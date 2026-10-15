@@ -1,0 +1,59 @@
+# vid2sub settings (spec section 5). vid2sub never writes this file, and it never holds a key: only
+# the names of environment variables that hold them (key_env). Copy it to
+# ~/.config/vid2sub/vid2sub.toml (macOS, Linux) or %APPDATA%\vid2sub\vid2sub.toml (Windows).
+
+[server]
+port = 8765
+open_browser = true
+
+[privacy]
+# A model marked `local = true` must live on one of these hosts.
+local_hosts = ["127.0.0.1", "localhost", "::1"]
+
+# The DGX Spark through local-ai's SSH tunnel (`make tunnel`).
+[endpoints.spark]
+base_url = "http://127.0.0.1:9100/v1"
+key_env = "SPARK_API_KEY"
+
+[endpoints.openai]
+base_url = "https://api.openai.com/v1"
+key_env = "OPENAI_API_KEY"
+allow_typed_key = true
+
+[models.spark-turbo]
+catalog = "whisper-large-v3-turbo"
+endpoint = "spark"
+model = "whisper-large-v3-turbo"
+parser = "whisper.cpp"
+local = true
+
+[models.spark-gemma]
+catalog = "gemma-4-26b-a4b"
+endpoint = "spark"
+model = "gemma-4-26b-a4b"
+task = "translate"
+local = true
+request_extra = { chat_template_kwargs = { enable_thinking = false } }
+
+# Qwen3-ASR on an Apple Silicon Mac: install vid2sub[mac].
+[models.mac-qwen]
+catalog = "qwen3-asr-1.7b"
+engine = "mlx-qwen3-asr"
+
+# Cloud models are used only when a run passes --allow-cloud.
+[models.openai-whisper]
+catalog = "openai-whisper-1"
+endpoint = "openai"
+model = "whisper-1"
+parser = "openai"
+
+[models.openai-gpt]
+catalog = "openai-gpt"
+endpoint = "openai"
+model = "gpt-5-mini"
+task = "translate"
+
+[defaults]
+targets = ["en"]
+formats = ["srt"]
+# youtube_dir = "~/Movies/vid2sub"

@@ -1,0 +1,74 @@
+name: ci
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+
+jobs:
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+        python: ["3.12", "3.14"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      UV_FROZEN: "1"
+      VID2SUB_REQUIRE_FFMPEG: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with: { version: "0.13.1" }
+      - name: ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+      - run: uv sync --group dev --python ${{ matrix.python }}
+      - run: uv run --python ${{ matrix.python }} pytest
+      - run: uv run ruff check src tests
+
+  floor:
+    # The pure packages run in Pyodide later (Python 3.12, pydantic 2.10.5): test them there.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with: { version: "0.13.1" }
+      - run: uv sync --frozen --group dev --python 3.12
+      - run: uv pip install --python 3.12 "pydantic==2.10.5"
+      - run: >-
+          uv run --no-sync pytest tests/test_purity.py tests/test_langs.py tests/test_text.py
+          tests/test_model.py tests/test_rules_lint.py tests/test_build.py tests/test_formats.py
+          tests/test_naming.py tests/test_sidecar.py tests/test_rendition.py
+          tests/test_glossary.py tests/test_scripts.py tests/test_translate_shape.py
+          tests/test_parse_words.py tests/test_parse_whispercpp.py
+          tests/test_parse_openai_qwen.py tests/test_catalog.py
+
+  leaks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: download gitleaks
+        run: curl -fsSL --retry 3 --max-time 120 -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+      - name: check gitleaks against its pinned checksum, then unpack it
+        run: |
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+      - name: gitleaks over the whole history
+        run: ./gitleaks git --redact --no-banner -v .
