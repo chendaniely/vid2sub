@@ -47,3 +47,30 @@ def test_cantonese_is_recognised_by_its_full_name():
 def test_something_that_isnt_verbose_json_is_refused():
     with pytest.raises(ParseError):
         parse_whispercpp({"text": "plain"})
+
+
+def dtw_segment(words, end=1.0):
+    return {"language": "japanese", "segments": [{"text": "こんにちは", "start": 0.0, "end": end,
+            "words": words}]}
+
+
+def test_decreasing_dtw_times_fall_back_to_the_token_times():
+    data = dtw_segment([word("こん", 0.0, 0.5, dtw=50), word("にちは", 0.5, 1.0, dtw=40)])
+    seg = parse_whispercpp(data).segments[0]
+    assert [(w.start_ms, w.end_ms) for w in seg.words] == [(0, 500), (500, 1000)]
+
+
+def test_a_dtw_time_past_the_segment_end_falls_back_to_the_token_times():
+    data = dtw_segment([word("こん", 0.0, 0.5, dtw=0), word("にちは", 0.5, 1.0, dtw=150)])
+    seg = parse_whispercpp(data).segments[0]
+    assert [(w.start_ms, w.end_ms) for w in seg.words] == [(0, 500), (500, 1000)]
+
+
+def test_a_segment_that_is_not_an_object_is_refused():
+    with pytest.raises(ParseError):
+        parse_whispercpp({"segments": ["oops"]})
+
+
+def test_a_language_probability_that_is_not_a_number_is_refused():
+    with pytest.raises(ParseError):
+        parse_whispercpp({"segments": [], "language_probabilities": {"en": "high"}})

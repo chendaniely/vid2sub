@@ -9,6 +9,8 @@ sits at the previous word's end and is marked untimed (recordings' rule).
 
 from __future__ import annotations
 
+import math
+import unicodedata
 from collections.abc import Sequence
 from typing import Any
 
@@ -19,13 +21,26 @@ RawToken = tuple[str, int | None, int | None, float | None]
 
 
 def ms(seconds: Any) -> int | None:
-    if seconds is None:
+    if seconds is None or isinstance(seconds, bool):
         return None
     try:
         value = float(seconds)
     except (TypeError, ValueError):
         return None
-    return None if value < 0 else round(value * 1000)
+    if not math.isfinite(value) or value < 0:
+        return None
+    return round(value * 1000)
+
+
+def _is_opening(text: str) -> bool:
+    body = text.strip()
+    return bool(body) and all(ch in NO_LINE_END for ch in body)
+
+
+def _is_closing(text: str) -> bool:
+    body = text.strip()
+    return bool(body) and all(unicodedata.category(ch).startswith("P") and ch not in NO_LINE_END
+                              for ch in body)
 
 
 def fill_untimed(raw: Sequence[Sequence[Any]], start_ms: int = 0) -> list[Word]:
@@ -48,8 +63,12 @@ def tokens_to_words(tokens: Sequence[RawToken], *, start_ms: int = 0) -> list[Wo
             continue
         head = text.lstrip()
         last = merged[-1][0].rstrip() if merged else ""
-        starts_word = (not merged or text[0].isspace() or is_cjk(head[0])
-                       or (bool(last) and is_cjk(last[-1])))
+        if not merged or text[0].isspace():
+            starts_word = True
+        elif _is_opening(merged[-1][0]) or _is_closing(text):
+            starts_word = False
+        else:
+            starts_word = is_cjk(head[0]) or (bool(last) and is_cjk(last[-1]))
         if starts_word:
             merged.append([text, start, end, prob])
             continue
@@ -65,14 +84,15 @@ def tokens_to_words(tokens: Sequence[RawToken], *, start_ms: int = 0) -> list[Wo
 def attach_punctuation(text: str, units: Sequence[tuple[str, int | None, int | None]], *,
                        start_ms: int = 0) -> list[Word] | None:
     lowered = text.lower()
-    haystack = lowered if len(lowered) == len(text) else text
+    fold = len(lowered) == len(text)
+    haystack = lowered if fold else text
     raw: list[list[Any]] = []
     pos = 0
     for utext, start, end in units:
         needle = utext.strip()
         if not needle:
             continue
-        found = haystack.find(needle.lower() if haystack is lowered else needle, pos)
+        found = haystack.find(needle.lower() if fold else needle, pos)
         if found < 0:
             return None
         gap = text[pos:found]

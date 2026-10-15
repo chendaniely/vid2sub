@@ -1,3 +1,5 @@
+import pytest
+
 from vid2sub.parse.words import attach_punctuation, fill_untimed, ms, tokens_to_words
 
 
@@ -37,3 +39,25 @@ def test_punctuation_and_spaces_from_the_text_attach_to_aligned_units():
 
 def test_a_unit_missing_from_the_text_gives_none():
     assert attach_punctuation("abc", [("zzz", 0, 1)]) is None
+
+
+def test_closing_punctuation_tokens_join_the_word_before_them():
+    words = tokens_to_words([("我", 0, 100, None), ("，", 100, 110, None), ("你", 110, 200, None),
+                             ("。", 200, 210, None)])
+    assert [w.text for w in words] == ["我，", "你。"]
+
+
+def test_opening_punctuation_takes_the_next_token_even_when_it_is_cjk():
+    toks = [("他", 0, 1, None), ("说", 1, 2, None), ("：", 2, 3, None), ("“", 3, 4, None),
+            ("你", 4, 5, None), ("好", 5, 6, None), ("”", 6, 7, None)]
+    assert [w.text for w in tokens_to_words(toks)] == ["他", "说：", "“你", "好”"]
+
+
+def test_an_opening_mark_followed_by_a_spaced_token_stays_a_word_of_its_own():
+    words = tokens_to_words([("(", 0, 100, None), (" hi", 100, 200, None)])
+    assert [w.text for w in words] == ["(", " hi"]
+
+
+@pytest.mark.parametrize("bad", [True, False, float("nan"), float("inf"), float("-inf")])
+def test_booleans_and_non_finite_numbers_are_not_times(bad):
+    assert ms(bad) is None
