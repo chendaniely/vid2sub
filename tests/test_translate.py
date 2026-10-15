@@ -1,9 +1,11 @@
+import json
 import re
 
 import pytest
 from fakes import FakeServer, chat_responder
 
 from vid2sub.config import Config, Endpoint, ModelEntry
+from vid2sub.engines.base import EngineError
 from vid2sub.engines.clients import KeyRing, RunPolicy
 from vid2sub.subs.glossary import EMPTY_GLOSSARY, parse_glossary
 from vid2sub.subs.model import Cue
@@ -91,3 +93,42 @@ def test_translation_goes_through_chatlas_with_a_schema_and_thinking_off():
     assert body["response_format"]["type"] == "json_schema"
     assert body["chat_template_kwargs"] == {"enable_thinking": False}
     assert body["messages"][0]["role"] == "system"
+
+
+def test_a_connection_or_key_error_stops_translation_at_once():
+    calls = []
+
+    def ask(system, prompt, model):
+        calls.append(prompt)
+        raise EngineError("connection", "down")
+
+    with pytest.raises(EngineError):
+        translate_cues(SOURCE[:10], source_lang="ja", target_track="en",
+                       glossary=EMPTY_GLOSSARY, ask=ask)
+    assert len(calls) == 1
+
+
+def _sizes_when_multi_cue_batches_fail(error, count):
+    sizes = []
+
+    def ask(system, prompt, model):
+        ids = re.findall(r"^\[(\S+)\] \(max", prompt, flags=re.MULTILINE)
+        sizes.append(len(ids))
+        if len(ids) > 1:
+            raise error
+        return model.model_validate({"items": [{"src": ids, "text": f"EN {ids[0]}"}]})
+
+    out = translate_cues(SOURCE[:count], source_lang="ja", target_track="en",
+                         glossary=EMPTY_GLOSSARY, ask=ask)
+    assert len(out) == count
+    return sizes
+
+
+def test_a_malformed_answer_is_split_and_retried():
+    sizes = _sizes_when_multi_cue_batches_fail(json.JSONDecodeError("bad", "", 0), 10)
+    assert sizes == [10, 5, 1, 1, 1, 1, 1, 5, 1, 1, 1, 1, 1]
+
+
+def test_a_failing_batch_is_halved_once_then_retried_cue_by_cue():
+    sizes = _sizes_when_multi_cue_batches_fail(ValueError("bad shape"), 6)
+    assert sizes == [6, 3, 1, 1, 1, 3, 1, 1, 1]

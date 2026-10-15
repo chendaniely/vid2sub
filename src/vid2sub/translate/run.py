@@ -102,18 +102,23 @@ def make_ask(name: str, entry: ModelEntry, config: Config, policy: clients.RunPo
 
 
 def _translate(batch: Batch, all_ids: Sequence[str], cues: Mapping[str, Cue],
-               limits: Mapping[str, int], system: str, ask: AskFn) -> list[Item]:
+               limits: Mapping[str, int], system: str, ask: AskFn, *, stage: int = 0) -> list[Item]:
+    """Stage 0 is the whole batch, 1 a half (spec §13.2), 2 a single cue."""
     try:
         result = ask(system, batch_prompt(batch, cues, limits), batch_model(batch.ids))
         return validate_partition(items_from(result), batch.ids)
-    except ValueError as err:  # a PartitionError or pydantic's ValidationError
-        if len(batch.ids) == 1:
+    except ValueError as err:  # a PartitionError or pydantic's or the JSON decoder's error
+        if stage >= 2 or len(batch.ids) == 1:
             raise TranslationFailed(
                 f"the model couldn't translate cue {batch.ids[0]} in the required shape") \
                 from err
+        if stage == 0:
+            parts = split_batch(batch, all_ids)
+        else:
+            parts = plan_batches(all_ids, batch.ids, size=1)
         items: list[Item] = []
-        for half in split_batch(batch, all_ids):
-            items += _translate(half, all_ids, cues, limits, system, ask)
+        for part in parts:
+            items += _translate(part, all_ids, cues, limits, system, ask, stage=stage + 1)
         return items
 
 
