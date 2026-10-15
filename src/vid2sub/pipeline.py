@@ -52,7 +52,14 @@ from vid2sub.subs.glossary import (
 from vid2sub.subs.model import Segment, Transcript, shift_segment
 from vid2sub.subs.rendition import cues_body, transcript_body
 from vid2sub.subs.rules import rules_for
-from vid2sub.subs.sidecar import HeadRecord, IdentityRecord, Sidecar, SidecarError, make_rendition
+from vid2sub.subs.sidecar import (
+    Conflict,
+    HeadRecord,
+    IdentityRecord,
+    Sidecar,
+    SidecarError,
+    make_rendition,
+)
 from vid2sub.subs.translate_shape import stale_ids
 from vid2sub.translate.run import PROMPT_VERSION, TranslationFailed, make_ask, translate_cues
 
@@ -162,6 +169,10 @@ def run_one(source: str, ctx: RunContext) -> InputResult:
         except (EngineError, ToolMissing, youtube.YouTubeError, InputError) as err:
             _fail(result, str(err), getattr(err, "hint", ""),
                   getattr(err, "kind", type(err).__name__))
+        except OSError as err:  # never err.filename: reasons may reach a --json consumer's log
+            _fail(result, "couldn't read or write a file here"
+                  + (f" ({err.strerror})" if err.strerror else ""),
+                  "check the folder's permissions and free space", type(err).__name__)
         except ToolFailed as err:
             _fail(result, f"{err.tool} couldn't process this file",
                   "check that it plays in a media player", "ToolFailed")
@@ -179,15 +190,18 @@ def _fail(result: InputResult, reason: str, hint: str = "", kind: str = "") -> N
 def _run(source: str, ctx: RunContext, scratch: Path, result: InputResult) -> None:
     opts = ctx.options
     video = _resolve(source, ctx, scratch, result)
+    is_url = youtube.is_url(source)
     ctx.events("stage", {"stage": "probe"})
     p = probe(video, ctx.tools, scratch=scratch)
     header = store.header_for(video, identify(video), p.duration_ms)
     sidecar, _ = store.load(video)
-    if sidecar is not None:
-        sidecar, changed = store.check_external(
-            video, header, sidecar,
-            on_unreadable=lambda name: result.notes.append(
-                f"left {name} alone: it isn't a readable subtitle file"))
+    if sidecar is not None and not opts.dry_run:  # a dry run writes nothing, not even versions
+        def unreadable(name: str) -> None:
+            track = naming.track_from_subtitle_name(video.name, name) or "subtitle"
+            result.notes.append(
+                f"left your {track} {Path(name).suffix} file alone: it isn't a readable "
+                "subtitle file; delete it to have vid2sub write it again")
+        sidecar, changed = store.check_external(video, header, sidecar, on_unreadable=unreadable)
         result.notes += [f"kept your outside edit to {t}" for t in changed]
     glossary = _glossary(video, opts)
     targets = [naming.target_track(t) for t in opts.targets]
@@ -208,10 +222,18 @@ def _run(source: str, ctx: RunContext, scratch: Path, result: InputResult) -> No
         }
         return
     if src_track is None:
+        if sidecar is not None:
+            forked = _forked_source(sidecar)
+            if forked:
+                raise store.StoreError(f"the {forked} track has two versions; pick one in the "
+                                       "editor")
         sidecar, src_track = _transcribe(video, p, header, sidecar, glossary, ctx, scratch,
-                                         result)
+                                         result, is_url=is_url)
         if src_track is None:
             return
+    elif opts.source_lang and naming.track(src_track).lang != opts.source_lang:
+        result.notes.append(f"kept the existing {src_track} transcript; --from "
+                            f"{opts.source_lang} applies only to new transcripts")
     sidecar = _translate_targets(video, header, sidecar, src_track, targets, glossary, ctx,
                                  result)
     tracks = [src_track] + [t for t in targets if t != src_track]
@@ -236,7 +258,7 @@ def _resolve(source: str, ctx: RunContext, scratch: Path, result: InputResult) -
     if not path.is_file():
         raise InputError("there's no file at that path")
     result.title = path.name
-    twins = [p for p in path.parent.iterdir() if p != path and p.stem == path.stem
+    twins = [p for p in path.parent.iterdir() if p != path and p.stem.casefold() == path.stem.casefold()
              and p.suffix.lower() in MEDIA_SUFFIXES]
     if twins:
         raise InputError("another video in this folder has the same name, so their subtitles "
@@ -250,7 +272,10 @@ def _glossary(video: Path, opts: RunOptions) -> Glossary:
         if opts.glossary is not None:
             raise InputError("that glossary file doesn't exist")
         return EMPTY_GLOSSARY
-    return parse_glossary(path.read_text(encoding="utf-8"))
+    try:
+        return parse_glossary(path.read_text(encoding="utf-8-sig"))
+    except UnicodeDecodeError:
+        raise GlossaryError("the glossary isn't UTF-8; save it as UTF-8") from None
 
 
 def _all_exist(video: Path, targets: list[str], formats: list[str],
@@ -260,22 +285,70 @@ def _all_exist(video: Path, targets: list[str], formats: list[str],
                                 for t in tracks for f in formats)
 
 
-def _choose(video: Path, samples, speech, encode, ctx: RunContext,
-            result: InputResult) -> tuple[str | None, str | None, dict]:
+def _forked_source(sidecar: Sidecar) -> str | None:
+    """A source track that is in Conflict, so it can't be reused and mustn't be redone."""
+    renditions = sidecar.renditions()
+    for track in sidecar.tracks():
+        head = sidecar.head(track)
+        if isinstance(head, Conflict) and any(
+                renditions[i].body.get("meta", {}).get("role") == "source"
+                for i in head.leaves if i in renditions):
+            return track
+    return None
+
+
+class _PatientDetector:
+    """An engine whose language detection waits and pauses like transcription (spec §17.2)."""
+
+    def __init__(self, inner: Engine, ctx: RunContext):
+        self._inner, self._ctx = inner, ctx
+
+    def detect_language(self, chunk: Chunk):
+        return _retrying(lambda: self._inner.detect_language(chunk), self._ctx)
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+
+def _candidates_that_work(ctx: RunContext, works: Callable[[list], bool]) -> list:
+    """The candidates, looked at again while servers that didn't answer might still come back.
+
+    A dropped tunnel mustn't read as "no model is available": it waits, then pauses (spec §17.3).
+    """
+    cands = ctx.get_candidates()
+    if works(cands) or not any(c.unreachable for c in cands):
+        return cands
+
+    def look() -> list:
+        fresh = detecting.candidates(ctx.config, ctx.keys)
+        ctx.candidates = fresh
+        if not works(fresh) and any(c.unreachable for c in fresh):
+            raise EngineError("connection", "the model server isn't reachable",
+                              hint="is it running? For the Spark: is `make tunnel` running?")
+        return fresh
+
+    return _retrying(look, ctx)
+
+
+def _choose(video: Path, samples, speech, encode, ctx: RunContext, result: InputResult, *,
+            is_url: bool = False) -> tuple[str | None, str | None, dict]:
     opts = ctx.options
     lang, meta = opts.source_lang, {}
     if lang is None:
-        votes = ctx.folder_votes.get(video.parent, [])
+        votes = [] if is_url else ctx.folder_votes.get(video.parent, [])
         if len(votes) >= 2 and len(set(votes)) == 1:
             lang, meta = votes[0], {"inherited_from_folder": True}
+            result.notes.append(f"used {lang} like the other videos in this folder")
         else:
-            detector = detecting.choose_detector(ctx.get_candidates(),
-                                                 allow_cloud=opts.allow_cloud)
+            cands = _candidates_that_work(
+                ctx, lambda c: detecting.choose_detector(c, allow_cloud=opts.allow_cloud)
+                is not None)
+            detector = detecting.choose_detector(cands, allow_cloud=opts.allow_cloud)
             if detector is None:
                 raise InputError("no model is available to detect the language",
                                  "pass --from LANG, or check `vid2sub models`")
             ctx.events("stage", {"stage": "detect"})
-            found = detecting.detect(ctx.engine(detector), samples, speech,
+            found = detecting.detect(_PatientDetector(ctx.engine(detector), ctx), samples, speech,
                                      len(samples) // SAMPLES_PER_MS, encode=encode)
             meta = {"detector": found.detector, "votes": list(found.votes),
                     "confidence": found.confidence}
@@ -287,10 +360,16 @@ def _choose(video: Path, samples, speech, encode, ctx: RunContext,
                     result.hint = "run it again with --from LANG (for example --from yue)"
                     return None, None, meta
             lang = found.language
-            ctx.folder_votes.setdefault(video.parent, []).append(lang)
+            if found.uncertain:
+                result.notes.append(f"went ahead with {lang} although {found.reason()}")
+            elif not is_url:  # only a confident detection votes, and a download has no folder
+                ctx.folder_votes.setdefault(video.parent, []).append(lang)
     model = opts.model
     if model is None:
-        s = suggest(lang, ctx.get_candidates(), "transcribe", allow_cloud=opts.allow_cloud)
+        def suggestion(cands: list):
+            return suggest(lang, cands, "transcribe", allow_cloud=opts.allow_cloud)
+
+        s = suggestion(_candidates_that_work(ctx, lambda c: suggestion(c).model is not None))
         if s.model is None:
             raise InputError(f"no usable transcription model for {langs.get(lang).name}",
                              "; ".join(f"{n}: {r}" for n, r in s.considered)
@@ -335,8 +414,8 @@ def _with_retries(engine: Engine, chunk: Chunk, *, language: str, prompt: str,
 
 
 def _transcribe(video: Path, p: Probe, header, sidecar: Sidecar | None, glossary: Glossary,
-                ctx: RunContext, scratch: Path,
-                result: InputResult) -> tuple[Sidecar | None, str | None]:
+                ctx: RunContext, scratch: Path, result: InputResult, *,
+                is_url: bool = False) -> tuple[Sidecar | None, str | None]:
     opts = ctx.options
     track = pick_track(p, opts.source_lang, opts.audio_track)
     offset = timeline_offset_ms(p, track)
@@ -350,18 +429,22 @@ def _transcribe(video: Path, p: Probe, header, sidecar: Sidecar | None, glossary
     def encode(s):
         return encode_flac(s, ctx.tools, scratch=scratch)
 
-    lang, model_name, detection = _choose(video, samples, speech, encode, ctx, result)
+    lang, model_name, detection = _choose(video, samples, speech, encode, ctx, result,
+                                         is_url=is_url)
     if lang is None:
         return sidecar, None
     engine = ctx.engine(model_name)
     duration = len(samples) // SAMPLES_PER_MS
     plans = plan_chunks(speech, duration, engine.max_chunk_s)
     cjk = langs.get(lang).cjk
+    vocab = prompt_sha(vocabulary_prompt(glossary.source_terms())) if engine.supports_prompt \
+        else ""
     segments: list[Segment] = []
     tail, answered = "", None
     for plan in plans:
         ctx.events("chunk", {"index": plan.index + 1, "of": len(plans)})
-        key = (header.video.quick_sha256, track.stream_index, model_name, lang, plan.plan_hash())
+        key = (header.video.quick_sha256, track.stream_index, model_name, lang, plan.plan_hash(),
+               vocab)
         if key not in ctx.chunk_cache:
             chunk = Chunk(plan.index, chunk_samples(samples, plan, speech), encode)
             prompt = chunk_prompt(glossary, tail, cjk=cjk) if engine.supports_prompt else ""
@@ -376,8 +459,6 @@ def _transcribe(video: Path, p: Probe, header, sidecar: Sidecar | None, glossary
     transcript = Transcript(language=lang,
                             segments=tuple(shift_segment(s, offset) for s in segments))
     stamp = engine.stamp()
-    vocab = prompt_sha(vocabulary_prompt(glossary.source_terms())) if engine.supports_prompt \
-        else ""
     now = store.now()
     t_body = transcript_body(
         transcript, engine=stamp.engine, model=stamp.model,
@@ -444,6 +525,14 @@ def _translate_targets(video: Path, header, sidecar: Sidecar, src_track: str,
         if entry is None or entry.task != "translate":
             raise ConfigError(f"{model_name} isn't a translation model in vid2sub.toml")
         existing = sidecar.head(target)
+        if isinstance(existing, Conflict):
+            result.notes.append(f"the {target} track has two versions; pick one in the editor")
+            continue
+        if isinstance(existing, HeadRecord) and existing.by != "auto" \
+                and not opts.replace_edited:
+            result.kept.append(target)
+            result.notes.append(f"kept your {target} subtitles; --replace-edited would redo them")
+            continue
         parents, keep, todo = [src_rec.id], [], list(by_id)
         if isinstance(existing, HeadRecord):
             old_rec, old = store.current_cues(sidecar, target)

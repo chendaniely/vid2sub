@@ -116,6 +116,7 @@ class Candidate:
     available: bool
     reason: str = ""
     cloud: bool = False
+    unreachable: bool = False  # the server didn't answer: waiting may help, unlike a missing key
 
 
 @dataclass(frozen=True)

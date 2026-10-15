@@ -22,28 +22,38 @@ _ES_SYSTEM_REQUIRED = 0x00000001
 
 
 @contextlib.contextmanager
-def keep_awake() -> Iterator[None]:
+def keep_awake() -> Iterator[subprocess.Popen | None]:
+    """Yield the helper process (None where there is none), and stop it on the way out."""
     proc: subprocess.Popen | None = None
     windows = False
+    quiet = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+             "stderr": subprocess.DEVNULL}
     try:
         if sys.platform == "darwin" and os.path.exists("/usr/bin/caffeinate"):
             proc = subprocess.Popen(["/usr/bin/caffeinate", "-i", "-w", str(os.getpid())],
-                                    env=child_env())
+                                    env=child_env(), **quiet)
         elif os.name == "nt":
             import ctypes
 
             ctypes.windll.kernel32.SetThreadExecutionState(_ES_CONTINUOUS | _ES_SYSTEM_REQUIRED)
             windows = True
         else:
-            exe = which("systemd-inhibit")
-            if exe:
+            exe, tail = which("systemd-inhibit"), which("tail")
+            if exe and tail:
+                # tail follows this process and exits with it, so the lock can't outlive us
                 proc = subprocess.Popen([exe, "--what=idle:sleep", "--who=vid2sub",
-                                         "--why=making subtitles", "--mode=block", "sleep",
-                                         "infinity"], env=child_env())
-        yield
+                                         "--why=making subtitles", "--mode=block", tail,
+                                         f"--pid={os.getpid()}", "-f", "/dev/null"],
+                                        env=child_env(), **quiet)
+        yield proc
     finally:
         if proc is not None:
             proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
         if windows:
             import ctypes
 

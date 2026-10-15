@@ -104,7 +104,7 @@ def mlx_available() -> bool:
 
 def candidates(config: Config, keys: clients.KeyRing, *,
                probe_endpoints: bool = True) -> list[Candidate]:
-    served: dict[str, tuple[bool, str, set[str]]] = {}
+    served: dict[str, tuple[bool, str, set[str], bool]] = {}
     out: list[Candidate] = []
     for name, m in config.models.items():
         if m.engine == "mlx-qwen3-asr":
@@ -123,14 +123,16 @@ def candidates(config: Config, keys: clients.KeyRing, *,
             continue
         if m.endpoint not in served:
             try:
-                served[m.endpoint] = (True, "", set(clients.list_models(m.endpoint, ep, keys)))
+                served[m.endpoint] = (True, "", set(clients.list_models(m.endpoint, ep, keys)),
+                                      False)
             except EngineError as err:
                 reason = f"{err} ({err.hint})" if err.hint else str(err)
-                served[m.endpoint] = (False, reason, set())
-        ok, reason, ids = served[m.endpoint]
+                served[m.endpoint] = (False, reason, set(),
+                                      err.kind in ("connection", "refused"))
+        ok, reason, ids, down = served[m.endpoint]
         if ok and ids and m.model not in ids:
             ok, reason = False, f"the server doesn't list {m.model}"
-        out.append(Candidate(name, m.catalog, "endpoint", ok, reason))
+        out.append(Candidate(name, m.catalog, "endpoint", ok, reason, unreachable=down))
     return out
 
 
