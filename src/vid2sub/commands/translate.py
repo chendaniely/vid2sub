@@ -50,6 +50,7 @@ def run(args: argparse.Namespace) -> int:
             targets = [naming.target_track(t) for t in args.targets]
         except naming.UnknownTrack as err:
             raise CommandError(exitcodes.USAGE, str(err)) from None
+        _common.check_model(config, args.translate_model, "translate", "--translate-model")
         inputs = _common.expand(args.inputs, recursive=args.recursive, from_file=args.from_file)
         if not inputs:
             raise CommandError(exitcodes.USAGE, "nothing to do",

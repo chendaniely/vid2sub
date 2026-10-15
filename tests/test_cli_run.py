@@ -4,7 +4,7 @@ import pytest
 from fakes import FakeEngine, fake_make_ask
 from helpers import SPEECH, make_clip
 
-from vid2sub import pipeline
+from vid2sub import pipeline, store
 from vid2sub.catalog import Candidate
 from vid2sub.cli import main
 from vid2sub.commands import _common
@@ -186,3 +186,31 @@ def test_an_unexpected_error_fails_one_input_and_the_next_still_runs(setup, tmp_
                                                            ("done", "")]
     assert "/secret/path" not in captured.out + captured.err
     assert second.with_name("Show - S01E02.en.srt").exists()
+
+
+@pytest.mark.parametrize("flags", [
+    ["--from", "yue", "--script", "hans"],
+    ["--from", "yue", "--script", "hant"],
+    ["--from", "ja", "--model", "nope"],
+    ["--from", "ja", "--model", "gemma"],
+    ["--from", "ja", "--translate-model", "nope"],
+    ["--from", "ja", "--translate-model", "fake"],
+])
+def test_a_contradictory_or_unknown_choice_is_a_usage_error_before_any_input(setup, capsys,
+                                                                             flags):
+    cfg, engine, clip = setup
+    assert main(["run", str(clip), *flags, "--config", str(cfg)]) == 64
+    assert engine.calls == []
+    assert not store.sidecar_path(clip).exists()
+    assert "Show - S01E01" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("model", ["nope", "fake"])
+def test_translate_refuses_a_translation_model_it_does_not_know_up_front(setup, model):
+    cfg, _, clip = setup
+    assert main(["run", str(clip), "--from", "ja", "--to", "none", "--config", str(cfg)]) == 0
+    before = store.sidecar_path(clip).read_bytes()
+    code = main(["translate", str(clip), "--to", "en", "--translate-model", model,
+                 "--config", str(cfg)])
+    assert code == 64
+    assert store.sidecar_path(clip).read_bytes() == before

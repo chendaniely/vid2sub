@@ -48,6 +48,22 @@ def load(args: argparse.Namespace) -> Config:
                            "fix vid2sub.toml (`vid2sub config init` prints a starter)") from None
 
 
+def check_model(config: Config, name: str | None, task: str, flag: str) -> None:
+    """A model named on the command line must be in vid2sub.toml and do this task (exit 64).
+
+    Checked before any input is touched, so a typo isn't a failure per episode (final review).
+    """
+    if name is None:
+        return
+    entry = config.models.get(name)
+    if entry is None:
+        raise CommandError(exitcodes.USAGE, f"{flag} {name}: there's no such model in "
+                           "vid2sub.toml", "`vid2sub models` lists them")
+    if entry.task != task:
+        raise CommandError(exitcodes.USAGE, f"{flag} {name}: that's a {entry.task} model, and "
+                           f"{flag} takes a {task} model", "`vid2sub models` lists them")
+
+
 def episode_key(path: Path) -> tuple:
     natural = [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", path.name)]
     m = _EPISODE.search(path.name)

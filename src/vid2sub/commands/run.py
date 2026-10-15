@@ -64,9 +64,15 @@ def add_parser(sub) -> None:
 
 
 def options_from(args: argparse.Namespace, config: Config) -> RunOptions:
+    """The run's options, with contradictions and unknown models refused before any input."""
     source = None if args.source_lang == "auto" else args.source_lang
     if source is not None:
         langs.get(source)
+    if source == "yue" and args.script:
+        raise CommandError(exitcodes.USAGE, "--script is for Mandarin; Cantonese subtitles are "
+                           "always in Traditional characters", "leave out --script")
+    _common.check_model(config, args.model, "transcribe", "--model")
+    _common.check_model(config, args.translate_model, "translate", "--translate-model")
     if args.targets == ["none"]:
         targets: list[str] = []
     else:
