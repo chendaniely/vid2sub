@@ -24,7 +24,7 @@ import platformdirs
 
 from vid2sub import detect as detecting
 from vid2sub import store
-from vid2sub.catalog import suggest
+from vid2sub.catalog import Suggestion, suggest
 from vid2sub.config import Config, ConfigError
 from vid2sub.engines.base import Chunk, ChunkResult, Engine, EngineError
 from vid2sub.engines.clients import KeyRing, RunPolicy
@@ -587,3 +587,81 @@ def _write(video: Path, header, sidecar: Sidecar, tracks: list[str], ctx: RunCon
             if written:
                 result.written.append(path.name)
     return sidecar
+
+
+@dataclass
+class DetectReport:
+    input: str
+    title: str = ""
+    duration_ms: int = 0
+    tracks: list[str] = field(default_factory=list)
+    detection: detecting.Detection | None = None
+    transcribe: Suggestion | None = None
+    translate: Suggestion | None = None
+    error: str = ""
+    kind: str = ""
+    hint: str = ""
+
+
+def detect_one(source: str, ctx: RunContext) -> DetectReport:
+    """What `run` would do for one file, without transcribing it (spec §18.1).
+
+    Detection waits and pauses like a run's does: a dropped tunnel raises Paused (§17.2, §17.3).
+    """
+    report = DetectReport(input=source)
+    if youtube.is_url(source):
+        report.error, report.kind = "detect works on files, not links", "NotAFile"
+        report.hint = "download it first with `vid2sub run URL --to none`"
+        return report
+    opts = ctx.options
+    with tempfile.TemporaryDirectory(prefix="vid2sub-") as tmp:
+        scratch = Path(tmp)
+        try:
+            path = resolve_input(source)
+            if not path.is_file():
+                raise InputError("there's no file at that path")
+            report.title = path.name
+            p = probe(path, ctx.tools, scratch=scratch)
+            report.duration_ms = p.duration_ms
+            report.tracks = [f"{t.index}: {t.language or t.tag or '?'} {t.codec}"
+                             f"{' (default)' if t.default else ''}" for t in p.audio]
+            lang = opts.source_lang
+            cands = ctx.get_candidates()
+            if lang is None:
+                track = pick_track(p, None, opts.audio_track)
+                wav = scratch / "audio.wav"
+                decode_to_wav(path, track, wav, ctx.tools, scratch=scratch,
+                              duration_ms=p.duration_ms)
+                samples = read_wav(wav)
+                cands = _candidates_that_work(
+                    ctx, lambda c: detecting.choose_detector(c, allow_cloud=opts.allow_cloud)
+                    is not None)
+                detector = detecting.choose_detector(cands, allow_cloud=opts.allow_cloud)
+                if detector is None:
+                    raise InputError("no model is available to detect the language",
+                                     "check `vid2sub models`")
+                report.detection = detecting.detect(
+                    _PatientDetector(ctx.engine(detector), ctx), samples,
+                    speech_regions(to_float(samples)), len(samples) // SAMPLES_PER_MS,
+                    encode=lambda s: encode_flac(s, ctx.tools, scratch=scratch))
+                lang = report.detection.language
+            if lang:
+                def suggestion(c: list, task: str) -> Suggestion:
+                    return suggest(lang, c, task, allow_cloud=opts.allow_cloud)
+
+                cands = _candidates_that_work(
+                    ctx, lambda c: suggestion(c, "transcribe").model is not None)
+                report.transcribe = suggestion(cands, "transcribe")
+                report.translate = suggestion(cands, "translate")
+        except (Paused, StopRun):
+            raise
+        except (EngineError, ToolMissing, InputError) as err:
+            report.error, report.hint = str(err), getattr(err, "hint", "")
+            report.kind = getattr(err, "kind", type(err).__name__)
+        except OSError as err:  # never err.filename (spec §6.8)
+            report.error = ("couldn't read a file here"
+                            + (f" ({err.strerror})" if err.strerror else ""))
+            report.kind = type(err).__name__
+        except (ToolFailed, ProbeError, InputRefused, ConfigError) as err:
+            report.error, report.kind = str(err), type(err).__name__
+    return report

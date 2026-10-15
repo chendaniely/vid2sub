@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import threading
 from dataclasses import dataclass
@@ -165,3 +166,11 @@ class FakeEngine:
 
     def close(self):
         pass
+
+
+def fake_make_ask(*args, **kwargs):
+    """Stands in for translate.run.make_ask: 'EN <id>' for every cue it's asked about."""
+    def ask(system, prompt, model):
+        ids = re.findall(r"^\[(\S+)\] \(max", prompt, flags=re.MULTILINE)
+        return model.model_validate({"items": [{"src": [i], "text": f"EN {i}"} for i in ids]})
+    return ask

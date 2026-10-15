@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 
 import pytest
-from fakes import FakeEngine
+from fakes import FakeEngine, fake_make_ask
 from helpers import SPEECH, make_clip
 from jsonschema import Draft202012Validator
 
@@ -21,13 +21,6 @@ from vid2sub.subs.sidecar import HeadRecord, make_rendition
 
 pytestmark = pytest.mark.media
 CONTRACTS = Path(__file__).parent / "contracts"
-
-
-def fake_make_ask(*args, **kwargs):
-    def ask(system, prompt, model):
-        ids = re.findall(r"^\[(\S+)\] \(max", prompt, flags=re.MULTILINE)
-        return model.model_validate({"items": [{"src": [i], "text": f"EN {i}"} for i in ids]})
-    return ask
 
 
 def failing_make_ask(failures):

@@ -15,7 +15,7 @@ from collections.abc import Sequence
 
 from vid2sub import __version__, exitcodes
 
-COMMAND_MODULES: list[str] = []
+COMMAND_MODULES: list[str] = ["run", "detect"]
 
 
 class _Parser(argparse.ArgumentParser):
