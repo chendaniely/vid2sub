@@ -77,4 +77,46 @@ def test_a_local_playlist_is_refused_by_the_format_whitelist(tmp_path):
 
 @pytest.mark.media
 def test_ffmpeg_reports_a_version():
-    assert t.version(t.Tools.find().need("ffmpeg")) >= (4,)
+    v = t.version(t.Tools.find().need("ffmpeg"))
+    assert v is not None and v >= (4,)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake tool is a POSIX shell script")
+def test_a_git_build_version_line_is_unknown_not_a_crash(tmp_path):
+    fake = tmp_path / "ffmpeg"
+    fake.write_text("#!/bin/sh\necho 'ffmpeg version N-117000-gabc123 Copyright (c) 2000-2026 "
+                    "the FFmpeg developers'\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    assert t.version(str(fake)) is None
+
+
+@pytest.mark.media
+def test_real_wav_and_mkv_inputs_pass_the_format_whitelist(tmp_path):
+    ffmpeg = t.Tools.find().need("ffmpeg")
+    wav = tmp_path / "tone.wav"
+    mkv = tmp_path / "clip.mkv"
+    t.run_tool([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", str(wav)],
+               cwd=tmp_path, timeout=60)
+    t.run_tool([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=1:size=64x64:rate=10",
+                "-f", "lavfi", "-i", "sine=duration=1", "-c:v", "ffv1", "-c:a", "flac", str(mkv)],
+               cwd=tmp_path, timeout=60)
+    ffprobe = t.Tools.find().need("ffprobe")
+    for media in (wav, mkv):
+        t.run_tool([ffprobe, "-v", "error", *t.input_args(media), "-show_format"],
+                   cwd=tmp_path, timeout=60)
+
+
+@pytest.mark.media
+@pytest.mark.parametrize("suffix, codec_args", [
+    ("mpg", ["-f", "mpeg"]),
+    ("ac3", ["-c:a", "ac3", "-f", "ac3"]),
+    ("eac3", ["-c:a", "eac3", "-f", "eac3"]),
+    ("dts", ["-c:a", "dca", "-strict", "-2", "-f", "dts"]),
+])
+def test_dvd_and_dolby_inputs_pass_the_format_whitelist(tmp_path, suffix, codec_args):
+    ffmpeg = t.Tools.find().need("ffmpeg")
+    media = tmp_path / f"tone.{suffix}"
+    t.run_tool([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", *codec_args,
+                str(media)], cwd=tmp_path, timeout=60)
+    t.run_tool([t.Tools.find().need("ffprobe"), "-v", "error", *t.input_args(media),
+                "-show_format"], cwd=tmp_path, timeout=60)

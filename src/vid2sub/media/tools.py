@@ -21,7 +21,7 @@ from vid2sub.security import child_env
 
 FALLBACK_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
 FORMAT_WHITELIST = ("matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts,flv,ogg,wav,flac,mp3,aac,"
-                    "asf,aiff,w64,caf")
+                    "asf,aiff,w64,caf,mpeg,ac3,eac3,dts")
 _HINTS = {
     "ffmpeg": "install ffmpeg 6 or later (macOS: brew install ffmpeg; Windows: winget install "
               "Gyan.FFmpeg; Linux: your package manager)",
@@ -96,7 +96,11 @@ def input_args(path: Path) -> list[str]:
 
 
 def version(exe: str) -> tuple[int, ...] | None:
-    """ffmpeg answers `-version`; deno answers `--version`."""
+    """ffmpeg answers `-version`; deno answers `--version`.
+
+    Returns None when the version can't be read (e.g. git builds print `N-117000-gabc…`, with no
+    `major.minor`); callers treat None as "unknown", not as an error.
+    """
     for flag in ("-version", "--version"):
         try:
             proc = subprocess.run([exe, flag], check=False, capture_output=True, timeout=30,
