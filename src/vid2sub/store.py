@@ -14,7 +14,7 @@ the edit has been recorded as a version (controller ruling, Task 28).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,6 +24,7 @@ from vid2sub.subs import naming
 from vid2sub.subs.formats import (
     PRECISION_MS,
     ParsedCue,
+    SubtitleError,
     parse_subtitles,
     same_cues,
     sha256_hex,
@@ -114,6 +115,7 @@ def append(video: Path, header: Header, records: Sequence) -> Sidecar:
 
 def head_record(sidecar: Sidecar, track: str, rendition_id: str, by: str, *,
                 replace_person: bool = False) -> HeadRecord | None:
+    """None when nothing should change; a track in Conflict is resolved in the editor."""
     current = sidecar.head(track)
     if isinstance(current, Conflict):
         return None
@@ -150,6 +152,7 @@ def source_track(sidecar: Sidecar) -> str | None:
 
 def project(video: Path, header: Header, sidecar: Sidecar, track: str, fmt: str, *,
             overwrite_foreign: bool) -> tuple[Sidecar, Path, bool]:
+    """EditedOnDisk assumes the caller ran `check_external` first; that makes the edit a version."""
     rec, cues = current_cues(sidecar, track)
     path = subtitle_path(video, track, fmt)
     if path.is_symlink() or (path.exists() and not path.is_file()):
@@ -207,8 +210,16 @@ def align_ids(parsed: Sequence[ParsedCue], projected: Sequence[Cue], *,
     return normalise_track(out)
 
 
-def check_external(video: Path, header: Header, sidecar: Sidecar) -> tuple[Sidecar, list[str]]:
+def check_external(video: Path, header: Header, sidecar: Sidecar, *,
+                   on_unreadable: Callable[[str], None] | None = None,
+                   ) -> tuple[Sidecar, list[str]]:
+    """Record edits made outside vid2sub as versions; a file that won't parse is only reported.
+
+    An unreadable or emptied file is neither adopted nor touched, so `project` later refuses it
+    as `EditedOnDisk`. Two edited files of one track chain their heads rather than diverge.
+    """
     renditions = sidecar.renditions()
+    latest: dict[str, str] = {}
     records: list = []
     changed: list[str] = []
     for name, proj in sidecar.projections().items():
@@ -221,7 +232,14 @@ def check_external(video: Path, header: Header, sidecar: Sidecar) -> tuple[Sidec
             continue
         projected_body = renditions[proj.rendition].body
         projected = cues_from_body(projected_body)
-        parsed = parse_subtitles(data, proj.format)
+        try:
+            parsed = parse_subtitles(data, proj.format)
+        except SubtitleError:
+            parsed = []
+        if not parsed:
+            if on_unreadable is not None:
+                on_unreadable(name)
+            continue
         if same_cues(parsed, projected, precision_ms=PRECISION_MS[proj.format]):
             records.append(proj.model_copy(update={"sha256": digest, "at": now()}))
             continue
@@ -231,13 +249,16 @@ def check_external(video: Path, header: Header, sidecar: Sidecar) -> tuple[Sidec
                          created_at=now(), inputs={"file_sha256": digest},
                          meta={"file": name, "role": projected_body.get("meta", {}).get("role")})
         rec = make_rendition([proj.rendition], proj.track, body)
-        head = sidecar.head(proj.track)
+        if proj.track not in latest:
+            head = sidecar.head(proj.track)
+            if isinstance(head, HeadRecord):
+                latest[proj.track] = head.rendition
         records += [rec,
                     HeadRecord(track=proj.track, rendition=rec.id,
-                               replaces=head.rendition if isinstance(head, HeadRecord) else None,
-                               by="external", at=now()),
+                               replaces=latest.get(proj.track), by="external", at=now()),
                     ProjectionRecord(path=name, format=proj.format, track=proj.track,
                                      rendition=rec.id, sha256=digest, at=now())]
+        latest[proj.track] = rec.id
         changed.append(proj.track)
     if records:
         sidecar = append(video, header, records)
@@ -246,6 +267,7 @@ def check_external(video: Path, header: Header, sidecar: Sidecar) -> tuple[Sidec
 
 def import_subtitles(video: Path, header: Header, sub_path: Path, track: str, *,
                      role: str) -> Sidecar:
+    """A person's explicit action, so it may replace a person's head (spec §14.4 binds only auto)."""
     data = sub_path.read_bytes()
     fmt = sub_path.suffix.lower().lstrip(".")
     parsed = parse_subtitles(data, fmt if fmt in ("srt", "ass", "ssa", "vtt") else None)

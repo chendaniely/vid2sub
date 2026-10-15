@@ -160,3 +160,47 @@ def test_overlapping_imported_cues_are_clamped():
                                  Cue(id="b", start_ms=1000, end_ms=3000, text="y"),
                                  Cue(id="c", start_ms=3000, end_ms=3000, text="z")])
     assert [(c.id, c.start_ms, c.end_ms) for c in out] == [("a", 0, 1000), ("b", 1000, 3000)]
+
+
+def two_projected_tracks(video):
+    with_track(video, track="en")
+    with_track(video, track="ja")
+    side, _ = store.load(video)
+    paths = {}
+    for track in ("en", "ja"):
+        side, paths[track], _ = store.project(video, header(video), side, track, "srt",
+                                              overwrite_foreign=False)
+    return side, paths
+
+
+@pytest.mark.parametrize("junk", [b"\x00garbage", b""])
+def test_an_unreadable_or_emptied_file_is_skipped_and_reported(video, junk):
+    side, paths = two_projected_tracks(video)
+    head_before = side.head("ja")
+    paths["en"].write_bytes(paths["en"].read_bytes().replace(b"World", b"Earth"))
+    paths["ja"].write_bytes(junk)
+    seen = []
+    side, changed = store.check_external(video, header(video), side, on_unreadable=seen.append)
+    assert changed == ["en"]
+    assert seen == [paths["ja"].name]
+    assert paths["ja"].read_bytes() == junk
+    assert side.head("ja") == head_before
+    with pytest.raises(store.EditedOnDisk):
+        store.project(video, header(video), side, "ja", "srt", overwrite_foreign=True)
+
+
+def test_two_edited_files_of_one_track_chain_instead_of_conflicting(video):
+    side = with_track(video)
+    paths = []
+    for fmt in ("srt", "ass"):
+        side, path, _ = store.project(video, header(video), side, "en", fmt,
+                                      overwrite_foreign=False)
+        paths.append(path)
+    srt, ass = paths
+    srt.write_bytes(srt.read_bytes().replace(b"World", b"Earth"))
+    ass.write_bytes(ass.read_bytes().replace(b"Hello", b"Howdy"))
+    before = set(side.renditions())
+    side, changed = store.check_external(video, header(video), side)
+    assert changed == ["en", "en"]
+    assert isinstance(side.head("en"), HeadRecord)
+    assert len(set(side.renditions()) - before) == 2
