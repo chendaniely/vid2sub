@@ -159,11 +159,11 @@ class RunContext:
             engine.close()
 
 
-def run_one(source: str, ctx: RunContext) -> InputResult:
-    result = InputResult(input=source)
+def _guarded(result: InputResult, work: Callable[[Path], None]) -> InputResult:
+    """Run one input's work in a scratch folder; any ordinary error fails only this input."""
     with tempfile.TemporaryDirectory(prefix="vid2sub-") as tmp:
         try:
-            _run(source, ctx, Path(tmp), result)
+            work(Path(tmp))
         except (Paused, StopRun):
             raise
         except (EngineError, ToolMissing, youtube.YouTubeError, InputError) as err:
@@ -183,6 +183,23 @@ def run_one(source: str, ctx: RunContext) -> InputResult:
     return result
 
 
+def run_one(source: str, ctx: RunContext) -> InputResult:
+    result = InputResult(input=source)
+    return _guarded(result, lambda scratch: _run(source, ctx, scratch, result))
+
+
+def _check_external(video: Path, header, sidecar: Sidecar, result: InputResult) -> Sidecar:
+    """Fold in outside edits to the subtitle files, with notes that name no file (spec §6.8)."""
+    def unreadable(name: str) -> None:
+        track = naming.track_from_subtitle_name(video.name, name) or "subtitle"
+        result.notes.append(
+            f"left your {track} {Path(name).suffix} file alone: it isn't a readable "
+            "subtitle file; delete it to have vid2sub write it again")
+    sidecar, changed = store.check_external(video, header, sidecar, on_unreadable=unreadable)
+    result.notes += [f"kept your outside edit to {t}" for t in changed]
+    return sidecar
+
+
 def _fail(result: InputResult, reason: str, hint: str = "", kind: str = "") -> None:
     result.status, result.reason, result.hint, result.kind = "failed", reason, hint, kind
 
@@ -196,13 +213,7 @@ def _run(source: str, ctx: RunContext, scratch: Path, result: InputResult) -> No
     header = store.header_for(video, identify(video), p.duration_ms)
     sidecar, _ = store.load(video)
     if sidecar is not None and not opts.dry_run:  # a dry run writes nothing, not even versions
-        def unreadable(name: str) -> None:
-            track = naming.track_from_subtitle_name(video.name, name) or "subtitle"
-            result.notes.append(
-                f"left your {track} {Path(name).suffix} file alone: it isn't a readable "
-                "subtitle file; delete it to have vid2sub write it again")
-        sidecar, changed = store.check_external(video, header, sidecar, on_unreadable=unreadable)
-        result.notes += [f"kept your outside edit to {t}" for t in changed]
+        sidecar = _check_external(video, header, sidecar, result)
     glossary = _glossary(video, opts)
     targets = [naming.target_track(t) for t in opts.targets]
     src_track = store.source_track(sidecar) if sidecar is not None else None
@@ -509,7 +520,7 @@ def _translator(src_lang: str, ctx: RunContext) -> str:
 
 def _translate_targets(video: Path, header, sidecar: Sidecar, src_track: str,
                        targets: list[str], glossary: Glossary, ctx: RunContext,
-                       result: InputResult) -> Sidecar:
+                       result: InputResult, *, fresh: bool = False) -> Sidecar:
     opts = ctx.options
     src_rec, source = store.current_cues(sidecar, src_track)
     src_lang = naming.track(src_track).lang
@@ -539,7 +550,7 @@ def _translate_targets(video: Path, header, sidecar: Sidecar, src_track: str,
             parents.append(old_rec.id)
             same = (old_rec.body["payload"].get("glossary_sha", "") == (glossary.sha() or "")
                     and old_rec.body.get("model") == entry.model)
-            stale = stale_ids(old, by_id) if same else {c.id for c in old}
+            stale = stale_ids(old, by_id) if (same and not fresh) else {c.id for c in old}
             keep = [c for c in old if c.id not in stale or "edited" in c.flags]
             covered = {i for c in keep for i in (c.src or ())}
             todo = [i for i in by_id if i not in covered]
@@ -665,3 +676,74 @@ def detect_one(source: str, ctx: RunContext) -> DetectReport:
         except (ToolFailed, ProbeError, InputRefused, ConfigError) as err:
             report.error, report.kind = str(err), type(err).__name__
     return report
+
+
+def _existing(source: str, ctx: RunContext, scratch: Path, result: InputResult):
+    video = resolve_input(source)
+    if not video.is_file():
+        raise InputError("there's no file at that path")
+    result.title = video.name
+    p = probe(video, ctx.tools, scratch=scratch)
+    header = store.header_for(video, identify(video), p.duration_ms)
+    sidecar, _ = store.load(video)
+    if sidecar is None:
+        raise InputError("this video has no vid2sub sidecar yet",
+                         "run `vid2sub run` (or `vid2sub import`) on it first")
+    return video, header, _check_external(video, header, sidecar, result)
+
+
+def translate_one(source: str, ctx: RunContext, *, fresh: bool) -> InputResult:
+    result = InputResult(input=source)
+
+    def work(scratch: Path) -> None:
+        video, header, sidecar = _existing(source, ctx, scratch, result)
+        src_track = store.source_track(sidecar)
+        if src_track is None:
+            raise InputError("the sidecar has no source subtitles",
+                             "run `vid2sub run` or `vid2sub import` first")
+        targets = [naming.target_track(t) for t in ctx.options.targets]
+        sidecar = _translate_targets(video, header, sidecar, src_track, targets,
+                                     _glossary(video, ctx.options), ctx, result, fresh=fresh)
+        _write(video, header, sidecar, targets, ctx, result)
+        result.status = "done"
+
+    return _guarded(result, work)
+
+
+def write_one(source: str, ctx: RunContext) -> InputResult:
+    result = InputResult(input=source)
+
+    def work(scratch: Path) -> None:
+        video, header, sidecar = _existing(source, ctx, scratch, result)
+        _write(video, header, sidecar, sidecar.tracks(), ctx, result)
+        result.status = "done"
+
+    return _guarded(result, work)
+
+
+def import_one(sub_path: str, video_path: str, track: str | None,
+               ctx: RunContext) -> InputResult:
+    result = InputResult(input=sub_path)
+
+    def work(scratch: Path) -> None:
+        sub = resolve_input(sub_path)
+        video = resolve_input(video_path)
+        if not sub.is_file() or not video.is_file():
+            raise InputError("both the subtitle file and the video must exist")
+        result.title = video.name
+        key = naming.target_track(track) if track else naming.track_from_subtitle_name(
+            video.name, sub.name)
+        if key is None:
+            raise InputError("can't tell the subtitle's language from its name",
+                             "pass --lang (for example --lang ja)")
+        p = probe(video, ctx.tools, scratch=scratch)
+        header = store.header_for(video, identify(video), p.duration_ms)
+        existing, _ = store.load(video)
+        current = store.source_track(existing) if existing else None
+        role = "source" if current in (None, key) else "translation"
+        sidecar = store.import_subtitles(video, header, sub, key, role=role)
+        _, cues = store.current_cues(sidecar, key)
+        result.notes.append(f"imported {len(cues)} cues as the {key} {role} track")
+        result.status = "done"
+
+    return _guarded(result, work)
