@@ -34,6 +34,8 @@ def hf_revision(repo: str) -> str:
 
 
 class QwenMLXEngine:
+    """One caller at a time: the Session isn't documented as thread-safe."""
+
     name = "qwen3-asr"
     max_chunk_s = 180.0
     supports_prompt = True
@@ -56,8 +58,14 @@ class QwenMLXEngine:
                                        "vid2sub[mac]") from None
             # One Session and one aligner per engine: the package's module-level transcribe()
             # measured as slow on a second call as on the first (task 27 live run).
-            session = Session(self.model_id)
-            aligner = ForcedAligner()
+            try:
+                session = Session(self.model_id)
+                aligner = ForcedAligner()
+            except Exception as err:
+                raise EngineError(
+                    "unavailable", "Qwen3-ASR couldn't load its model",
+                    hint="check the network for the first download and free disk space; on an "
+                         "Apple Silicon Mac (macOS 14+) with vid2sub[mac]") from err
 
             def run(audio, *, model, **kw):
                 return session.transcribe(audio, forced_aligner=aligner, **kw)
@@ -66,9 +74,12 @@ class QwenMLXEngine:
         return self._fn
 
     def transcribe(self, chunk: Chunk, *, language: str | None, prompt: str) -> ChunkResult:
+        try:
+            name = langs.get(language).qwen if language else None
+        except langs.UnknownLanguage:
+            raise EngineError("unavailable", "Qwen3-ASR has no name for that language") from None
         result = self._transcribe()(
-            (chunk.float32, SAMPLE_RATE), model=self.model_id,
-            language=langs.get(language).qwen if language else None,
+            (chunk.float32, SAMPLE_RATE), model=self.model_id, language=name,
             context=prompt or "", return_timestamps=True, verbose=False)
         data = {"text": getattr(result, "text", ""), "language": getattr(result, "language", ""),
                 "segments": getattr(result, "segments", None) or []}

@@ -1,6 +1,7 @@
 import os
 import platform
 import sys
+import types
 from types import SimpleNamespace
 
 import numpy as np
@@ -50,6 +51,67 @@ def test_without_the_mac_extra_qwen_says_how_to_install_it(monkeypatch):
     with pytest.raises(EngineError) as err:
         QwenMLXEngine("q", ENTRY).transcribe(chunk(), language="en", prompt="")
     assert err.value.kind == "unavailable" and "vid2sub[mac]" in err.value.hint
+
+
+def _fake_package(monkeypatch, session_error=None):
+    log = SimpleNamespace(sessions=[], aligners=[], calls=[])
+
+    class Session:
+        def __init__(self, *args, **kw):
+            if session_error:
+                raise session_error
+            log.sessions.append((args, kw))
+
+        def transcribe(self, audio, **kw):
+            log.calls.append(kw)
+            return SimpleNamespace(text="你好。", language="Cantonese",
+                                   segments=[{"text": "你", "start": 0.0, "end": 0.2},
+                                             {"text": "好", "start": 0.2, "end": 0.4}])
+
+    class ForcedAligner:
+        def __init__(self, *args, **kw):
+            log.aligners.append((args, kw))
+
+    module = types.ModuleType("mlx_qwen3_asr")
+    module.Session, module.ForcedAligner = Session, ForcedAligner
+    monkeypatch.setitem(sys.modules, "mlx_qwen3_asr", module)
+    return log
+
+
+def test_the_session_and_aligner_are_built_once_and_get_the_right_arguments(monkeypatch):
+    log = _fake_package(monkeypatch)
+    e = QwenMLXEngine("q", ENTRY)
+    first = e.transcribe(chunk(), language="yue", prompt="工藤新一.")
+    e.transcribe(chunk(), language="en", prompt="")
+    e.detect_language(chunk())
+    assert log.sessions == [(("Qwen/Qwen3-ASR-1.7B",), {})]
+    assert len(log.aligners) == 1
+    assert len(log.calls) == 3
+    assert log.calls[0]["language"] == "Cantonese" and log.calls[0]["context"] == "工藤新一."
+    assert log.calls[0]["return_timestamps"] is True
+    assert log.calls[1]["language"] == "English" and log.calls[1]["return_timestamps"] is True
+    assert log.calls[2]["language"] is None and log.calls[2]["return_timestamps"] is False
+    assert all("model" not in c for c in log.calls)
+    aligner = e._fn.__closure__ and next(
+        c.cell_contents for c in e._fn.__closure__
+        if type(c.cell_contents).__name__ == "ForcedAligner")
+    assert all(c["forced_aligner"] is aligner for c in log.calls)
+    assert first.parsed.language == "yue"
+
+
+def test_a_model_that_cannot_load_is_an_unavailable_engine_error(monkeypatch):
+    _fake_package(monkeypatch, session_error=OSError("disk full at /private/x"))
+    with pytest.raises(EngineError) as err:
+        QwenMLXEngine("q", ENTRY).transcribe(chunk(), language="en", prompt="")
+    assert err.value.kind == "unavailable" and "/private" not in str(err.value)
+    assert "vid2sub[mac]" in err.value.hint
+
+
+def test_a_language_qwen_has_no_name_for_is_an_unavailable_engine_error():
+    e = QwenMLXEngine("q", ENTRY, transcribe_fn=lambda audio, **kw: None)
+    with pytest.raises(EngineError) as err:
+        e.transcribe(chunk(), language="xx-not-a-code", prompt="")
+    assert err.value.kind == "unavailable"
 
 
 def test_engines_are_built_from_the_config_entry():
