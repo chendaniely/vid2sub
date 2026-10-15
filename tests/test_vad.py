@@ -1,3 +1,5 @@
+from importlib.resources import files
+
 import numpy as np
 from helpers import speech_with_gaps
 
@@ -24,3 +26,10 @@ def test_speech_is_found_where_it_is_and_nowhere_else(tmp_path):
 
 def test_silence_has_no_speech():
     assert speech_regions(np.zeros(16_000 * 5, dtype=np.float32)) == []
+
+
+def test_the_silero_vad_model_ships_with_its_mit_licence():
+    licence = files("vid2sub.media._vendor").joinpath("LICENSE-silero-vad")
+    assert licence.is_file()
+    text = licence.read_text(encoding="utf-8")
+    assert text.startswith("MIT License") and "Copyright (c) 2020-present Silero Team" in text
