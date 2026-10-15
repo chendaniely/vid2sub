@@ -6,16 +6,20 @@ detected), decode, find speech, chunk, transcribe with retries, place words, add
 offset, build cues, convert the Chinese script → translate each target (only what's new or stale)
 → write the files → record the full hash. Connection errors and Spark refusals wait with backoff
 up to a limit, then raise Paused so the CLI exits 75 and a re-run resumes; finished chunks are
-cached for the life of the process. Any other error fails only this input, with the fix. Events
-carry stages and counts, never titles or paths (spec §6.8). A dry run writes and downloads
+cached for the life of the process. Any other error fails only this input, with the fix; an
+unexpected one is named only by its type, and VID2SUB_DEBUG=1 prints its traceback (spec §17.3).
+Events carry stages and counts, never titles or paths (spec §6.8). A dry run writes and downloads
 nothing: a link not downloaded yet is planned by its video id (final review).
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
+import sys
 import tempfile
 import time
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -182,6 +186,13 @@ def _guarded(result: InputResult, work: Callable[[Path], None]) -> InputResult:
                 ConfigError, SidecarError, store.StoreError, WriteRefused, TranslationFailed,
                 naming.UnknownTrack, langs.UnknownLanguage) as err:
             _fail(result, str(err), kind=type(err).__name__)
+        except Exception as err:  # noqa: BLE001 - a bug fails one input, not the season (§17.3)
+            # Its message and traceback may hold paths or titles (spec §6.8): only the type is
+            # kept, and the traceback goes to stderr only when asked for.
+            if os.environ.get("VID2SUB_DEBUG") == "1":
+                traceback.print_exc(file=sys.stderr)
+            _fail(result, f"vid2sub hit an unexpected error ({type(err).__name__})",
+                  "please report it; set VID2SUB_DEBUG=1 to see the details", type(err).__name__)
     return result
 
 

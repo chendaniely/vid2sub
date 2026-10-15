@@ -170,3 +170,19 @@ def test_a_failed_input_never_puts_its_name_in_the_output(setup, tmp_path, capsy
         assert next(e for e in events(out) if e["event"] == "result")["status"] == "failed"
     else:
         assert "failed" in out
+
+
+def test_an_unexpected_error_fails_one_input_and_the_next_still_runs(setup, tmp_path, capsys,
+                                                                    monkeypatch):
+    monkeypatch.delenv("VID2SUB_DEBUG", raising=False)
+    cfg, engine, clip = setup
+    second = make_clip(tmp_path, "Show - S01E02.mkv", seconds=14, speech=SPEECH)
+    engine.fail = [RuntimeError("boom /secret/path")]
+    code = main(["run", str(clip), str(second), "--from", "ja", "--config", str(cfg), "--json"])
+    captured = capsys.readouterr()
+    results = [e for e in events(captured.out) if e["event"] == "result"]
+    assert code == 1
+    assert [(r["status"], r["kind"]) for r in results] == [("failed", "RuntimeError"),
+                                                           ("done", "")]
+    assert "/secret/path" not in captured.out + captured.err
+    assert second.with_name("Show - S01E02.en.srt").exists()

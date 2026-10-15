@@ -673,3 +673,25 @@ def test_the_difference_is_said_in_units_a_person_reads(old, new, expected):
         return VideoInfo(name="x.mkv", size=size, quick_sha256=quick, duration_ms=ms)
     assert pipeline.video_change(info(*old), info(*new)) == expected
     assert pipeline.video_change(info(*old), info(*old)) is None
+
+
+# final review 7: one unexpected error fails one input, not the season (spec §17.3)
+
+
+def test_an_unexpected_error_fails_only_this_input_and_keeps_its_details_out(clip, capsys,
+                                                                             monkeypatch):
+    monkeypatch.delenv("VID2SUB_DEBUG", raising=False)
+    engine = FakeEngine(fail=[RuntimeError("boom /secret/path")])
+    result = pipeline.run_one(str(clip), make_ctx(engine))
+    assert result.status == "failed" and result.kind == "RuntimeError"
+    assert result.reason == "vid2sub hit an unexpected error (RuntimeError)"
+    assert result.hint == "please report it; set VID2SUB_DEBUG=1 to see the details"
+    assert "/secret/path" not in capsys.readouterr().err
+
+
+def test_vid2sub_debug_prints_the_traceback_of_an_unexpected_error(clip, capsys, monkeypatch):
+    monkeypatch.setenv("VID2SUB_DEBUG", "1")
+    engine = FakeEngine(fail=[RuntimeError("boom /secret/path")])
+    assert pipeline.run_one(str(clip), make_ctx(engine)).status == "failed"
+    err = capsys.readouterr().err
+    assert "Traceback" in err and "boom /secret/path" in err
