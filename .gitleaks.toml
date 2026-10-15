@@ -1,0 +1,9 @@
+title = "vid2sub"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+# fake fixtures from tests/test_config.py; never a real key
+description = "the fake key used by the config tests, matched exactly and never by path"
+regexes = ['''^sk-live-abc123$''']
