@@ -35,6 +35,7 @@ class ChunkPlan:
         return self.core_start_ms <= mid_ms and (mid_ms < self.core_end_ms or self.last)
 
     def plan_hash(self) -> str:
+        """Identifies the plan only; a cache key must also include the media identity and the VAD settings."""
         return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()[:12]
 
 
@@ -96,15 +97,25 @@ def chunk_samples(samples: np.ndarray, plan: ChunkPlan, speech: Sequence[tuple[i
 
 
 def place(plan: ChunkPlan, segments: Sequence[Segment]) -> list[Segment]:
+    """Move chunk-relative segments onto the global timeline, keeping what this chunk owns.
+
+    Words decide ownership by their midpoints. A segment without word timings is kept when its
+    midpoint is owned, and clamped to the core. Its text may repeat speech from the 1 s audio
+    overlap with a neighbouring chunk; that is expected, because ownership is defined for words
+    only (spec §8.7).
+    """
     out = []
     for seg in segments:
         g = shift_segment(seg, plan.start_ms)
         if g.words:
             kept = tuple(w for w in g.words if plan.owns((w.start_ms + w.end_ms) // 2))
             if kept:
+                text = g.text if len(kept) == len(g.words) else "".join(w.text for w in kept)
                 out.append(g.model_copy(update={
-                    "words": kept, "text": "".join(w.text for w in kept),
+                    "words": kept, "text": text,
                     "start_ms": kept[0].start_ms, "end_ms": max(w.end_ms for w in kept)}))
         elif plan.owns((g.start_ms + g.end_ms) // 2):
-            out.append(g)
+            start = max(g.start_ms, plan.core_start_ms)
+            end = g.end_ms if plan.last else min(g.end_ms, plan.core_end_ms)
+            out.append(g.model_copy(update={"start_ms": start, "end_ms": max(end, start)}))
     return out

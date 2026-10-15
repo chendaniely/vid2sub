@@ -72,3 +72,48 @@ def test_every_moment_is_owned_by_exactly_one_chunk(gaps_and_lengths, mids, max_
     assert all(p.end_ms - p.start_ms <= max_chunk_s * 1000 for p in plans)
     for mid in (m % duration for m in mids):
         assert sum(p.owns(mid) for p in plans) == 1
+
+
+def _middle_plan():
+    plans = plan_chunks([(0, 400_000)], 400_000, 180)
+    assert len(plans) == 3
+    return plans[1]
+
+
+def test_place_drops_words_owned_by_the_neighbouring_chunks():
+    p = _middle_plan()
+    before = (0, 300)  # global midpoint lies before p.core_start_ms
+    inside = (10_000, 10_200)  # inside p's core
+    after = (p.end_ms - p.start_ms - 300, p.end_ms - p.start_ms)  # after p.core_end_ms
+    assert p.start_ms + before[1] // 2 < p.core_start_ms
+    assert p.core_start_ms <= p.start_ms + inside[0] < p.core_end_ms
+    assert p.start_ms + (after[0] + after[1]) // 2 >= p.core_end_ms
+    seg = Segment(text=" a b c", start_ms=0, end_ms=p.end_ms - p.start_ms,
+                  words=(Word(text=" a", start_ms=before[0], end_ms=before[1]),
+                         Word(text=" b", start_ms=inside[0], end_ms=inside[1]),
+                         Word(text=" c", start_ms=after[0], end_ms=after[1])))
+    placed = place(p, [seg])
+    owned = [w for s in placed for w in s.words]
+    assert [w.text for w in owned] == [" b"]
+    assert owned[0].start_ms == p.start_ms + inside[0]
+
+
+def test_place_clamps_an_unaligned_segment_to_its_core():
+    p = _middle_plan()
+    # Midpoint 100 ms inside the core; the span runs 400 ms before core_end to 200 ms after it.
+    start = p.core_end_ms - 400 - p.start_ms
+    end = p.core_end_ms + 200 - p.start_ms
+    seg = Segment(text=" spans the boundary", start_ms=start, end_ms=end)
+    placed = place(p, [seg])
+    assert len(placed) == 1
+    assert placed[0].start_ms == p.core_end_ms - 400
+    assert placed[0].end_ms == p.core_end_ms
+
+
+def test_place_keeps_the_original_text_when_every_word_is_owned():
+    plans = plan_chunks([(0, 5000)], 10_000, 300)
+    seg = Segment(text=" a  b", start_ms=0, end_ms=2000,
+                  words=(Word(text=" a", start_ms=0, end_ms=100),
+                         Word(text=" b", start_ms=1500, end_ms=1600)))
+    placed = place(plans[0], [seg])
+    assert [s.text for s in placed] == [" a  b"]
