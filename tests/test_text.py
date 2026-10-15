@@ -52,3 +52,7 @@ def test_text_that_cannot_fit_in_two_lines_returns_none():
 
 def test_chinese_line_ends_lose_their_comma_and_full_stop():
     assert t.strip_line_ends(["你好，", "世界。"]) == ["你好", "世界"]
+
+
+def test_canonical_stores_ass_markup_characters_full_width():
+    assert t.canonical("{x} a\\Nb") == "｛x｝ a＼Nb"

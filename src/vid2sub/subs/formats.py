@@ -50,15 +50,38 @@ def sha256_hex(data: bytes) -> str:
 
 
 def canonical_to_ass(text: str) -> str:
-    text = text.replace("{", "｛").replace("}", "｝")
     text = text.replace("<i>", r"{\i1}").replace("</i>", r"{\i0}")
     return text.replace("\n", r"\N")
 
 
+def _italic_effect(match: re.Match[str]) -> str:
+    block = match.group(0)
+    if r"\i1" in block:
+        return "<i>"
+    if r"\i0" in block or re.search(r"\\i(?!\d)", block):
+        return "</i>"
+    return ""
+
+
+def _balance_italics(text: str) -> str:
+    out, depth = [], 0
+    for part in re.split(r"(</?i>)", text):
+        if part == "<i>":
+            if depth:
+                continue
+            depth = 1
+        elif part == "</i>":
+            if not depth:
+                continue
+            depth = 0
+        out.append(part)
+    return "".join(out) + ("</i>" if depth else "")
+
+
 def ass_to_canonical(text: str) -> str:
     text = text.replace(r"\N", "\n").replace(r"\n", "\n").replace(r"\h", " ")
-    text = text.replace(r"{\i1}", "<i>").replace(r"{\i0}", "</i>")
-    text = _ASS_TAG.sub("", text)
+    text = _ASS_TAG.sub(_italic_effect, text)
+    text = _balance_italics(text)
     text = _HTML_TAG.sub("", text)
     return canonical(text)
 

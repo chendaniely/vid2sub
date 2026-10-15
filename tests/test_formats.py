@@ -2,6 +2,7 @@ import pytest
 
 from vid2sub.subs import formats as f
 from vid2sub.subs.model import Cue
+from vid2sub.subs.text import canonical
 
 CUES = [Cue(id="a", start_ms=1000, end_ms=2500, text="Hello\nworld"),
         Cue(id="b", start_ms=3000, end_ms=4000, text="<i>Bye</i>")]
@@ -36,7 +37,7 @@ def test_ass_round_trips_at_centisecond_precision():
 
 
 def test_braces_in_text_cant_become_ass_override_tags():
-    data = f.to_ass([Cue(id="a", start_ms=0, end_ms=1000, text="{not a tag}")]).decode()
+    data = f.to_ass([Cue(id="a", start_ms=0, end_ms=1000, text=canonical("{not a tag}"))]).decode()
     assert "{not a tag}" not in data
     assert "｛not a tag｝" in data
 
@@ -86,3 +87,20 @@ def test_legacy_east_asian_encodings_are_detected(encoding, line):
 def test_an_unreadable_file_raises_a_subtitle_error():
     with pytest.raises(f.SubtitleError):
         f.parse_subtitles(b"\x00\x01\x02 not subtitles", "ass")
+
+
+@pytest.mark.parametrize("fmt, write", [("srt", f.to_srt), ("ass", f.to_ass)])
+def test_text_with_braces_and_backslashes_round_trips_exactly(fmt, write):
+    cue = Cue(id="a", start_ms=1000, end_ms=2000, text=canonical("{x} a\\Nb"))
+    parsed = f.parse_subtitles(write([cue]), fmt)
+    assert f.same_cues(parsed, [cue], precision_ms=f.PRECISION_MS[fmt])
+
+
+@pytest.mark.parametrize("raw, expected", [
+    (r"{\i1}a{\i}b", "<i>a</i>b"),
+    (r"{\an8\i1}x{\i0}", "<i>x</i>"),
+    (r"{\i1}x", "<i>x</i>"),
+    (r"a{\i0}b", "ab"),
+])
+def test_imported_italics_stay_balanced(raw, expected):
+    assert f.ass_to_canonical(raw) == expected

@@ -37,7 +37,11 @@ def is_cjk(ch: str) -> bool:
 
 
 def canonical(text: str) -> str:
-    """`\\n` line breaks, single spaces, no blank or padded lines (spec §15.2)."""
+    """`\\n` line breaks, single spaces, no blank or padded lines (spec §15.2).
+
+    `{`, `}` and `\\` are stored full-width: ASS reads them as markup, so what's written is
+    exactly what's read back."""
+    text = text.replace("{", "｛").replace("}", "｝").replace("\\", "＼")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = (_SPACES.sub(" ", line).strip() for line in text.split("\n"))
     return "\n".join(line for line in lines if line)
