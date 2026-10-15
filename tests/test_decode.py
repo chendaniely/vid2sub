@@ -39,3 +39,16 @@ def test_an_encoded_chunk_is_flac_with_no_metadata_even_when_the_video_has_a_tit
         capture_output=True, check=True).stdout)
     assert "Secret" not in json.dumps(info)
     assert not (info["format"].get("tags") or {}).get("title")
+
+
+def test_the_decoded_wav_carries_no_title_from_the_video(tmp_path):
+    clip = make_clip(tmp_path, seconds=2.0, title="Secret Show Title")
+    tools = Tools.find()
+    p = probe(clip, tools, scratch=tmp_path)
+    wav = tmp_path / "audio.wav"
+    decode_to_wav(clip, p.audio[0], wav, tools, scratch=tmp_path, duration_ms=p.duration_ms)
+    info = json.loads(subprocess.run(
+        [tools.ffprobe, "-v", "error", "-show_format", "-of", "json", str(wav)],
+        capture_output=True, check=True).stdout)
+    assert "Secret" not in json.dumps(info)
+    assert "title" not in (info["format"].get("tags") or {})
