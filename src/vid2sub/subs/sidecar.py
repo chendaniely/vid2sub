@@ -136,8 +136,8 @@ class Sidecar:
         for h in heads:
             if h.rendition not in replaced:
                 leaves[h.rendition] = h
-        if not leaves:
-            return heads[-1]
+        if not leaves:  # a replacement cycle: no head is current, so don't guess by file order
+            return Conflict(track, tuple(sorted({h.rendition for h in heads})))
         if len(leaves) == 1:
             return next(iter(leaves.values()))
         return Conflict(track, tuple(leaves))

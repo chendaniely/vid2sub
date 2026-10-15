@@ -76,3 +76,11 @@ def test_the_latest_projection_per_file_wins():
                           sha256="a", at=AT)
     p2 = p1.model_copy(update={"sha256": "b", "rendition": "r_2"})
     assert Sidecar(HEADER).add(p1, p2).projections()["Show.en.srt"].sha256 == "b"
+
+
+def test_a_replacement_cycle_is_a_conflict_not_a_file_order_guess():
+    x, y = (make_rendition([], "en", {"n": i}) for i in range(2))
+    side = Sidecar(HEADER).add(x, y, head("en", x.id), head("en", y.id, x.id),
+                               head("en", x.id, y.id, "user"))
+    result = side.head("en")
+    assert isinstance(result, Conflict) and set(result.leaves) == {x.id, y.id}
