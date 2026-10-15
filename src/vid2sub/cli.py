@@ -15,7 +15,9 @@ from collections.abc import Sequence
 
 from vid2sub import __version__, exitcodes
 
-COMMAND_MODULES: list[str] = ["run", "detect", "translate", "import_", "write", "models"]
+COMMAND_MODULES: list[str] = [
+    "run", "detect", "translate", "import_", "write", "models", "doctor", "config",
+]
 
 
 class _Parser(argparse.ArgumentParser):
