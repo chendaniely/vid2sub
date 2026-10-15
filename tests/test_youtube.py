@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 import subprocess
@@ -97,6 +98,95 @@ def test_deno_is_required(tmp_path):
     with pytest.raises(ToolMissing):
         yt.download("https://youtu.be/dQw4w9WgXcQ", out_dir=tmp_path, scratch=tmp_path,
                     keep_video=False, tools=Tools(ffmpeg=None, ffprobe=None, deno=None))
+
+
+def test_a_sign_in_wall_is_not_called_a_bot_check(tmp_path):
+    def gated(args, **_):
+        raise ToolFailed("python", 1, "ERROR: Sign in to confirm your age")
+    (tmp_path / "s").mkdir()
+    with pytest.raises(yt.YouTubeError) as err:
+        yt.download("https://youtu.be/dQw4w9WgXcQ", out_dir=tmp_path / "o",
+                    scratch=tmp_path / "s", keep_video=False, tools=TOOLS, runner=gated)
+    assert err.value.kind == "sign_in"
+    assert str(err.value) == "YouTube wants a signed-in account for this video"
+    assert err.value.hint == "vid2sub can't download videos that need an account"
+
+
+def test_a_bot_check_wins_over_a_sign_in_wording(tmp_path):
+    def blocked(args, **_):
+        raise ToolFailed("python", 1, "Sign in to confirm you're not a bot")
+    (tmp_path / "s").mkdir()
+    with pytest.raises(yt.YouTubeError) as err:
+        yt.download("https://youtu.be/dQw4w9WgXcQ", out_dir=tmp_path / "o",
+                    scratch=tmp_path / "s", keep_video=False, tools=TOOLS, runner=blocked)
+    assert err.value.kind == "bot_check"
+
+
+def test_a_partial_or_sidecar_file_is_not_reused(tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "x [dQw4w9WgXcQ].part").write_bytes(b"x")
+    (out_dir / "x [dQw4w9WgXcQ].json").write_bytes(b"{}")
+    assert yt.find_existing(out_dir, "dQw4w9WgXcQ") is None
+    media = out_dir / "x [dQw4w9WgXcQ].m4a"
+    media.write_bytes(b"audio")
+    assert yt.find_existing(out_dir, "dQw4w9WgXcQ") == media
+
+
+@pytest.mark.parametrize("stdout", [b"", b"not json\n", b'{"id": "dQw4w9WgXcQ"}\n'],
+                         ids=["empty", "not-json", "no-filepath"])
+def test_unreadable_yt_dlp_output_is_a_youtube_error(tmp_path, stdout):
+    (tmp_path / "s").mkdir()
+
+    def answer(args, **_):
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr=b"")
+    with pytest.raises(yt.YouTubeError) as err:
+        yt.download("https://youtu.be/dQw4w9WgXcQ", out_dir=tmp_path / "o",
+                    scratch=tmp_path / "s", keep_video=False, tools=TOOLS, runner=answer)
+    assert err.value.kind == "failed"
+    assert str(err.value) == "yt-dlp's answer couldn't be read"
+
+
+def test_a_move_never_replaces_an_existing_file(tmp_path):
+    src = tmp_path / "src.m4a"
+    src.write_bytes(b"new")
+    dest = tmp_path / "dest.m4a"
+    dest.write_bytes(b"old")
+    with pytest.raises(yt.YouTubeError) as err:
+        yt._move_new(src, dest)
+    assert dest.read_bytes() == b"old"
+    assert err.value.kind == "failed"
+    assert str(err.value) == "a file with that name appeared while downloading; try again"
+
+
+def test_the_move_falls_back_to_a_copy_across_devices(tmp_path, monkeypatch):
+    real_link = os.link
+    calls = []
+
+    def cross_device_once(a, b, *args, **kwargs):
+        calls.append(a)
+        if len(calls) == 1:
+            raise OSError(errno.EXDEV, "cross-device")
+        return real_link(a, b, *args, **kwargs)
+    monkeypatch.setattr(yt.os, "link", cross_device_once)
+    src = tmp_path / "src.m4a"
+    src.write_bytes(b"audio")
+    dest = tmp_path / "dest.m4a"
+    yt._move_new(src, dest)
+    assert dest.read_bytes() == b"audio" and not src.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["dest.m4a"]
+
+
+def test_the_move_renames_when_hard_links_are_refused(tmp_path, monkeypatch):
+    def no_links(a, b, *args, **kwargs):
+        raise OSError(errno.EPERM, "operation not permitted")
+    monkeypatch.setattr(yt.os, "link", no_links)
+    src = tmp_path / "src.m4a"
+    src.write_bytes(b"audio")
+    dest = tmp_path / "dest.m4a"
+    yt._move_new(src, dest)
+    assert dest.read_bytes() == b"audio" and not src.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["dest.m4a"]
 
 
 @pytest.mark.live
