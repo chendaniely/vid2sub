@@ -22,7 +22,7 @@ from vid2sub.engines.clients import KeyRing
 from vid2sub.media.tools import Tools
 from vid2sub.media.youtube import is_url
 from vid2sub.pipeline import MEDIA_SUFFIXES, RunContext, RunOptions
-from vid2sub.security import resolve_input
+from vid2sub.security import InputRefused, resolve_input
 
 _EPISODE = re.compile(r"[Ss](\d{1,3})[ ._-]*[Ee](\d{1,4})")
 
@@ -54,25 +54,48 @@ def episode_key(path: Path) -> tuple:
     return (0, int(m.group(1)), int(m.group(2)), natural) if m else (1, 0, 0, natural)
 
 
+def _natural(text: str) -> list:
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", text)]
+
+
+def _read_list(from_file: str) -> list[str]:
+    try:
+        text = sys.stdin.read() if from_file == "-" else Path(from_file).read_text(
+            encoding="utf-8-sig")
+    except (OSError, UnicodeError) as err:  # never err.filename (spec §6.8)
+        strerror = getattr(err, "strerror", None)
+        raise CommandError(
+            exitcodes.USAGE,
+            "couldn't read the list of inputs" + (f" ({strerror})" if strerror else ""),
+            "give a readable UTF-8 text file, one input per line") from None
+    return [line.strip() for line in text.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")]
+
+
+def _is_hidden(path: Path, root: Path) -> bool:
+    return any(part.startswith(".") or part == "@eaDir" for part in path.relative_to(root).parts)
+
+
 def expand(inputs: Sequence[str], *, recursive: bool = False,
            from_file: str | None = None) -> list[str]:
     items = list(inputs)
     if from_file:
-        text = sys.stdin.read() if from_file == "-" else Path(from_file).read_text(
-            encoding="utf-8")
-        items += [line.strip() for line in text.splitlines()
-                  if line.strip() and not line.lstrip().startswith("#")]
+        items += _read_list(from_file)
     out: list[str] = []
     for item in items:
         if is_url(item):
             out.append(item)
             continue
-        path = resolve_input(item)
+        try:
+            path = resolve_input(item)
+        except InputRefused as err:  # its message names no path
+            raise CommandError(exitcodes.USAGE, str(err)) from None
         if path.is_dir():
             found = path.rglob("*") if recursive else path.iterdir()
-            videos = [f for f in found if f.is_file() and not f.name.startswith(".")
+            videos = [f for f in found if f.is_file() and not _is_hidden(f, path)
                       and f.suffix.lower() in MEDIA_SUFFIXES]
-            out += [str(f) for f in sorted(videos, key=lambda f: (str(f.parent), episode_key(f)))]
+            out += [str(f) for f in sorted(
+                videos, key=lambda f: (_natural(str(f.parent)), episode_key(f)))]
         else:
             out.append(str(path))
     return out

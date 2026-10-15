@@ -34,3 +34,36 @@ def test_a_list_file_skips_blank_lines_and_comments_and_links_pass_through(tmp_p
                                             ("1.5h", 5400)])
 def test_durations_read_seconds_minutes_and_hours(value, seconds):
     assert duration(value) == seconds
+
+
+def test_a_list_file_with_a_bom_and_windows_line_endings_expands(tmp_path):
+    video = touch(tmp_path / "a.mkv")
+    listing = tmp_path / "list.txt"
+    listing.write_bytes(("﻿" + "\r\n".join([str(video), "https://youtu.be/dQw4w9WgXcQ"])
+                         ).encode("utf-8"))
+    assert expand([], from_file=str(listing)) == [str(video), "https://youtu.be/dQw4w9WgXcQ"]
+
+
+def test_a_list_read_from_stdin_expands(tmp_path, monkeypatch):
+    import io
+    import sys
+    video = touch(tmp_path / "a.mkv")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(f"{video}\n"))
+    assert expand([], from_file="-") == [str(video)]
+
+
+def test_recursive_folders_sort_by_natural_folder_order(tmp_path):
+    touch(tmp_path / "Season 10" / "S10E01.mkv")
+    touch(tmp_path / "Season 2" / "S02E01.mkv")
+    names = [p.replace("\\", "/").split("/")[-2] for p in expand([str(tmp_path)], recursive=True)]
+    assert names == ["Season 2", "Season 10"]
+
+
+def test_recursion_skips_hidden_files_and_folders_and_synology_metadata(tmp_path):
+    touch(tmp_path / "a.mkv")
+    touch(tmp_path / ".x.mkv")
+    touch(tmp_path / ".hidden" / "a.mkv")
+    touch(tmp_path / "@eaDir" / "a.mkv")
+    found = expand([str(tmp_path)], recursive=True)
+    assert [p.replace("\\", "/").rsplit("/", 1)[-1] for p in found] == ["a.mkv"]
+    assert len(found) == 1

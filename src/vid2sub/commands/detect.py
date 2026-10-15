@@ -41,11 +41,18 @@ def run(args: argparse.Namespace) -> int:
             except langs.UnknownLanguage as err:
                 raise CommandError(exitcodes.USAGE, str(err)) from None
         inputs = _common.expand(args.inputs, recursive=args.recursive, from_file=args.from_file)
+        if not inputs:
+            raise CommandError(exitcodes.USAGE, "nothing to do",
+                               "give a video, a folder, or --from-file")
+        options = RunOptions(source_lang=source, audio_track=args.audio_track,
+                             allow_cloud=args.allow_cloud)
+        ctx = _common.new_context(config, options, out)
     except CommandError as err:
         return _common.fail(out, err)
-    options = RunOptions(source_lang=source, audio_track=args.audio_track,
-                         allow_cloud=args.allow_cloud)
-    ctx = _common.new_context(config, options, out)
+    except KeyboardInterrupt:
+        out.warn("vid2sub: stopped.")
+        out.event("interrupted")
+        return exitcodes.TEMPFAIL
     failed = False
     code = exitcodes.OK
     try:

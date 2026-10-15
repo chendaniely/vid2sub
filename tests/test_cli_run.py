@@ -132,3 +132,41 @@ def test_detect_with_a_connection_that_stays_down_exits_75_and_says_so(setup, mo
     assert code == 75
     assert "paused" in [e["event"] for e in events(captured.out)]
     assert "Show - S01E01" not in captured.out
+
+
+def test_a_missing_input_list_is_a_usage_error_that_does_not_name_the_path(setup, tmp_path,
+                                                                          capsys):
+    cfg, _, _ = setup
+    missing = tmp_path / "missing-list.txt"
+    assert main(["run", "--from-file", str(missing), "--config", str(cfg)]) == 64
+    assert "missing-list" not in capsys.readouterr().err
+
+
+def test_detect_with_nothing_to_do_is_a_usage_error(setup, capsys):
+    cfg, _, _ = setup
+    assert main(["detect", "--config", str(cfg)]) == 64
+    assert "nothing to do" in capsys.readouterr().err
+
+
+def test_ctrl_c_while_expanding_inputs_exits_75(setup, monkeypatch):
+    cfg, _, clip = setup
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(_common, "expand", interrupted)
+    assert main(["run", str(clip), "--config", str(cfg)]) == 75
+    assert main(["detect", str(clip), "--config", str(cfg)]) == 75
+
+
+@pytest.mark.parametrize("flags", [["--json"], []])
+def test_a_failed_input_never_puts_its_name_in_the_output(setup, tmp_path, capsys, flags):
+    cfg, _, _ = setup
+    ghost = tmp_path / "Secret Show - S01E01.mkv"
+    code = main(["run", str(ghost), "--from", "ja", "--config", str(cfg), *flags])
+    out = capsys.readouterr().out
+    assert code == 1 and "Secret Show" not in out
+    if flags:
+        assert next(e for e in events(out) if e["event"] == "result")["status"] == "failed"
+    else:
+        assert "failed" in out

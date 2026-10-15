@@ -118,6 +118,12 @@ def summary(out: Output, results: list[InputResult]) -> None:
             out.say(f"  vid2sub run {shlex.quote(r.input)}{extra}")
 
 
+def _interrupted(out: Output) -> int:
+    out.warn("vid2sub: stopped. Run the same command with --skip-existing to carry on.")
+    out.event("interrupted")
+    return exitcodes.TEMPFAIL
+
+
 def run(args: argparse.Namespace) -> int:
     out = Output(args.json)
     quiet_libraries()
@@ -128,13 +134,14 @@ def run(args: argparse.Namespace) -> int:
         except (langs.UnknownLanguage, naming.UnknownTrack) as err:
             raise CommandError(exitcodes.USAGE, str(err)) from None
         inputs = _common.expand(args.inputs, recursive=args.recursive, from_file=args.from_file)
+        if not inputs:
+            raise CommandError(exitcodes.USAGE, "nothing to do",
+                               "give a video, a folder, a YouTube link, or --from-file")
+        ctx = _common.new_context(config, options, out)
     except CommandError as err:
         return _common.fail(out, err)
-    if not inputs:
-        return _common.fail(out, CommandError(
-            exitcodes.USAGE, "nothing to do",
-            "give a video, a folder, a YouTube link, or --from-file"))
-    ctx = _common.new_context(config, options, out)
+    except KeyboardInterrupt:
+        return _interrupted(out)
     results: list[InputResult] = []
     code = exitcodes.OK
     try:
