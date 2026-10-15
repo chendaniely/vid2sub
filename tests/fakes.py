@@ -10,6 +10,10 @@ from email import policy
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from vid2sub.engines.base import ChunkResult, ModelStamp
+from vid2sub.parse import ParsedChunk
+from vid2sub.subs.model import Segment, Word
+
 
 @dataclass
 class Request:
@@ -122,3 +126,42 @@ def chat_responder(req):
                      "message": {"role": "assistant", "content": content}}],
         "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
     }, {}
+
+
+class FakeEngine:
+    """A transcription engine that hears one word every 500 ms of each chunk."""
+
+    max_chunk_s = 300.0
+    supports_prompt = True
+
+    def __init__(self, name="whisper.cpp", language="ja", detect=None, fail=None, text=None):
+        self.name = name
+        self.language = language
+        self.detect = detect if detect is not None else {language: 0.95}
+        self.fail = list(fail or [])
+        self.text = text or ("字" if language in ("ja", "zh", "yue") else " word")
+        self.calls: list[tuple] = []
+
+    def transcribe(self, chunk, *, language, prompt):
+        self.calls.append(("transcribe", chunk.index, language, prompt))
+        if self.fail:
+            raise self.fail.pop(0)
+        words = tuple(Word(text=self.text, start_ms=t, end_ms=t + 300)
+                      for t in range(200, max(chunk.duration_ms - 400, 201), 500))
+        if not words:
+            return ChunkResult(ParsedChunk((), language, {}))
+        seg = Segment(text="".join(w.text for w in words), start_ms=words[0].start_ms,
+                      end_ms=words[-1].end_ms, words=words)
+        return ChunkResult(ParsedChunk((seg,), language or self.language, {self.language: 0.95}))
+
+    def detect_language(self, chunk):
+        self.calls.append(("detect", chunk.index))
+        if isinstance(self.detect, list):
+            return dict(self.detect.pop(0))
+        return dict(self.detect)
+
+    def stamp(self):
+        return ModelStamp(self.name, "fake-model", "unknown")
+
+    def close(self):
+        pass
