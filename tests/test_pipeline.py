@@ -626,3 +626,50 @@ def test_a_dry_run_of_a_link_already_downloaded_plans_against_that_file(tmp_path
     assert "download" not in result.plan
     assert result.plan["files"] == ["Never Gonna [dQw4w9WgXcQ].en.srt"]
     assert not store.sidecar_path(yt / "Never Gonna [dQw4w9WgXcQ].mkv").exists()
+
+
+# final review 6: a replaced video is noticed (spec §8.3)
+
+CHANGED = "this video changed since its subtitles were made"
+
+
+def replace_video(clip):
+    with clip.open("ab") as f:
+        f.write(b"\0" * 4096)
+
+
+def test_a_replaced_video_is_noticed_with_the_difference_and_no_name(clip):
+    assert pipeline.run_one(str(clip), make_ctx(FakeEngine())).status == "done"
+    again = pipeline.run_one(str(clip), make_ctx(FakeEngine()))
+    assert not [n for n in again.notes if CHANGED in n]
+    side_before = store.sidecar_path(clip).read_bytes()
+    replace_video(clip)
+    result = pipeline.run_one(str(clip), make_ctx(FakeEngine()))
+    assert result.status == "done", (result.reason, result.hint)
+    [note] = [n for n in result.notes if CHANGED in n]
+    assert "size" in note and "→" in note and "may no longer line up" in note
+    assert "Show" not in note and "S01E01" not in note and "mkv" not in note
+    assert store.sidecar_path(clip).read_bytes().startswith(side_before.splitlines()[0])
+
+
+def test_rewriting_the_files_of_a_replaced_video_notices_it_too(clip):
+    pipeline.run_one(str(clip), make_ctx(FakeEngine()))
+    replace_video(clip)
+    result = pipeline.write_one(str(clip), make_ctx(FakeEngine()))
+    assert result.status == "done", (result.reason, result.hint)
+    assert [n for n in result.notes if CHANGED in n]
+
+
+@pytest.mark.parametrize("old, new, expected", [
+    ((1_200_000_000, "a", 1_420_000), (1_400_000_000, "b", 1_421_000),
+     "size 1.2 GB → 1.4 GB, duration 23:40 → 23:41"),
+    ((95_301, "a", 14_000), (95_311, "b", 14_000), "size 95,301 bytes → 95,311 bytes"),
+    ((10, "a", 14_000), (10, "b", 14_020), "duration 14,000 ms → 14,020 ms"),
+    ((10, "a", 14_000), (10, "b", 14_000), "same size and duration, different content"),
+])
+def test_the_difference_is_said_in_units_a_person_reads(old, new, expected):
+    from vid2sub.subs.sidecar import VideoInfo
+    def info(size, quick, ms):
+        return VideoInfo(name="x.mkv", size=size, quick_sha256=quick, duration_ms=ms)
+    assert pipeline.video_change(info(*old), info(*new)) == expected
+    assert pipeline.video_change(info(*old), info(*old)) is None

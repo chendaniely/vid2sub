@@ -59,6 +59,7 @@ from vid2sub.subs.sidecar import (
     IdentityRecord,
     Sidecar,
     SidecarError,
+    VideoInfo,
     make_rendition,
 )
 from vid2sub.subs.translate_shape import stale_ids
@@ -201,6 +202,51 @@ def _check_external(video: Path, header, sidecar: Sidecar, result: InputResult) 
     return sidecar
 
 
+def _size(n: int) -> str:
+    for unit, scale in (("GB", 10**9), ("MB", 10**6), ("kB", 10**3)):
+        if n >= scale:
+            return f"{n / scale:.1f} {unit}"
+    return f"{n:,} bytes"
+
+
+def _clock(ms: int) -> str:
+    s = ms // 1000
+    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+
+
+def _difference(label: str, old: int, new: int, show: Callable[[int], str],
+                exact: Callable[[int], str]) -> str:
+    a, b = show(old), show(new)
+    if a == b:  # too small a change to see when rounded
+        a, b = exact(old), exact(new)
+    return f"{label} {a} → {b}"
+
+
+def video_change(old: VideoInfo, new: VideoInfo) -> str | None:
+    """What differs between the video a sidecar was made for and the one here, or None."""
+    changes = []
+    if old.size != new.size:
+        changes.append(_difference("size", old.size, new.size, _size, lambda n: f"{n:,} bytes"))
+    if old.duration_ms != new.duration_ms:
+        changes.append(_difference("duration", old.duration_ms, new.duration_ms, _clock,
+                                   lambda ms: f"{ms:,} ms"))
+    if not changes and old.quick_sha256 != new.quick_sha256:
+        changes.append("same size and duration, different content")
+    return ", ".join(changes) or None
+
+
+def _notice_replaced(sidecar: Sidecar, header, result: InputResult) -> None:
+    """A replaced video is warned about with the difference; nothing is discarded (spec §8.3).
+
+    The note names no file (spec §6.8); the sidecar keeps its original header, so it repeats on
+    every run until the person decides what to do.
+    """
+    change = video_change(sidecar.header.video, header.video)
+    if change:
+        result.notes.append(f"this video changed since its subtitles were made ({change}); its "
+                            "transcript may no longer line up")
+
+
 def _fail(result: InputResult, reason: str, hint: str = "", kind: str = "") -> None:
     result.status, result.reason, result.hint, result.kind = "failed", reason, hint, kind
 
@@ -228,6 +274,8 @@ def _run(source: str, ctx: RunContext, scratch: Path, result: InputResult) -> No
     p = probe(video, ctx.tools, scratch=scratch)
     header = store.header_for(video, identify(video), p.duration_ms)
     sidecar, _ = store.load(video)
+    if sidecar is not None:
+        _notice_replaced(sidecar, header, result)
     if sidecar is not None and not opts.dry_run:  # a dry run writes nothing, not even versions
         sidecar = _check_external(video, header, sidecar, result)
     glossary = _glossary(video, opts)
@@ -726,6 +774,7 @@ def _existing(source: str, ctx: RunContext, scratch: Path, result: InputResult):
     if sidecar is None:
         raise InputError("this video has no vid2sub sidecar yet",
                          "run `vid2sub run` (or `vid2sub import`) on it first")
+    _notice_replaced(sidecar, header, result)
     return video, header, _check_external(video, header, sidecar, result)
 
 
