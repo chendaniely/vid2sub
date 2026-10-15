@@ -53,10 +53,10 @@ needed, extracts the audio, transcribes it into subtitles in the video's languag
 (auto-detected, overridable), optionally translates them, and writes SRT or ASS.
 
 **Principles.**
-- **The user's machine does the work.** There is no vid2sub server. The local app is a front end
-  for commands run on the user's own computer, against models on that computer, on a machine
-  they run (a DGX Spark reached through an SSH tunnel), or, only when they opt in for a run, a
-  cloud API.
+- **The user's machine does the work.** There is no vid2sub server. vid2sub is a Python CLI
+  application with a local web app over the same core (§3.1). Both run commands on the user's own
+  computer, against models on that computer, on a machine they run (a DGX Spark reached through
+  an SSH tunnel), or, only when they opt in for a run, a cloud API.
 - **The app stores no state of its own.** Settings live in a file the user writes (§5); keys
   live in the user's environment; results live next to the video (§14, §15). Caches are
   disposable (§8.9).
@@ -105,34 +105,45 @@ and still ships Pyodide's 3.12); the pure core is tested on 3.12 and 3.14 (§22)
 
 ## 3. Architecture
 
-### 3.1 Two ways to run it
+### 3.1 Three ways to run it
 
 ```mermaid
 flowchart LR
   subgraph user["User's machine"]
-    browser["Browser\n(React UI)"]
-    engine["vid2sub engine\nFastAPI + Shiny, 127.0.0.1"]
+    term["Terminal<br/>vid2sub run · detect · translate"]
+    browser["Browser<br/>React UI"]
+    web["vid2sub serve<br/>FastAPI + Shiny on 127.0.0.1"]
+    core["vid2sub core library<br/>media · engines · subs · translate"]
     tools["ffmpeg · ffprobe · yt-dlp + deno"]
-    local["In-process engines\nmlx-qwen3-asr · faster-whisper"]
-    files[("Video folder\nvideo · .vid2sub.jsonl · .xx.srt")]
+    local["In-process engines<br/>mlx-qwen3-asr · faster-whisper"]
+    files[("Video folder<br/>video · .vid2sub.jsonl · .xx.srt")]
   end
-  spark["DGX Spark via SSH tunnel\n127.0.0.1:9100/v1\nwhisper.cpp · Gemma 4"]
-  cloud["OpenAI (opt-in per run)"]
-  pages["GitHub Pages\nShinylive editor"]
-  browser <-->|"websocket + token cookie"| engine
-  engine --> tools
-  engine --> local
-  engine <--> files
-  engine -->|"chunks, cue text"| spark
-  engine -.->|"only with allow_cloud"| cloud
+  spark["DGX Spark via SSH tunnel<br/>127.0.0.1:9100/v1<br/>whisper.cpp · Gemma 4"]
+  cloud["OpenAI<br/>opt-in per run"]
+  pages["GitHub Pages<br/>Shinylive editor"]
+  term --> core
+  browser <-->|"websocket + token cookie"| web
+  web --> core
+  core --> tools
+  core --> local
+  core <--> files
+  core -->|"chunks, cue text"| spark
+  core -.->|"only with allow_cloud"| cloud
   pages -->|"File System Access"| files
 ```
 
-- **The local app** (`vid2sub`): a Python engine on `127.0.0.1` serves the React UI, runs jobs
-  and reads and writes files next to videos. Everything in v1 that generates subtitles runs here.
+- **The CLI** (`vid2sub run`, `detect`, `translate`, …; §18): a Python command-line application
+  for the terminal and for batch work, such as a season, a folder tree, a list of files, a script
+  or a scheduled job. It needs no browser and no Node. It is installed as a uv tool, or editable
+  from a clone (§23.5). Dan, 2026-10-14: vid2sub is a CLI application, not only a web app.
+- **The local web app** (`vid2sub serve`): the same core behind a Python engine on `127.0.0.1`
+  that serves the React UI, runs jobs, and reads and writes files next to videos.
 - **The Pages editor** (`chendaniely.github.io/vid2sub/`): the same UI and the same pure Python
   subtitle code running in the browser through Shinylive. It opens a folder on the user's disk,
   plays the video, edits and saves subtitles. It cannot generate subtitles (§21).
+
+Generating subtitles happens only in the core, through the CLI or `vid2sub serve`; the two share
+every behaviour (§18.3).
 
 ### 3.2 Core library with a CLI and the app on top (Dan, 2026-10-14)
 
@@ -1025,24 +1036,78 @@ chunk has finished.
 
 ## 18. CLI
 
-- `vid2sub` / `vid2sub serve [--port N] [--no-browser] [--config PATH]`: start the engine and open
-  the browser through the token redirect (§6.1). (`recordings` never opens a browser; vid2sub is a
-  desktop tool.)
-- `vid2sub run PATH|URL… [--from LANG] [--to LANG…] [--model ID] [--translate-model ID]
-  [--format srt|ass]… [--keep-video] [--skip-existing] [--overwrite-foreign] [--allow-cloud]
-  [--dry-run] [--json]`: the whole pipeline, folders expanded and sorted.
-- `vid2sub translate VIDEO --to LANG [--stale-only] [--model ID] [--allow-cloud]`.
+vid2sub is a Python command-line application (Dan, 2026-10-14). Everything the web app does to
+generate, translate and write subtitles is a CLI command, so batches that would be tedious in the
+UI run from a terminal or a script.
+- **Entry point:** the package's `[project.scripts]` entry, `vid2sub = "vid2sub.cli:main"`; it
+  also runs as `python -m vid2sub`.
+- **Nothing extra needed:** the CLI needs neither Node nor the built frontend. Only `serve` needs
+  `www/ui.js`, and without it `serve` refuses with "build the frontend first" (§23.5).
+- **No arguments:** `vid2sub` alone prints help.
+
+### 18.1 Commands
+
+- `vid2sub run INPUT… [options]`: the whole pipeline for each input (probe, detect, transcribe,
+  build cues, translate, write).
+  - **INPUT** is a video file; a folder (its videos sorted by `SxxEyy` when present, else by name;
+    `--recursive` descends into subfolders); a YouTube URL; or `--from-file LIST` (one input per
+    line, `-` for stdin).
+  - **Options:** `--from LANG|auto` (default `auto`), `--to LANG…` (default from `vid2sub.toml`;
+    `--to none` writes source-language captions only), `--model ID`, `--translate-model ID`,
+    `--format srt|ass…`, `--script hant|hans`, `--glossary FILE`, `--audio-track N|LANG`,
+    `--keep-video`, `--skip-existing` (per target language, §15.3), `--overwrite-foreign`,
+    `--allow-cloud`, `--dry-run`, `--json`.
+  - **Unattended detection:** with `--from auto` and no `--model`, each input is detected and
+    routed as on the Review screen (§10, §11.2), without asking. The sampled files' choices apply
+    to the rest of their folder. `--on-uncertain proceed|skip|stop` (default `skip`) decides what
+    happens to a file whose detection is low-confidence or ambiguous between Mandarin and
+    Cantonese. Skipped files are listed at the end, each with the command that would run it.
+  - **One input at a time** (§17). Ctrl-C stops cleanly between chunks and exits 75. Re-running the
+    same command with `--skip-existing` carries on where it stopped, because finished targets'
+    files exist.
+  - **Connection errors** (§17.3) are retried with backoff for up to `--wait-on-connection
+    DURATION` (default 10 min), then the command exits 75, instead of failing every remaining
+    file.
+- `vid2sub detect INPUT… [--json]`: the Review table without running anything. It shows duration,
+  audio tracks, the detected language and confidence, the suggested models, and what `run` would
+  do. The CLI's version of §10.
+- `vid2sub translate INPUT… --to LANG… [--stale-only] [--translate-model ID] [--glossary FILE]
+  [--allow-cloud]`: translate the current source tracks of videos that already have a sidecar
+  (folders accepted).
 - `vid2sub import SUBFILE --video VIDEO [--lang LANG]` (§15.4).
+- `vid2sub write INPUT… [--format srt|ass…]`: re-write the subtitle files from the sidecar's
+  current versions. Uses: adding ASS later, or after a Pages save in a browser that could only
+  download the sidecar.
+- `vid2sub models [--json]`: the catalog, with which models are usable on this machine now and
+  why the others aren't.
+- `vid2sub serve [--port N] [--no-browser] [--config PATH]`: start the local web app and open the
+  browser through the token redirect (§6.1). (`recordings` never opens a browser; vid2sub is a
+  desktop tool.)
 - `vid2sub doctor [--json]`: tools and versions, extras, MLX/CUDA, endpoints reachable, keys
   present (presence only), cache size.
 - `vid2sub config init`: prints a starter `vid2sub.toml`.
 - `vid2sub cache clear`.
 
-`--json` emits JSON Lines events with ids, stages and counts, never titles or paths. Exit codes
-follow sysexits, as in `audio-router`: 0 ok, 1 failure, 64 usage, 69 unavailable (a tool or
-endpoint), 75 temporary (paused, connection), 78 configuration. Writing is the point of `run`, so
-it writes by default (unlike `audio-router`'s `--apply` verbs); `--dry-run` shows the plan, and
-foreign files are protected (§6.6).
+### 18.2 Output and exit codes
+
+- **In an interactive terminal:** a progress line per file and stage, titles included (titles
+  reach only an interactive terminal, §6.8), and a summary table at the end listing what was
+  done, skipped and failed, with reasons.
+- **`--json`:** JSON Lines events (ids, stages, counts, error kinds) for scripts, never titles or
+  paths.
+- **Exit codes** follow sysexits, as in `audio-router`: 0 everything done, 1 at least one input
+  failed, 64 usage, 69 unavailable (a tool or endpoint), 75 temporary (interrupted, connection),
+  78 configuration.
+- **Writes by default.** Writing is the point of `run` (unlike `audio-router`'s `--apply` verbs);
+  `--dry-run` prints the plan, and foreign files are protected (§6.6).
+
+### 18.3 The CLI and the web app share everything
+
+- **One core:** both call it, and nothing about generating subtitles exists in only one of them.
+- **Shared files:** a sidecar the CLI writes opens in the editor, and an editor save is picked up
+  by `vid2sub translate --stale-only`.
+- **Running both at once is safe:** a `serve` session and a CLI batch can touch the same files,
+  because of the sidecar's compare-and-swap (§14.6).
 
 ## 19. The local web app
 
@@ -1254,9 +1319,27 @@ and `deploy-pages`. No `gh-pages` branch.
   translation.
 - The model table, generated from the catalog.
 - Upgrading yt-dlp.
-- Building from scratch with Node: clone, `npm ci && npm run build` in `frontend/`, `uv sync`,
-  `uv run vid2sub` (Dan, 2026-10-14). The Makefile is for development; the README gives plain uv
-  and npm commands so Windows works without make.
+- **Installing the CLI** (Dan, 2026-10-14). Each way puts a `vid2sub` command on the `PATH` with
+  the CLI ready; none needs Node.
+
+  ```bash
+  # as a tool, from a release
+  uv tool install 'vid2sub[mac]' --index https://chendaniely.github.io/vid2sub/simple/
+
+  # editable, from a clone: tracks the working tree, so edits apply without reinstalling
+  git clone https://github.com/chendaniely/vid2sub && cd vid2sub
+  uv tool install --editable '.[mac]'
+
+  # or inside the project's own environment
+  uv sync --extra mac
+  uv run vid2sub run ~/TV/Show/Season\ 1 --to en
+  ```
+
+- **The web UI from a clone** also needs the frontend built once (and after frontend changes):
+  `npm ci && npm run build` in `frontend/`, then `vid2sub serve` (Dan, 2026-10-14). Release wheels
+  already contain it.
+- The Makefile is for development; the README gives plain uv and npm commands so Windows works
+  without make.
 
 ## 24. Development conventions
 
@@ -1284,14 +1367,21 @@ and `deploy-pages`. No `gh-pages` branch.
 Each milestone ends with something Dan uses.
 
 **M1: the CLI, end to end.**
-- `subs/`, `parse/`, `catalog.py`, `media/` (probe, identity, decode, timeline offset, VAD,
-  chunking, YouTube), the endpoint engine (Spark whisper.cpp, OpenAI, `mlx-qwen3-asr serve`), the
-  in-process `mlx-qwen3-asr` engine, cue building, translation through chatlas (Spark Gemma 4),
-  the sidecar and projections, naming, import, the glossary, `vid2sub.toml`, `doctor`, and the
-  non-web security rules (§6.4–§6.8, §7).
-- **Exit test:** one Cantonese episode and one Japanese episode each produce a `.en.srt` that is
-  watchable in Plex; every naming code is checked in Plex and Jellyfin; an English YouTube video
-  gets English captions.
+- The Python CLI application, installable as a uv tool and editable from a clone (§23.5), with
+  `run`, `detect`, `translate`, `import`, `write`, `models`, `doctor`, `config init` and
+  `cache clear` (§18).
+- Behind it: `subs/`, `parse/`, `catalog.py`, `media/` (probe, identity, decode, timeline offset,
+  VAD, chunking, YouTube), the endpoint engine (Spark whisper.cpp, OpenAI,
+  `mlx-qwen3-asr serve`), the in-process `mlx-qwen3-asr` engine, cue building, translation through
+  chatlas (Spark Gemma 4), the sidecar and projections, naming, import, the glossary,
+  `vid2sub.toml`, and the non-web security rules (§6.4–§6.8, §7).
+- **Exit test:**
+  - one Cantonese episode and one Japanese episode each produce a `.en.srt` that is watchable in
+    Plex;
+  - every naming code is checked in Plex and Jellyfin;
+  - an English YouTube video gets English captions;
+  - a whole season folder runs unattended from one `vid2sub run` command, and a second run with
+    `--skip-existing` does nothing.
 
 **M2: the editor.**
 - The FastAPI shell and every web security rule (§6.1–§6.3), the shinyreact app, the editor
@@ -1406,6 +1496,8 @@ Spark's translation default is Gemma 4, not the coder.
 | 2026-10-14 | Settings in a file, UI changes per session, Copy settings | Dan |
 | 2026-10-14 | CI builds the frontend into wheels; no PyPI; README covers a from-scratch build | Dan |
 | 2026-10-14 | Core library with a CLI and the app on top | Dan |
+| 2026-10-14 | vid2sub is a Python CLI application in its own right, installable as a uv tool or editable from a clone, for batch work in the terminal | Dan |
+| 2026-10-14 | `vid2sub` with no arguments prints help; `vid2sub serve` starts the web app | Claude |
 | 2026-10-14 | Languages: Mandarin, Cantonese, Japanese, English in; mainly English out; many models | Dan |
 | 2026-10-14 | Detect the language from samples, suggest a model, user overrides | Dan |
 | 2026-10-14 | NYC blue and orange, from `recordings`' brand | Dan |
