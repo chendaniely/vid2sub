@@ -1,3 +1,6 @@
+from email import policy
+from email.parser import BytesParser
+
 import numpy as np
 import pytest
 from fakes import FakeServer, closed_port_url
@@ -96,3 +99,55 @@ def test_the_engine_takes_its_chunk_limit_from_the_catalog():
     e = engine("http://127.0.0.1:9/v1")
     assert e.max_chunk_s == 300 and e.name == "whisper.cpp"
     assert e.stamp().label == "whisper-large-v3-turbo@unknown"
+
+
+OPENAI = {"language": "english",
+          "segments": [{"start": 0, "end": 2, "text": " Hello, world."}],
+          "words": [{"word": "Hello", "start": 0.1, "end": 0.5},
+                    {"word": "world", "start": 0.6, "end": 1.0}]}
+
+
+def openai_engine(url):
+    cfg = Config(endpoints={"spark": Endpoint(base_url=url, key_env="SPARK_API_KEY")},
+                 models={"oa": ModelEntry(endpoint="spark", model="whisper-1", parser="openai",
+                                          local=True)})
+    return EndpointEngine("oa", cfg.models["oa"], cfg, RunPolicy(),
+                          KeyRing(environ={"SPARK_API_KEY": SECRET}))
+
+
+def field_values(req, name):
+    message = BytesParser(policy=policy.HTTP).parsebytes(
+        b"Content-Type: " + req.headers["content-type"].encode() + b"\r\n\r\n" + req.body)
+    return [part.get_payload(decode=True) for part in message.iter_parts()
+            if part.get_param("name", header="content-disposition") == name]
+
+
+def test_an_openai_entry_asks_for_word_and_segment_times_and_parses_openai_json():
+    with FakeServer([(200, OPENAI, {})]) as srv:
+        engine = openai_engine(srv.url)
+        result = engine.transcribe(chunk(), language=None, prompt="")
+    req = srv.requests[0]
+    assert engine.name == "openai"
+    assert req.form()["response_format"][1] == b"verbose_json"
+    assert sorted(field_values(req, "timestamp_granularities[]")) == [b"segment", b"word"]
+    assert [w.text for w in result.parsed.segments[0].words] == [" Hello,", " world."]
+
+
+def test_a_malformed_answer_is_a_bad_response_not_a_raw_exception():
+    bad = {"language": "english",
+           "segments": [{"text": "a", "start": 0, "end": 1, "avg_logprob": "abc"}]}
+    with FakeServer([(200, bad, {})]) as srv, \
+            pytest.raises(EngineError) as err:
+        engine(srv.url).transcribe(chunk(), language="ja", prompt="")
+    assert err.value.kind == "bad_response"
+
+
+def test_whisper_cpp_detection_without_probabilities_knows_nothing():
+    no_probs = {k: v for k, v in WHISPER.items() if k != "language_probabilities"}
+    with FakeServer([(200, no_probs, {})]) as srv:
+        assert engine(srv.url).detect_language(chunk()) == {}
+
+
+def test_openai_detection_reports_the_language_it_decoded_in():
+    with FakeServer([(200, {"language": "japanese", "segments": []}, {})]) as srv:
+        assert openai_engine(srv.url).detect_language(chunk()) == {"ja": 1.0}

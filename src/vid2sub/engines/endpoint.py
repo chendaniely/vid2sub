@@ -51,8 +51,10 @@ class EndpointEngine:
         try:
             parsed = (parse_whispercpp(data) if self.entry.parser == "whisper.cpp"
                       else parse_openai(data))
-        except ParseError as err:
-            raise EngineError("bad_response", str(err)) from None
+        except (ParseError, ValueError, TypeError):
+            # Segment validation raises pydantic errors (ValueError); the message names no server content.
+            raise EngineError("bad_response",
+                              "the server's answer didn't have the expected shape") from None
         return ChunkResult(parsed, answered)
 
     def transcribe(self, chunk: Chunk, *, language: str | None, prompt: str) -> ChunkResult:
@@ -62,6 +64,9 @@ class EndpointEngine:
         parsed = self._post(chunk, language=None, prompt="").parsed
         if parsed.language_probs:
             return dict(parsed.language_probs)
+        # whisper.cpp reports the language it decoded in, not a detection, so it knows nothing here.
+        if self.entry.parser == "whisper.cpp":
+            return {}
         return {parsed.language: 1.0} if parsed.language else {}
 
     def stamp(self) -> ModelStamp:
