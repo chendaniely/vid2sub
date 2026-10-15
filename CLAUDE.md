@@ -18,7 +18,17 @@ plan: `docs/superpowers/plans/`.
 
 ## Commands
 
-- `make setup` · `make test` · `make lint` · `make live` (opt-in tests against real models).
+- `make setup` · `make test` · `make lint` · `make live` (opt-in, real models) ·
+  `make readme` (refresh the README's model table from the catalog).
+- The CLI: `uv run vid2sub --help`. Media tests need ffmpeg; set `VID2SUB_REQUIRE_FFMPEG=1` to
+  make them fail instead of skip.
+
+## Layout
+
+- `src/vid2sub/subs/`, `parse/`, `catalog.py`: pure (they run in the browser from M4).
+- `media/`: ffmpeg, probing, VAD (vendored Silero in `media/_vendor/`), chunking, YouTube.
+- `engines/`: the Engine protocol; `clients.py` is the only network client factory.
+- `translate/`, `detect.py`, `store.py`, `pipeline.py`, `commands/`.
 
 ## Check the docs, never write from memory
 
