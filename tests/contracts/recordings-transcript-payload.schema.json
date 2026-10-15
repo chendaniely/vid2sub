@@ -1,0 +1,38 @@
+{
+  "$comment": "Hand-written from recordings' models.py (TranscriptPayload, Segment, Word, all extra=forbid) at 64b75513876207f6e4d0ddfd7191497551c6e200. recordings validates payloads with pydantic, not a schema file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["segments"],
+  "properties": {
+    "language": {"type": ["string", "null"]},
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["start", "end", "text"],
+        "properties": {
+          "start": {"type": "number", "minimum": 0},
+          "end": {"type": "number", "minimum": 0},
+          "speaker": {"type": ["string", "null"]},
+          "speaker_name": {"type": ["string", "null"]},
+          "embedding_key": {"type": ["string", "null"]},
+          "text": {"type": "string"},
+          "words": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["word", "start", "end"],
+              "properties": {
+                "word": {"type": "string"},
+                "start": {"type": "number", "minimum": 0},
+                "end": {"type": "number", "minimum": 0}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
