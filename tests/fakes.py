@@ -91,3 +91,34 @@ def closed_port_url() -> str:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
     return f"http://127.0.0.1:{port}/v1"
+
+
+def _schema_ids(node):
+    if isinstance(node, dict):
+        props = node.get("properties")
+        if isinstance(props, dict) and "src" in props:
+            items = props["src"].get("items", {})
+            return items.get("enum") or ([items["const"]] if "const" in items else [])
+        for value in node.values():
+            found = _schema_ids(value)
+            if found:
+                return found
+    elif isinstance(node, list):
+        for value in node:
+            found = _schema_ids(value)
+            if found:
+                return found
+    return []
+
+
+def chat_responder(req):
+    """An OpenAI-compatible chat completion that fills the request's batch schema."""
+    body = req.json()
+    ids = _schema_ids(body["response_format"]["json_schema"]["schema"])
+    content = json.dumps({"items": [{"src": [i], "text": f"EN {i}"} for i in ids]})
+    return 200, {
+        "id": "chatcmpl-test", "object": "chat.completion", "created": 0, "model": body["model"],
+        "choices": [{"index": 0, "finish_reason": "stop",
+                     "message": {"role": "assistant", "content": content}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }, {}
