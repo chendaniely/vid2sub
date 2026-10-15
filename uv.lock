@@ -1838,7 +1838,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.100" },
     { name = "opencc-purepy", specifier = ">=1.4.4" },
     { name = "platformdirs", specifier = ">=4.3" },
-    { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic", specifier = ">=2.10.5" },
     { name = "pysubs2", specifier = ">=1.9" },
     { name = "yt-dlp", extras = ["default"], specifier = ">=2026.1.1" },
 ]
