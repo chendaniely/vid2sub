@@ -83,3 +83,38 @@ def test_the_detector_prefers_qwen_then_local_whisper_then_the_cloud():
     assert d.choose_detector([turbo, cloud], allow_cloud=False) == "turbo"
     assert d.choose_detector([cloud], allow_cloud=False) is None
     assert d.choose_detector([cloud], allow_cloud=True) == "w1"
+
+
+def test_a_cloud_catalog_entry_is_treated_as_cloud_even_when_the_candidate_says_otherwise():
+    cand = Candidate("w1", "openai-whisper-1", "endpoint", True, cloud=False)
+    assert d.choose_detector([cand], allow_cloud=False) is None
+    assert d.choose_detector([cand], allow_cloud=True) == "w1"
+
+
+def test_unsorted_speech_gives_the_same_windows_as_sorted_speech():
+    assert d.sample_windows(list(reversed(SPEECH)), 200_000) == d.sample_windows(SPEECH, 200_000)
+
+
+def test_an_empty_detection_is_a_none_vote_and_the_rest_still_decide():
+    result = run(FakeEngine(detect=[{}, {"ja": 0.9}, {"ja": 0.9}]))
+    assert result.language == "ja" and result.votes == (None, "ja", "ja")
+    assert result.confidence == 0.6
+
+
+def test_a_cloud_endpoint_is_never_contacted_while_listing_models(monkeypatch):
+    monkeypatch.setattr(d, "mlx_available", lambda: False)
+    contacted = []
+    real = d.clients.list_models
+
+    def recording(name, endpoint, keys, **kwargs):
+        contacted.append(name)
+        return real(name, endpoint, keys, **kwargs)
+
+    monkeypatch.setattr(d.clients, "list_models", recording)
+    models = {"object": "list", "data": [{"id": "whisper-large-v3-turbo", "object": "model",
+                                          "created": 0, "owned_by": "spark"}]}
+    with FakeServer([(200, models, {})]) as srv:
+        cands = {c.name: c for c in d.candidates(
+            config(srv.url), KeyRing(environ={"OPENAI_API_KEY": "k", "SPARK_API_KEY": "k"}))}
+    assert contacted == ["spark"]
+    assert cands["w1"].available and cands["w1"].cloud

@@ -65,7 +65,7 @@ def sample_windows(speech: Sequence[tuple[int, int]], duration_ms: int, *,
     windows = []
     for position in positions:
         target, acc, t = position * total, 0, speech[-1][0]
-        for s, e in speech:
+        for s, e in sorted(speech):
             if acc + (e - s) >= target:
                 t = s + int(target - acc)
                 break
@@ -134,12 +134,17 @@ def candidates(config: Config, keys: clients.KeyRing, *,
     return out
 
 
+def _is_cloud(c: Candidate) -> bool:
+    return c.cloud or CATALOG[c.catalog].cloud
+
+
 def choose_detector(cands: Sequence[Candidate], *, allow_cloud: bool) -> str | None:
-    usable = [c for c in cands if c.available and (allow_cloud or not c.cloud)
-              and c.catalog in CATALOG and CATALOG[c.catalog].task == "transcribe"]
+    usable = [c for c in cands if c.available and c.catalog in CATALOG
+              and CATALOG[c.catalog].task == "transcribe"
+              and (allow_cloud or not _is_cloud(c))]
     for family in ("qwen3-asr", "whisper"):
         found = sorted((c for c in usable if CATALOG[c.catalog].family == family),
-                       key=lambda c: (c.cloud, 0 if c.kind == "endpoint" else 1))
+                       key=lambda c: (_is_cloud(c), 0 if c.kind == "endpoint" else 1))
         if found:
             return found[0].name
     return None
