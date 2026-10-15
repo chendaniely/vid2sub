@@ -45,28 +45,40 @@ class Probe:
 def _ms(value: Any) -> int | None:
     try:
         return round(float(value) * 1000)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
-def parse_probe(data: dict) -> Probe:
-    fmt = data.get("format") or {}
+def parse_probe(data: Any) -> Probe:
+    if not isinstance(data, dict):
+        raise ProbeError("ffprobe's answer wasn't a JSON object")
+    fmt = data.get("format")
+    fmt = fmt if isinstance(fmt, dict) else {}
     duration = _ms(fmt.get("duration"))
+    streams = data.get("streams")
+    streams = streams if isinstance(streams, list) else []
     starts: list[int] = []
     video: str | None = None
     audio: list[AudioTrack] = []
-    for s in data.get("streams") or []:
+    for s in streams:
+        if not isinstance(s, dict):
+            continue
+        index = s.get("index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise ProbeError("an ffprobe stream has no numeric index")
         kind = s.get("codec_type")
-        disposition = s.get("disposition") or {}
+        disposition = s.get("disposition") if isinstance(s.get("disposition"), dict) else {}
+        tags = s.get("tags") if isinstance(s.get("tags"), dict) else {}
         start = _ms(s.get("start_time"))
         if kind == "video" and not disposition.get("attached_pic"):
             video = video or s.get("codec_name")
             if start is not None:
                 starts.append(start)
         elif kind == "audio":
-            tag = (s.get("tags") or {}).get("language")
+            tag = tags.get("language")
+            tag = tag if isinstance(tag, str) else None
             audio.append(AudioTrack(
-                index=len(audio), stream_index=int(s["index"]),
+                index=len(audio), stream_index=index,
                 codec=str(s.get("codec_name", "")), channels=s.get("channels"),
                 language=langs.from_media_tag(tag), tag=tag,
                 default=bool(disposition.get("default")), start_ms=start or 0))
@@ -90,18 +102,39 @@ def probe(path: Path, tools: Tools, *, scratch: Path) -> Probe:
     return parse_probe(data)
 
 
+def _same_tag(track: AudioTrack, override: str) -> bool:
+    """A string override names a language: its ISO 639-2 media tag, its code, or the raw tag."""
+    wanted = override.strip().lower()
+    code = langs.from_media_tag(wanted)
+    return bool((code and track.language == code)
+                or (track.language and wanted == track.language)
+                or wanted == (track.tag or "").lower())
+
+
+def _prefer_default(tracks: list[AudioTrack]) -> AudioTrack:
+    return next((t for t in tracks if t.default), tracks[0])
+
+
 def pick_track(p: Probe, lang: str | None, override: int | str | None = None) -> AudioTrack:
+    """An int override is an index among audio tracks (ffmpeg's a:N); a digit string from the
+    command line must be converted by the caller."""
+    if isinstance(override, bool):
+        raise ProbeError("an audio track override is a number or a language")
     if isinstance(override, int):
         if not 0 <= override < len(p.audio):
             raise ProbeError(f"there's no audio track {override}; this file has {len(p.audio)}")
         return p.audio[override]
-    wanted = override if isinstance(override, str) else lang
-    if wanted:
-        for track in p.audio:
-            if track.language == wanted:
-                return track
-        if isinstance(override, str):
+    if isinstance(override, str):
+        if not override.strip():
+            raise ProbeError("an audio track override is a number or a language")
+        matches = [t for t in p.audio if _same_tag(t, override)]
+        if not matches:
             raise ProbeError(f"no audio track is tagged {override}")
+        return _prefer_default(matches)
+    if lang:
+        matches = [t for t in p.audio if t.language == lang]
+        if matches:
+            return _prefer_default(matches)
     return next((t for t in p.audio if t.default), p.audio[0])
 
 

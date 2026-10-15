@@ -61,3 +61,49 @@ def test_probing_a_real_clip_finds_its_tracks_languages_and_audio_delay(tmp_path
     assert [t.language for t in p.audio] == ["ja", "en"]
     assert p.audio[1].default
     assert abs(timeline_offset_ms(p, p.audio[0]) - 2000) < 50
+
+
+def test_ffprobe_output_that_is_not_an_object_is_a_probe_error():
+    with pytest.raises(ProbeError, match="JSON object"):
+        parse_probe([])
+
+
+@pytest.mark.parametrize("stream", [
+    {"codec_type": "audio"},
+    {"codec_type": "audio", "index": "x"},
+])
+def test_a_stream_without_a_numeric_index_is_a_probe_error(stream):
+    with pytest.raises(ProbeError, match="numeric index"):
+        parse_probe({"format": {"duration": "1"}, "streams": [stream]})
+
+
+def test_junk_entries_in_the_stream_list_are_skipped():
+    data = {"format": {"duration": "1"},
+            "streams": ["x", {"index": 0, "codec_type": "audio", "codec_name": "aac"}]}
+    assert [t.stream_index for t in parse_probe(data).audio] == [0]
+
+
+def test_a_boolean_override_is_refused():
+    with pytest.raises(ProbeError, match="number or a language"):
+        pick_track(parse_probe(DATA), None, override=True)
+
+
+@pytest.mark.parametrize("override", ["jpn", "JPN", "ja"])
+def test_a_media_tag_or_code_override_finds_its_track(override):
+    assert pick_track(parse_probe(DATA), None, override=override).index == 0
+
+
+def test_a_tag_vid2sub_has_no_code_for_still_finds_its_track():
+    data = {"format": {"duration": "1"},
+            "streams": [{"index": 0, "codec_type": "audio", "tags": {"language": "fre"}}]}
+    assert pick_track(parse_probe(data), None, override="fre").index == 0
+
+
+def test_the_default_among_same_language_tracks_wins():
+    data = {"format": {"duration": "1"}, "streams": [
+        {"index": 0, "codec_type": "audio", "tags": {"language": "jpn"},
+         "disposition": {"default": 0}},
+        {"index": 1, "codec_type": "audio", "tags": {"language": "jpn"},
+         "disposition": {"default": 1}},
+    ]}
+    assert pick_track(parse_probe(data), "ja").index == 1
