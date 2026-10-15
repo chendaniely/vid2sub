@@ -1,0 +1,53 @@
+[project]
+name = "vid2sub"
+version = "0.1.0.dev0"
+description = "Subtitles for videos and YouTube, made on your own machine"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{ name = "Daniel Chen" }]
+dependencies = [
+    "pydantic>=2.10",
+    "pysubs2>=1.9",
+    "opencc-purepy>=1.4.4",
+    "charset-normalizer>=3.4",
+    "platformdirs>=4.3",
+    "numpy>=2.0",
+    "onnxruntime>=1.20",
+    "chatlas>=0.23",
+    "openai>=1.100",
+    "httpx>=0.27",
+    "yt-dlp[default]>=2026.1.1",
+]
+
+[project.optional-dependencies]
+# Qwen3-ASR with its forced aligner on Apple Silicon (spec §9.4). macOS 14+ only.
+mac = ["mlx-qwen3-asr[aligner]>=0.4.4; sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[project.scripts]
+vid2sub = "vid2sub.cli:main"
+
+# A dependency group, not an extra, so `uv sync` can never silently remove pytest
+# (an audio-router lesson).
+[dependency-groups]
+dev = ["pytest>=8.3", "hypothesis>=6.100", "jsonschema>=4.23", "ruff>=0.8"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vid2sub"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]  # tests/helpers.py and tests/fakes.py are importable
+addopts = "--import-mode=importlib -m 'not live'"
+markers = [
+    "media: needs ffmpeg and ffprobe (skipped without them unless VID2SUB_REQUIRE_FFMPEG=1)",
+    "live: a real model or the Spark; opt-in, see tests/README.md",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
