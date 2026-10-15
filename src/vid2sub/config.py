@@ -6,7 +6,9 @@ get past Dan's `.env` hooks). Unknown keys are refused at load, naming the key (
 lesson). A model is local only if it runs in-process, or says `local = true` and its endpoint's
 host is in `privacy.local_hosts` (spec §7.2: llama-swap or Ollama can pass a request to a hosted
 model on localhost, so the flag is per model). Keys travel over plain http only to this machine
-or the tailnet.
+or the tailnet. The key scan recognises common key prefixes and key-shaped table keys; it is a
+backstop, not a guarantee. `privacy.local_hosts` is trust the user grants: any host listed there
+counts as local.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from __future__ import annotations
 import os
 import re
 import tomllib
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, Literal
@@ -27,8 +29,10 @@ from vid2sub.security import host_of, key_transport_ok
 from vid2sub.subs import naming
 
 ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+KEY_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,31}$")
 SECRET_PREFIXES = ("sk-", "sk_", "hf_", "ghp_", "gho_", "github_pat_", "xoxb-", "xoxp-",
                    "AKIA", "-----BEGIN")
+HOLDS_NAMES = ("vid2sub.toml holds only the names of environment variables (key_env)")
 
 
 class ConfigError(ValueError):
@@ -82,15 +86,31 @@ class Config(_M):
     defaults: Defaults = Field(default_factory=Defaults)
 
 
-def _strings(obj: Any, where: str = "") -> Iterator[tuple[str, str]]:
+def _where(loc: tuple[Any, ...]) -> str:
+    """Render a location from the file without echoing any table name that is not key-shaped."""
+    out = ""
+    for part in loc:
+        if isinstance(part, int):
+            out += f"[{part}]"
+            continue
+        name = str(part) if KEY_NAME.fullmatch(str(part)) else "<key>"
+        out += f".{name}" if out else name
+    return out or "the top level"
+
+
+def _scan(obj: Any, loc: tuple[Any, ...] = ()) -> None:
+    """Refuse any string, or table key, that looks like a key; names where, never what."""
     if isinstance(obj, str):
-        yield where, obj
+        if obj.startswith(SECRET_PREFIXES):
+            raise ConfigError(f"{_where(loc)} looks like a key; {HOLDS_NAMES}")
     elif isinstance(obj, dict):
         for k, v in obj.items():
-            yield from _strings(v, f"{where}.{k}" if where else str(k))
+            if str(k).startswith(SECRET_PREFIXES):
+                raise ConfigError(f"a key in {_where(loc)} looks like a key; {HOLDS_NAMES}")
+            _scan(v, (*loc, k))
     elif isinstance(obj, list):
         for i, v in enumerate(obj):
-            yield from _strings(v, f"{where}[{i}]")
+            _scan(v, (*loc, i))
 
 
 def _local_hosts(config: Config) -> set[str]:
@@ -99,21 +119,27 @@ def _local_hosts(config: Config) -> set[str]:
 
 def _validate(config: Config) -> Config:
     for name, ep in config.endpoints.items():
-        if urlsplit(ep.base_url).scheme not in ("http", "https"):
-            raise ConfigError(f"endpoints.{name}.base_url must start with http:// or https://")
+        label = _where((name,))
+        parts = urlsplit(ep.base_url)
+        if parts.scheme not in ("http", "https"):
+            raise ConfigError(f"endpoints.{label}.base_url must start with http:// or https://")
+        if parts.username is not None or parts.password is not None:
+            raise ConfigError(f"endpoints.{label}.base_url must not contain a user name or "
+                              "password; put the key in an environment variable named by key_env")
         if ep.key_env is not None and not ENV_NAME.fullmatch(ep.key_env):
-            raise ConfigError(f"endpoints.{name}.key_env must be an environment variable name "
+            raise ConfigError(f"endpoints.{label}.key_env must be an environment variable name "
                               "like SPARK_API_KEY, never a key")
         if ep.key_env and not key_transport_ok(ep.base_url):
-            raise ConfigError(f"endpoints.{name}: a key goes over plain http only to this "
+            raise ConfigError(f"endpoints.{label}: a key goes over plain http only to this "
                               "machine or a Tailscale address; use https")
     for name, m in config.models.items():
-        where = f"models.{name}"
+        where = f"models.{_where((name,))}"
         if (m.endpoint is None) == (m.engine is None):
             raise ConfigError(f"{where} needs exactly one of `endpoint` or `engine`")
         if m.catalog is not None:
             if m.catalog not in CATALOG:
-                raise ConfigError(f"{where}.catalog: unknown catalog id {m.catalog!r}")
+                raise ConfigError(f"{where}.catalog: not a catalog id "
+                                  "(run `vid2sub models` to list them)")
             if CATALOG[m.catalog].task != m.task:
                 raise ConfigError(f"{where}: {m.catalog} is a {CATALOG[m.catalog].task} model, "
                                   f"but task is {m.task}")
@@ -122,18 +148,18 @@ def _validate(config: Config) -> Config:
                 raise ConfigError(f"{where}: in-process engines only transcribe")
             continue
         if m.endpoint not in config.endpoints:
-            raise ConfigError(f"{where}.endpoint: no endpoint named {m.endpoint!r}")
+            raise ConfigError(f"{where}.endpoint: no endpoint by that name in [endpoints]")
         if not m.model:
             raise ConfigError(f"{where}.model: the name the server knows the model by")
         if m.task == "transcribe" and m.parser is None:
             raise ConfigError(f"{where}.parser: whisper.cpp or openai")
         if m.local and host_of(config.endpoints[m.endpoint].base_url) not in _local_hosts(config):
             raise ConfigError(f"{where}.local: its endpoint's host isn't in privacy.local_hosts")
-    for target in config.defaults.targets:
+    for i, target in enumerate(config.defaults.targets):
         try:
             naming.target_track(target)
-        except naming.UnknownTrack as err:
-            raise ConfigError(f"defaults.targets: {err}") from None
+        except naming.UnknownTrack:
+            raise ConfigError(f"defaults.targets[{i}]: not a known target track") from None
     return config
 
 
@@ -151,9 +177,22 @@ def config_path(explicit: str | None = None,
     if environ.get("VID2SUB_CONFIG"):
         return Path(environ["VID2SUB_CONFIG"]).expanduser()
     if os.name == "nt":
-        return Path(environ.get("APPDATA", Path.home())) / "vid2sub" / "vid2sub.toml"
-    base = environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / "vid2sub" / "vid2sub.toml"
+        appdata = environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+        return Path(appdata) / "vid2sub" / "vid2sub.toml"
+    xdg = environ.get("XDG_CONFIG_HOME") or ""
+    # The XDG spec says a relative XDG_CONFIG_HOME is invalid, so it is ignored.
+    base = Path(xdg) if xdg and Path(xdg).is_absolute() else Path.home() / ".config"
+    return base / "vid2sub" / "vid2sub.toml"
+
+
+def _from_pydantic(err: ValidationError) -> str:
+    first = err.errors()[0]
+    loc = tuple(first["loc"])
+    if first["type"] == "extra_forbidden":
+        if loc and KEY_NAME.fullmatch(str(loc[-1])):
+            return f"{_where(loc)}: {first['msg']}"
+        return f"an unknown key in {_where(loc[:-1])}: {first['msg']}"
+    return f"{_where(loc)}: {first['msg']}"
 
 
 def load_config(path: Path) -> Config:
@@ -163,16 +202,11 @@ def load_config(path: Path) -> Config:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as err:
         raise ConfigError(f"{path.name}: {err}") from None
-    for where, value in _strings(data):
-        if value.startswith(SECRET_PREFIXES):
-            raise ConfigError(f"{where} looks like a key; vid2sub.toml holds only the names of "
-                              "environment variables (key_env)")
+    _scan(data)
     try:
         config = Config.model_validate(data)
     except ValidationError as err:
-        first = err.errors()[0]
-        loc = ".".join(str(p) for p in first["loc"])
-        raise ConfigError(f"{loc}: {first['msg']}") from None
+        raise ConfigError(_from_pydantic(err)) from None
     return _validate(config)
 
 

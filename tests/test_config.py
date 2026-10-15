@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -73,3 +74,65 @@ def test_a_key_pasted_into_any_string_field_is_refused_without_echoing_it(tmp_pa
     with pytest.raises(c.ConfigError, match="looks like a key") as err:
         c.load_config(write(tmp_path, text))
     assert "sk-live" not in str(err.value)
+
+
+def test_a_key_pasted_as_a_table_key_is_refused_without_echoing_it(tmp_path):
+    with pytest.raises(c.ConfigError, match="a key in server looks like a key") as err:
+        c.load_config(write(tmp_path, '[server]\n"sk-live-abc123" = 1\n'))
+    assert "sk-live" not in str(err.value)
+
+
+def test_a_long_unknown_key_is_neither_named_nor_echoed(tmp_path):
+    token = "a" * 40
+    with pytest.raises(c.ConfigError, match="an unknown key in server") as err:
+        c.load_config(write(tmp_path, f'[server]\n"{token}" = 1\n'))
+    assert token not in str(err.value)
+
+
+def test_a_catalog_id_that_is_a_token_is_not_echoed(tmp_path):
+    token = "a" * 40
+    text = f'[models.m]\ncatalog = "{token}"\nendpoint = "x"\nmodel = "m"\n'
+    with pytest.raises(c.ConfigError, match="not a catalog id") as err:
+        c.load_config(write(tmp_path, text))
+    assert token not in str(err.value)
+
+
+def test_an_endpoint_name_that_is_a_token_is_not_echoed(tmp_path):
+    token = "a" * 40
+    text = f'[models.m]\nendpoint = "{token}"\nmodel = "m"\nparser = "openai"\n'
+    with pytest.raises(c.ConfigError, match="no endpoint by that name") as err:
+        c.load_config(write(tmp_path, text))
+    assert token not in str(err.value)
+
+
+def test_a_target_that_is_a_token_is_not_echoed(tmp_path):
+    token = "a" * 40
+    with pytest.raises(c.ConfigError, match="not a known target track") as err:
+        c.load_config(write(tmp_path, f'[defaults]\ntargets = ["{token}"]\n'))
+    assert token not in str(err.value)
+
+
+def test_a_model_table_named_with_a_token_is_not_echoed(tmp_path):
+    token = "a" * 40
+    text = f'[models.{token}]\nendpoint = "x"\nmodel = "m"\nparser = "openai"\n'
+    with pytest.raises(c.ConfigError, match="no endpoint by that name") as err:
+        c.load_config(write(tmp_path, text))
+    assert token not in str(err.value)
+
+
+def test_a_base_url_with_credentials_is_refused_without_echoing_them(tmp_path):
+    text = '[endpoints.x]\nbase_url = "https://user:tok123@a.b/v1"\n'
+    with pytest.raises(c.ConfigError, match="must not contain a user name or password") as err:
+        c.load_config(write(tmp_path, text))
+    assert "tok123" not in str(err.value)
+
+
+def test_the_windows_config_falls_back_to_appdata_roaming_when_appdata_is_unset(monkeypatch):
+    # Patch only config's view of `os`: a global os.name change breaks pathlib on this machine.
+    monkeypatch.setattr(c, "os", SimpleNamespace(name="nt"))
+    expected = Path.home() / "AppData" / "Roaming" / "vid2sub" / "vid2sub.toml"
+    assert c.config_path(None, {}) == expected
+
+
+def test_a_relative_xdg_config_home_is_ignored_for_the_default_path():
+    assert c.config_path(None, {"XDG_CONFIG_HOME": "rel"}).is_absolute()
