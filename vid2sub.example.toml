@@ -1,4 +1,4 @@
-# vid2sub settings (spec §5). vid2sub never writes this file, and it never holds a key: only
+# vid2sub settings (spec section 5). vid2sub never writes this file, and it never holds a key: only
 # the names of environment variables that hold them (key_env). Copy it to
 # ~/.config/vid2sub/vid2sub.toml (macOS, Linux) or %APPDATA%\vid2sub\vid2sub.toml (Windows).
 

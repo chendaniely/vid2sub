@@ -120,3 +120,14 @@ def test_dvd_and_dolby_inputs_pass_the_format_whitelist(tmp_path, suffix, codec_
                 str(media)], cwd=tmp_path, timeout=60)
     t.run_tool([t.Tools.find().need("ffprobe"), "-v", "error", *t.input_args(media),
                 "-show_format"], cwd=tmp_path, timeout=60)
+
+
+def test_exts_are_lower_case_without_empties_on_windows_and_blank_elsewhere():
+    assert t._exts({"PATHEXT": ".COM;.EXE;;.BAT;"}, nt=True) == [".com", ".exe", ".bat"]
+    assert t._exts({"PATHEXT": ".COM;.EXE"}, nt=False) == [""]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="PATHEXT only applies on Windows")
+def test_which_accepts_a_name_that_already_ends_in_an_extension(tmp_path):
+    exe = make_exe(tmp_path, "faketool")
+    assert t.which("faketool.exe", path=str(tmp_path)) == str(exe)

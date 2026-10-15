@@ -143,3 +143,28 @@ def test_the_windows_config_falls_back_to_appdata_roaming_when_appdata_is_unset(
 
 def test_a_relative_xdg_config_home_is_ignored_for_the_default_path():
     assert c.config_path(None, {"XDG_CONFIG_HOME": "rel"}).is_absolute()
+
+
+def test_the_starter_is_ascii_so_any_windows_redirect_keeps_it_readable():
+    assert c.STARTER.isascii()
+
+
+def test_a_starter_saved_as_utf8_with_a_bom_loads(tmp_path):
+    path = tmp_path / "vid2sub.toml"
+    path.write_bytes(b"\xef\xbb\xbf" + c.STARTER.encode("utf-8"))
+    assert "spark-turbo" in c.load_config(path).models
+
+
+@pytest.mark.parametrize("bom,codec", [(b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be")])
+def test_a_starter_saved_as_utf16_with_a_bom_loads(tmp_path, bom, codec):
+    path = tmp_path / "vid2sub.toml"
+    path.write_bytes(bom + c.STARTER.encode(codec))
+    assert "spark-turbo" in c.load_config(path).models
+
+
+def test_a_cp1252_file_is_refused_by_name_without_echoing_its_content(tmp_path):
+    path = tmp_path / "vid2sub.toml"
+    path.write_bytes(b"# \xa7\n[server]\nport = 8765\n")
+    with pytest.raises(c.ConfigError) as err:
+        c.load_config(path)
+    assert str(err.value) == "vid2sub.toml isn't UTF-8 text; save it as UTF-8"

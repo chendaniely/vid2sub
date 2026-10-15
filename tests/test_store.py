@@ -59,8 +59,9 @@ def test_a_concurrent_writer_is_merged_not_lost(video, monkeypatch):
         if not calls:
             calls.append(1)
             path = store.sidecar_path(video)
-            path.write_text(path.read_text() + real(sidecar.__class__(sidecar.header, (other,)))
-                            .splitlines()[1] + "\n")
+            path.write_text(path.read_text(encoding="utf-8")
+                            + real(sidecar.__class__(sidecar.header, (other,)))
+                            .splitlines()[1] + "\n", encoding="utf-8")
         return real(sidecar)
 
     monkeypatch.setattr(store, "serialize", racing)

@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,12 +43,21 @@ class ToolFailed(RuntimeError):
         super().__init__(f"{tool} failed (exit {returncode})")
 
 
+def _exts(environ: Mapping[str, str], nt: bool) -> list[str]:
+    """Executable suffixes to try; Windows' PATHEXT is upper-case, but files are made lower-case."""
+    if not nt:
+        return [""]
+    return [e.lower() for e in environ.get("PATHEXT", ".EXE;.BAT;.CMD").split(";") if e]
+
+
 def which(name: str, path: str | None = None) -> str | None:
     search = os.environ.get("PATH", "") if path is None else path
     dirs = [d for d in search.split(os.pathsep) if d and os.path.isabs(d)]
     if os.name != "nt":
         dirs += [d for d in FALLBACK_DIRS if d not in dirs]
-    exts = os.environ.get("PATHEXT", ".EXE;.BAT;.CMD").split(";") if os.name == "nt" else [""]
+    exts = _exts(os.environ, os.name == "nt")
+    if os.name == "nt" and name.lower().endswith(tuple(e for e in exts if e)):
+        exts = ["", *exts]
     for d in dirs:
         for ext in exts:
             candidate = os.path.join(d, name + ext)

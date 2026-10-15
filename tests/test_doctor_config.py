@@ -23,7 +23,7 @@ def test_config_path_prints_where_vid2sub_looks(capsys, tmp_path):
 
 def test_doctor_reports_keys_by_presence_only(tmp_path, monkeypatch, capsys):
     cfg = tmp_path / "vid2sub.toml"
-    cfg.write_text(c.STARTER)
+    cfg.write_text(c.STARTER, encoding="utf-8")
     monkeypatch.setenv("SPARK_API_KEY", "supersecretvalue")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     main(["doctor", "--config", str(cfg), "--json", "--offline"])

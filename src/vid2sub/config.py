@@ -198,8 +198,13 @@ def _from_pydantic(err: ValidationError) -> str:
 def load_config(path: Path) -> Config:
     if not path.exists():
         return Config()
+    raw = path.read_bytes()
+    # Windows editors and redirects save UTF-8 with a BOM, UTF-16 with a BOM, or the ANSI page.
+    encoding = "utf-16" if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        data = tomllib.loads(raw.decode(encoding))
+    except UnicodeDecodeError:
+        raise ConfigError(f"{path.name} isn't UTF-8 text; save it as UTF-8") from None
     except tomllib.TOMLDecodeError as err:
         raise ConfigError(f"{path.name}: {err}") from None
     _scan(data)
