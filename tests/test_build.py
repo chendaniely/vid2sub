@@ -1,3 +1,5 @@
+from itertools import pairwise
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -111,7 +113,7 @@ def test_any_word_sequence_gives_a_valid_track_that_covers_every_word_once(spec)
     check_track(cues)
     for c in cues:
         assert c.end_ms - c.start_ms <= 7000
-    for a, b in zip(cues, cues[1:]):
+    for a, b in pairwise(cues):
         assert b.start_ms - a.end_ms >= 84
     covered = sorted(i for c in cues if c.w for i in range(*c.w))
     assert covered == list(range(len(ws)))
