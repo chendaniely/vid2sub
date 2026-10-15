@@ -263,3 +263,49 @@ def test_an_edited_dialogue_line_next_to_a_sign_is_still_an_outside_edit(video):
     assert changed == ["en"]
     _, cues = store.current_cues(side, "en")
     assert [c.text for c in cues] == ["Hello", "Earth"]
+
+
+# final review 3: a file vid2sub was writing when interrupted is not "your outside edit"
+
+
+def test_a_write_interrupted_after_its_record_is_not_taken_for_an_outside_edit(video,
+                                                                               monkeypatch):
+    side = with_track(video)
+    side, path, _ = store.project(video, header(video), side, "en", "srt",
+                                  overwrite_foreign=False)
+    old = path.read_bytes()
+    newer = [CUES[0], CUES[1].model_copy(update={"text": "Planet"})]
+    side = with_track(video, cues=newer)
+    real = store.safe_write
+
+    def full_disk(target, data, **kwargs):
+        if target == path:
+            raise OSError(28, "No space left on device")
+        return real(target, data, **kwargs)
+
+    monkeypatch.setattr(store, "safe_write", full_disk)
+    with pytest.raises(OSError):
+        store.project(video, header(video), side, "en", "srt", overwrite_foreign=False)
+    monkeypatch.setattr(store, "safe_write", real)
+    assert path.read_bytes() == old
+    side, _ = store.load(video)
+    assert side.projections()[path.name].sha256 != store.sha256_hex(old)
+    before, head = set(side.renditions()), side.head("en")
+    side, changed = store.check_external(video, header(video), side)
+    assert changed == []
+    assert set(side.renditions()) == before and side.head("en") == head
+    side, _, written = store.project(video, header(video), side, "en", "srt",
+                                     overwrite_foreign=False)
+    assert written and b"Planet" in path.read_bytes()
+
+
+def test_every_digest_ever_projected_for_a_file_is_known(video):
+    side = with_track(video)
+    side, path, _ = store.project(video, header(video), side, "en", "srt",
+                                  overwrite_foreign=False)
+    first = store.sha256_hex(path.read_bytes())
+    side = with_track(video, cues=[CUES[0]])
+    side, _, _ = store.project(video, header(video), side, "en", "srt", overwrite_foreign=False)
+    second = store.sha256_hex(path.read_bytes())
+    assert store.projected_digests(side, path.name) == {first, second}
+    assert store.projected_digests(side, "other.srt") == set()

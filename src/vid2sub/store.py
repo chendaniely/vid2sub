@@ -152,9 +152,23 @@ def source_track(sidecar: Sidecar) -> str | None:
     return None
 
 
+def projected_digests(sidecar: Sidecar, name: str) -> set[str]:
+    """Every hash vid2sub has ever recorded for the file `name`, not only the latest.
+
+    The record is appended before the file is written, so a write cut short (Ctrl-C, a full
+    disk, Windows' "file in use") leaves bytes whose hash is an earlier record's: vid2sub's own
+    unfinished write, never a person's edit (final review).
+    """
+    return {r.sha256 for r in sidecar.records
+            if isinstance(r, ProjectionRecord) and r.path == name}
+
+
 def project(video: Path, header: Header, sidecar: Sidecar, track: str, fmt: str, *,
             overwrite_foreign: bool) -> tuple[Sidecar, Path, bool]:
-    """EditedOnDisk assumes the caller ran `check_external` first; that makes the edit a version."""
+    """EditedOnDisk assumes the caller ran `check_external` first; that makes the edit a version.
+
+    A file holding an earlier projection's bytes (an interrupted write) is overwritten.
+    """
     rec, cues = current_cues(sidecar, track)
     path = subtitle_path(video, track, fmt)
     if path.is_symlink() or (path.exists() and not path.is_file()):
@@ -168,7 +182,8 @@ def project(video: Path, header: Header, sidecar: Sidecar, track: str, fmt: str,
         # vid2sub's own projection of the current version, perhaps restyled since (an Aegisub
         # \an8 that check_external recorded): nothing to rewrite, and rewriting would undo it
         return sidecar, path, False
-    if existing is not None and previous is not None and sha256_hex(existing) != previous.sha256:
+    if (existing is not None and previous is not None and sha256_hex(existing) != previous.sha256
+            and sha256_hex(existing) not in projected_digests(sidecar, path.name)):
         raise EditedOnDisk(path.name)
     ours = existing if (existing is not None and previous is not None) else None
     data = to_srt(cues) if fmt == "srt" else to_ass(cues, existing=ours)
@@ -235,8 +250,8 @@ def check_external(video: Path, header: Header, sidecar: Sidecar, *,
             continue
         data = path.read_bytes()
         digest = sha256_hex(data)
-        if digest == proj.sha256:
-            continue
+        if digest == proj.sha256 or digest in projected_digests(sidecar, name):
+            continue  # unchanged, or vid2sub's own write that was cut short: never adopted
         projected_body = renditions[proj.rendition].body
         projected = cues_from_body(projected_body)
         try:  # an ASS file's other styles are a person's signs, not vid2sub's cues
