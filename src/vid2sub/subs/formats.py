@@ -4,7 +4,8 @@ vid2sub serialises with pysubs2 but writes the bytes itself: LF line endings and
 optional), so a projection's hash is the same on every OS (pysubs2's own save() writes CRLF on
 Windows). Canonical text keeps `\\n` breaks and `<i>` as the only markup; braces become full-width
 so text can never turn into ASS override tags. An existing ASS file keeps its Script Info, Styles
-and every event outside vid2sub's `Default` style (plan decision 6). Imports read UTF-8 with or
+and every event outside vid2sub's `Default` style (plan decision 6), and outside-edit checks read
+only its `Default` events, so a person's signs never become dialogue. Imports read UTF-8 with or
 without a BOM, then fall back to charset-normalizer, because GBK, Big5 and Shift-JIS files are
 common. ASS stores centiseconds, so comparisons allow the format's precision (spec §15.3).
 """
@@ -139,15 +140,23 @@ def to_ass(cues: Sequence[Cue], *, existing: bytes | None = None, bom: bool = Fa
     return _encode(subs.to_string("ass"), bom)
 
 
-def parse_subtitles(data: bytes, fmt: str | None = None) -> list[ParsedCue]:
+def parse_subtitles(data: bytes, fmt: str | None = None, *,
+                    default_style_only: bool = False) -> list[ParsedCue]:
+    """The cues in a subtitle file, sorted by time.
+
+    `default_style_only` reads only an ASS or SSA file's `Default` events, the ones vid2sub
+    writes: signs and karaoke a person added in other styles aren't vid2sub's cues, so comparing
+    them would turn them into dialogue (plan decision 6; final review). Imports keep every event.
+    """
     text = decode_text(data)
     try:
         subs = pysubs2.SSAFile.from_string(text, format_=fmt)
     except Exception as err:  # noqa: BLE001 - pysubs2 raises several unrelated types
         raise SubtitleError(f"not a subtitle file vid2sub can read ({type(err).__name__})") from None
+    only_default = default_style_only and subs.format in ("ass", "ssa")
     out = []
     for ev in subs.events:
-        if ev.is_comment:
+        if ev.is_comment or (only_default and ev.style != "Default"):
             continue
         body = ass_to_canonical(ev.text)
         if body and ev.end > ev.start:

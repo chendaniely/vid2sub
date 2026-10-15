@@ -110,3 +110,11 @@ def test_raw_braces_that_skipped_canonical_cant_reach_ass_as_tags():
     data = f.to_ass([Cue(id="a", start_ms=0, end_ms=1000, text="{raw}")]).decode()
     assert "{raw}" not in data
     assert "｛raw｝" in data
+
+
+def test_only_default_style_events_are_read_when_asked():
+    ass = f.to_ass([Cue(id="a", start_ms=0, end_ms=1000, text="line")]).decode("utf-8")
+    ass += "Dialogue: 0,0:00:00.50,0:00:01.20,Sign,,0,0,0,,STATION\n"
+    data = ass.encode("utf-8")
+    assert [c.text for c in f.parse_subtitles(data, "ass")] == ["line", "STATION"]
+    assert [c.text for c in f.parse_subtitles(data, "ass", default_style_only=True)] == ["line"]

@@ -204,3 +204,62 @@ def test_two_edited_files_of_one_track_chain_instead_of_conflicting(video):
     assert changed == ["en", "en"]
     assert isinstance(side.head("en"), HeadRecord)
     assert len(set(side.renditions()) - before) == 2
+
+
+# final review 2: a person's ASS work is never wiped or turned into dialogue
+
+
+def test_a_restyled_ass_of_the_current_version_is_not_rewritten(video):
+    side = with_track(video)
+    side, path, _ = store.project(video, header(video), side, "en", "ass",
+                                  overwrite_foreign=False)
+    text = path.read_text(encoding="utf-8")
+    assert ",,Hello" in text
+    path.write_text(text.replace(",,Hello", ",,{\\an8}Hello"), encoding="utf-8")
+    side, changed = store.check_external(video, header(video), side)
+    assert changed == []
+    side, _, written = store.project(video, header(video), side, "en", "ass",
+                                     overwrite_foreign=False)
+    assert not written
+    assert "{\\an8}Hello" in path.read_text(encoding="utf-8")
+
+
+def add_sign(path, text="TOKYO STATION"):
+    import pysubs2
+    subs = pysubs2.SSAFile.from_string(path.read_text(encoding="utf-8"), format_="ass")
+    subs.styles["Sign"] = pysubs2.SSAStyle(fontname="Arial", fontsize=40,
+                                           alignment=pysubs2.Alignment.TOP_CENTER)
+    subs.append(pysubs2.SSAEvent(start=500, end=1200, style="Sign", text=text))
+    path.write_text(subs.to_string("ass"), encoding="utf-8")
+
+
+def test_a_sign_added_in_aegisub_stays_a_sign_and_never_becomes_dialogue(video):
+    side = with_track(video)
+    paths = {}
+    for fmt in ("srt", "ass"):
+        side, paths[fmt], _ = store.project(video, header(video), side, "en", fmt,
+                                            overwrite_foreign=False)
+    add_sign(paths["ass"])
+    before = set(side.renditions())
+    head = side.head("en")
+    side, changed = store.check_external(video, header(video), side)
+    assert changed == []
+    assert set(side.renditions()) == before and side.head("en") == head
+    for fmt in ("srt", "ass"):
+        side, _, _ = store.project(video, header(video), side, "en", fmt,
+                                   overwrite_foreign=False)
+    assert "TOKYO" not in paths["srt"].read_text(encoding="utf-8")
+    assert paths["ass"].read_text(encoding="utf-8").count("TOKYO STATION") == 1
+
+
+def test_an_edited_dialogue_line_next_to_a_sign_is_still_an_outside_edit(video):
+    side = with_track(video)
+    side, path, _ = store.project(video, header(video), side, "en", "ass",
+                                  overwrite_foreign=False)
+    add_sign(path)
+    path.write_text(path.read_text(encoding="utf-8").replace(",,World", ",,Earth"),
+                    encoding="utf-8")
+    side, changed = store.check_external(video, header(video), side)
+    assert changed == ["en"]
+    _, cues = store.current_cues(side, "en")
+    assert [c.text for c in cues] == ["Hello", "Earth"]

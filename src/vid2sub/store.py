@@ -5,11 +5,13 @@ start over if another writer got there first; records are immutable with ids, so
 union and nothing is lost. A sidecar vid2sub can't read is never overwritten. A subtitle file is
 vid2sub's only if the sidecar has a projection record for it; anyone else's (Bazarr, a fansub) is
 never overwritten without `overwrite_foreign`. The projection record is written before the file.
-A projected file that changed on disk is parsed and compared at its format's precision: real
-changes come back as an `external` version (ids recovered by time and text), and a change that
-was only bytes or styling just updates the record. An automatic version never replaces a head a
-person set (spec §14.4). A file of ours edited since vid2sub wrote it is never overwritten until
-the edit has been recorded as a version (controller ruling, Task 28).
+A projected file that changed on disk is parsed and compared at its format's precision (an ASS
+file's `Default` events only): real changes come back as an `external` version (ids recovered by
+time and text), and a change that was only bytes or styling just updates the record, after which
+the file counts as the current version's projection and isn't rewritten, so a restyle survives
+(final review). An automatic version never replaces a head a person set (spec §14.4). A file of
+ours edited since vid2sub wrote it is never overwritten until the edit has been recorded as a
+version (controller ruling, Task 28).
 """
 
 from __future__ import annotations
@@ -161,6 +163,11 @@ def project(video: Path, header: Header, sidecar: Sidecar, track: str, fmt: str,
     previous = sidecar.projections().get(path.name)
     if existing is not None and previous is None and not overwrite_foreign:
         raise ForeignFile(path.name)
+    if (existing is not None and previous is not None and previous.rendition == rec.id
+            and sha256_hex(existing) == previous.sha256):
+        # vid2sub's own projection of the current version, perhaps restyled since (an Aegisub
+        # \an8 that check_external recorded): nothing to rewrite, and rewriting would undo it
+        return sidecar, path, False
     if existing is not None and previous is not None and sha256_hex(existing) != previous.sha256:
         raise EditedOnDisk(path.name)
     ours = existing if (existing is not None and previous is not None) else None
@@ -232,8 +239,8 @@ def check_external(video: Path, header: Header, sidecar: Sidecar, *,
             continue
         projected_body = renditions[proj.rendition].body
         projected = cues_from_body(projected_body)
-        try:
-            parsed = parse_subtitles(data, proj.format)
+        try:  # an ASS file's other styles are a person's signs, not vid2sub's cues
+            parsed = parse_subtitles(data, proj.format, default_style_only=proj.format == "ass")
         except SubtitleError:
             parsed = []
         if not parsed:
