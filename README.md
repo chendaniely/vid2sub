@@ -12,7 +12,8 @@ Status: milestone M1, the command line. The web editor arrives with M2. Design:
 ## Install
 
 You need [uv](https://docs.astral.sh/uv/), ffmpeg 6 or later, and, for YouTube, deno 2.3 or later.
-ffmpeg must be 6 or later. Some Linux distributions ship older versions (such as 4.x), so use a newer package or a static build; `vid2sub doctor` tells you.
+Some Linux distributions ship an older ffmpeg (such as 4.x), so use a newer package or a static
+build; `vid2sub doctor` tells you.
 
 | | macOS (Apple Silicon, 14+) | Windows | Linux |
 |---|---|---|---|
