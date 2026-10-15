@@ -1523,6 +1523,38 @@ Each is checked in the milestone that first depends on it; the result goes into 
   the Qwen3-ForcedAligner's output format (punctuation, units) and `mlx-qwen3-asr serve`'s
   stability; the real cue-timing quality of whisper.cpp tokens without DTW, against a
   hand-corrected episode; whether ffmpeg ≥6.0 is the right floor.
+
+  **M1 results so far (2026-10-15, during the build).** The items marked *pending* need Dan's
+  episodes, Plex and Jellyfin (the plan's Task 36 exit test).
+
+  - *ffmpeg.* Built and tested against ffmpeg 9.0.2 (Homebrew). An MKV made with
+    `-itsoffset 2.0` reports the audio stream's `start_time` as 2.000 and the video's as 0.000,
+    so vid2sub's timeline offset (§8.5) comes out at 2000 ms with no special handling. ffmpeg ≥6
+    already refuses to probe HLS under a non-standard extension ("Not detecting m3u8/hls with
+    non standard extension"); vid2sub's `-format_whitelist` also refuses a local `.m3u8`
+    ("Format not on whitelist"). `-fflags +bitexact` alone makes chunk FLAC bytes reproducible.
+    Whether 6.0 itself is the right floor: *pending* (CI's Ubuntu 24.04 runs ffmpeg 6.1).
+  - *whisper.cpp on the Spark* (behind llama-swap, through local-ai's tunnel). The opt-in live
+    test (`tests/test_live_spark.py`) passes: `verbose_json` parses into ordered, timed words.
+    Requests without `language` return `language_probabilities`, so detection works through the
+    Spark. An end-to-end `vid2sub run` on the 14 s public-domain fixture (detect → transcribe
+    → translate to Japanese with Gemma 4 → SRT and ASS) took 22 s. Cue timing without DTW
+    against a hand-corrected episode: *pending*.
+  - *Gemma 4 structured output.* The live test passes: with thinking off through
+    `chat_template_kwargs`, Gemma answers the per-batch JSON schema with the batch's own ids.
+    Japanese targets at 4 characters per second (§12) condense heavily: a 2 s cue allows about
+    8 characters ("to be here on this occasion" became "この日を迎え"). Revisit the Japanese
+    reading speed against real episodes.
+  - *Qwen3-ASR and its forced aligner on the Mac* (mlx-qwen3-asr's Session API, in-process).
+    On the same fixture it returned 36 word units, the last ending at 13.84 s. vid2sub attaches
+    the text's punctuation to the units either way, so whether the units carry punctuation
+    doesn't change the output. Speed: *pending*; timings taken while the machine was heavily
+    loaded (load average 15–37) ranged from 76 to 330 s per call, so re-time on an idle Mac.
+    `mlx-qwen3-asr serve` isn't used in M1 (vid2sub runs it in-process).
+  - *Plex and Jellyfin file codes* (`zh-CN`, `zh-TW`, `zh-HK`, `ja`, `en`): *pending*.
+  - *YouTube*: deno isn't installed on Dan's Mac, so downloads were tested only with a fake
+    `yt-dlp`. vid2sub passes `--js-runtimes deno:<path>`, documented in yt-dlp 2026.08.19:
+    *pending* a real download.
 - **M2:** the CSP that Shiny and shinyreact need (inline styles, `eval`); the 2026 browser codec
   matrix (Chrome HEVC depends on hardware; Firefox MKV arrived in late 2025).
 - **M3:** CUDA cuBLAS setup for faster-whisper on Windows.
