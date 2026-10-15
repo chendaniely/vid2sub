@@ -503,3 +503,91 @@ def test_a_download_neither_inherits_a_folder_language_nor_votes(tmp_path):
                                   ctx, result, is_url=True)
     assert lang == "ko" and detect_calls(engine)
     assert ctx.folder_votes[tmp_path] == ["ja", "ja"]
+
+
+# final review 1: model selection never silently falls back past an unreachable preferred model
+
+
+def gemma(available=True):
+    if available:
+        return Candidate("gemma", "gemma-4-26b-a4b", "endpoint", True)
+    return Candidate("gemma", "gemma-4-26b-a4b", "endpoint", False, "down", unreachable=True)
+
+
+def probes(*lists):
+    """detecting.candidates answering each list in turn, then the last one for ever."""
+    answers = [list(x) for x in lists]
+
+    def look(*args, **kwargs):
+        return list(answers.pop(0) if len(answers) > 1 else answers[0])
+    return look
+
+
+def recording_models(seen):
+    def make(model_name, *args, **kwargs):
+        seen.append(model_name)
+        return fake_make_ask()
+    return make
+
+
+def with_cloud_translator(ctx):
+    ctx.config.endpoints["openai"] = Endpoint(base_url="https://api.openai.com/v1",
+                                              key_env="OPENAI_API_KEY")
+    ctx.config.models["gpt"] = ModelEntry(catalog="openai-gpt", endpoint="openai",
+                                          model="gpt-test", task="translate")
+    return Candidate("gpt", "openai-gpt", "endpoint", True, cloud=True)
+
+
+def test_a_translation_model_unreachable_at_first_is_waited_for_and_used(clip, monkeypatch):
+    monkeypatch.setattr(detecting, "candidates", probes([gemma(False)], [gemma(False)],
+                                                        [gemma()]))
+    ctx = make_ctx(FakeEngine(), translate_model=None)
+    result = pipeline.run_one(str(clip), ctx)
+    assert result.status == "done", (result.reason, result.hint)
+    assert ctx.sleeps
+    assert "EN " in clip.with_name("Show - S01E01.en.srt").read_text(encoding="utf-8")
+
+
+def test_a_translation_model_that_stays_unreachable_pauses_the_run(clip, monkeypatch):
+    monkeypatch.setattr(detecting, "candidates", probes([gemma(False)]))
+    ctx = make_ctx(FakeEngine(), translate_model=None, wait_on_connection_s=10)
+    with pytest.raises(pipeline.Paused) as caught:
+        pipeline.run_one(str(clip), ctx)
+    assert caught.value.error.kind == "connection"
+
+
+def test_an_unreachable_spark_never_falls_back_to_the_cloud_even_when_allowed(clip, monkeypatch):
+    seen: list = []
+    monkeypatch.setattr(pipeline, "make_ask", recording_models(seen))
+    ctx = make_ctx(FakeEngine(), translate_model=None, allow_cloud=True, wait_on_connection_s=10)
+    cloud = with_cloud_translator(ctx)
+    monkeypatch.setattr(detecting, "candidates", probes([gemma(False), cloud]))
+    with pytest.raises(pipeline.Paused):
+        pipeline.run_one(str(clip), ctx)
+    assert ctx.sleeps
+    assert "gpt" not in seen
+    assert not clip.with_name("Show - S01E01.en.srt").exists()
+
+
+def test_an_unreachable_model_the_route_would_not_pick_causes_no_waiting(clip, monkeypatch):
+    lower = Candidate("local", "local-llm", "endpoint", False, "down", unreachable=True)
+    monkeypatch.setattr(detecting, "candidates", probes([gemma(), lower]))
+    ctx = make_ctx(FakeEngine(), translate_model=None)
+    result = pipeline.run_one(str(clip), ctx)
+    assert result.status == "done", (result.reason, result.hint)
+    assert ctx.sleeps == []
+
+
+def test_an_unreachable_spark_whisper_never_falls_back_to_cloud_transcription(clip,
+                                                                              monkeypatch):
+    spark = Candidate("fake", "whisper-large-v3-turbo", "endpoint", False, "down",
+                      unreachable=True)
+    cloud = Candidate("cloudwhisper", "openai-whisper-1", "endpoint", True, cloud=True)
+    monkeypatch.setattr(detecting, "candidates", probes([spark, cloud]))
+    engine = FakeEngine()
+    ctx = make_ctx(engine, model=None, allow_cloud=True, wait_on_connection_s=10)
+    ctx.engines["cloudwhisper"] = engine
+    with pytest.raises(pipeline.Paused):
+        pipeline.run_one(str(clip), ctx)
+    assert ctx.sleeps
+    assert not [c for c in engine.calls if c[0] == "transcribe"]

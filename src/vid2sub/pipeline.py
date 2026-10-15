@@ -16,7 +16,7 @@ import hashlib
 import tempfile
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -321,19 +321,29 @@ class _PatientDetector:
         return getattr(self._inner, name)
 
 
-def _candidates_that_work(ctx: RunContext, works: Callable[[list], bool]) -> list:
-    """The candidates, looked at again while servers that didn't answer might still come back.
+def _waits_for(cands: list, pick: Callable[[list], str | None]) -> bool:
+    """Whether the route's pick, were every server answering, is one that isn't answering now."""
+    hoped = pick([replace(c, available=True, reason="") if c.unreachable else c for c in cands])
+    return any(c.name == hoped and c.unreachable for c in cands)
 
-    A dropped tunnel mustn't read as "no model is available": it waits, then pauses (spec §17.3).
+
+def _candidates_that_work(ctx: RunContext, pick: Callable[[list], str | None]) -> list:
+    """The candidates, looked at again while the model the route prefers might still come back.
+
+    `pick` is the route: candidates in, the chosen model's name (or None) out. It is asked twice,
+    once as if every server answered and once with the real list; when the first answer is a
+    server that didn't answer, this waits and probes again, then pauses, rather than taking the
+    next model down the route or the cloud (spec §7.2, §17.3, §17.4; final review). A server the
+    route wouldn't pick anyway causes no waiting.
     """
     cands = ctx.get_candidates()
-    if works(cands) or not any(c.unreachable for c in cands):
+    if not _waits_for(cands, pick):
         return cands
 
     def look() -> list:
         fresh = detecting.candidates(ctx.config, ctx.keys)
         ctx.candidates = fresh
-        if not works(fresh) and any(c.unreachable for c in fresh):
+        if _waits_for(fresh, pick):
             raise EngineError("connection", "the model server isn't reachable",
                               hint="is it running? For the Spark: is `make tunnel` running?")
         return fresh
@@ -351,10 +361,10 @@ def _choose(video: Path, samples, speech, encode, ctx: RunContext, result: Input
             lang, meta = votes[0], {"inherited_from_folder": True}
             result.notes.append(f"used {lang} like the other videos in this folder")
         else:
-            cands = _candidates_that_work(
-                ctx, lambda c: detecting.choose_detector(c, allow_cloud=opts.allow_cloud)
-                is not None)
-            detector = detecting.choose_detector(cands, allow_cloud=opts.allow_cloud)
+            def detector_for(c: list) -> str | None:
+                return detecting.choose_detector(c, allow_cloud=opts.allow_cloud)
+
+            detector = detector_for(_candidates_that_work(ctx, detector_for))
             if detector is None:
                 raise InputError("no model is available to detect the language",
                                  "pass --from LANG, or check `vid2sub models`")
@@ -380,7 +390,7 @@ def _choose(video: Path, samples, speech, encode, ctx: RunContext, result: Input
         def suggestion(cands: list):
             return suggest(lang, cands, "transcribe", allow_cloud=opts.allow_cloud)
 
-        s = suggestion(_candidates_that_work(ctx, lambda c: suggestion(c).model is not None))
+        s = suggestion(_candidates_that_work(ctx, lambda c: suggestion(c).model))
         if s.model is None:
             raise InputError(f"no usable transcription model for {langs.get(lang).name}",
                              "; ".join(f"{n}: {r}" for n, r in s.considered)
@@ -510,7 +520,11 @@ def _transcribe(video: Path, p: Probe, header, sidecar: Sidecar | None, glossary
 def _translator(src_lang: str, ctx: RunContext) -> str:
     if ctx.options.translate_model:
         return ctx.options.translate_model
-    s = suggest(src_lang, ctx.get_candidates(), "translate", allow_cloud=ctx.options.allow_cloud)
+
+    def suggestion(cands: list):
+        return suggest(src_lang, cands, "translate", allow_cloud=ctx.options.allow_cloud)
+
+    s = suggestion(_candidates_that_work(ctx, lambda c: suggestion(c).model))
     if s.model is None:
         raise InputError("no usable translation model",
                          "; ".join(f"{n}: {r}" for n, r in s.considered)
@@ -637,17 +651,17 @@ def detect_one(source: str, ctx: RunContext) -> DetectReport:
             report.tracks = [f"{t.index}: {t.language or t.tag or '?'} {t.codec}"
                              f"{' (default)' if t.default else ''}" for t in p.audio]
             lang = opts.source_lang
-            cands = ctx.get_candidates()
             if lang is None:
                 track = pick_track(p, None, opts.audio_track)
                 wav = scratch / "audio.wav"
                 decode_to_wav(path, track, wav, ctx.tools, scratch=scratch,
                               duration_ms=p.duration_ms)
                 samples = read_wav(wav)
-                cands = _candidates_that_work(
-                    ctx, lambda c: detecting.choose_detector(c, allow_cloud=opts.allow_cloud)
-                    is not None)
-                detector = detecting.choose_detector(cands, allow_cloud=opts.allow_cloud)
+
+                def detector_for(c: list) -> str | None:
+                    return detecting.choose_detector(c, allow_cloud=opts.allow_cloud)
+
+                detector = detector_for(_candidates_that_work(ctx, detector_for))
                 if detector is None:
                     raise InputError("no model is available to detect the language",
                                      "check `vid2sub models`")
@@ -660,10 +674,12 @@ def detect_one(source: str, ctx: RunContext) -> DetectReport:
                 def suggestion(c: list, task: str) -> Suggestion:
                     return suggest(lang, c, task, allow_cloud=opts.allow_cloud)
 
-                cands = _candidates_that_work(
-                    ctx, lambda c: suggestion(c, "transcribe").model is not None)
-                report.transcribe = suggestion(cands, "transcribe")
-                report.translate = suggestion(cands, "translate")
+                def routed(task: str) -> Suggestion:
+                    return suggestion(_candidates_that_work(
+                        ctx, lambda c: suggestion(c, task).model), task)
+
+                report.transcribe = routed("transcribe")
+                report.translate = routed("translate")
         except (Paused, StopRun):
             raise
         except (EngineError, ToolMissing, InputError) as err:
