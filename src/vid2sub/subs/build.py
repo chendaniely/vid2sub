@@ -110,20 +110,34 @@ def _unaligned(seg: Segment, rules: CueRules, lang: str) -> list[_Draft]:
     cjk = _cjk(lang)
     tokens = list(text) if cjk else text.split(" ")
     joiner = "" if cjk else " "
-    pieces: list[str] = []
+    runs: list[list[str]] = []
     cur: list[str] = []
     for tok in tokens:
         candidate = cur + [tok]
         if cur and wrap(joiner.join(candidate), rules.max_width, rules.max_lines) is None:
-            pieces.append(joiner.join(cur))
+            runs.append(cur)
             cur = [tok]
         else:
             cur = candidate
     if cur:
-        pieces.append(joiner.join(cur))
-    pieces = [p.strip() for p in pieces if p.strip()]
-    total = sum(reading_chars(p) for p in pieces) or 1
+        runs.append(cur)
     span = max(seg.end_ms - seg.start_ms, 1)
+    total_chars = sum(reading_chars(joiner.join(r)) for r in runs) or 1
+
+    def too_long(run: list[str]) -> bool:
+        return span * reading_chars(joiner.join(run)) / total_chars > rules.max_ms
+
+    todo = runs
+    runs = []
+    while todo:
+        run = todo.pop(0)
+        if len(run) > 1 and too_long(run):
+            half = len(run) // 2
+            todo[:0] = [run[:half], run[half:]]
+        else:
+            runs.append(run)
+    pieces = [p.strip() for p in (joiner.join(r) for r in runs) if p.strip()]
+    total = sum(reading_chars(p) for p in pieces) or 1
     drafts: list[_Draft] = []
     t = seg.start_ms
     for i, piece in enumerate(pieces):
@@ -147,7 +161,9 @@ def _suspect(draft: _Draft, seg: Segment, words: Sequence[Word], lang: str,
     if (seg.no_speech_prob is not None and seg.avg_logprob is not None
             and seg.no_speech_prob > HALLUC_NO_SPEECH and seg.avg_logprob < HALLUC_LOGPROB):
         return True
-    if speech is not None and words:
+    if speech is not None:
+        if not words:
+            return not _in_speech((draft.start + draft.end) // 2, speech)
         outside = sum(1 for w in words if not _in_speech((w.start_ms + w.end_ms) // 2, speech))
         return outside * 2 > len(words)
     return False
@@ -169,14 +185,19 @@ def _fix_timing(drafts: list[_Draft], rules: CueRules) -> None:
             d.end = max(d.end, want if limit is None else min(want, limit))
         if d.end <= d.start:
             d.end = d.start + 1
+    for d in drafts:  # last: only ever shortens, so gaps only grow
+        d.end = min(d.end, d.start + rules.max_ms)
 
 
-def _untangle(drafts: list[_Draft]) -> None:
-    """Last resort for cues that start together: never let two overlap."""
+def _untangle(drafts: list[_Draft], rules: CueRules) -> None:
+    """Last resort for cues that start together: keep the minimum gap between neighbours."""
     for a, b in pairwise(drafts):
-        b.start = max(b.start, a.end)
-        if b.end <= b.start:
-            b.end = b.start + 1
+        if b.start < a.end + rules.min_gap_ms:
+            if b.start - rules.min_gap_ms > a.start:
+                a.end = b.start - rules.min_gap_ms
+            else:
+                b.start = a.end + rules.min_gap_ms
+        b.end = max(b.end, b.start + 1)
 
 
 def build_cues(transcript: Transcript, rules: CueRules, *,
@@ -188,7 +209,7 @@ def build_cues(transcript: Transcript, rules: CueRules, *,
     for seg in transcript.segments:
         if not seg.words:
             for d in _unaligned(seg, rules, lang):
-                if looks_hallucinated(d.text, lang):
+                if _suspect(d, seg, (), lang, speech):
                     d.flags.add("halluc")
                 drafts.append(d)
             continue
@@ -205,7 +226,7 @@ def build_cues(transcript: Transcript, rules: CueRules, *,
                 drafts.append(d)
     drafts = [d for d in drafts if d.text.strip()]
     _fix_timing(drafts, rules)
-    _untangle(drafts)
+    _untangle(drafts, rules)
     taken = set() if taken is None else taken
     return [Cue(id=new_cue_id(taken), start_ms=d.start, end_ms=d.end, text=d.text, w=d.w,
                 flags=tuple(sorted(d.flags))) for d in drafts]

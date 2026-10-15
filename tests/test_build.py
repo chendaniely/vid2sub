@@ -43,7 +43,7 @@ def test_a_long_run_of_speech_is_split_into_cues_that_fit():
     assert len(cues) > 3
     for c in cues:
         assert all(width(line) <= 42 for line in c.text.split("\n"))
-        assert c.end_ms - c.start_ms <= 7000 + 500
+        assert c.end_ms - c.start_ms <= 7000
 
 
 def test_japanese_words_join_without_spaces_and_wrap_within_26():
@@ -109,5 +109,40 @@ def test_any_word_sequence_gives_a_valid_track_that_covers_every_word_once(spec)
         t += dur
     cues = build_cues(transcript("en", seg(tuple(ws))), rules_for("en"))
     check_track(cues)
+    for c in cues:
+        assert c.end_ms - c.start_ms <= 7000
+    for a, b in zip(cues, cues[1:]):
+        assert b.start_ms - a.end_ms >= 84
     covered = sorted(i for c in cues if c.w for i in range(*c.w))
     assert covered == list(range(len(ws)))
+
+
+def test_a_sparse_unaligned_segment_is_split_into_cues_of_at_most_seven_seconds():
+    s = Segment(text="alpha bravo charlie delta echo foxtrot", start_ms=0, end_ms=30_000)
+    cues = build_cues(transcript("en", s), rules_for("en"))
+    check_track(cues)
+    assert len(cues) >= 5
+    assert all(c.end_ms - c.start_ms <= 7000 for c in cues)
+    assert all("est" in c.flags for c in cues)
+
+
+def test_an_unaligned_segment_with_a_high_compression_ratio_is_flagged():
+    s = Segment(text="Some perfectly ordinary words", start_ms=0, end_ms=4000,
+                compression_ratio=3.0)
+    cues = build_cues(transcript("en", s), rules_for("en"))
+    assert cues and all("halluc" in c.flags for c in cues)
+
+
+def test_an_unaligned_segment_outside_speech_is_flagged():
+    s = Segment(text="Some perfectly ordinary words", start_ms=50_000, end_ms=54_000)
+    cues = build_cues(transcript("en", s), rules_for("en"), speech=[(0, 10_000)])
+    assert cues and all("halluc" in c.flags for c in cues)
+
+
+def test_segments_whose_words_overlap_in_time_still_keep_the_minimum_gap():
+    a = words([" First", " part."], start=1000)
+    b = words([" Second", " part."], start=1020)
+    cues = build_cues(transcript("en", seg(a), seg(b)), rules_for("en"))
+    check_track(cues)
+    assert len(cues) == 2
+    assert cues[1].start_ms - cues[0].end_ms >= 84
