@@ -99,7 +99,7 @@ def test_cues_follow_an_audio_delay(tmp_path):
     pipeline.run_one(str(clip), make_ctx(FakeEngine()))
     side, _ = store.load(clip)
     _, cues = store.current_cues(side, "ja")
-    assert cues[0].start_ms >= 2000
+    assert 2000 <= cues[0].start_ms < 2000 + 1000  # the delay once, not twice
 
 
 def test_a_dropped_connection_waits_and_carries_on(clip):
