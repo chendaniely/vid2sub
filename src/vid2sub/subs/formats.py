@@ -50,6 +50,7 @@ def sha256_hex(data: bytes) -> str:
 
 
 def canonical_to_ass(text: str) -> str:
+    text = text.replace("{", "｛").replace("}", "｝").replace("\\", "＼")
     text = text.replace("<i>", r"{\i1}").replace("</i>", r"{\i0}")
     return text.replace("\n", r"\N")
 

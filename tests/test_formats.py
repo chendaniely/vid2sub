@@ -104,3 +104,9 @@ def test_text_with_braces_and_backslashes_round_trips_exactly(fmt, write):
 ])
 def test_imported_italics_stay_balanced(raw, expected):
     assert f.ass_to_canonical(raw) == expected
+
+
+def test_raw_braces_that_skipped_canonical_cant_reach_ass_as_tags():
+    data = f.to_ass([Cue(id="a", start_ms=0, end_ms=1000, text="{raw}")]).decode()
+    assert "{raw}" not in data
+    assert "｛raw｝" in data
