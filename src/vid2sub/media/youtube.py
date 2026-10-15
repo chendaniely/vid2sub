@@ -91,7 +91,8 @@ def _move_new(src: Path, dest: Path) -> None:
     """Move `src` to `dest` without ever replacing an existing file (spec §14, §15.3).
 
     A hard link refuses to overwrite, so it is the first choice. Across devices, or on a folder
-    without hard links, the bytes are copied to a temp file beside `dest` and linked from there.
+    without hard links, the bytes are copied to a temp file beside `dest` (with the source's
+    mode) and linked from there.
     """
     try:
         try:
@@ -114,6 +115,7 @@ def _copy_then_link(src: Path, dest: Path) -> None:
     try:
         with os.fdopen(fd, "wb") as out, src.open("rb") as inp:
             shutil.copyfileobj(inp, out)
+        shutil.copymode(src, tmp)  # the download's own mode, not mkstemp's 0o600
         try:
             os.link(tmp, dest)
         except FileExistsError:

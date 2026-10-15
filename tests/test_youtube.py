@@ -1,7 +1,9 @@
 import errno
 import json
 import os
+import stat
 import subprocess
+import sys
 
 import pytest
 
@@ -197,3 +199,23 @@ def test_a_real_video_downloads_as_audio(tmp_path):
     got = yt.download(os.environ["VID2SUB_LIVE_YOUTUBE_URL"], out_dir=tmp_path / "o",
                       scratch=tmp_path / "s", keep_video=False, tools=Tools.find())
     assert got.path.exists() and got.path.stat().st_size > 10_000
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+@pytest.mark.parametrize("link_error", [errno.EXDEV, errno.EPERM])
+def test_a_copied_download_keeps_the_source_files_mode(tmp_path, monkeypatch, link_error):
+    real_link = os.link
+    calls = []
+
+    def refuse_first(a, b, *args, **kwargs):
+        calls.append(a)
+        if len(calls) == 1 or link_error == errno.EPERM:
+            raise OSError(link_error, "no link")
+        return real_link(a, b, *args, **kwargs)
+    monkeypatch.setattr(yt.os, "link", refuse_first)
+    src = tmp_path / "src.m4a"
+    src.write_bytes(b"audio")
+    src.chmod(0o644)
+    dest = tmp_path / "dest.m4a"
+    yt._move_new(src, dest)
+    assert stat.S_IMODE(dest.stat().st_mode) == 0o644
