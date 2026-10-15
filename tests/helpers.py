@@ -2,7 +2,10 @@
 
 import shutil
 import subprocess
+import wave
 from pathlib import Path
+
+import numpy as np
 
 
 def make_clip(directory: Path, name: str = "clip.mkv", *, seconds: float = 4.0,
@@ -32,4 +35,24 @@ def make_clip(directory: Path, name: str = "clip.mkv", *, seconds: float = 4.0,
         args += ["-metadata", f"title={title}"]
     out = directory / name
     subprocess.run(args + [str(out)], check=True)
+    return out
+
+
+SPEECH = Path(__file__).parent / "fixtures" / "speech" / "jfk-14s.wav"
+
+
+def speech_with_gaps(directory: Path) -> Path:
+    """3 s silence, 8 s speech, 4 s silence, 6 s speech, 2 s silence (23 s, 16 kHz mono)."""
+    with wave.open(str(SPEECH), "rb") as w:
+        speech = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
+    rate = 16_000
+    silence = lambda s: np.zeros(int(s * rate), dtype="<i2")
+    audio = np.concatenate([silence(3), speech[: 8 * rate], silence(4),
+                            speech[8 * rate: 14 * rate], silence(2)])
+    out = directory / "gaps.wav"
+    with wave.open(str(out), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(audio.tobytes())
     return out
