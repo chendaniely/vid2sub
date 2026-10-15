@@ -11,6 +11,7 @@ the endpoint it was declared with; a typed key only to an endpoint that allows o
 from __future__ import annotations
 
 import logging
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -23,7 +24,7 @@ from pydantic import BaseModel
 
 from vid2sub.config import Config, Endpoint, ModelEntry, is_local
 from vid2sub.engines.base import EngineError
-from vid2sub.security import host_of, redact
+from vid2sub.security import host_of, key_transport_ok, redact
 
 QUIET = ("openai", "httpx", "httpcore", "chatlas")
 REFUSAL_CODES = {"loading", "no_fit", "held_by_brake", "gate_down"}  # local-ai Phase 3
@@ -65,6 +66,13 @@ def check_allowed(name: str, entry: ModelEntry, config: Config, policy: RunPolic
                           hint="add --allow-cloud to send audio or text to it")
 
 
+def _require_safe_transport(ep: Endpoint) -> None:
+    if not key_transport_ok(ep.base_url):
+        raise EngineError("auth", "vid2sub won't send a key over plain http except to this "
+                                  "machine or a Tailscale address",
+                          hint="use https for this endpoint")
+
+
 def _key(entry: ModelEntry, config: Config, keys: KeyRing) -> str:
     ep = config.endpoints[entry.endpoint]
     key = keys.key_for(entry.endpoint, ep)
@@ -73,6 +81,8 @@ def _key(entry: ModelEntry, config: Config, keys: KeyRing) -> str:
                           f"{ep.key_env} isn't set in the environment vid2sub started from",
                           hint=f"export {ep.key_env} in your shell (on Dan's Mac, ~/.secrets), "
                                "then start vid2sub again from that shell")
+    if key:
+        _require_safe_transport(ep)
     return key or "unused"
 
 
@@ -95,11 +105,17 @@ def _json(response: Any) -> Any:
         return None
 
 
-def _retry_after(response: Any) -> float | None:
+def _seconds(value: Any) -> float | None:
+    """A finite, non-negative number of seconds, or None for anything else."""
     try:
-        return float(response.headers.get("retry-after"))
+        seconds = float(value)
     except (TypeError, ValueError):
         return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
+
+
+def _retry_after(response: Any) -> float | None:
+    return _seconds(response.headers.get("retry-after"))
 
 
 def map_error(err: Exception, *, key_env: str | None, secrets: list[str]) -> EngineError:
@@ -121,10 +137,9 @@ def map_error(err: Exception, *, key_env: str | None, secrets: list[str]) -> Eng
         error = body.get("error") if isinstance(body, dict) else None
         code = error.get("code") if isinstance(error, dict) else None
         if code in REFUSAL_CODES:
-            retry = error.get("retry_after_s")
             return EngineError("refused", f"the Spark refused the request: {code}",
                                hint="local-ai's `make status` says why",
-                               retry_after=float(retry) if retry else None)
+                               retry_after=_seconds(error.get("retry_after_s")))
         if 300 <= status < 400:
             return EngineError("bad_response",
                                f"the server redirected ({status}); vid2sub never follows a "
@@ -133,8 +148,9 @@ def map_error(err: Exception, *, key_env: str | None, secrets: list[str]) -> Eng
             return EngineError("too_large", "the chunk was too large for this server (413)",
                                hint="this server's upload limit is below vid2sub's chunk size")
         if status == 429:
+            retry = _retry_after(err.response)
             return EngineError("refused", "the server is busy (429)",
-                               retry_after=_retry_after(err.response) or 30.0)
+                               retry_after=retry if retry is not None else 30.0)
         if status >= 500:
             return EngineError("server", f"the server failed ({status})",
                                hint="vid2sub retries twice")
@@ -154,12 +170,16 @@ def call_transcription(client: openai.OpenAI, *, key_env: str | None, secrets: l
         data = response.json()
     except ValueError:
         raise EngineError("bad_response", "the server's answer wasn't JSON") from None
+    if not isinstance(data, dict):
+        raise EngineError("bad_response", "the server's answer wasn't a JSON object")
     return data, response.headers
 
 
 def list_models(endpoint_name: str, endpoint: Endpoint, keys: KeyRing, *,
                 timeout: float = 5.0) -> list[str]:
     key = keys.key_for(endpoint_name, endpoint)
+    if key:
+        _require_safe_transport(endpoint)
     client = openai.OpenAI(api_key=key or "unused", base_url=endpoint.base_url,
                            http_client=_http(timeout), max_retries=0)
     try:

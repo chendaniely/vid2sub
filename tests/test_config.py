@@ -54,6 +54,13 @@ def test_a_key_over_plain_http_to_the_lan_is_refused(tmp_path):
         c.load_config(write(tmp_path, text))
 
 
+def test_a_typed_key_over_plain_http_to_the_lan_is_refused(tmp_path):
+    text = ('[endpoints.lan]\nbase_url = "http://192.168.1.50:9100/v1"\n'
+            'allow_typed_key = true\n')
+    with pytest.raises(c.ConfigError, match="https"):
+        c.load_config(write(tmp_path, text))
+
+
 def test_a_model_needs_exactly_one_of_endpoint_or_engine(tmp_path):
     with pytest.raises(c.ConfigError, match="exactly one"):
         c.load_config(write(tmp_path, '[models.m]\nmodel = "x"\n'))

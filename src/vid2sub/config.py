@@ -129,7 +129,7 @@ def _validate(config: Config) -> Config:
         if ep.key_env is not None and not ENV_NAME.fullmatch(ep.key_env):
             raise ConfigError(f"endpoints.{label}.key_env must be an environment variable name "
                               "like SPARK_API_KEY, never a key")
-        if ep.key_env and not key_transport_ok(ep.base_url):
+        if (ep.key_env or ep.allow_typed_key) and not key_transport_ok(ep.base_url):
             raise ConfigError(f"endpoints.{label}: a key goes over plain http only to this "
                               "machine or a Tailscale address; use https")
     for name, m in config.models.items():
