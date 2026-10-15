@@ -591,3 +591,38 @@ def test_an_unreachable_spark_whisper_never_falls_back_to_cloud_transcription(cl
         pipeline.run_one(str(clip), ctx)
     assert ctx.sleeps
     assert not [c for c in engine.calls if c[0] == "transcribe"]
+
+
+# final review 4: --dry-run never downloads
+
+LINK = "https://youtu.be/dQw4w9WgXcQ"
+
+
+@pytest.fixture
+def no_download(monkeypatch):
+    def download(*args, **kwargs):
+        pytest.fail("a dry run downloaded a video")
+    monkeypatch.setattr(pipeline.youtube, "download", download)
+
+
+def test_a_dry_run_of_a_link_never_downloads_and_plans_by_the_video_id(tmp_path, no_download):
+    ctx = make_ctx(FakeEngine(), dry_run=True)
+    ctx.config.defaults.youtube_dir = str(tmp_path / "yt")
+    result = pipeline.run_one(LINK, ctx)
+    assert result.status == "planned", (result.reason, result.hint)
+    assert "dQw4w9WgXcQ" in result.plan["download"]
+    assert result.title == ""
+    assert not (tmp_path / "yt").exists()
+
+
+def test_a_dry_run_of_a_link_already_downloaded_plans_against_that_file(tmp_path, no_download):
+    yt = tmp_path / "yt"
+    yt.mkdir()
+    make_clip(yt, "Never Gonna [dQw4w9WgXcQ].mkv", seconds=14, speech=SPEECH)
+    ctx = make_ctx(FakeEngine(), dry_run=True)
+    ctx.config.defaults.youtube_dir = str(yt)
+    result = pipeline.run_one(LINK, ctx)
+    assert result.status == "planned", (result.reason, result.hint)
+    assert "download" not in result.plan
+    assert result.plan["files"] == ["Never Gonna [dQw4w9WgXcQ].en.srt"]
+    assert not store.sidecar_path(yt / "Never Gonna [dQw4w9WgXcQ].mkv").exists()

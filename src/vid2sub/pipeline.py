@@ -7,7 +7,8 @@ offset, build cues, convert the Chinese script → translate each target (only w
 → write the files → record the full hash. Connection errors and Spark refusals wait with backoff
 up to a limit, then raise Paused so the CLI exits 75 and a re-run resumes; finished chunks are
 cached for the life of the process. Any other error fails only this input, with the fix. Events
-carry stages and counts, never titles or paths (spec §6.8).
+carry stages and counts, never titles or paths (spec §6.8). A dry run writes and downloads
+nothing: a link not downloaded yet is planned by its video id (final review).
 """
 
 from __future__ import annotations
@@ -204,9 +205,24 @@ def _fail(result: InputResult, reason: str, hint: str = "", kind: str = "") -> N
     result.status, result.reason, result.hint, result.kind = "failed", reason, hint, kind
 
 
+def _planned_source(opts: RunOptions, src_track: str | None = None) -> str:
+    if src_track:
+        return src_track
+    return naming.source_track(opts.source_lang, opts.script) if opts.source_lang else "detect"
+
+
 def _run(source: str, ctx: RunContext, scratch: Path, result: InputResult) -> None:
     opts = ctx.options
     video = _resolve(source, ctx, scratch, result)
+    if video is None:  # a dry run of a link not downloaded yet: named by its id, never a title
+        result.status = "planned"
+        result.plan = {
+            "download": f"YouTube video {youtube.video_id(source)} (not downloaded yet)",
+            "source": _planned_source(opts),
+            "transcribe": opts.model or "suggested",
+            "targets": [naming.target_track(t) for t in opts.targets],
+        }
+        return
     is_url = youtube.is_url(source)
     ctx.events("stage", {"stage": "probe"})
     p = probe(video, ctx.tools, scratch=scratch)
@@ -223,8 +239,7 @@ def _run(source: str, ctx: RunContext, scratch: Path, result: InputResult) -> No
     if opts.dry_run:
         result.status = "planned"
         result.plan = {
-            "source": src_track or (naming.source_track(opts.source_lang, opts.script)
-                                    if opts.source_lang else "detect"),
+            "source": _planned_source(opts, src_track),
             "transcribe": "reuse the sidecar" if src_track else (opts.model or "suggested"),
             "targets": targets,
             "files": [store.subtitle_path(video, t, f).name
@@ -255,11 +270,17 @@ def _run(source: str, ctx: RunContext, scratch: Path, result: InputResult) -> No
     result.status = "done"
 
 
-def _resolve(source: str, ctx: RunContext, scratch: Path, result: InputResult) -> Path:
+def _resolve(source: str, ctx: RunContext, scratch: Path, result: InputResult) -> Path | None:
+    """The video to work on; None only for a dry run of a link that isn't downloaded yet."""
     if youtube.is_url(source):
         configured = ctx.config.defaults.youtube_dir
         out_dir = (Path(configured).expanduser() if configured
                    else Path(platformdirs.user_videos_dir()) / "vid2sub")
+        if ctx.options.dry_run:  # a dry run never downloads (final review)
+            found = youtube.find_existing(out_dir, youtube.video_id(source))
+            if found is not None:
+                result.title = found.stem.rsplit(" [", 1)[0]
+            return found
         ctx.events("stage", {"stage": "download"})
         fetched = youtube.download(source, out_dir=out_dir, scratch=scratch,
                                    keep_video=ctx.options.keep_video, tools=ctx.tools)
