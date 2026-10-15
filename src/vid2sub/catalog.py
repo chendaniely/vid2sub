@@ -101,7 +101,7 @@ TRANSCRIBE_ROUTES: dict[str, tuple[str, ...]] = {
            "openai-whisper-1"),
     "ko": ("whisper-large-v3", "qwen3-asr-1.7b", "whisper-large-v3-turbo", "openai-whisper-1"),
 }
-TRANSLATE_ROUTE: tuple[str, ...] = ("gemma-4-26b-a4b", "local-llm", "qwen3.8-27b", "openai-gpt")
+TRANSLATE_ROUTE: tuple[str, ...] = ("gemma-4-26b-a4b", "local-llm", "openai-gpt")
 WEAK: frozenset[tuple[str, str]] = frozenset({
     ("yue", "whisper-large-v3"), ("yue", "whisper-large-v3-turbo"),
     ("zh", "whisper-large-v3-turbo"),
@@ -128,9 +128,19 @@ class Suggestion:
 
 def suggest(lang: str, candidates: Sequence[Candidate], task: str, *,
             allow_cloud: bool) -> Suggestion:
-    route = (TRANSCRIBE_ROUTES.get(lang, TRANSCRIBE_ROUTES["en"]) if task == "transcribe"
-             else TRANSLATE_ROUTE)
+    if task == "transcribe":
+        route = TRANSCRIBE_ROUTES.get(lang, TRANSCRIBE_ROUTES["en"])
+    elif task == "translate":
+        route = TRANSLATE_ROUTE
+    else:
+        raise ValueError(f"unknown task {task!r}; known: transcribe, translate")
+    no_route = ""
+    if task == "transcribe" and lang not in TRANSCRIBE_ROUTES:
+        no_route = f"no route for {lang}; using the English route"
     considered: list[tuple[str, str]] = []
+    off_route = tuple(
+        (o.name, f"not in the {task} route for {lang}; choose it with --model")
+        for o in candidates if o.catalog not in route)
     for cid in route:
         matches = sorted((c for c in candidates if c.catalog == cid),
                          key=lambda c: 0 if c.kind == "endpoint" else 1)
@@ -138,18 +148,25 @@ def suggest(lang: str, candidates: Sequence[Candidate], task: str, *,
             if not c.available:
                 considered.append((c.name, c.reason))
                 continue
-            if c.cloud and not allow_cloud:
+            if (c.cloud or CATALOG[cid].cloud) and not allow_cloud:
                 considered.append((c.name, "a cloud model: needs --allow-cloud"))
                 continue
-            warning = ""
+            notes = []
+            if no_route:
+                notes.append(no_route)
             if (lang, cid) in WEAK and lang in langs.LANGS:
-                warning = f"{CATALOG[cid].title} is weak on {langs.get(lang).name}"
-            return Suggestion(c.name, cid, warning, tuple(considered))
-    return Suggestion(None, None, "no usable model", tuple(considered))
+                notes.append(f"{CATALOG[cid].title} is weak on {langs.get(lang).name}")
+            return Suggestion(c.name, cid, "; ".join(notes), tuple(considered) + off_route)
+    return Suggestion(None, None, "no usable model", tuple(considered) + off_route)
+
+
+def _cell(text: str) -> str:
+    return text.replace("|", "\\|").replace("\n", " ")
 
 
 def readme_table() -> str:
     rows = ["| Model | Task | Good for | Weak spots | Runs on |", "|---|---|---|---|---|"]
     for e in CATALOG.values():
-        rows.append(f"| {e.title} | {e.task} | {e.good_for} | {e.weak or '—'} | {e.runs_on} |")
+        cells = (e.title, e.task, e.good_for, e.weak or "—", e.runs_on)
+        rows.append("| " + " | ".join(_cell(c) for c in cells) + " |")
     return "\n".join(rows) + "\n"
