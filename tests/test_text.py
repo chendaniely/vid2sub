@@ -37,9 +37,13 @@ def test_japanese_wraps_between_characters_without_breaking_kinsoku():
 
 
 def test_a_latin_word_inside_cjk_text_is_never_split():
-    lines = t.wrap("我哋聽日一齊去 shopping 啦，好唔好呀？我哋去旺角", 26)
+    text = "我哋聽日一齊去 shopping 啦，好唔好呀？"
+    lines = t.wrap(text, 26)
     assert lines is not None
+    assert len(lines) == 2
     assert not any(line.endswith("shop") or line.startswith("ping") for line in lines)
+    assert any("shopping" in line for line in lines)
+    assert "".join(lines).replace(" ", "") == text.replace(" ", "")
 
 
 def test_text_that_cannot_fit_in_two_lines_returns_none():
