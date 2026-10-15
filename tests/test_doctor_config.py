@@ -58,3 +58,19 @@ def test_doctor_accepts_an_ffmpeg_whose_version_cannot_be_read(tmp_path):
     assert ffmpeg.ok
     assert ffmpeg.detail == "unknown version"
     assert ffmpeg.essential
+
+
+def doctor_lines(capsys, tmp_path):
+    main(["doctor", "--config", str(tmp_path / "none.toml"), "--offline"])
+    return {line.split(":")[0][2:]: line for line in capsys.readouterr().out.splitlines()}
+
+
+def test_a_passing_check_shows_no_fix_and_a_failing_one_does(tmp_path, monkeypatch, capsys):
+    lines = doctor_lines(capsys, tmp_path)
+    assert lines["python"].startswith("✓") and "→" not in lines["python"]
+    assert "Python 3.12 or later" not in lines["python"]
+    assert "config init" in lines["vid2sub.toml"]  # advice for a passing check stays
+    monkeypatch.setattr(doctor.Tools, "find", classmethod(
+        lambda cls: Tools(ffmpeg=None, ffprobe=None, deno=None)))
+    lines = doctor_lines(capsys, tmp_path)
+    assert lines["ffmpeg"].startswith("✗") and "→ install ffmpeg 6 or later" in lines["ffmpeg"]

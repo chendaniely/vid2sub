@@ -2,7 +2,9 @@
 
 Python, ffmpeg and ffprobe are essential; deno (YouTube), yt-dlp's age and the Mac extra are
 warnings. Endpoints serving local models are asked for their model list (not with --offline);
-cloud endpoints are never contacted. Keys are reported by presence only, never their values.
+cloud endpoints are never contacted. Keys are reported by presence only, never their values. A
+check's hint is its fix, shown only when it fails; a note is advice shown either way (final
+review: a passing Python printed "needs Python 3.12 or later").
 """
 
 from __future__ import annotations
@@ -28,8 +30,9 @@ class Check:
     name: str
     ok: bool
     detail: str
-    hint: str = ""
+    hint: str = ""  # the fix: shown only when the check fails
     essential: bool = True
+    note: str = ""  # advice: shown whether or not it passes
 
 
 def add_parser(sub) -> None:
@@ -48,7 +51,7 @@ def _tool(tools: Tools, name: str, minimum: tuple[int, ...], essential: bool, hi
     if found is None:  # a build whose version isn't major.minor (git builds): not an error
         soft = (f"couldn't read its version; vid2sub needs {name} "
                 f"{'.'.join(map(str, minimum))} or later")
-        return Check(name, True, "unknown version", soft, essential)
+        return Check(name, True, "unknown version", essential=essential, note=soft)
     ok = found >= minimum
     return Check(name, ok, ".".join(map(str, found)), "" if ok else hint, essential)
 
@@ -92,8 +95,8 @@ def checks(config_arg: str | None, environ: Mapping[str, str] = os.environ,
                          "`vid2sub config init`"))
         return out, False
     out.append(Check("vid2sub.toml", True, "found" if path.exists() else "not found: defaults",
-                     "" if path.exists() else "`vid2sub config init` prints a starter",
-                     essential=False))
+                     essential=False,
+                     note="" if path.exists() else "`vid2sub config init` prints a starter"))
     out += _endpoints(config, environ, offline)
     return out, True
 
@@ -131,7 +134,8 @@ def run(args: argparse.Namespace) -> int:
         if out.json:
             continue
         mark = "✓" if c.ok else ("✗" if c.essential else "!")
-        out.say(f"{mark} {c.name}: {c.detail}" + (f" → {c.hint}" if c.hint else ""))
+        out.say(f"{mark} {c.name}: {c.detail}" + (f" ({c.note})" if c.note else "")
+                + (f" → {c.hint}" if c.hint and not c.ok else ""))
     if not config_ok:
         return exitcodes.CONFIG
     if any(c.essential and not c.ok for c in results):
