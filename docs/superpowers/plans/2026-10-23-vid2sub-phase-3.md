@@ -1874,9 +1874,10 @@ Co-Authored-By: <the model's own line>
     `apply_to_all`, `set_allow_cloud` and `problems` on the loop (pure, fast); `start` with the
     runtime's `Queue` and its job `RunContext`, `Runtime.job_context` (the one Phase 2 Task
     19's `runtime.job_runner(ctx, session)` wraps `run_one` with; in the demo it is the canned
-    context, and its runner runs only the demo's own clip; Pages offers no Review). The view of a row is Task 4's (never `path`; `detection.votes`,
-    `detection.confidence`, `warning`, `hint`, `inherited`, `ask_zh_yue`); the box is drawn
-    from `Review.allow_cloud` and never from settings.
+    context, and its runner runs only the demo's own clip; Pages offers no Review). The view of
+    a row is Task 4's (never `path`; `detection.votes`, `detection.confidence`, `warning`,
+    `hint`, `inherited`, `ask_zh_yue`); the box is drawn from `Review.allow_cloud` and never
+    from settings.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: Write the failing test,** `tests/test_review.py`:
