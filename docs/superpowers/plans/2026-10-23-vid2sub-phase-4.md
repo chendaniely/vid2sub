@@ -33,6 +33,18 @@ listings are run and revised at its phase start.)
    the install from the index (S47 live, S51, S52) run after the merge, as the phase end's step
    9. Their results go out in a short PR from `phase-4-live`, which also carries the status
    line's `merged` entry, since no Phase 5 start follows to carry it.
+2. **`pages.yml` runs when `release.yml` succeeds, not on `release: published`.** A release that
+   `release.yml` creates with `GITHUB_TOKEN` starts no other workflow (GitHub's docs: "events
+   triggered by the `GITHUB_TOKEN`, with the exception of `workflow_dispatch` and
+   `repository_dispatch`, will not create a new workflow run"). As specced, then, the index
+   would never list a new release (S52). So `pages.yml` triggers on
+   `workflow_run: {workflows: [release], types: [completed]}` and deploys only when that run
+   succeeded, was a tag push in this repository, and built from main's own files. The run's ref
+   is `main`, so the `github-pages` environment needs no tag rule, and `release.yml` keeps only
+   the three write permissions its publish job needs (Task 7, Task 8; found while writing Task
+   8). The other ways each cost more: `release.yml` dispatching `pages.yml` needs
+   `actions: write`, and a GitHub App or personal token is a secret. **This changes the spec**
+   (§23.3's triggers), so it waits for Dan's yes at approval.
 
 ## Global Constraints
 
@@ -134,12 +146,14 @@ plus:
 **Tier:** 1 · **Scenarios:** S50, S51
 
 **Interfaces:**
-- Consumes: spec §23.3's triggers, `release: published` among them. A release-triggered run
-  deploys from the tag's ref, and the `github-pages` environment Pages makes may allow only the
-  default branch to deploy. Check GitHub's docs on environments' deployment branches and tags;
-  if a tag is refused, the task says so, and Dan's settings checklist gains "allow `v*` tags
-  on the `github-pages` environment", which the phase end's step 9b names (repo settings are
-  Dan's).
+- Consumes: spec §23.3's triggers, with Decision 2's `workflow_run` in place of
+  `release: published`. Task 8's `release.yml` is named `release` and runs on `v*` tag pushes
+  only. `workflow_run` fires for any completed run of a workflow by that name, a fork's pull
+  request included, so the deploy job runs only when `github.event.workflow_run.conclusion` is
+  `success`, its `event` is `push`, and its `head_repository.full_name` is
+  `github.repository`. It checks out `main`, never the triggering run's `head_sha`. The Tier 1
+  review checks each condition, with a test over the workflow file. Read GitHub's docs on
+  `workflow_run` and on environments' deployment branches, and say in the commit what you read.
 
 <!-- steps: written in the next pass -->
 
@@ -347,11 +361,9 @@ fi
     11's Step 3 on the live site, without the re-read part (S47).
   - [ ] **9b. [Dan] The first release:** on `main`'s merge commit, tag the version that Task 8's
     check accepts (the tag must match the package's version), and push the tag:
-    `git tag -a v<version> -m "vid2sub <version>"`, then `git push origin v<version>`. If Task 7
-    found that the `github-pages` environment refuses a tag's deploy, allow `v*` tags there
-    first (Settings → Environments → github-pages).
-  - [ ] **9c. The release and the index (S52):** `release.yml` and the release-triggered
-    `pages.yml` run are green; then the read-only checks:
+    `git tag -a v<version> -m "vid2sub <version>"`, then `git push origin v<version>`.
+  - [ ] **9c. The release and the index (S52):** `release.yml` and the `pages.yml` run its
+    success starts (Decision 2) are green; then the read-only checks:
 
 ```bash
 gh release view "v<version>" --json assets --jq '.assets[].name'
