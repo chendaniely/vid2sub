@@ -91,6 +91,31 @@ listings are run and revised at its phase start.)
 15. **`make pages-serve` sends `Cache-Control: max-age=600`** on every response (Task 2), as
     GitHub Pages is widely reported to; GitHub's docs don't say, so Task 11 checks it on the live
     site.
+16. **The demo's clip is committed in `demo/`** (Task 5), so neither the Pages build nor
+    `vid2sub serve --demo` runs ffmpeg to make it; `serve --demo` still checks for ffmpeg and
+    ffprobe first, since its editor probes the clip. `web.demo.prepare` keeps its unused `tools`
+    argument for its callers. Until Dan chooses the non-English clip §21 asks for (Task 5, Step
+    1), the stand-in is Phase 2's JFK clip, English with a Japanese translation; keeping it would
+    reword §21, so that waits on his answer there.
+17. **CI caches only Shinylive's tarball,** keyed by `scripts/shinylive_local.py`'s hash, and
+    checks its SHA-256 before every unpack (Task 7). `shinylive_local.assets()` now keeps the
+    tarball (Task 2 deleted it), so locally it stays beside the unpacked folder (435 MB). uv's
+    cache is off in `pages.yml`.
+18. **Pages deploys go out in the order their runs started,** one ref at a time and none
+    cancelled; `_site/` is checked for links before the upload; the deploy job's 15-minute
+    timeout outlasts deploy-pages' own 10 (Task 7).
+19. **The `github-pages` environment's rule, `main` only, is the real deploy gate** (Task 7): a
+    run on another branch runs that branch's copy of `pages.yml`, so only the environment, Dan's
+    setting at Task 7's Step 14, stops it deploying.
+20. **The index links each wheel by repository, tag and name, with GitHub's own digest** (Task 9),
+    never a URL from the listing. Only wheels are listed; drafts, tags that aren't `v` and a
+    version, releases with no wheel, wheels named for another version, and assets with no
+    `sha256:` digest or not yet uploaded are left out (Review Focus 5).
+21. **The smoke job runs after the deploy, only once a wheel is indexed** (Task 9), with no
+    permissions and no checkout, on Ubuntu, macOS and Windows; macOS installs the `[mac]` extra;
+    it waits up to 3 minutes for the live index to list the newest wheel.
+22. **No `release.yml` step may carry `if:` or `continue-on-error`, and it is the only workflow
+    named `release`** (Task 8, round 8e), since `pages.yml` follows every workflow by that name.
 
 ## Global Constraints
 
@@ -8434,16 +8459,773 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 3 · **Scenarios:** S50 · Step 1 is **[Dan]**: choosing the public-domain clip
 
-**Interfaces:**
-- Consumes: Task 2's `build_pages.demo_folder()`, which makes `demo/` with `web.demo.prepare`
-  (Phase 2's JFK clip muxed by ffmpeg, so `make pages` needs ffmpeg until this task); once the
-  clip is committed, `demo/` is copied instead, and its sidecar's header names the clip. The tests
-  that name `jfk.mp4`, `DEMO_EN` or the Japanese line, and `EXEMPT`'s `demo/jfk.mp4`, change with
-  the clip; `tests/pages/test_pages_files.py` uses `prepare`'s VP9 and Opus episode as a
-  person's folder and needs a video Chromium plays. The demo opens from the app bundle, plays
-  from `../demo/<name>`, and its Save downloads (Task 3).
+Spec §21 and S50: "a public-domain clip (non-English, so translation shows) with a canned sidecar
+and subtitles, credited in `demo/CREDITS.md`. Only `demo/` is exported." Until this task `demo/`
+holds no video: `web.demo.prepare` muxes the JFK speech under a still picture with ffmpeg, so
+`make pages` needs ffmpeg (Task 2).
 
-<!-- steps: written in the next pass -->
+**Why it is built this way** (read 2026-10-24):
+- **The clip is committed, and both demos copy `demo/` as it is.** The Pages build exports
+  `demo/` (`build_pages.demo_folder()` returns it), and `vid2sub serve --demo` serves a fresh copy
+  of it; neither runs ffmpeg to make the demo. `serve --demo` still checks for ffmpeg and ffprobe
+  before it starts, since its editor probes the clip and its jobs decode it.
+- **Round 5a is clip-independent, and is built here with a stand-in:** Phase 2's own demo video,
+  `demo/jfk.mp4` (the public-domain JFK speech, `tests/fixtures/speech/jfk-14s.wav`, under a still
+  picture, VP9 and Opus), made once with Phase 2's mux command and committed. ffmpeg 9.0.2 with
+  `+bitexact` makes the very bytes the canned sidecar was made for (79,186 bytes, quick hash
+  `39380204…`), so the sidecar and subtitles stay as they are; another ffmpeg may make other
+  bytes, and then `make demo-sidecar` remakes them for the committed clip. It is English with a
+  Japanese translation, so spec §21's "non-English" waits on Dan's clip (Step 1).
+- **Round 5b swaps in Dan's clip** (Step 1's answer A). It couldn't be built ahead of the clip:
+  its commands are exact, but the clip's words, its translation, its name and its language come
+  from Dan's file, so its expected lines are the shapes to look for. Its canned words and
+  translation come from a real `vid2sub run` on Dan's own engine, printed into `web/demo.py` by
+  a script that reproduces Phase 2's `WORDS` and `JAPANESE` exactly from `demo/jfk.vid2sub.jsonl`
+  (checked while writing this listing).
+- **What `demo/` holds is pinned:** the clip, its sidecar, the subtitle files the sidecar projects
+  and `CREDITS.md`, nothing else, since all of it goes to the public site.
+- **Playwright's Chromium plays no H.264 or AAC**, so the clip is VP9 and Opus in an MP4, as Phase
+2's
+  demo is (Phase 2 Decision 6); `tests/pages/test_pages_files.py` uses a copy of it as a person's
+  folder and needs a video Chromium plays.
+
+**Files:**
+- Create: `demo/jfk.mp4` (the stand-in; Round 5b replaces it with Dan's), `tests/test_demo_clip.py`
+- Modify: `src/vid2sub/web/demo.py` (`prepare`; `mux` and `CLIP` go),
+`src/vid2sub/commands/serve.py`
+  (`_demo`), `scripts/build_pages.py` (`demo_folder`, its docstring), `scripts/demo_sidecar.py`,
+  `demo/CREDITS.md`, `Makefile` (`pages`' help), `README.md`, `tests/README.md`,
+  `.github/workflows/ci.yml` (the e2e job's ffmpeg comment), and comments in
+  `tests/pages/test_pages_files.py`, `tests/pages/test_pages_site.py` and
+  `tests/test_browser_backend.py`
+- Round 5b (Step 1's answer A only): `demo/` (the clip, its sidecar and subtitles, `CREDITS.md`),
+  `src/vid2sub/web/demo.py`, `scripts/demo_sidecar.py`, and the tests that name the stand-in
+- Modify at the close: this plan; the spec (S50; §21 with answer B)
+
+**Interfaces:**
+- Consumes: Task 2's `build_pages.demo_folder()` and `assemble(app, demo, video, …)` (the app
+  bundles `demo/` without its video; `_site/demo/<video>` is the site's copy); `web.demo.prepare`,
+  `VIDEO`, `DEMO`, `WORDS`, `JAPANESE`, `CannedEngine`, `canned_ask`; `scripts/demo_sidecar.py`
+  (`make demo-sidecar`); Task 3's demo Save, which downloads.
+- Produces:
+  - `demo/` holds exactly the clip (`demo.VIDEO`), its sidecar, the subtitle files it projects and
+    `CREDITS.md`; the sidecar's header and identity record name the committed clip.
+  - `web.demo.prepare(tools: Tools | None = None) -> Path`: a fresh copy of `demo/` in a new
+    private temporary folder, removed at exit; nothing runs, and `tools` is unused (kept for the
+    callers that pass it, Phase 3's `demo.prepare(tools)` among them). `web.demo.mux` and
+    `web.demo.CLIP` are gone.
+  - `build_pages.demo_folder() -> (demo.DEMO, demo.VIDEO)`: `make pages` needs no ffmpeg.
+  - `serve._demo()` raises `CommandError(UNAVAILABLE, "the demo needs ffmpeg", …)` without ffmpeg
+    or ffprobe, before the copy; its "ffmpeg couldn't make the demo's video" refusal is gone.
+  - For Task 7: `make pages` needs no ffmpeg, but `make pages-test` does
+    (`tests/pages/test_pages_files.py` is a `media` test: `LocalBackend.open` probes the episode).
+  - For Task 11's Step 5: the demo is Step 1's clip.
+
+The `make check` counts below come from a clone of the finished Phase 2 with this phase's Tasks 1
+to 4; yours are higher once Phase 3 is in. What matters is no failure, ruff's `All checks passed!`
+and gitleaks' `no leaks found`; the new tests' own counts are exact. Each `diff` block applies
+with `git apply` from the repository's root (save it to a file first).
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: [Dan] Choose the demo's clip.** Set **Now** to `waiting on Dan: Task 5, Step 1`
+  in a wip commit (`chore(plan): 🤖 wip Task 5: waiting on Dan for the demo's clip`; `Done so
+  far:` none, `Stopped at:` Step 1, `Tests:` `make check` green at the base), then ask, by
+  *Asking Dan* (one question), with the self-review line first: *checked against spec §21 and S50
+  ("non-English, so translation shows"), Dan's languages (§2.2: Cantonese, Mandarin, Japanese),
+  the cost (Round 5b, which waits on the clip) and what could go wrong (a clip whose licence isn't
+  public domain or CC0; one with music or other voices under the speech; one Playwright's
+  Chromium can't play, which Step 9's conversion settles).*
+
+  Scenario: the Pages demo (S50) and `vid2sub serve --demo` show a short public-domain clip with
+  its canned sidecar, subtitles and a translation. This listing was built with a stand-in,
+  Phase 2's JFK clip: English, with a Japanese translation. What do you expect?
+  - **A. (Recommended)** A non-English clip you choose, with English subtitles, as spec §21 says.
+    You hand over the file and its credit line; Round 5a commits the stand-in, then Round 5b
+    swaps your clip in.
+  - **B.** Keep the JFK clip: its Japanese shows the translation. Round 5b is skipped, and spec
+    §21's "(non-English, so translation shows)" becomes "(here English, with a Japanese
+    translation, so translation shows)", recorded on the Q&A page with your reason.
+  - **C.** Ship Phase 4 with the JFK clip and choose a non-English one later: Round 5b moves to
+    the spec's Later table as a new row, and §21 is reworded as in B until then.
+
+  For **A**, Dan hands over, and the implementer records on the Q&A page:
+  - **the file:** 10 to 30 s of one person speaking one language, clearly, with no music or other
+    voices under it; any container and codecs ffmpeg reads (Step 9 converts it);
+  - **the credit line:** its title, its author or speaker, the page it comes from (Wikimedia
+    Commons, the Internet Archive, a national archive), where in the original the excerpt starts,
+    and its licence, public domain or CC0 only (the site is public, and `demo/CREDITS.md` names
+    it);
+  - **its name in `demo/`** (the stem, `<stem>`, lower case, no spaces: the editor shows
+    `<stem>.mp4`), and **its language**, as vid2sub's `--from` takes it (`<lang>`: `yue`, `zh`,
+    `ja`, …);
+  - Then, in Round 5b: Step 10 is his too (his own engine transcribes and translates it, and he
+    corrects both in the editor), and the rest is the implementer's.
+
+  With **B** or **C**, record the answer on the Q&A page, commit it, and go on at Step 2; the
+  close rewords §21.
+
+#### Round 5a: the clip committed, and copied rather than muxed
+
+- [ ] **Step 2: Write the failing tests,** `tests/test_demo_clip.py`:
+
+```python
+"""The demo's clip is committed in demo/ with its canned sidecar and subtitles, and both the Pages
+site and `vid2sub serve --demo` copy it as it is, so making the demo needs no ffmpeg (spec §21,
+S50; Phase 4 Task 5).
+
+What the site exports is demo/ and nothing else, so these tests also pin what demo/ holds: the
+clip, its sidecar, the subtitle files the sidecar projects and CREDITS.md. A clip swapped without
+remaking the sidecar (`make demo-sidecar`) fails here, since the editor knows a video by its size
+and quick hash (spec §8.3).
+"""
+
+import hashlib
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+from vid2sub import exitcodes
+from vid2sub.commands import serve
+from vid2sub.commands._common import CommandError
+from vid2sub.media.identity import full_sha256, identify
+from vid2sub.media.tools import Tools
+from vid2sub.store import sidecar_path
+from vid2sub.subs.sidecar import IdentityRecord, ProjectionRecord, parse_sidecar
+from vid2sub.web import demo
+
+REPO = Path(__file__).resolve().parents[1]
+NO_TOOLS = Tools(ffmpeg=None, ffprobe=None, deno=None)
+
+
+def committed():
+    video = demo.DEMO / demo.VIDEO
+    side, problems = parse_sidecar(sidecar_path(video).read_text(encoding="utf-8"))
+    assert problems == []
+    return video, side
+
+
+def test_the_demo_clip_is_committed_and_is_the_one_its_sidecar_was_made_for():
+    video, side = committed()
+    info = side.header.video
+    assert info.name == demo.VIDEO
+    assert (info.size, info.quick_sha256) == (identify(video).size, identify(video).quick_sha256)
+    assert [r.sha256 for r in side.records if isinstance(r, IdentityRecord)] == [
+        full_sha256(video)]
+    projected = [r for r in side.records if isinstance(r, ProjectionRecord)]
+    assert projected and all(
+        hashlib.sha256((demo.DEMO / r.path).read_bytes()).hexdigest() == r.sha256
+        for r in projected)
+
+
+def test_demo_holds_only_the_clip_its_sidecar_its_subtitles_and_the_credits():
+    # why: spec §21, "only demo/ is exported": whatever else lands in demo/ goes to the public
+    # site (and into every copy `vid2sub serve --demo` makes).
+    video, side = committed()
+    expected = {video.name, sidecar_path(video).name, "CREDITS.md"} | {
+        r.path for r in side.records if isinstance(r, ProjectionRecord)}
+    assert {p.name for p in demo.DEMO.iterdir()} == expected
+
+
+def test_the_demos_copy_is_demo_itself_and_needs_no_ffmpeg():
+    copy = demo.prepare(NO_TOOLS)
+    assert sorted(p.name for p in copy.iterdir()) == sorted(p.name for p in demo.DEMO.iterdir())
+    assert all((copy / p.name).read_bytes() == p.read_bytes() for p in demo.DEMO.iterdir())
+
+
+def test_the_site_takes_its_demo_from_demo_and_needs_no_ffmpeg(monkeypatch):
+    spec = importlib.util.spec_from_file_location("build_pages",
+                                                  REPO / "scripts" / "build_pages.py")
+    build_pages = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build_pages)
+    monkeypatch.setattr(Tools, "find", classmethod(lambda cls: NO_TOOLS))
+    assert build_pages.demo_folder() == (demo.DEMO, demo.VIDEO)
+
+
+def test_serve_demo_still_says_it_needs_ffmpeg_before_it_starts(monkeypatch):
+    # why: the copy runs nothing now, but the demo's editor probes its clip and its jobs decode it,
+    # so `vid2sub serve --demo` without ffmpeg says so at once, as it did when it muxed the clip.
+    monkeypatch.setattr(Tools, "find", classmethod(lambda cls: NO_TOOLS))
+    with pytest.raises(CommandError, match="the demo needs ffmpeg") as refused:
+        serve._demo()
+    assert refused.value.code == exitcodes.UNAVAILABLE
+```
+
+- [ ] **Step 3: Run them; watch them fail.** `uv run pytest tests/test_demo_clip.py -q`.
+  Expected: `4 failed, 1 passed`: `FileNotFoundError: [Errno 2] No such file or directory:
+  '…/demo/jfk.mp4'`; `Extra items in the right set: 'jfk.mp4'`; twice
+  `vid2sub.media.tools.ToolMissing: ffmpeg isn't installed: …` (the demo's copy and the site's
+  demo); the serve test passes for now, as `prepare` still muxes.
+- [ ] **Step 4: Make the stand-in clip,** Phase 2's mux command once, from the
+  repository's root:
+
+```bash
+ffmpeg -nostdin -v error -f lavfi -i color=c=0x236192:s=640x360:r=2:d=14 \
+  -i tests/fixtures/speech/jfk-14s.wav -map 0:v -map 1:a -shortest \
+  -c:v libvpx-vp9 -b:v 0 -crf 40 -deadline realtime -c:a libopus -b:a 48k \
+  -map_metadata -1 -fflags +bitexact demo/jfk.mp4
+ffprobe -v error -show_entries stream=codec_name:format=duration -of compact demo/jfk.mp4
+```
+
+  Expected: `stream|codec_name=vp9`, `stream|codec_name=opus`, `format|duration=14.000000`; with
+  ffmpeg 9.0.2 the file is 79,186 bytes. It needs an ffmpeg built with libvpx and libopus
+  (Homebrew's is), this once.
+- [ ] **Step 5: The code.** Apply:
+
+```diff
+diff --git a/scripts/build_pages.py b/scripts/build_pages.py
+index 24711aa..d0f3e8f 100644
+--- a/scripts/build_pages.py
++++ b/scripts/build_pages.py
+@@ -19,9 +19,8 @@ Adapted from recordings (scripts/build_pages.py at 8deb039; Dan owns both) (Phas
+    Pyodide and Shinylive versions the build used (spec §29's M4 check).
+ 
+ Only the demo is exported, and nothing here reads vid2sub.toml, a key or any folder of the
+-person's: everything in the site is public. Until Phase 4 Task 5 commits the public-domain clip,
+-the demo is Phase 2's (`vid2sub serve --demo`'s): `web.demo.prepare` muxes its MP4 with ffmpeg
+-from the committed JFK speech and names it in the sidecar's header.
++person's: everything in the site is public. The demo is demo/ as committed, the clip with its
++canned sidecar, subtitles and credits (Phase 4 Task 5), so the build runs no ffmpeg.
+ """
+ 
+ from __future__ import annotations
+@@ -160,12 +159,11 @@ def refuse_symlinks(*roots: Path) -> None:
+ 
+ 
+ def demo_folder() -> tuple[Path, str]:
+-    """The demo's files and its video's name: a fresh copy of demo/, its MP4 muxed and named in
+-    its sidecar (web.demo.prepare, as `vid2sub serve --demo` makes it)."""
+-    from vid2sub.media.tools import Tools
++    """The demo's files and its video's name: demo/ itself, the committed clip and its sidecar
++    (`vid2sub serve --demo` serves a copy of the same folder)."""
+     from vid2sub.web import demo
+ 
+-    return demo.prepare(Tools.find()), demo.VIDEO
++    return demo.DEMO, demo.VIDEO
+ 
+ 
+ def locked(name: str) -> Path:
+diff --git a/scripts/demo_sidecar.py b/scripts/demo_sidecar.py
+index 33fb520..7be64a3 100644
+--- a/scripts/demo_sidecar.py
++++ b/scripts/demo_sidecar.py
+@@ -2,11 +2,11 @@
+ 
+     make demo-sidecar        (uv run python scripts/demo_sidecar.py)
+ 
+-As recordings' demo/build.py makes its canned archive. vid2sub.web.demo muxes the clip; M1's
+-pipeline transcribes it with the canned engine (the clip's words) and translates it to Japanese
+-with the canned translation, exactly as `vid2sub run --from en --to ja` would; then the sidecar,
+-`jfk.en.srt` and `jfk.ja.srt` are copied into demo/. The MP4 isn't kept: `vid2sub serve --demo`
+-muxes its own and points the sidecar's header at it.
++As recordings' demo/build.py makes its canned archive. M1's pipeline transcribes a scratch copy
++of the committed clip, demo/jfk.mp4, with the canned engine (the clip's words) and translates it
++to Japanese with the canned translation, exactly as `vid2sub run --from en --to ja` would; then
++the sidecar, `jfk.en.srt` and `jfk.ja.srt` are copied into demo/, the sidecar's header naming the
++clip by its size and quick hash. Run it after the clip changes (Phase 4 Task 5).
+ """
+ 
+ from __future__ import annotations
+@@ -38,7 +38,7 @@ def main() -> int:
+     tools = Tools.find()
+     with tempfile.TemporaryDirectory(prefix="vid2sub-demo-build-") as tmp:
+         video = Path(tmp) / demo.VIDEO
+-        demo.mux(tools, video)
++        shutil.copyfile(demo.DEMO / demo.VIDEO, video)
+         options = pipeline.RunOptions(source_lang="en", targets=["ja"], model="canned",
+                                       translate_model="canned-ja", formats=["srt"])
+         ctx = pipeline.RunContext(config=CONFIG, tools=tools, keys=KeyRing(environ={}),
+diff --git a/src/vid2sub/commands/serve.py b/src/vid2sub/commands/serve.py
+index 47fdb32..62c7e3f 100644
+--- a/src/vid2sub/commands/serve.py
++++ b/src/vid2sub/commands/serve.py
+@@ -133,21 +133,22 @@ def run(args: argparse.Namespace) -> int:
+ 
+ 
+ def _demo() -> tuple[Path, Tools]:
+-    """The demo's fresh copy (spec §22.7), and the tools that made its video."""
+-    from vid2sub.media.tools import ToolFailed, ToolMissing, Tools
++    """The demo's fresh copy (spec §22.7), and the tools its editor and jobs run: the clip is
++    committed (Phase 4 Task 5), but opening it probes it and its jobs decode it, so the demo
++    still needs ffmpeg, and says so before it starts."""
++    from vid2sub.media.tools import ToolMissing, Tools
+     from vid2sub.web import demo
+ 
+     tools = Tools.find()
+     try:
++        tools.need("ffmpeg")
++        tools.need("ffprobe")
+         return demo.prepare(tools), tools
+     except demo.DemoMissing as err:
+         raise CommandError(exitcodes.UNAVAILABLE, str(err)) from None
+     except ToolMissing:
+         raise CommandError(exitcodes.UNAVAILABLE, "the demo needs ffmpeg",
+                            "install ffmpeg 6 or later (vid2sub doctor checks it)") from None
+-    except ToolFailed:
+-        raise CommandError(exitcodes.UNAVAILABLE, "ffmpeg couldn't make the demo's video",
+-                           "it needs ffmpeg built with libvpx and libopus") from None
+ 
+ 
+ def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
+diff --git a/src/vid2sub/web/demo.py b/src/vid2sub/web/demo.py
+index bdd0dbb..193c94d 100644
+--- a/src/vid2sub/web/demo.py
++++ b/src/vid2sub/web/demo.py
+@@ -1,13 +1,15 @@
+ """The demo: `vid2sub serve --demo` serves a fresh copy of `demo/`, with a canned engine, and
+ touches nothing else on the machine (spec §21, §22.4, §22.7; the Phase 2 plan's Decision 6).
+ 
+-`demo/` holds no video. `prepare` copies it into a new private temporary folder, muxes the
+-public-domain `tests/fixtures/speech/jfk-14s.wav` under a still NYC-blue picture into `jfk.mp4`
+-(VP9 and Opus, which every Chromium plays, Playwright's included), and makes the copied sidecar's
+-header and identity name that MP4, so the episode opens as the M1 episode it is. The canned sidecar
+-and its subtitle files were made by the real pipeline (`make demo-sidecar`) with the canned engine:
+-the clip's words as Whisper heard them (recordings' demo transcript of the same speech, cut to
+-these 14 s) and a hand-written Japanese translation. Everything goes when the engine exits.
++`demo/` holds the clip, `jfk.mp4` (the public-domain `tests/fixtures/speech/jfk-14s.wav` under a
++still NYC-blue picture, in VP9 and Opus, which every Chromium plays, Playwright's included), with
++its canned sidecar, subtitle files and credits, and is what the Pages site exports (spec §21).
++`prepare` copies it, as it is, into a new private temporary folder, so the episode opens as the M1
++episode it is and making the demo runs no ffmpeg (Phase 4 Task 5, which committed the clip). The
++canned sidecar and its subtitle files were made by the real pipeline (`make demo-sidecar`) with the
++canned engine: the clip's words as Whisper heard them (recordings' demo transcript of the same
++speech, cut to these 14 s) and a hand-written Japanese translation. Everything goes when the engine
++exits.
+ 
+ Demo isolation is as in recordings, but enforced by the app, not only watched by a test: a
+ Python audit hook (`isolate`) refuses, while the demo runs, any file written outside the demo's
+@@ -33,14 +35,11 @@ from vid2sub.cache import Cache
+ from vid2sub.config import Config, ModelEntry
+ from vid2sub.engines.base import ChunkResult, EngineError, ModelStamp
+ from vid2sub.engines.clients import KeyRing, RunPolicy
+-from vid2sub.media.identity import full_sha256, identify
+-from vid2sub.media.probe import probe
+-from vid2sub.media.tools import Tools, run_tool
++from vid2sub.media.tools import Tools
+ from vid2sub.parse import ParsedChunk
+ from vid2sub.pipeline import Event, InputResult, RunContext, RunOptions
+-from vid2sub.store import header_for, now, sidecar_path
++from vid2sub.store import sidecar_path
+ from vid2sub.subs.model import Segment, Word
+-from vid2sub.subs.sidecar import IdentityRecord, Sidecar, parse_sidecar, serialize
+ from vid2sub.translate.run import AskFn
+ from vid2sub.web import runtime
+ from vid2sub.web.backend import Episode, LocalBackend, OpenError
+@@ -48,8 +47,7 @@ from vid2sub.web.settings import Defaults, Session
+ 
+ REPO = Path(__file__).resolve().parents[3]
+ DEMO = REPO / "demo"
+-CLIP = REPO / "tests" / "fixtures" / "speech" / "jfk-14s.wav"
+-VIDEO = "jfk.mp4"
++VIDEO = "jfk.mp4"  # the clip in demo/, which its sidecar's header names
+ CACHE_BYTES = 200_000_000  # the demo's own cache, in its temporary folder
+ 
+ # The clip's words as Whisper heard them, in ms: recordings' demo transcript (demo/canned/
+@@ -148,39 +146,18 @@ def canned_ask(system: str, prompt: str, data_model):
+     return data_model.model_validate({"items": items})
+ 
+ 
+-def mux(tools: Tools, out: Path) -> None:
+-    """The demo clip under a still picture, as an MP4 of VP9 and Opus, with no metadata."""
+-    ffmpeg = tools.need("ffmpeg")
+-    with tempfile.TemporaryDirectory(prefix="vid2sub-") as scratch:
+-        run_tool([ffmpeg, "-nostdin", "-v", "error", "-y",
+-                  "-f", "lavfi", "-i", "color=c=0x236192:s=640x360:r=2:d=14",
+-                  "-i", f"file:{CLIP}", "-map", "0:v", "-map", "1:a", "-shortest",
+-                  "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "40", "-deadline", "realtime",
+-                  "-c:a", "libopus", "-b:a", "48k", "-map_metadata", "-1",
+-                  "-fflags", "+bitexact", f"file:{out}"], cwd=Path(scratch), timeout=120)
+-
+-
+-def prepare(tools: Tools) -> Path:
+-    """A fresh copy of `demo/` in a new private temporary folder, with its MP4 muxed and its
+-    sidecar's header naming that MP4; the folder is removed at exit. DemoMissing outside a
+-    checkout of vid2sub's repository."""
+-    if not (DEMO / VIDEO.replace(".mp4", ".vid2sub.jsonl")).is_file() or not CLIP.is_file():
++def prepare(tools: Tools | None = None) -> Path:
++    """A fresh copy of `demo/`, the clip and its sidecar as committed, in a new private temporary
++    folder, removed at exit. Nothing runs: `tools` is taken for the callers that pass theirs, and
++    unused since the clip is committed (Phase 4 Task 5). DemoMissing outside a checkout of
++    vid2sub's repository."""
++    if not (DEMO / VIDEO).is_file() or not sidecar_path(DEMO / VIDEO).is_file():
+         raise DemoMissing("the demo is in vid2sub's repository: run it from a checkout "
+                           "(make demo)")
+     folder = Path(tempfile.mkdtemp(prefix="vid2sub-demo-"))  # mode 0700
+     atexit.register(shutil.rmtree, folder, ignore_errors=True)
+     copy = folder / "demo"
+     shutil.copytree(DEMO, copy)
+-    video = copy / VIDEO
+-    mux(tools, video)
+-    path = sidecar_path(video)
+-    side, _ = parse_sidecar(path.read_text(encoding="utf-8"))
+-    with tempfile.TemporaryDirectory(prefix="vid2sub-") as scratch:
+-        duration = probe(video, tools, scratch=Path(scratch)).duration_ms
+-    header = header_for(video, identify(video), duration)
+-    records = [r for r in side.records if not isinstance(r, IdentityRecord)]
+-    records.append(IdentityRecord(sha256=full_sha256(video), at=now()))
+-    path.write_text(serialize(Sidecar(header, tuple(records))), encoding="utf-8")
+     return copy
+ 
+ 
+```
+
+- [ ] **Step 6: The credits and the docs.** Replace `demo/CREDITS.md` with:
+
+```markdown
+# The demo
+
+This folder is the demo: the Pages editor's (it is all the site exports) and `vid2sub serve
+--demo`'s (`make demo`), which serves a fresh copy of it. `make demo-sidecar` remakes the sidecar
+and subtitles here from the clip, with the real pipeline and the canned engine in
+`src/vid2sub/web/demo.py`; run it whenever the clip changes.
+
+| File | Source | License |
+|---|---|---|
+| `jfk.mp4` | 14 s from 0:30 of "JFK at Rice University", https://commons.wikimedia.org/wiki/File:Jfk_rice_university_we_choose_to_go_to_the_moon.ogg (via `recordings`' demo, as `tests/fixtures/speech/jfk-14s.wav`), under a still picture: VP9 and Opus, made with ffmpeg (Phase 4 Task 5) | Public domain (John F. Kennedy Presidential Library & Museum) |
+| `jfk.vid2sub.jsonl`, `jfk.en.srt` | the clip's words with their times from `recordings`' demo transcript of the same speech (local Whisper output, `demo/canned/transcripts/jfk-rice.json` at 8deb039), cut into cues by vid2sub | Public domain speech; the transcript is Dan's, MIT here |
+| `jfk.ja.srt` | a Japanese translation written for this demo | MIT |
+```
+
+  and apply:
+
+```diff
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 7c3dc82..aa87280 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -94,8 +94,8 @@ jobs:
+         with: { version: "0.13.1" }
+       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+         with: { node-version-file: frontend/.nvmrc, cache: npm, cache-dependency-path: frontend/package-lock.json }
+-      # The demo muxes VP9 and Opus (Decision 6): Ubuntu 24.04's ffmpeg (6.1.1-3ubuntu5) links
+-      # libvpx9 and libopus0.
++      # The editor probes what it opens and the demo's jobs decode its clip; one test encodes Opus:
++      # Ubuntu 24.04's ffmpeg (6.1.1-3ubuntu5) links libopus0.
+       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+       - run: npm ci
+         working-directory: frontend
+diff --git a/Makefile b/Makefile
+index e10f05e..d715dfe 100644
+--- a/Makefile
++++ b/Makefile
+@@ -30,7 +30,7 @@ e2e: build ## The browser tests against vid2sub serve (installs Playwright's Chr
+ 
+ # The Pages editor (spec §21): only the demo is exported. The first build downloads Shinylive's
+ # assets (about 435 MB, checked by hash) and the vendored wheels (checked against uv.lock).
+-pages: build ## Build the Pages editor into _site/ (needs ffmpeg for the demo's video until Phase 4 Task 5)
++pages: build ## Build the Pages editor into _site/, its demo the committed clip in demo/
+ 	uv run --group pages python scripts/build_pages.py
+ 
+ pages-serve: ## Serve _site/ as GitHub Pages does: under /vid2sub/, with Range requests, on 127.0.0.1
+diff --git a/README.md b/README.md
+index 65a8681..bb3e85a 100644
+--- a/README.md
++++ b/README.md
+@@ -50,8 +50,8 @@ cd ..
+ ```
+ 
+ The build writes `src/vid2sub/web/www/ui.js` and `ui.css`; with make, `make setup` and
+-`make build` do the same. The editor's playback audio needs ffmpeg, as the CLI does, and its demo
+-needs an ffmpeg built with libvpx and libopus (Homebrew's and Ubuntu 24.04's are).
++`make build` do the same. The editor needs ffmpeg, as the CLI does: it probes what it opens and
++makes the playback audio, in the demo too, whose clip is in `demo/`.
+ 
+ ## Configure
+ 
+diff --git a/tests/README.md b/tests/README.md
+index 58ceaf5..7d71069 100644
+--- a/tests/README.md
++++ b/tests/README.md
+@@ -24,8 +24,9 @@
+   unless it checks for them itself.
+   `make e2e` builds the frontend and installs Chromium first (`uv run playwright install
+   chromium`; on Linux, `uv run playwright install --with-deps chromium` adds the system
+-  packages, as CI does). The demo's video needs an ffmpeg built with libvpx and libopus:
+-  `ffmpeg -hide_banner -encoders | grep -E 'libvpx-vp9|libopus'` lists both. Each server's output
++  packages, as CI does). The demo's clip is committed (`demo/jfk.mp4`, VP9 and Opus), so
++  nothing encodes it; one editor test encodes Opus, which needs an ffmpeg built with libopus:
++  `ffmpeg -hide_banner -encoders | grep libopus` lists it. Each server's output
+   is `server.log` in its test's temporary folder; CI sets `PYTEST_ADDOPTS=--basetemp=e2e-tmp`
+   and keeps them when the job fails.
+ - Fixtures are synthetic or public domain (`tests/fixtures/CREDITS.md`).
+diff --git a/tests/pages/test_pages_files.py b/tests/pages/test_pages_files.py
+index cb07cdc..6a8687d 100644
+--- a/tests/pages/test_pages_files.py
++++ b/tests/pages/test_pages_files.py
+@@ -86,7 +86,7 @@ def site_url():
+ 
+ @pytest.fixture
+ def episode(tmp_path) -> Path:
+-    """A person's folder: Phase 2's demo episode, its video muxed by ffmpeg."""
++    """A person's folder: a copy of the demo's episode, its clip in VP9 and Opus."""
+     copy = demo.prepare(Tools.find())
+     folder = tmp_path / "show"
+     shutil.copytree(copy, folder, ignore=shutil.ignore_patterns("tmp"))
+diff --git a/tests/pages/test_pages_site.py b/tests/pages/test_pages_site.py
+index df176c7..f81adbb 100644
+--- a/tests/pages/test_pages_site.py
++++ b/tests/pages/test_pages_site.py
+@@ -55,8 +55,8 @@ def test_the_editor_starts_in_the_browser_with_no_install(page: Page, site_url,
+ 
+ 
+ def test_the_demo_plays_with_its_captions_and_its_translation(page: Page, site_url, watch):
+-    # S50: the site's demo (Phase 2's JFK clip until Phase 4 Task 5's), its video the site's
+-    # own file, its sidecar and subtitles bundled with the app.
++    # S50: the site's demo (demo/'s committed clip, Phase 4 Task 5), its video the site's own
++    # file, its sidecar and subtitles bundled with the app.
+     app = boot(page, site_url)
+     app.get_by_test_id("open-demo").click()
+     expect(app.get_by_test_id("episode-name")).to_have_text("jfk.mp4", timeout=RENDER)
+@@ -116,8 +116,9 @@ def test_a_new_deploy_runs_whole_though_the_browser_cached_the_last_one(page: Pa
+ 
+ # Files whose names carry their content's hash or their version can't be mixed across deploys:
+ # Shinylive's chunks (an 8-character hash) and Pyodide's wheels (their versions). The page itself
+-# is a navigation, and start.js, the service worker and the demo's video change only with Phase 4
+-# Task 5 or a Shinylive bump, which re-checks this list (pages/site/start.js's header).
++# is a navigation; start.js and the service worker change only with a Shinylive bump, which
++# re-checks this list (pages/site/start.js's header); and a new demo clip comes under its own name
++# (Phase 4 Task 5), so no visitor's cache holds it.
+ HASHED = re.compile(r"-[A-Z0-9]{8}\.(js|css|woff2)$|\.whl$|-\d[\w.]*\.(zip|tar)$")
+ # An exported app's viewer never loads Shinylive's code-URL worker or Quarto's blocks.
+ EXEMPT = {"index.html", "start.js", "shinylive-sw.js", ".nojekyll", "demo/jfk.mp4",
+diff --git a/tests/test_browser_backend.py b/tests/test_browser_backend.py
+index 1687d94..c7807fe 100644
+--- a/tests/test_browser_backend.py
++++ b/tests/test_browser_backend.py
+@@ -384,7 +384,7 @@ def test_the_demo_opens_from_the_files_bundled_with_the_site_and_plays_from_its_
+         video, local, tmp_path):
+     # why: S50 and spec §21: the demo's sidecar and subtitles are bundled with the app, and its
+     # video is the site's own file, so its bytes never reach Python; its identity is the one its
+-    # sidecar was made for. The site's demo is Phase 2's until Phase 4 Task 5's clip.
++    # sidecar was made for. The site's demo is demo/'s committed clip (Phase 4 Task 5).
+     demo = tmp_path / "bundled"
+     demo.mkdir()
+     for p in video.parent.iterdir():
+```
+
+- [ ] **Step 7: Run the checks; they pass.** `uv run pytest tests/test_demo_clip.py -q`: `5
+  passed`. If `test_the_demo_clip_is_committed_and_is_the_one_its_sidecar_was_made_for` fails
+  instead, your ffmpeg made other bytes than 9.0.2 did: `make demo-sidecar` (it prints `wrote
+  demo/jfk.vid2sub.jsonl`, `wrote demo/jfk.en.srt`, `wrote demo/jfk.ja.srt`; only the sidecar's
+  times, ids and hashes change), then it passes. The guard: in `src/vid2sub/commands/serve.py`,
+  take out `        tools.need("ffmpeg")` and `        tools.need("ffprobe")`, rerun, restore.
+  Expected: `FAILED tests/test_demo_clip.py::test_serve_demo_still_says_it_needs_ffmpeg_before_it_starts`
+  with `Failed: DID NOT RAISE CommandError` (`1 failed, 4 passed`). Then `make check`.
+  Expected: `1108 passed, 2 skipped, 51 deselected` (twice), `Test Files  21 passed (21)`,
+  `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`. Then `make pages` (`build_pages:
+  wrote _site/ (44.0 MB) with Shinylive 0.8.12 (assets 0.10.15), Pyodide 0.27.7, Python 3.12.7.
+  …`), `make pages-test` (`15 passed`) and `make e2e` (`31 passed`).
+- [ ] **Step 8: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(demo): 🤖 the demo's clip is committed in demo/, so the Pages build and vid2sub serve --demo copy it and run no ffmpeg to make it
+
+Spec §21 and S50: "a public-domain clip ... with a canned sidecar and subtitles, credited in
+demo/CREDITS.md. Only demo/ is exported." Until now demo/ held no video: web.demo.prepare muxed
+the JFK speech under a still picture with ffmpeg, so `make pages` needed ffmpeg (Phase 4 Task 2).
+
+- demo/jfk.mp4 is the stand-in clip, committed (79,186 bytes): the same VP9 and Opus MP4 Phase 2
+  muxed (Decision 6), made once with Phase 2's command, until Dan's clip replaces it (Task 5's
+  Step 1). ffmpeg 9.0.2 with +bitexact made the very bytes the canned sidecar was made for, so
+  the sidecar and subtitles are unchanged; with other bytes, make demo-sidecar remakes them.
+- web.demo.prepare copies demo/ as it is (no mux, no probe); `mux` and `CLIP` go. Its `tools`
+  argument stays, optional and unused, for the callers that pass it (Phase 2's tests and Phase
+  3's), so their listings need no change.
+- scripts/build_pages.py's demo_folder() returns demo/ itself; make pages runs no ffmpeg.
+- scripts/demo_sidecar.py runs the pipeline on a scratch copy of the committed clip.
+- `vid2sub serve --demo` still checks for ffmpeg and ffprobe before it starts (its editor probes
+  the clip and its jobs decode it), so its "the demo needs ffmpeg" refusal stays; the "ffmpeg
+  couldn't make the demo's video" one goes, since nothing makes it.
+- demo/CREDITS.md credits the committed clip; README, tests/README.md, the Makefile's help,
+  ci.yml's e2e comment and three test comments no longer say the demo is muxed or that Task 5 is
+  to come.
+
+tests/test_demo_clip.py: the committed clip is the one its sidecar names (size, quick hash, full
+SHA-256 in the identity record, each projection's hash), demo/ holds only the clip, its sidecar,
+its subtitles and CREDITS.md (what the site exports), and the demo's copy, the site's demo and
+serve --demo's ffmpeg check all hold with no ffmpeg found. Before the change: "FileNotFoundError:
+... demo/jfk.mp4", "Extra items in the right set: 'jfk.mp4'" and twice "ToolMissing: ffmpeg
+isn't installed"; the serve test, after prepare stopped needing ffmpeg and before serve checked
+for it, "Failed: DID NOT RAISE CommandError".
+
+make pages, make pages-test (15 passed) and make e2e (31 passed) pass on the committed clip.
+
+Docs read: ffmpeg 9.0.2's `-fflags +bitexact` and `-map_metadata -1` (ffmpeg's formats and
+main options manuals).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 5
+Co-Authored-By: <the model's own line>
+```
+
+  `git add demo/jfk.mp4 demo/CREDITS.md src/vid2sub/web/demo.py src/vid2sub/commands/serve.py
+  scripts/build_pages.py scripts/demo_sidecar.py tests/test_demo_clip.py
+  tests/pages/test_pages_files.py tests/pages/test_pages_site.py tests/test_browser_backend.py
+  Makefile README.md tests/README.md .github/workflows/ci.yml` (and `demo/jfk.vid2sub.jsonl`, if
+  Step 7 ran `make demo-sidecar`), `git commit -F .git/COMMIT_MSG`,
+  then `git log -1 --format='%(trailers)'` shows `Plan:`. `demo/jfk.mp4` is a file no scan reads:
+  the phase end's step 8 lists it for Dan to check by eye.
+
+#### Round 5b: Dan's clip (Step 1's answer A only)
+
+Built only once the clip is in hand, so its expected lines are the shapes to look for. `<stem>` and
+`<lang>` are Step 1's answers; `<file>` is the path of the file Dan handed over. Nothing of his
+goes into `demo/` until Step 11, and his scratch copy lives under `.git/`, which git never tracks.
+
+- [ ] **Step 9: Convert the clip** to what every Chromium plays (VP9 and Opus, at most 360 lines,
+  at most 30 s, no metadata, no chapters):
+
+```bash
+mkdir -p .git/demo-clip
+ffmpeg -nostdin -v error -i "<file>" -t 30 -vf "scale=-2:'min(360,ih)'" \
+  -c:v libvpx-vp9 -b:v 0 -crf 36 -deadline good -cpu-used 4 -c:a libopus -b:a 64k \
+  -map_metadata -1 -map_chapters -1 -fflags +bitexact .git/demo-clip/<stem>.mp4
+ffprobe -v error -show_entries stream=codec_name,width,height:format=duration -of compact \
+  .git/demo-clip/<stem>.mp4
+```
+
+  Expected: `stream|codec_name=vp9|width=…|height=360` (or less), `stream|codec_name=opus`, and
+  the duration (run on the stand-in while writing this listing: `vp9|width=640|height=360`,
+  `opus`, `duration=14.013521`, 125,471 bytes). Keep it under 5 MB: the site's visitors download
+  it.
+- [ ] **Step 10: [Dan] Transcribe, translate and correct it with your own engine.** In a terminal,
+  with your `vid2sub.toml`'s local models (no cloud: `--allow-cloud` stays off):
+
+```bash
+uv run vid2sub run .git/demo-clip/<stem>.mp4 --from <lang> --to en
+uv run vid2sub serve
+```
+
+  Expected: `vid2sub run` writes `<stem>.vid2sub.jsonl` and the subtitles beside the clip; in the
+  editor, open `.git/demo-clip/<stem>.mp4` by its full path, correct the source and the English
+  until you'd publish them, and **Save**. Hand back when it's done.
+- [ ] **Step 11: Swap the clip into `demo/`.**
+
+```bash
+git rm -q demo/jfk.mp4 demo/jfk.vid2sub.jsonl demo/jfk.en.srt demo/jfk.ja.srt
+cp .git/demo-clip/<stem>.mp4 demo/<stem>.mp4
+```
+
+- [ ] **Step 12: Print the clip's canned words and translation** from Dan's sidecar, with this
+  script, saved as `.git/demo-clip/canned.py` (it reproduces Phase 2's `WORDS` and `JAPANESE`
+  exactly when run on `demo/jfk.vid2sub.jsonl` with `ja ""`):
+
+```python
+"""Print a sidecar's transcript words and its translation, as web.demo's WORDS and JAPANESE."""
+import sys
+from pathlib import Path
+
+from vid2sub.subs.rendition import cues_from_body
+from vid2sub.subs.sidecar import parse_sidecar
+
+side, _ = parse_sidecar(Path(sys.argv[1]).read_text(encoding="utf-8"))
+target, join = sys.argv[2], sys.argv[3]  # the translation's track, and what its line breaks become
+transcript = side.transcripts()[0].body["payload"]
+words = [(w["word"], round(w["start"] * 1000), round(w["end"] * 1000))
+         for seg in transcript["segments"] for w in seg["words"]]
+print("WORDS =", tuple(words))
+source = next(t for t in side.tracks() if t != target)
+renditions = side.renditions()
+src = {c.id: c for c in cues_from_body(renditions[side.head(source).rendition].body)}
+pairs = [(tuple(src[i].text.replace("\n", " ") for i in c.src), c.text.replace("\n", join))
+         for c in cues_from_body(renditions[side.head(target).rendition].body)]
+print("TRANSLATION =", tuple(pairs))
+```
+
+  `uv run python .git/demo-clip/canned.py .git/demo-clip/<stem>.vid2sub.jsonl en " "` prints
+  `WORDS = (…)` and `TRANSLATION = (…)`. In `src/vid2sub/web/demo.py`:
+  - `VIDEO = "<stem>.mp4"`; `WORDS` becomes the printed tuple, and its comment names where the
+    words came from (your engine, on Dan's clip, corrected by Dan);
+  - `JAPANESE` becomes `TRANSLATION`, the printed tuple (and so in `canned_ask`), its comment
+    "Dan's English translation"; `NO_TRANSLATION = "(no translation)"`;
+  - `CannedEngine.transcribe` and `detect_language` hear `"<lang>"` instead of `"en"`; its stamp,
+    and `JOB_CONFIG`'s and `scripts/demo_sidecar.py`'s `CONFIG`'s model, `"canned-<stem>"` for
+    `"canned-jfk"`; `CANNED_JA = "canned-ja"` becomes `CANNED_EN = "canned-en"` (and
+    `CANNED_ENTRY`, `DemoBackend._translator`, `runtime_for`);
+  - in `runtime_for`, `RunOptions(source_lang="<lang>", …)` and `Session(Defaults(("en",),
+    ("srt",)))`;
+  - the module docstring's second paragraph describes the new clip.
+
+  In `scripts/demo_sidecar.py`: `RunOptions(source_lang="<lang>", targets=["en"], model="canned",
+  translate_model="canned-en", …)`, and the copied files are the sidecar and the two subtitle
+  files `vid2sub run` named beside the clip in Step 10 (for `ja`, `<stem>.ja.srt` and
+  `<stem>.en.srt`); the docstring says "translates it to English … `vid2sub run --from <lang>
+  --to en`".
+- [ ] **Step 13: Remake the canned sidecar** from the committed clip, with the canned engine:
+  `make demo-sidecar`. Expected: `wrote demo/<stem>.vid2sub.jsonl` and a line for each subtitle
+  file. Then the credits: in `demo/CREDITS.md`, the first table row becomes the clip's (`<stem>.mp4`
+  | Step 1's credit line, cut to its first N s, as VP9 and Opus with ffmpeg | its licence), the
+  second the sidecar and the source subtitles (the words as your engine heard them, cut into cues
+  by vid2sub, corrected by Dan | the licence of the speech; the transcript Dan's, MIT here), the
+  third the English (Dan's translation | MIT).
+- [ ] **Step 14: The tests that name the stand-in.** `git grep -n -e jfk -e DEMO_EN -e JAPANESE -e
+  CANNED_JA -e 'ここに' -e '私たち' -e '進歩' -- tests frontend/src` lists them; each takes the new
+  name (`<stem>.mp4`, `<stem>.vid2sub.jsonl`, the subtitle files' names), the first source and
+  English lines from `demo/`'s new subtitle files, and `TRANSLATION` for `JAPANESE`. Among them:
+  `tests/e2e/test_editor_view.py` (`DEMO_EN`, the captions), `test_editing.py`, `test_jobs.py`,
+  `test_retranslate.py`, `test_saving.py` (`EN`, the notices' file names),
+  `tests/pages/test_pages_files.py` (`SIDECAR`, `EN`, `FIRST`), `test_pages_origin.py`,
+  `test_pages_site.py` (`DEMO_EN`, `EXEMPT`'s `demo/<stem>.mp4`), `tests/test_build_pages.py`,
+  `tests/test_web_browser.py`, `tests/test_backend_retranslate.py`, and Phase 3's Add and Review
+  tests, which list the demo folder's files. `tests/fixtures/speech/jfk-14s.wav` stays: other
+  tests use it.
+- [ ] **Step 15: Run the checks; they pass,** as Step 7: `uv run pytest tests/test_demo_clip.py
+  -q` (`5 passed`), `make check`, `make pages`, `make pages-test` (in the demo test the new
+  clip plays with its source and English captions) and `make e2e`. Then commit, the message in
+  `.git/COMMIT_MSG`:
+
+```text
+feat(demo): 🤖 the demo is <its title>, a public-domain clip in <its language> with English subtitles
+
+Spec §21 and S50: the demo is non-English, so its translation shows. demo/<stem>.mp4 is <the
+credit line>, cut to <N> s and converted to VP9 and Opus (ffmpeg <version>, Task 5's Step 9), which
+every Chromium plays; its sidecar and subtitles were made with <the engine and models> and
+corrected by Dan (Step 10), then remade by make demo-sidecar with the canned engine, whose words
+and English web.demo now holds (printed from Dan's sidecar, Step 12). The JFK stand-in goes from
+demo/; its speech stays in tests/fixtures/. The tests that named the stand-in name the clip.
+
+<the checks' summary lines>
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 5
+Co-Authored-By: <the model's own line>
+```
+
+  `git add -A demo` is never used: `git add demo/<stem>.mp4 demo/<stem>.vid2sub.jsonl` and each
+  new subtitle file and `demo/CREDITS.md` by name, then `src/vid2sub/web/demo.py
+  scripts/demo_sidecar.py` and each test file Step 14 changed; the `git rm` of Step 11 is staged
+  already. `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows
+  `Plan:`. Then `rm -r .git/demo-clip`.
+
+- [ ] **Step 16: Review, look forward, close.** The Tier 3 self-review from `$(cat .git/TASK_BASE)`
+  (*Standards*, *Spec*) plus `make check`, `make pages`, `make pages-test` and `make e2e`. Worth
+  checking: `demo/` holds only what `tests/test_demo_clip.py` allows (all of it is public);
+  `CREDITS.md` names the clip's source and licence; the clip has no metadata (`ffprobe -v error
+  -show_entries format_tags -of compact demo/<stem>.mp4` prints only `format`). The forward
+  review over Tasks 7, 10 and 11: Task 7's `pages.yml` runs `make pages` with no ffmpeg needed,
+  but `make pages-test` needs it (`test_pages_files.py` is a `media` test); Task 10's README
+  names the demo's clip and `demo/CREDITS.md`; Task 11's Step 5 plays this clip. The docs this
+  task made untrue are fixed in its build steps; with answer B or C, spec §21's demo line is
+  reworded as Step 1 says. Then the close, its own commit, holding this plan with this task's
+  boxes ticked and **Now** set to `Task 6: The Pyodide job, open.`, and the spec's S50 row's
+  Phase and task set to `Phase 4, Task 5` (it stays `planned` until Task 7's Pages test runs in
+  CI), with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 5: The demo clip
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 3
+Rounds: self-review (Standards, Spec); make check; make pages; make pages-test; make e2e
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 5
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -8464,13 +9246,14 @@ pydantic 2.10.5), the version §21 pins through Shinylive 0.8.12, in CI's `pyodi
   describes. It is a frontend dev dependency (the frontend's is the only npm project), and the
   ubuntu-24.04 runner needs nothing beyond checkout and setup-node.
 - **Which tests:** every `tests/test_*.py` whose imports are the pure packages, the standard
-  library and what the run installs. 19 files at this listing's build: `test_build`,
+  library and what the run installs. 20 files at this listing's build: `test_build`,
   `test_catalog`, `test_edit`, `test_formats`, `test_glossary`, `test_hostile_fixtures`,
-  `test_langs`, `test_model`, `test_naming`, `test_parse_openai_qwen`, `test_parse_whispercpp`,
-  `test_parse_words`, `test_readme`, `test_rendition`, `test_rules_lint`, `test_scripts`,
-  `test_sidecar`, `test_text`, `test_translate_shape` (199 tests, the same 199 the host runs for
-  them). They are picked by their imports, not listed, so a new pure test (Phase 3's parser test
-  among them) joins without an edit; the floor job's list, by contrast, lacks `test_edit.py` and
+  `test_langs`, `test_model`, `test_naming`, `test_parse_openai_qwen`,
+  `test_parse_qwen_endpoint`, `test_parse_whispercpp`, `test_parse_words`, `test_readme`,
+  `test_rendition`, `test_rules_lint`, `test_scripts`, `test_sidecar`, `test_text`,
+  `test_translate_shape` (224 tests, the same 224 the host runs for them). They are picked by their
+  imports, not listed, so a new pure test joins without an edit, as Phase 2 Task 20's
+  `test_parse_qwen_endpoint` did; the floor job's list, by contrast, lacks `test_edit.py` and
   `test_hostile_fixtures.py` (see the close).
 - **What Pyodide gets:** its own `micropip`, `pydantic` 2.10.5, `pytest` 8.1.1 and `jsonschema`
   (for `test_rendition.py`'s contract checks), loaded from its CDN and cached in
@@ -8507,9 +9290,10 @@ pydantic 2.10.5), the version §21 pins through Shinylive 0.8.12, in CI's `pyodi
     main(args) -> int`, `HYPOTHESIS = "hypothesis==6.155.7"`, `LOCKED`, `INSTALLED`, `PURE`.
   - The harness refuses any Pyodide but Task 1's devDependency `"pyodide": "0.27.7"`.
 
-The `make check` counts below come from a clone with Phase 2's Tasks 2–16 and 21 only; yours
-are higher. What matters is no failure, ruff's `All checks passed!` and gitleaks'
-`no leaks found`; `make test-pyodide`'s file list grows with every pure test added since.
+The `make check` counts below come from a clone of the finished Phase 2 with Phase 4's Tasks
+1–5; yours are higher once Phase 3 is in. What matters is no failure, ruff's `All checks passed!`
+and gitleaks' `no leaks found`; `make test-pyodide`'s file list grows with every pure test added
+since.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: Watch the target fail.** `make test-pyodide`. Expected (GNU make 3.81):
@@ -8666,21 +9450,21 @@ test-pyodide: ## Run the pure packages' tests inside Pyodide 0.27.7, as Pages ru
   lines (`Package pydantic-2.10.5-py3-none-any.whl loaded from
   https://cdn.jsdelivr.net/pyodide/v0.27.7/full/, caching the wheel in node_modules for future
   use.` and the like, on the first run):
-  `Python 3.12.7 in Pyodide: 19 test files: test_build.py test_catalog.py test_edit.py ...
+  `Python 3.12.7 in Pyodide: 20 test files: test_build.py test_catalog.py test_edit.py ...
   test_translate_shape.py`, `platform emscripten -- Python 3.12.7, pytest-8.1.1, pluggy-1.5.0`,
   `rootdir: /repo`, `configfile: pyproject.toml`, `plugins: hypothesis-6.155.7`,
-  `collected 199 items`, and `============================= 199 passed in 3.14s
+  `collected 224 items`, and `============================= 224 passed in 5.10s
   ==============================`. Then `git status --short` shows only this task's files: the
   run writes nothing into the checkout.
 - [ ] **Step 8: Make a subs test fail; watch the run fail.** In `tests/test_text.py`, change
   `assert t.width("日本") == 4` to `assert t.width("日本") == 2`, run `make test-pyodide`, then
   `git checkout tests/test_text.py`. Expected: `E       AssertionError: assert 4 == 2`,
   `FAILED ../../repo/tests/test_text.py::test_wide_characters_count_two_and_latin_counts_one`,
-  `======================== 1 failed, 198 passed in 4.77s =========================` and
+  `======================== 1 failed, 223 passed in 3.04s =========================` and
   `make: *** [test-pyodide] Error 1`.
 - [ ] **Step 9: Run the checks; they pass.** `make actionlint`, then `make check`. Expected:
-  actionlint prints only its command line and exits 0; `955 passed, 2 skipped, 26 deselected`
-  (twice), `Test Files  12 passed (12)`, `Tests  55 passed (55)`, `All checks passed!`,
+  actionlint prints only its command line and exits 0; `1108 passed, 2 skipped, 51 deselected`
+  (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`, `All checks passed!`,
   `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -8698,24 +9482,24 @@ tests of vid2sub.subs, vid2sub.parse and vid2sub.catalog through the real Pyodid
   needs pyodide-build in a host Python matched to Pyodide's and Node as well: this needs only the
   Node the frontend already has, which is what §22.6 describes.
 - tests/pyodide_run.py picks every tests/test_*.py whose imports are the pure packages, the
-  standard library and what the run installs (19 files today, test_edit.py and
-  test_hostile_fixtures.py among them), so a new pure test joins without an edit; it installs
+  standard library and what the run installs (20 files today, test_edit.py,
+  test_hostile_fixtures.py and test_parse_qwen_endpoint.py among them), so a new pure test joins without an edit; it installs
   uv.lock's pysubs2 1.9.0, opencc-purepy 1.4.4 and charset-normalizer 3.5.2 from PyPI through
   micropip (Pyodide ships charset-normalizer 3.3.2, below pyproject.toml's >=3.4), and
   hypothesis 6.155.7, the newest pure-Python release (from 6.156.0 hypothesis ships compiled
   wheels only, none for Pyodide 0.27, read from PyPI's JSON). micropip checks each wheel's sha256 against PyPI's
   (its _validate_sha256_checksum, read in micropip 0.9.0's source). Nothing is written into the
   checkout: no bytecode, and pytest and hypothesis work in /tmp inside Pyodide.
-- make test-pyodide passes: "199 passed in 3.14s", about 9 s with a cold package cache, the
-  same 199 tests the host runs for those files. With tests/test_text.py's `t.width("日本") == 4`
+- make test-pyodide passes: "224 passed in 5.10s", about 9 s with a cold package cache, the
+  same 224 tests the host runs for those files. With tests/test_text.py's `t.width("日本") == 4`
   changed to `== 2`, it fails: "FAILED ../../repo/tests/test_text.py::test_wide_characters_count_
-  two_and_latin_counts_one", "1 failed, 198 passed", and make stops with
+  two_and_latin_counts_one", "1 failed, 223 passed", and make stops with
   "make: *** [test-pyodide] Error 1". It needs the network (Pyodide's CDN and PyPI), so make
   check leaves it out, as it does e2e.
 - The job: ubuntu-24.04, contents: read, 10 minutes, checkout without credentials, setup-node
   from frontend/.nvmrc, npm ci, make test-pyodide. make actionlint: no findings.
-- The lockfile change is pyodide and its one dependency, ws 8.22.0, written with npm 11.11.1
-  (npm 10 also drops the lock's libc fields); npm audit still counts the same 8 findings.
+- Pyodide itself came with Task 1 (`"pyodide": "0.27.7"`, exact, in frontend/package.json and
+  its lock), so this task changes neither.
 
 Docs read: Pyodide 0.27.7's "Using Pyodide" (Node), JS API (loadPyodide, loadPackage,
 mountNodeFS, runPython, globals, toPy), "Loading packages" (micropip from PyPI, deps), and
@@ -8770,23 +9554,1182 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 1 · **Scenarios:** S50, S51
 
+Spec §23.3 with Phase 4 Decision 2: the only workflow that deploys Pages builds the site with `make
+pages`, tests it with `make pages-test`, and deploys it from `main` alone; pull requests build and
+test only. Task 9 adds the install index and the post-deploy smoke job to it.
+
+**Why it is built this way** (read 2026-10-24):
+- **`workflow_run` is a trigger with write tokens for anyone's run.** GitHub's "Events that trigger
+  workflows": it fires "regardless of the conclusion of the previous workflow", for any workflow
+  by the name in `workflows:`, and "the workflow started by the `workflow_run` event is able to
+  access secrets and write tokens, even if the previous workflow was not", with a warning about
+  cache poisoning. So both jobs run for it only when the run succeeded, was a `push`, and came
+  from this repository (`head_repository.full_name == github.repository`); a fork's or a pull
+  request's run of a workflow named `release` builds nothing.
+- **It builds `main`'s own files.** For `workflow_run`, `GITHUB_SHA` and `GITHUB_REF` are the
+  default branch's newest commit and the branch itself, and the file runs from the default
+  branch. Checkout takes no `ref:`, and no `head_sha` appears in the file, so the site is main's,
+  never the commit the release run built. The release tag is on `main` already (Task 8 refuses
+  one that isn't).
+- **Each job's condition holds on its own, and the environment is the gate.** The deploy job
+  checks `refs/heads/main` and the event too, rather than leaning on the build job's skip, so
+  main's copy never deploys a manual run on another branch. But a run on another ref (a pull
+  request from this repository, a manual run on a branch) uses that ref's own copy of
+  `pages.yml`, which anyone who can push can edit: only the `github-pages` environment's rule,
+  `main` alone (Dan's, Step 14), stops it deploying (round 7b, found by the security review).
+  The test evaluates both conditions, each alone, against ten events, with a small evaluator of
+  the expression syntax they use (strings compared ignoring case, as Actions compares them).
+- **No repository code runs with the write permissions.** The deploy job holds `pages: write`
+  and `id-token: write` (deploy-pages' README: the minimum) and runs deploy-pages alone, on the
+  artifact the build job uploaded; the build job holds `contents: read`.
+- **The caches hand the build nothing unchecked** (round 7b). `shinylive_local.assets()` trusts
+  an unpacked folder, so CI caches Shinylive's tarball alone (about 435 MB), which `assets()`
+  now keeps and checks against the pinned SHA-256 before every unpack, under a key that changes
+  with the pin itself (`hashFiles('scripts/shinylive_local.py')`); the step that names the
+  tarball reads `ASSETS` from that file, and the test runs it. The vendored wheels are cached by
+  `uv.lock`'s hash and checked against it on every build; npm's cache by the lockfile's
+  integrity; uv's cache is off (uv trusts what it unpacked there). A cache saved on `main` comes
+  only from runs of `main`'s code (actions/cache: a pull request's run saves in its own scope),
+  and only when the job succeeded (its `post-if: success()`), so a refused tarball is never
+  saved. A restored entry can still write any path in the workspace (actions/cache extracts
+  every member), so CI trusts what main's own runs saved; restoring caches only on pull requests
+  would close that, on the phase-end list (round 7c).
+- **One run per ref at a time, in order** (round 7b): a push, a manual run on `main` and a
+  release's run all have `main`'s ref, so with workflow-level concurrency the newest deploys
+  last; a deploy is never cancelled midway, and the deploy job's 15 minutes outlast
+  deploy-pages' own 10. A link in `_site/` stops the upload (upload-pages-artifact's tar follows
+  links; Pages takes none), checked with `find -print -quit`, which pipefail can't misread.
+- **ffmpeg, and a skip fails.** `make pages` needs no ffmpeg since Task 5, but
+  `tests/pages/test_pages_files.py` is a `media` test (it probes the episode), so the job installs
+  ffmpeg and sets `VID2SUB_REQUIRE_FFMPEG=1`.
+- **Pages' settings are Dan's** (`AGENTS.md`, *Stops*: Pages settings and repo settings): Step 14
+  lists them; the agent checks them only by reading.
+
+**Files:**
+- Create: `.github/workflows/pages.yml`, `tests/test_pages_workflow.py`
+- Modify (round 7b): `scripts/shinylive_local.py` (`assets()` keeps the tarball),
+  `tests/test_build_pages.py`
+- Modify at the close: this plan; the spec (§23.3's triggers, Decision 2; S50)
+
 **Interfaces:**
 - Consumes: spec §23.3's triggers, with Decision 2's `workflow_run` in place of
   `release: published`. Task 8's `release.yml` is named `release` and runs on `v*` tag pushes
   only. `workflow_run` fires for any completed run of a workflow by that name, a fork's pull
   request included, so the deploy job runs only when `github.event.workflow_run.conclusion` is
   `success`, its `event` is `push`, and its `head_repository.full_name` is
-  `github.repository`. It checks out `main`, never the triggering run's `head_sha`. The Tier 1
-  review checks each condition, with a test over the workflow file. Read GitHub's docs on
-  `workflow_run` and on environments' deployment branches, and say in the commit what you read.
-- Consumes, from Tasks 2–4: the build job runs `make pages` (Node from `frontend/.nvmrc`,
-  `npm ci`, uv, and ffmpeg until Task 5's clip), then `make pages-test` (after
-  `uv run playwright install --with-deps chromium`), then uploads `_site/` with hidden files.
-  Cache `.cache/shinylive/` keyed by `shinylive_local.ASSETS` (435 MB on a first download) and
-  `.cache/wheels/` keyed by `uv.lock`. Review Focus 3's test is `test_pages_site.py`'s new-deploy
-  test; that file's last test checks `start.js`'s `REVALIDATE` list against the built site.
+  `github.repository`. It checks out `main`, never the triggering run's `head_sha`.
+- Consumes, from Tasks 2–5: `make pages` (Node from `frontend/.nvmrc`, `npm ci`, uv; no ffmpeg
+  since Task 5), then `make pages-test` (after `uv run playwright install --with-deps chromium`;
+  it needs ffmpeg), then `_site/` uploaded with hidden files. `.cache/shinylive/` keyed by
+  `shinylive_local.ASSETS`, `.cache/wheels/` keyed by `uv.lock`. Review Focus 3's test is
+  `test_pages_site.py`'s new-deploy test, which `make pages-test` runs; Phase 2 Task 21's pins
+  (checkout v7.0.1, setup-uv v10.3.0 with uv 0.13.1, setup-node v7.1.0) and `make actionlint`.
+- Produces:
+  - `pages.yml`, `name: pages`, on `push: branches: [main]`, `pull_request`,
+    `workflow_dispatch` and `workflow_run: {workflows: [release], types: [completed]}`; jobs
+    `build` (`contents: read`; uploads the `github-pages` artifact except on a pull request) and
+    `deploy` (`pages: write`, `id-token: write`; `needs: build`; environment `github-pages`;
+    deploy-pages alone, its step id `deployment`); concurrency `pages-${{ github.ref }}`, never
+    cancelled; a step `the site holds no symbolic links` just before the upload.
+  - `scripts/shinylive_local.assets()` keeps the tarball beside the unpacked folder (it deleted
+    it before), and checks it before every unpack.
+  - For Task 9: the index is built in the build job after `make pages-test` (`make pages`
+    empties `_site/`) and before the link check, and the smoke job follows `deploy`; Task 9
+    extends `tests/test_pages_workflow.py` (its job set, the build job's order).
+  - `tests/test_pages_workflow.py`: `evaluate(expression, context)`, `EVENTS`, and the
+    hardening checks Task 9's jobs must keep.
 
-<!-- steps: written in the next pass -->
+The `make check` counts below come from a clone of the finished Phase 2 with this phase's Tasks 1
+to 6; yours are higher once Phase 3 is in. What matters is no failure, ruff's `All checks passed!`
+and gitleaks' `no leaks found`; the new tests' own counts are exact.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing test,** `tests/test_pages_workflow.py`:
+
+```python
+"""pages.yml, read as GitHub Actions reads it (spec §23.1, §23.3; S50, S51; Phase 4 Task 7).
+
+GitHub Actions can't run here, so this pins what only a live run would otherwise show: the only
+workflow that deploys Pages builds and tests the site on every pull request and push, and deploys
+from main alone, after a push, a manual run, or a successful release in this repository (Phase 4
+Decision 2's workflow_run, whose conditions are evaluated here against the events that could
+start it); the deploy job holds the only write permissions and runs no code of the repository's;
+and every job keeps §23.1's hardening. `make actionlint` checks the file's syntax and expressions.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+from pathlib import Path
+
+import pytest
+import yaml
+
+REPO = Path(__file__).resolve().parents[1]
+WORKFLOWS = REPO / ".github" / "workflows"
+PAGES = WORKFLOWS / "pages.yml"
+PINNED = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+(\.\d+)*$")
+REPOSITORY = "chendaniely/vid2sub"
+
+
+@pytest.fixture(scope="module")
+def workflow() -> dict:
+    return yaml.safe_load(PAGES.read_text(encoding="utf-8"))
+
+
+def steps(workflow: dict, job: str) -> list[dict]:
+    return workflow["jobs"][job]["steps"]
+
+
+def runs(workflow: dict, job: str) -> list[str]:
+    return [s["run"] for s in steps(workflow, job) if "run" in s]
+
+
+def uses(workflow: dict, job: str) -> list[str]:
+    return [s["uses"].split("@")[0] for s in steps(workflow, job) if "uses" in s]
+
+
+# ---- GitHub's expressions, as far as pages.yml's `if:` conditions use them ----------------------
+
+TOKEN = re.compile(r"\s*(?:(?P<str>'[^']*')|(?P<op>==|!=|&&|\|\||[()!])|(?P<name>[A-Za-z_][\w.-]*))")
+
+
+def evaluate(expression: str, context: dict) -> bool:
+    """`expression`, in as much of GitHub's syntax as pages.yml's conditions use (names,
+    single-quoted strings, ==, !=, &&, ||, ! and brackets), with each name looked up in `context`
+    by its dotted path, missing as None, as Actions reads a missing property as null. Anything
+    else fails the test."""
+    tokens, at, text = [], 0, expression.strip()
+    while at < len(text):
+        match = TOKEN.match(text, at)
+        assert match and match.end() > at, f"can't read {text[at:]!r}"
+        tokens.append(match.groupdict())
+        at = match.end()
+    tokens.append({"op": "end"})
+    pos = 0
+
+    def peek(op: str) -> bool:
+        return tokens[pos].get("op") == op
+
+    def take(op: str) -> None:
+        nonlocal pos
+        assert peek(op), f"expected {op!r} in {expression!r}"
+        pos += 1
+
+    def either():
+        value = both()
+        while peek("||"):
+            take("||")
+            right = both()
+            value = value or right
+        return value
+
+    def both():
+        value = compare()
+        while peek("&&"):
+            take("&&")
+            right = compare()
+            value = value and right
+        return value
+
+    def compare():
+        left = unary()
+        for op in ("==", "!="):
+            if peek(op):
+                take(op)
+                right = unary()
+                return (left == right) is (op == "==")
+        return left
+
+    def unary():
+        if peek("!"):
+            take("!")
+            return not unary()
+        return atom()
+
+    def atom():
+        nonlocal pos
+        token = tokens[pos]
+        if peek("("):
+            take("(")
+            value = either()
+            take(")")
+            return value
+        pos += 1
+        if token.get("str") is not None:
+            return token["str"][1:-1]
+        name = token.get("name")
+        assert name is not None, f"can't read {expression!r}"
+        if name in ("true", "false", "null"):
+            return {"true": True, "false": False, "null": None}[name]
+        value = context
+        for part in name.split("."):
+            value = value.get(part) if isinstance(value, dict) else None
+        return value
+
+    value = either()
+    take("end")
+    return bool(value)
+
+
+def event(name: str, *, ref: str = "refs/heads/main", run: dict | None = None) -> dict:
+    github = {"event_name": name, "ref": ref, "repository": REPOSITORY, "event": {}}
+    if run is not None:
+        github["event"]["workflow_run"] = run
+    return {"github": github}
+
+
+def release_run(conclusion: str = "success", trigger: str = "push",
+                repository: str = REPOSITORY) -> dict:
+    return {"conclusion": conclusion, "event": trigger,
+            "head_repository": {"full_name": repository}}
+
+
+EVENTS = {
+    # name: (context, builds, deploys)
+    "a push to main": (event("push"), True, True),
+    "a manual run on main": (event("workflow_dispatch"), True, True),
+    "a release that succeeded": (event("workflow_run", run=release_run()), True, True),
+    "a pull request": (event("pull_request", ref="refs/pull/7/merge"), True, False),
+    "a manual run on another branch": (event("workflow_dispatch", ref="refs/heads/phase-4"),
+                                       True, False),
+    "a release run that failed": (event("workflow_run", run=release_run("failure")), False,
+                                  False),
+    "a release run that was cancelled": (event("workflow_run", run=release_run("cancelled")),
+                                         False, False),
+    "a run of a workflow named release on a fork's pull request": (
+        event("workflow_run", run=release_run(trigger="pull_request",
+                                              repository="someone/vid2sub")), False, False),
+    "a run of a workflow named release on a pull request here": (
+        event("workflow_run", run=release_run(trigger="pull_request")), False, False),
+    "a fork's push to a workflow named release": (
+        event("workflow_run", run=release_run(repository="someone/vid2sub")), False, False),
+}
+
+
+# ---- the tests ------------------------------------------------------------------------------------
+
+
+def test_the_evaluator_reads_expressions_as_actions_does():
+    context = {"github": {"event_name": "push", "event": {}}}
+    assert evaluate("github.event_name == 'push' && !(github.ref == 'x')", context)
+    assert evaluate("github.event.workflow_run.conclusion == null", context)
+    assert not evaluate("github.event_name != 'push' || false", context)
+    with pytest.raises(AssertionError):
+        evaluate("contains(github.ref, 'main')", context)
+
+
+def test_pages_yml_triggers_on_main_pull_requests_by_hand_and_after_a_release(workflow):
+    # why: spec §23.3 with Phase 4 Decision 2: a release made with the GITHUB_TOKEN starts no
+    # workflow, so `release: published` would never fire for release.yml's releases.
+    assert workflow["name"] == "pages"
+    assert workflow[True] == {  # PyYAML reads the key `on` as True
+        "push": {"branches": ["main"]}, "pull_request": None, "workflow_dispatch": None,
+        "workflow_run": {"workflows": ["release"], "types": ["completed"]}}
+
+
+def test_release_yml_if_present_is_the_workflow_pages_follows():
+    release = WORKFLOWS / "release.yml"
+    if release.is_file():  # Phase 4 Task 8 makes it, and pins its name too
+        assert yaml.safe_load(release.read_text(encoding="utf-8"))["name"] == "release"
+
+
+@pytest.mark.parametrize("name", EVENTS)
+def test_the_site_is_built_and_deployed_only_for_the_events_that_should(workflow, name):
+    # why: workflow_run fires for every completed run of any workflow named `release`, a
+    # failure's and a fork pull request's included, and its jobs get write tokens; and only main
+    # may deploy (spec §23.3), whoever starts a manual run. Each job's condition holds alone.
+    context, builds, deploys = EVENTS[name]
+    jobs = workflow["jobs"]
+    assert evaluate(jobs["build"]["if"], context) is builds
+    assert evaluate(jobs["deploy"]["if"], context) is deploys
+
+
+def test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys(workflow):
+    assert workflow["permissions"] == {"contents": "read"}
+    assert set(workflow["jobs"]) == {"build", "deploy"}
+    assert workflow["jobs"]["build"]["permissions"] == {"contents": "read"}
+    deploy = workflow["jobs"]["deploy"]
+    assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
+    assert deploy["needs"] == "build"
+    assert deploy["environment"]["name"] == "github-pages"
+    assert deploy["concurrency"] == {"group": "pages", "cancel-in-progress": False}
+    assert [s.get("uses", "").split("@")[0] for s in deploy["steps"]] == ["actions/deploy-pages"]
+
+
+def test_it_builds_mains_own_files_never_the_commit_a_release_run_built(workflow):
+    # why: checkout's default is the event's commit, for workflow_run main's newest; a `ref:`
+    # set to the triggering run's head would build whatever that run checked out.
+    text = PAGES.read_text(encoding="utf-8")
+    assert "head_sha" not in text and "head_branch" not in text
+    checkouts = [s for s in steps(workflow, "build") if s.get("uses", "").startswith(
+        "actions/checkout@")]
+    assert len(checkouts) == 1 and set(checkouts[0]["with"]) == {"persist-credentials"}
+
+
+def test_the_build_job_makes_tests_and_uploads_the_site_in_that_order(workflow):
+    order = [s.get("run") or s.get("uses", "").split("@")[0] for s in steps(workflow, "build")]
+    assert order.index("make pages") < order.index("make pages-test") < order.index(
+        "actions/upload-pages-artifact")
+    assert order.index("uv run playwright install --with-deps chromium") < order.index(
+        "make pages-test")
+    upload = next(s for s in steps(workflow, "build")
+                  if s.get("uses", "").startswith("actions/upload-pages-artifact@"))
+    assert upload["with"] == {"path": "_site/", "include-hidden-files": True}  # .nojekyll
+    assert upload["if"] == "github.event_name != 'pull_request'"
+    assert workflow["jobs"]["build"]["env"] == {"UV_FROZEN": "1", "VID2SUB_REQUIRE_FFMPEG": "1"}
+    assert "sudo apt-get update && sudo apt-get install -y ffmpeg" in runs(workflow, "build")
+
+
+def test_the_caches_follow_the_pinned_shinylive_assets_and_uv_lock(workflow, tmp_path):
+    caches = {s["with"]["path"]: s["with"]["key"] for s in steps(workflow, "build")
+              if s.get("uses", "").startswith("actions/cache@")}
+    assert caches == {".cache/shinylive": "shinylive-${{ steps.shinylive.outputs.assets }}",
+                      ".cache/wheels": "wheels-${{ hashFiles('uv.lock') }}"}
+    step = next(s for s in steps(workflow, "build") if s.get("id") == "shinylive")
+    output = tmp_path / "output"
+    subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+                   cwd=REPO, env={**os.environ, "GITHUB_OUTPUT": str(output)}, check=True)
+    pinned = re.search(r'^ASSETS = "(.+)"$', (REPO / "scripts/shinylive_local.py").read_text(
+        encoding="utf-8"), flags=re.MULTILINE)[1]
+    assert output.read_text(encoding="utf-8") == f"assets={pinned}\n"
+
+
+def test_pages_yml_is_the_only_workflow_that_deploys_pages():
+    # why: spec §23.3, and no gh-pages branch.
+    for path in WORKFLOWS.glob("*.yml"):
+        text = path.read_text(encoding="utf-8")
+        deploys = "pages: write" in text or "actions/deploy-pages@" in text or "gh-pages" in text
+        assert deploys is (path == PAGES), path.name
+
+
+def test_every_action_is_pinned_and_every_job_is_hardened(workflow):
+    text = PAGES.read_text(encoding="utf-8")
+    pins = re.findall(r"uses: (.+)$", text, flags=re.MULTILINE)
+    assert pins and [u for u in pins if not PINNED.fullmatch(u.strip())] == []
+    for name, job in workflow["jobs"].items():
+        assert isinstance(job.get("timeout-minutes"), int), name
+        assert job["runs-on"] == "ubuntu-24.04", name
+        for s in job["steps"]:
+            assert "${{" not in s.get("run", ""), s["run"]
+            if s.get("uses", "").startswith("actions/checkout@"):
+                assert s["with"]["persist-credentials"] is False, name
+    setup_uv = next(s for s in steps(workflow, "build")
+                    if s.get("uses", "").startswith("astral-sh/setup-uv@"))
+    assert setup_uv["with"]["version"] == "0.13.1"
+```
+
+- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_pages_workflow.py -q`.
+  Expected: `3 passed, 16 errors`, each error `FileNotFoundError: [Errno 2] No such file or
+  directory: '…/.github/workflows/pages.yml'` (the evaluator's test, the release-name test and the
+  only-deployer scan pass without the file).
+- [ ] **Step 3: Write the workflow,** `.github/workflows/pages.yml`:
+
+```yaml
+# The Pages editor (spec §21, §23.3; S50): build the site with make pages, test it with make
+# pages-test, and deploy it to GitHub Pages. This is the only workflow that deploys Pages, and
+# there is no gh-pages branch. Pull requests build and test only. A deploy comes from main alone:
+# a push to main, a manual run on main, or a release (spec §23.4). A release made with the
+# GITHUB_TOKEN starts no workflow, so this one follows release.yml by its name through
+# workflow_run (Phase 4 Decision 2), and runs only for a successful tag push in this repository;
+# workflow_run runs main's own copy of this file, on main's newest commit, never the commit the
+# release built.
+name: pages
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # A workflow_run for any other run of a workflow named `release` (a failure, a fork's) builds
+    # nothing.
+    if: >-
+      github.event_name != 'workflow_run' || (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      UV_FROZEN: "1"
+      # tests/pages/test_pages_files.py is a media test (it probes the episode): a skip fails.
+      VID2SUB_REQUIRE_FFMPEG: "1"
+    steps:
+      # No ref: the event's own commit, which for workflow_run is main's newest.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with: { version: "0.13.1" }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version-file: frontend/.nvmrc, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # Shinylive's assets (about 435 MB) by the version scripts/shinylive_local.py pins, and the
+      # vendored wheels by uv.lock: build_pages.py checks each wheel's hash on every build.
+      - name: the Shinylive assets' version
+        id: shinylive
+        run: echo "assets=$(sed -n 's/^ASSETS = "\(.*\)"$/\1/p' scripts/shinylive_local.py)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/shinylive
+          key: shinylive-${{ steps.shinylive.outputs.assets }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/wheels
+          key: wheels-${{ hashFiles('uv.lock') }}
+      - run: npm ci
+        working-directory: frontend
+      - run: uv sync --group dev
+      - run: uv run playwright install --with-deps chromium
+      - run: make pages
+      - run: make pages-test
+      # Hidden files too, for .nojekyll (spec §23.3).
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site/
+          include-hidden-files: true
+
+  deploy:
+    needs: build
+    # main only, and never a pull request; the github-pages environment allows main alone too.
+    if: >-
+      github.ref == 'refs/heads/main' && (
+        github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write # deploy
+      id-token: write # prove to Pages that the deploy comes from this run
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # One deploy at a time, never cancelled midway; a newer one waits.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_pages_workflow.py -q`:
+  `19 passed`. `make actionlint`: its command line only, exit 0 (with shellcheck installed, it
+  checks the run steps too). The guards, each made in the workflow, run, and reverted:
+  - the deploy job's `github.event.workflow_run.event == 'push' &&` taken out: `FAILED
+    tests/test_pages_workflow.py::test_the_site_is_built_and_deployed_only_for_the_events_that_should[a run of a workflow named release on a pull request here]`;
+  - the build job's `&& github.event.workflow_run.head_repository.full_name == github.repository`
+    taken out: `FAILED …[a fork's push to a workflow named release]`;
+  - the deploy job's `github.ref == 'refs/heads/main' && (` made `(`: `FAILED …[a manual run on
+    another branch]`;
+  - checkout given `ref: "${{ github.event.workflow_run.head_sha }}"`: `FAILED
+    tests/test_pages_workflow.py::test_it_builds_mains_own_files_never_the_commit_a_release_run_built`;
+  - the build job given `contents: write`: `FAILED
+    tests/test_pages_workflow.py::test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys`.
+
+  Each prints `1 failed, 18 passed`. The build job's commands are Tasks 2–5's, run here: `make
+  pages` and `make pages-test` (`15 passed`). Then `make check`. Expected: `1127 passed, 2
+  skipped, 51 deselected` (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`, `All
+  checks passed!`, `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+ci(pages): 🤖 pages.yml builds and tests the Pages site on every pull request and push, and deploys it from main alone, after a push, a manual run or a successful release
+
+Spec §21, §23.3 and S50, with Phase 4 Decision 2: pages.yml is the only workflow that deploys
+Pages, from an Actions artifact (no gh-pages branch).
+
+- Triggers: push to main, pull_request, workflow_dispatch, and workflow_run on the workflow named
+  `release` (Task 8's release.yml), completed. A release made with the GITHUB_TOKEN starts no
+  workflow, so `release: published` would never fire for release.yml's releases.
+- workflow_run fires for every completed run of any workflow by that name, a failed one's and a
+  fork pull request's included, and its jobs get write tokens: both jobs run for it only when
+  the run's conclusion is success, its event is push, and its head repository is this one.
+- build (contents: read, 30 minutes, UV_FROZEN=1, VID2SUB_REQUIRE_FFMPEG=1): checkout with no
+  ref and no credentials (for workflow_run, main's newest commit, never the run's head_sha);
+  uv 0.13.1; Node from .nvmrc; ffmpeg (tests/pages/test_pages_files.py is a media test, so a
+  skip fails); Shinylive's assets cached by the version scripts/shinylive_local.py pins and the
+  vendored wheels by uv.lock's hash (build_pages.py checks each wheel's hash on every build);
+  npm ci; uv sync --group dev; Playwright's Chromium with its system packages; make pages; make
+  pages-test; then, except on a pull request, upload-pages-artifact with _site/ and its hidden
+  files (.nojekyll).
+- deploy (pages: write and id-token: write only, 10 minutes): needs build, runs only on main
+  (refs/heads/main; a manual run on another branch builds and tests but never deploys) and
+  never for a pull request; the github-pages environment; one deploy at a time, never cancelled
+  midway; deploy-pages, and nothing else: no checkout, no code of the repository's runs with
+  those permissions.
+- Every action pinned by commit with its version beside it (git ls-remote: cache v6.1.0,
+  upload-pages-artifact v5.0.0, deploy-pages v5.0.1, all lightweight tags; checkout, setup-uv
+  and setup-node as ci.yml pins them).
+
+tests/test_pages_workflow.py reads the file as Actions does (PyYAML) and evaluates both jobs'
+`if:` conditions, each on its own, against ten events (a push to main, a manual run on main or
+on another branch, a pull request, and workflow_run for a success, a failure, a cancel, a pull
+request here and a fork's pull request or push); it pins the permissions, the deploy job's lone
+step, the checkout with no ref and no head_sha anywhere, the order make pages, make pages-test,
+upload, the caches' keys (running the version step's script against shinylive_local.py's
+ASSETS), pages.yml as the only workflow that deploys Pages, the pins, timeouts and token-free
+checkouts. It failed first with FileNotFoundError for .github/workflows/pages.yml (16 errors).
+Guard checks, each reverted: the deploy condition without `event == 'push'` ("FAILED ...[a run
+of a workflow named release on a pull request here]"), the build condition without the head
+repository ("...[a fork's push to a workflow named release]"), the deploy condition without
+the main ref ("...[a manual run on another branch]"), a checkout of the run's head_sha
+("FAILED ...test_it_builds_mains_own_files_never_the_commit_a_release_run_built"), the build job
+given contents: write ("FAILED ...test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_
+repositorys"). make actionlint (with shellcheck): no findings.
+
+What only a live run shows: the first deploy, Pages' source and the github-pages environment's
+rule (Dan's, the [Dan] steps in Task 7's listing), and a release's workflow_run (Task 12, step 9).
+
+Docs read: GitHub's "Events that trigger workflows" (workflow_run: completed whatever the
+conclusion, GITHUB_SHA and GITHUB_REF the default branch's, the file must be on the default
+branch, its runs get secrets and write tokens, the cache-poisoning warning; GITHUB_TOKEN events
+start no run but workflow_dispatch and repository_dispatch); the REST workflow-run object
+(event, conclusion, head_repository.full_name); "Deployments and environments" (deployment
+branch rules match GITHUB_REF); Pages' "Using custom workflows" (pages: write and id-token:
+write; a gzip of one tar, no symlinks or hard links) and "Configuring a publishing source" (the
+github-pages environment, created if missing; protect it so only the default branch deploys);
+upload-pages-artifact v5.0.0's action.yml and release notes (include-hidden-files, default
+false, new in v5; tar --dereference; upload-artifact v7.0.0); deploy-pages v5.0.1's README
+and release notes; actions/cache v6.1.0's README (the default branch's caches are readable by
+other branches; a key, once saved, isn't saved again).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 7
+Co-Authored-By: <the model's own line>
+```
+
+  `git add .github/workflows/pages.yml tests/test_pages_workflow.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 7b: the security review's fixes
+
+When this listing was built, one independent Tier 1 reviewer went over round 7a with `AGENTS.md`'s
+security checklist (28 mutations of the workflow against the test, every pin checked with `git
+ls-remote`). It found no Critical. Its findings, each fixed in this round: the Shinylive cache
+held the unpacked folder, which `shinylive_local.assets()` trusts unchecked, keyed by the version
+alone, so the SHA-256 pin was checked only on a cache miss (Important); the `github-pages`
+environment's rule is the only gate for a run on any other ref, since such a run uses that ref's
+own copy of `pages.yml`, and no step set it (Important: Step 14 below); concurrency on the deploy
+job let an older run deploy over a newer one (Minor); the deploy job's timeout equalled
+deploy-pages' own (Minor); `continue-on-error`, the deploy job's exact step and env, `*.yaml`
+and `write-all` were untested (Minor); the evaluator compared strings with case, where Actions
+ignores it (Minor); two comments overstated (Minor). Its checklist: secrets fine; permissions a
+finding (the environment rule); network exposure fine; failing closed a finding (the cache;
+`continue-on-error`); injection fine; logging fine.
+
+- [ ] **Step 6: Write the failing tests.** Apply to `tests/test_pages_workflow.py`:
+
+```diff
+diff --git a/tests/test_pages_workflow.py b/tests/test_pages_workflow.py
+index 3d97957..e1b5eed 100644
+--- a/tests/test_pages_workflow.py
++++ b/tests/test_pages_workflow.py
+@@ -23,6 +23,8 @@ WORKFLOWS = REPO / ".github" / "workflows"
+ PAGES = WORKFLOWS / "pages.yml"
+ PINNED = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+(\.\d+)*$")
+ REPOSITORY = "chendaniely/vid2sub"
++# The run steps are bash on ubuntu-24.04; the Linux and macOS jobs run them here, not Windows'.
++bash_steps = pytest.mark.skipif(os.name == "nt", reason="pages.yml's run steps are bash")
+ 
+ 
+ @pytest.fixture(scope="module")
+@@ -50,8 +52,8 @@ TOKEN = re.compile(r"\s*(?:(?P<str>'[^']*')|(?P<op>==|!=|&&|\|\||[()!])|(?P<name
+ def evaluate(expression: str, context: dict) -> bool:
+     """`expression`, in as much of GitHub's syntax as pages.yml's conditions use (names,
+     single-quoted strings, ==, !=, &&, ||, ! and brackets), with each name looked up in `context`
+-    by its dotted path, missing as None, as Actions reads a missing property as null. Anything
+-    else fails the test."""
++    by its dotted path, missing as None, as Actions reads a missing property as null, and strings
++    compared ignoring case, as Actions compares them. Anything else fails the test."""
+     tokens, at, text = [], 0, expression.strip()
+     while at < len(text):
+         match = TOKEN.match(text, at)
+@@ -91,6 +93,8 @@ def evaluate(expression: str, context: dict) -> bool:
+             if peek(op):
+                 take(op)
+                 right = unary()
++                if isinstance(left, str) and isinstance(right, str):  # Actions ignores case
++                    left, right = left.casefold(), right.casefold()
+                 return (left == right) is (op == "==")
+         return left
+ 
+@@ -168,6 +172,7 @@ def test_the_evaluator_reads_expressions_as_actions_does():
+     assert evaluate("github.event_name == 'push' && !(github.ref == 'x')", context)
+     assert evaluate("github.event.workflow_run.conclusion == null", context)
+     assert not evaluate("github.event_name != 'push' || false", context)
++    assert evaluate("github.event_name == 'PUSH'", context)  # Actions ignores case
+     with pytest.raises(AssertionError):
+         evaluate("contains(github.ref, 'main')", context)
+ 
+@@ -206,8 +211,19 @@ def test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys(wo
+     assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
+     assert deploy["needs"] == "build"
+     assert deploy["environment"]["name"] == "github-pages"
+-    assert deploy["concurrency"] == {"group": "pages", "cancel-in-progress": False}
+-    assert [s.get("uses", "").split("@")[0] for s in deploy["steps"]] == ["actions/deploy-pages"]
++    assert "env" not in deploy and "concurrency" not in deploy
++    assert deploy["steps"] == [{"id": "deployment", "uses": (
++        "actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346")}]  # its defaults
++    assert deploy["timeout-minutes"] > 10  # deploy-pages stops itself at 10 minutes
++
++
++def test_runs_wait_their_turn_per_ref_and_a_failing_step_fails_the_run(workflow):
++    # why: deploys go out in the order their runs started, so an older run can't deploy over a
++    # newer one (and, from Task 9, drop a new release from the index); and a step allowed to
++    # fail (a failing Pages test, say) would still deploy, since `needs` sees success.
++    assert workflow["concurrency"] == {"group": "pages-${{ github.ref }}",
++                                       "cancel-in-progress": False}
++    assert "continue-on-error" not in PAGES.read_text(encoding="utf-8")
+ 
+ 
+ def test_it_builds_mains_own_files_never_the_commit_a_release_run_built(workflow):
+@@ -234,11 +250,19 @@ def test_the_build_job_makes_tests_and_uploads_the_site_in_that_order(workflow):
+     assert "sudo apt-get update && sudo apt-get install -y ffmpeg" in runs(workflow, "build")
+ 
+ 
++@bash_steps
+ def test_the_caches_follow_the_pinned_shinylive_assets_and_uv_lock(workflow, tmp_path):
++    # why: shinylive_local.py trusts an unpacked folder, and checks the tarball before every
++    # unpack; so CI caches the tarball alone, under a key that changes with the pin itself.
+     caches = {s["with"]["path"]: s["with"]["key"] for s in steps(workflow, "build")
+               if s.get("uses", "").startswith("actions/cache@")}
+-    assert caches == {".cache/shinylive": "shinylive-${{ steps.shinylive.outputs.assets }}",
+-                      ".cache/wheels": "wheels-${{ hashFiles('uv.lock') }}"}
++    assert caches == {
++        ".cache/shinylive/shinylive-${{ steps.shinylive.outputs.assets }}.tar.gz":
++            "shinylive-${{ hashFiles('scripts/shinylive_local.py') }}",
++        ".cache/wheels": "wheels-${{ hashFiles('uv.lock') }}"}
++    setup_uv = next(s for s in steps(workflow, "build")
++                    if s.get("uses", "").startswith("astral-sh/setup-uv@"))
++    assert setup_uv["with"]["enable-cache"] is False  # uv trusts what it unpacked there
+     step = next(s for s in steps(workflow, "build") if s.get("id") == "shinylive")
+     output = tmp_path / "output"
+     subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+@@ -250,12 +274,45 @@ def test_the_caches_follow_the_pinned_shinylive_assets_and_uv_lock(workflow, tmp
+ 
+ def test_pages_yml_is_the_only_workflow_that_deploys_pages():
+     # why: spec §23.3, and no gh-pages branch.
+-    for path in WORKFLOWS.glob("*.yml"):
++    def grants(permissions) -> bool:
++        return permissions == "write-all" or (
++            isinstance(permissions, dict) and permissions.get("pages") == "write")
++
++    paths = sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")])
++    assert PAGES in paths
++    for path in paths:
+         text = path.read_text(encoding="utf-8")
+-        deploys = "pages: write" in text or "actions/deploy-pages@" in text or "gh-pages" in text
++        wf = yaml.safe_load(text)
++        writes = grants(wf.get("permissions")) or any(
++            grants(job.get("permissions")) for job in wf.get("jobs", {}).values())
++        deploys = writes or "actions/deploy-pages@" in text or "gh-pages" in text
+         assert deploys is (path == PAGES), path.name
+ 
+ 
++@bash_steps
++def test_the_site_is_uploaded_only_once_it_holds_no_link(workflow, tmp_path):
++    # why: Pages takes no links, and upload-pages-artifact's tar follows them (--dereference),
++    # so a link in _site/ would upload whatever it points at.
++    order = [s.get("name") or s.get("uses", "").split("@")[0] for s in steps(workflow, "build")]
++    assert order.index("the site holds no symbolic links") == order.index(
++        "actions/upload-pages-artifact") - 1
++    script = next(s["run"] for s in steps(workflow, "build")
++                  if s.get("name") == "the site holds no symbolic links")
++    site = tmp_path / "_site"
++    site.mkdir()
++    (site / "index.html").write_text("<p>site</p>", encoding="utf-8")
++
++    def check() -> subprocess.CompletedProcess:
++        return subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
++                              cwd=tmp_path, capture_output=True, text=True, check=False)
++
++    assert check().returncode == 0
++    (site / "secret").symlink_to(tmp_path / "outside")
++    refused = check()
++    assert refused.returncode == 1
++    assert refused.stdout.startswith("::error::_site/ holds a symbolic link")
++
++
+ def test_every_action_is_pinned_and_every_job_is_hardened(workflow):
+     text = PAGES.read_text(encoding="utf-8")
+     pins = re.findall(r"uses: (.+)$", text, flags=re.MULTILINE)
+```
+
+  and to `tests/test_build_pages.py` the second file's part of this diff (its first part is
+  Step 8's `scripts/shinylive_local.py`; apply only the test's hunk now: `git apply --include
+  tests/test_build_pages.py`):
+
+```diff
+diff --git a/scripts/shinylive_local.py b/scripts/shinylive_local.py
+index a4fb2f1..5844f81 100644
+--- a/scripts/shinylive_local.py
++++ b/scripts/shinylive_local.py
+@@ -6,11 +6,13 @@ Copied from recordings (scripts/shinylive_local.py at 8deb039; Dan owns both), w
+ pinned by hash (Phase 4 Task 2). Why: Shinylive keeps its web assets, about 740 MB per version
+ unpacked, in `appdirs.user_cache_dir("shinylive")` and has no option or environment variable to
+ move them (`shinylive._assets.shinylive_cache_dir()`), so this points that private function at
+-`.cache/shinylive/` in the repository, which is git-ignored, and runs Shinylive's own CLI; CI
+-caches that folder. Shinylive downloads the assets from GitHub with no check of what arrives, so
+-this downloads them itself first, the first time, and unpacks them only if the tarball's SHA-256
+-is the pinned one: what runs in every visitor's browser is fixed by version and by hash, as a
+-package install is (spec §21).
++`.cache/shinylive/` in the repository, which is git-ignored, and runs Shinylive's own CLI.
++Shinylive downloads the assets from GitHub with no check of what arrives, so this downloads them
++itself first, the first time, and unpacks them only if the tarball's SHA-256 is the pinned one:
++what runs in every visitor's browser is fixed by version and by hash, as a package install is
++(spec §21). The tarball is kept beside the folder, and pages.yml caches the tarball alone, so
++every CI build checks it again before it unpacks (Phase 4 Task 7's security review: a cached
++folder would be trusted unchecked).
+ 
+ Because it patches a private function, it refuses any Shinylive but the pinned one: the `pages`
+ dependency group in pyproject.toml, `shinylive==0.8.12`, whose assets are 0.10.15 (Pyodide
+@@ -47,9 +49,11 @@ def sha256_of(path: Path) -> str:
+ 
+ 
+ def assets(cache: Path = CACHE, *, url: str | None = None) -> Path:
+-    """The pinned assets' folder in `cache`: downloaded and checked the first time, then unpacked
+-    with Shinylive's own safe extractor. A tarball whose hash isn't the pinned one is deleted and
+-    nothing is unpacked."""
++    """The pinned assets' folder in `cache`: unpacked with Shinylive's own safe extractor from
++    the tarball, downloaded first if it isn't there, once the tarball's hash is the pinned one.
++    The tarball is kept, so a cache of it is checked again at the next unpack; one whose hash
++    isn't the pinned one is deleted and nothing is unpacked. A folder already unpacked here is
++    used as it is."""
+     folder = cache / f"shinylive-{ASSETS}"
+     if folder.is_dir():
+         return folder
+@@ -67,7 +71,6 @@ def assets(cache: Path = CACHE, *, url: str | None = None) -> Path:
+         raise SystemExit(f"shinylive_local: the Shinylive {ASSETS} assets' SHA-256 is {digest}, "
+                          f"not the pinned {ASSETS_SHA256}; nothing was unpacked")
+     _utils.tar_safe_extractall(str(tarball), str(cache))
+-    tarball.unlink()
+     return folder
+ 
+ 
+diff --git a/tests/test_build_pages.py b/tests/test_build_pages.py
+index 5d5b09b..bf7b461 100644
+--- a/tests/test_build_pages.py
++++ b/tests/test_build_pages.py
+@@ -175,7 +175,14 @@ def test_shinylives_assets_are_unpacked_only_with_the_pinned_hash(shinylive_loca
+     body = tarball(cached)
+     monkeypatch.setattr(shinylive_local, "ASSETS_SHA256", hashlib.sha256(body).hexdigest())
+     folder = shinylive_local.assets(tmp_path)
+-    assert (folder / "marker.json").read_bytes() == b"{}" and not cached.exists()
++    assert (folder / "marker.json").read_bytes() == b"{}"
++    # The tarball stays, so pages.yml caches it, not the folder, and checks it again next time.
++    assert cached.read_bytes() == body
++    shutil.rmtree(folder)
++    cached.write_bytes(body[:-1] + b"x")  # a cache that changed under the same key
++    with pytest.raises(SystemExit, match="not the pinned"):
++        shinylive_local.assets(tmp_path)
++    assert not folder.exists()
+ 
+ 
+ def test_pages_app_configures_the_browser_runtime_before_it_imports_the_server():
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_pages_workflow.py
+  tests/test_build_pages.py -q`. Expected: `5 failed, 27 passed`: `FAILED
+  tests/test_pages_workflow.py::test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys`
+  (the deploy job's own concurrency), `FAILED …::test_runs_wait_their_turn_per_ref_and_a_failing_step_fails_the_run`
+  (no workflow concurrency), `FAILED …::test_the_caches_follow_the_pinned_shinylive_assets_and_uv_lock`
+  (the folder cached, by the version), `FAILED …::test_the_site_is_uploaded_only_once_it_holds_no_link`
+  (no such step), and `FAILED
+  tests/test_build_pages.py::test_shinylives_assets_are_unpacked_only_with_the_pinned_hash`
+  (the tarball deleted after unpacking). The evaluator's new case check passes already: the
+  evaluator is the test's own.
+- [ ] **Step 8: The fixes.** Apply the rest of Step 6's second diff (`git apply --include
+  scripts/shinylive_local.py`), and replace `.github/workflows/pages.yml` with:
+
+```yaml
+# The Pages editor (spec §21, §23.3; S50): build the site with make pages, test it with make
+# pages-test, and deploy it to GitHub Pages. This is the only workflow that deploys Pages, and
+# there is no gh-pages branch. Pull requests build and test only. A deploy comes from main alone:
+# a push to main, a manual run on main, or a release (spec §23.4). A release made with the
+# GITHUB_TOKEN starts no workflow, so this one follows release.yml by its name through
+# workflow_run (Phase 4 Decision 2), and builds only after a successful push run of a workflow
+# named release in this repository; workflow_run runs main's own copy of this file, on main's
+# newest commit, never the commit the release built. Another branch's run uses that branch's
+# copy of this file, so the github-pages environment's rule, main only (Dan's setting, Phase 4
+# Task 7), is what keeps it from deploying.
+name: pages
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+# One run per ref at a time, in the order they started, never cancelled midway: a push, a manual
+# run on main and a release's run all have main's ref, so the newest deploys last.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # A workflow_run for any other run of a workflow named `release` (a failure, a fork's) builds
+    # nothing.
+    if: >-
+      github.event_name != 'workflow_run' || (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      UV_FROZEN: "1"
+      # tests/pages/test_pages_files.py is a media test (it probes the episode): a skip fails.
+      VID2SUB_REQUIRE_FFMPEG: "1"
+    steps:
+      # No ref: the event's own commit, which for workflow_run is main's newest.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      # No uv cache: uv trusts what it unpacked there, and the site is built from pinned,
+      # hash-checked downloads only.
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with: { version: "0.13.1", enable-cache: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version-file: frontend/.nvmrc, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # Shinylive's assets (about 435 MB) are cached as the tarball, keyed by the file that pins
+      # their version and SHA-256: shinylive_local.py checks the tarball against the pin before
+      # every unpack, so a cache can't hand the site anything else. The vendored wheels, keyed
+      # by uv.lock, are checked against it on every build too.
+      - name: the Shinylive assets' version
+        id: shinylive
+        run: echo "assets=$(sed -n 's/^ASSETS = "\(.*\)"$/\1/p' scripts/shinylive_local.py)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/shinylive/shinylive-${{ steps.shinylive.outputs.assets }}.tar.gz
+          key: shinylive-${{ hashFiles('scripts/shinylive_local.py') }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/wheels
+          key: wheels-${{ hashFiles('uv.lock') }}
+      - run: npm ci
+        working-directory: frontend
+      - run: uv sync --group dev
+      - run: uv run playwright install --with-deps chromium
+      - run: make pages
+      - run: make pages-test
+      # Pages takes no links, and upload-pages-artifact's tar follows them.
+      - name: the site holds no symbolic links
+        run: |
+          if find _site -type l | grep -q .; then
+            echo "::error::_site/ holds a symbolic link: $(find _site -type l | head -1)"
+            exit 1
+          fi
+      # Hidden files too, for .nojekyll (spec §23.3).
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site/
+          include-hidden-files: true
+
+  deploy:
+    needs: build
+    # main only, and never a pull request (this copy's rule; the environment's is the gate).
+    if: >-
+      github.ref == 'refs/heads/main' && (
+        github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    # Longer than deploy-pages' own 10-minute limit, so its error is the one that shows.
+    timeout-minutes: 15
+    permissions:
+      pages: write # deploy
+      id-token: write # prove to Pages that the deploy comes from this run
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_pages_workflow.py
+  tests/test_build_pages.py -q`: `32 passed`. The guards, each made, run, and reverted:
+  - the Shinylive cache's `path:` back to `.cache/shinylive`: `FAILED
+    tests/test_pages_workflow.py::test_the_caches_follow_the_pinned_shinylive_assets_and_uv_lock`;
+  - `tarball.unlink()` back after `_utils.tar_safe_extractall(…)` in `shinylive_local.py`:
+    `FAILED tests/test_build_pages.py::test_shinylives_assets_are_unpacked_only_with_the_pinned_hash`;
+  - setup-uv's `enable-cache: false` taken out: the caches test fails;
+  - `continue-on-error: true` under `- run: make pages-test`, or the concurrency group back to
+    `pages`: `FAILED …::test_runs_wait_their_turn_per_ref_and_a_failing_step_fails_the_run`;
+  - the link check's `exit 1` made `exit 0`: `FAILED
+    …::test_the_site_is_uploaded_only_once_it_holds_no_link`.
+
+  Each prints `1 failed, 31 passed`. `make actionlint`: its command line only. Then `make check`.
+  Expected: `1129 passed, 2 skipped, 51 deselected` (twice), `Test Files  21 passed (21)`,
+  `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`. `make pages` still builds
+  from the unpacked folder already in `.cache/shinylive/` (an existing checkout keeps its folder;
+  a fresh one now keeps the tarball beside it).
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(pages): 🤖 the security review's fixes: CI caches Shinylive's tarball and checks it before every unpack, deploys go out in the order their runs started, and the site is uploaded only with no link in it
+
+The Tier 1 security review (one independent reviewer, AGENTS.md's checklist) found no Critical;
+each finding is fixed here:
+
+- Important: the Shinylive cache bypassed the SHA-256 pin. It held the unpacked folder, keyed by
+  the version alone, and shinylive_local.assets() trusts an unpacked folder unchecked, so a
+  re-pin never reached CI and a cache saved by one bad run on main would stay. Now assets()
+  keeps the tarball beside the folder, pages.yml caches the tarball alone, keyed by
+  hashFiles('scripts/shinylive_local.py') (the version and the hash), and every CI build checks
+  it before it unpacks; one that changed under the key stops the build. setup-uv's cache is off
+  in this job too (uv trusts what it unpacked). The npm cache (integrity-checked) and the wheels
+  (checked against uv.lock on every build) stay. Locally the tarball now stays in .cache/ (435
+  MB beside the folder).
+- Important: the github-pages environment's rule is the real gate for any ref but main (another
+  branch's run uses that branch's copy of pages.yml), and nothing set it: Task 7's listing gains
+  the [Dan] steps (the Pages source, the rule main only) with read-only checks, and the
+  workflow's comments say the rule is the gate.
+- Minor: the deploy job's concurrency let an older run whose build finished later deploy over a
+  newer one; concurrency is now the workflow's, per ref (push, a manual run on main and a
+  release's run share main's), never cancelled.
+- Minor: the deploy job's 10 minutes equalled deploy-pages' own limit; it is 15.
+- Minor: test gaps: continue-on-error anywhere (a failing Pages test would still deploy), the
+  deploy job's step and env not pinned exactly, *.yaml and write-all not seen by the
+  only-deployer scan. All pinned now. And a step before the upload refuses a symbolic link in
+  _site/ (upload-pages-artifact's tar follows links; Pages takes none).
+- Minor: the test's evaluator compared strings with case; Actions ignores it, and so does it now.
+- Minor: the header said "a successful tag push"; it is any successful push run of a workflow
+  named release in this repository (main's newest commit is built either way).
+
+The new and changed tests fail without their fixes, each tried and reverted: the folder cached
+again ("FAILED tests/test_pages_workflow.py::test_the_caches_follow_the_pinned_shinylive_assets_
+and_uv_lock"), the tarball deleted after unpacking again ("FAILED tests/test_build_pages.py::
+test_shinylives_assets_are_unpacked_only_with_the_pinned_hash"), setup-uv's cache on (the caches
+test), continue-on-error on make pages-test and the old `group: pages` ("FAILED ...::test_runs_
+wait_their_turn_per_ref_and_a_failing_step_fails_the_run"), the link check's exit 1 made 0
+("FAILED ...::test_the_site_is_uploaded_only_once_it_holds_no_link"). make actionlint: no
+findings.
+
+Docs read: actions/cache v6.1.0's README and action.yml (a saved key isn't saved again; the
+save runs only when the job succeeded, post-if: success(), so a refused tarball is never saved);
+setup-uv v10.3.0's README (enable-cache: auto is on for push and dispatch); GitHub's expressions
+reference ("GitHub ignores case when comparing strings"); deploy-pages v5.0.1's action.yml
+(timeout 600000 ms, "10 minutes").
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 7
+Co-Authored-By: <the model's own line>
+```
+
+  `git add .github/workflows/pages.yml tests/test_pages_workflow.py scripts/shinylive_local.py
+  tests/test_build_pages.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1
+  --format='%(trailers)'` shows `Plan:`.
+
+#### Round 7c: the re-review's two one-line fixes
+
+The listing's one re-review found round 7b's fixes sound (B to H resolved) but for two Minor
+points, fixed here directly, as the cap allows: the link check failed open under pipefail with
+many links (`grep -q` ends the pipe, `find` dies of SIGPIPE, and pipefail reads 141 as false),
+and the cache comment overclaimed (actions/cache restores every member of an entry into the
+workspace, so an entry saved under the key could carry the unpacked folder or any other path;
+closing that goes to the phase-end list, below).
+
+- [ ] **Step 11: Apply:**
+
+```diff
+diff --git a/.github/workflows/pages.yml b/.github/workflows/pages.yml
+index e583cc4..7fb16ae 100644
+--- a/.github/workflows/pages.yml
++++ b/.github/workflows/pages.yml
+@@ -54,9 +54,10 @@ jobs:
+         with: { node-version-file: frontend/.nvmrc, cache: npm, cache-dependency-path: frontend/package-lock.json }
+       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+       # Shinylive's assets (about 435 MB) are cached as the tarball, keyed by the file that pins
+-      # their version and SHA-256: shinylive_local.py checks the tarball against the pin before
+-      # every unpack, so a cache can't hand the site anything else. The vendored wheels, keyed
+-      # by uv.lock, are checked against it on every build too.
++      # their version and SHA-256, and shinylive_local.py checks the tarball against the pin
++      # before every unpack: a re-pin reaches CI, and a tarball changed under the key stops the
++      # build. A cache entry can still write any path when restored, so CI trusts what main's own
++      # runs saved. The vendored wheels, keyed by uv.lock, are checked on every build.
+       - name: the Shinylive assets' version
+         id: shinylive
+         run: echo "assets=$(sed -n 's/^ASSETS = "\(.*\)"$/\1/p' scripts/shinylive_local.py)" >> "$GITHUB_OUTPUT"
+@@ -77,8 +78,9 @@ jobs:
+       # Pages takes no links, and upload-pages-artifact's tar follows them.
+       - name: the site holds no symbolic links
+         run: |
+-          if find _site -type l | grep -q .; then
+-            echo "::error::_site/ holds a symbolic link: $(find _site -type l | head -1)"
++          link=$(find _site -type l -print -quit)
++          if [ -n "$link" ]; then
++            echo "::error::_site/ holds a symbolic link: $link"
+             exit 1
+           fi
+       # Hidden files too, for .nojekyll (spec §23.3).
+diff --git a/tests/test_pages_workflow.py b/tests/test_pages_workflow.py
+index e1b5eed..f81c0ce 100644
+--- a/tests/test_pages_workflow.py
++++ b/tests/test_pages_workflow.py
+@@ -311,6 +311,10 @@ def test_the_site_is_uploaded_only_once_it_holds_no_link(workflow, tmp_path):
+     refused = check()
+     assert refused.returncode == 1
+     assert refused.stdout.startswith("::error::_site/ holds a symbolic link")
++    # Many links: a `find | grep -q` would end on SIGPIPE, which pipefail reads as a pass.
++    for n in range(3000):
++        (site / f"link{n}").symlink_to(tmp_path / "outside")
++    assert check().returncode == 1
+ 
+ 
+ def test_every_action_is_pinned_and_every_job_is_hardened(workflow):
+```
+
+- [ ] **Step 12: Run the checks; they pass.** `uv run pytest tests/test_pages_workflow.py -q`:
+  `21 passed`. The guard: the old check back (`if find _site -type l | grep -q .; then` with
+  its `$(find _site -type l | head -1)` message), `FAILED
+  tests/test_pages_workflow.py::test_the_site_is_uploaded_only_once_it_holds_no_link`
+  (`1 failed, 20 passed`); restore. `make actionlint`, then `make check`: `1129 passed, 2
+  skipped, 51 deselected` (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`,
+  `All checks passed!`, `no leaks found`.
+- [ ] **Step 13: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(pages): 🤖 the link check before the upload holds under pipefail, and the cache comment says what CI still trusts
+
+The Tier 1 re-review (the one AGENTS.md allows) found rounds 7b's fixes sound but for two things,
+each fixed here directly, as the cap allows one-line fixes:
+
+- Minor, new in round 7b: `find _site -type l | grep -q .` ends on SIGPIPE once grep has its
+  match, and pipefail reads the pipeline's 141 as false, so the step passed with many links
+  (the reviewer: 20 of 20 under `bash -eo pipefail`). It now takes the first link with `find
+  -print -quit` and tests that. The test makes 3,000 links too; with the old check back it
+  fails: "FAILED tests/test_pages_workflow.py::test_the_site_is_uploaded_only_once_it_holds_no_
+  link".
+- Minor, the rest of finding A: actions/cache restores by extracting every member of the
+  archive into the workspace (actions/toolkit's cache tar.ts, per the reviewer), so an entry
+  saved under the key could carry any path, the unpacked Shinylive folder included. The comment
+  no longer says a cache can't hand the site anything else: a re-pin reaches CI and a tarball
+  changed under the key stops the build, but CI trusts what main's own runs saved. Closing that
+  fully (restoring caches only on pull requests, saving on main) goes to the phase-end list for
+  Dan; it needs code running in a main-ref run first.
+
+make actionlint: no findings.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 7
+Co-Authored-By: <the model's own line>
+```
+
+  `git add .github/workflows/pages.yml tests/test_pages_workflow.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 14: [Dan] Pages' settings, before the phase PR merges** (`AGENTS.md`, *Stops*: Pages
+  and repo settings are Dan's; the agent reads them, never writes). The first push to `main`
+  after the merge deploys, and fails if these aren't set. Set **Now** to `waiting on Dan: Task 7,
+  Step 14` in a wip commit (`chore(plan): 🤖 wip Task 7: waiting on Dan for Pages' settings`;
+  `Done so far:` rounds 7a to 7c, `Stopped at:` Step 14, `Tests:` `make check` green), then
+  list the steps for Dan, one at a time (*Asking Dan*):
+  1. **Settings → Pages → Build and deployment → Source: GitHub Actions** (no branch).
+  2. **Settings → Environments → `github-pages`** (choosing the source creates it; if it isn't
+     there, **New environment**, named exactly `github-pages`) → **Deployment branches and tags:
+     Selected branches and tags** → **Add deployment branch or tag rule**: Ref type **Branch**,
+     name pattern `main`. No other rule, and no tag rule: a release's deploy runs on `main`'s ref
+     (Decision 2). No required reviewers or wait timer (they would hold every deploy), and no
+     environment secrets or variables.
+  3. **Settings → Actions → General → Workflow permissions: Read repository contents and
+     packages permissions** (each job asks for what it needs).
+
+  Then the read-only checks, which print only settings:
+
+```bash
+gh api repos/chendaniely/vid2sub/pages --jq .build_type
+gh api repos/chendaniely/vid2sub/environments/github-pages --jq .deployment_branch_policy
+gh api repos/chendaniely/vid2sub/environments/github-pages/deployment-branch-policies \
+  --jq '.branch_policies[] | [.type, .name]'
+gh api repos/chendaniely/vid2sub/actions/permissions/workflow --jq .default_workflow_permissions
+```
+
+  Expected: `workflow`; the policy with `custom_branch_policies` true and `protected_branches`
+  false; `["branch","main"]` alone; `read`. Record Dan's answers on the Q&A page and commit them.
+  (Unverified here: no repository settings could be read while writing this listing; the
+  field names are from GitHub's REST reference for Pages, environments' deployment branch
+  policies and workflow permissions.)
+- [ ] **Step 15: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review). Worth the
+  reviewers' time: each `if:` against every event that can start the workflow (a fork's pull
+  request, a manual run on another branch, a failed or cancelled or forked run of any workflow
+  named `release`), and what a run on another ref can do with its own copy of the file (only
+  the environment's rule, Step 14, stops a deploy); what code runs while `pages: write` and
+  `id-token: write` are held (deploy-pages alone); what the caches can hand the build (a re-pin
+  reaches CI and a changed tarball stops it, but a restored entry can write any path, so CI
+  trusts what main's own runs saved: the Phase-end list's Task 7 row); `tar --dereference` and links
+  in `_site/`; that every guard test fails without its fix. The checklist, as the listing's review
+  and re-review left it: secrets fine (none used; checkout without credentials); permissions fine
+  once Step 14's rule is set; network exposure fine (nothing listens; outbound to GitHub, npm, PyPI,
+  Pyodide's CDN through Shinylive's pinned assets, Playwright's CDN, apt); failing closed fine but
+  for one Minor gap (a cache entry saved by a main-ref run is trusted; a changed tarball, a link, a
+  failing step, a failed or foreign release run each stop the deploy); injection fine (no `${{` in a
+  run step; the only event data read are the run's conclusion, event and head repository, in `if:`);
+  logging fine (versions, sizes and public file names).
+
+  The forward review over Tasks 9, 10, 11 and 12:
+  - Task 9 adds the index step after `make pages-test` (`make pages` empties `_site/`) and before
+    the link check and the upload, the build job's `outputs`, the deploy job's `page_url`
+    output, and the `smoke` job; it extends `tests/test_pages_workflow.py` (the job set, the
+    build job's order, a `value()` beside `evaluate()` for the smoke job's `EXTRA`).
+  - Task 10's README and `tests/README.md` name `pages.yml`, `make pages-test` in CI, and the
+    environment rule; `docs/architecture.md` draws the workflow.
+  - Task 11 needs nothing from here (it runs on the site `make pages` builds).
+  - Task 12's step 9a: `pages.yml`'s run on the merge commit is green (build and deploy; the
+    smoke job is skipped until the first release); step 9c: the run `release`'s success starts.
+
+  The docs this task made untrue: spec §23.3's "Triggers: push to `main`, `workflow_dispatch`
+  (Dan, 2026-10-14), `release: published`" becomes "Triggers: push to `main`,
+  `workflow_dispatch` (Dan, 2026-10-14), and `workflow_run` when `release.yml`'s run succeeds
+  (Phase 4 Decision 2: a release made with the GITHUB_TOKEN starts no workflow); it deploys from
+  `main` only, which the `github-pages` environment enforces". Then the close, its own commit,
+  holding this plan with this task's boxes ticked and **Now** set to ``Task 8: `release.yml`,
+  open.`` (the cache finding the listing's re-review deferred is on the Phase-end list already, as
+  a planning row), and the spec's §23.3 line and its S50 row set to `built`, its Proof reading
+  `the Pages Playwright test (tests/pages/test_pages_site.py), run by pages.yml before every
+  deploy`, with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 7: `pages.yml`
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 1
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>; the security
+  checklist: secrets <fine / a finding>; permissions <…>; network exposure <…>; failing closed
+  <…>; injection <…>; logging <…>
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 7
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -8896,9 +10839,17 @@ Focus 4).
     accepts.
   - For Task 9's index: release assets are named as above; the wheel is the only `.whl`.
 
-The `make check` counts below come from a clone with Phase 2's Tasks 2–16 and 21 and Phase 4's
-Task 6 only; yours are higher. What matters is no failure, ruff's `All checks passed!` and
-gitleaks' `no leaks found`. `tests/test_release.py`'s own counts are exact.
+The `make check` counts below come from a clone of the finished Phase 2 with this phase's Tasks 1
+to 7; yours are higher once Phase 3 is in. What matters is no failure, ruff's `All checks passed!`
+and gitleaks' `no leaks found`. `tests/test_release.py`'s own counts are exact.
+
+This listing was first built on an older Phase 2 base (its round 8d records that build's Tier 1
+security review); it was replayed, every Expected line re-run, on Phase 2 with this phase's
+Tasks 1–7 on 2026-10-24, where `make build-constraints` wrote the same pins. Re-checked then:
+`gh release list --help` and `gh release create --help` (gh 2.103.1: `--exclude-drafts`,
+`--json`, `--limit`, `--verify-tag`), `uv build --help` (`--clear`, `--build-constraints`,
+`--require-hashes`, `--no-sources`), hatch's build configuration (artifacts) and actions/attest
+v4.2.2's README (provenance by default; `id-token` and `attestations: write`).
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
@@ -9059,8 +11010,8 @@ tar -tzf dist/*.tar.gz | grep 'www/ui'
   `uv build --no-sources --clear --build-constraints build-constraints.txt --require-hashes`,
   then `git checkout build-constraints.txt` (or regenerate it). Expected: ``cause: Hash mismatch
   for `hatchling==<version>` ``, exit 2, even with hatchling in uv's cache. Then `make check`.
-  Expected: `956 passed, 2 skipped, 26 deselected` (twice), `Test Files  12 passed (12)`,
-  `Tests  55 passed (55)`, `All checks passed!`, `no leaks found`.
+  Expected: `1130 passed, 2 skipped, 51 deselected` (twice), `Test Files  21 passed (21)`,
+  `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -9363,8 +11314,9 @@ if __name__ == "__main__":
   check: v0.1.0.dev0 names the package's version` (exit 0); `uv run scripts/release_check.py
   v0.1.0` prints `release check: the tag 'v0.1.0' isn't v0.1.0.dev0, pyproject.toml's version`
   (exit 1); `uv run scripts/release_check.py 'v$(touch /tmp/x)'` is refused the same way and
-  creates nothing. Then `make check`. Expected: `962 passed, 2 skipped, 26 deselected` (twice),
-  `Test Files  12 passed (12)`, `Tests  55 passed (55)`, `All checks passed!`, `no leaks found`.
+  creates nothing. Then `make check`. Expected: `1136 passed, 2 skipped, 51 deselected`
+  (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`, `All checks passed!`, `no
+  leaks found`.
 - [ ] **Step 11: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -9735,8 +11687,8 @@ unset UV_FROZEN TAG
   tests/test_release.py::test_a_published_release_is_never_overwritten`; with the build job's
   `contents: read` changed to `contents: write`, `FAILED
   tests/test_release.py::test_only_the_publish_job_can_write`. Then `make check`. Expected:
-  `967 passed, 2 skipped, 26 deselected` (twice), `Test Files  12 passed (12)`, `Tests  55
-  passed (55)`, `All checks passed!`, `no leaks found`.
+  `1141 passed, 2 skipped, 51 deselected` (twice), `Test Files  21 passed (21)`, `Tests  104
+  passed (104)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 16: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -10293,8 +12245,8 @@ jobs:
     (the stand-in gh answers only the exact call).
 
   Each prints `1 failed, 15 passed`. Then `make actionlint` (its command line only, exit 0) and
-  `make check`. Expected: `971 passed, 2 skipped, 26 deselected` (twice), `Test Files  12
-  passed (12)`, `Tests  55 passed (55)`, `All checks passed!`, `no leaks found`.
+  `make check`. Expected: `1145 passed, 2 skipped, 51 deselected` (twice), `Test Files  21
+  passed (21)`, `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 21: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -10328,8 +12280,6 @@ finding fixed here:
   (with cancel-in-progress true, the name-and-trigger test fails).
 - Minor: the notes' verify command now names the signer workflow (`--signer-workflow
   <repo>/.github/workflows/release.yml`), as gh's attestation manual advises.
-- Minor (docs): release.yml and the tests cite Phase 4 Decision 2, which this branch's plan
-  copy lacked; a90afd7 brought the plan up to the main repository's.
 
 Left to repo settings (Dan's), for the phase end's step 9b: immutable releases, a tag ruleset on
 refs/tags/v* (creation, update and deletion by Dan only), branch protection on main. A modified
@@ -10347,7 +12297,108 @@ Co-Authored-By: <the model's own line>
 
   `git add .github/workflows/release.yml tests/test_release.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
-- [ ] **Step 22: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+
+#### Round 8e: the replay's review
+
+When this listing was replayed on Tasks 1–7, one independent Tier 1 reviewer went over the
+replayed rounds and their interplay with Task 7's `pages.yml`. It found the files and messages
+the listing's (round 8d's plan-copy bullet aside, rightly dropped), no path for a tag, a fork, a
+draft or a failed run to publish or deploy, and two Minor gaps, closed here: a step-level `if:`
+or `continue-on-error:` would switch a guard off with every test green, and nothing checked that
+`release.yml` is the only workflow named `release`, which `pages.yml` follows. Its checklist:
+secrets fine; permissions fine; network exposure fine; failing closed fine but for the first gap;
+injection fine; logging fine.
+
+- [ ] **Step 22: Write the tests.** Apply:
+
+```diff
+diff --git a/tests/test_pages_workflow.py b/tests/test_pages_workflow.py
+index f81c0ce..a64d447 100644
+--- a/tests/test_pages_workflow.py
++++ b/tests/test_pages_workflow.py
+@@ -186,10 +186,12 @@ def test_pages_yml_triggers_on_main_pull_requests_by_hand_and_after_a_release(wo
+         "workflow_run": {"workflows": ["release"], "types": ["completed"]}}
+ 
+ 
+-def test_release_yml_if_present_is_the_workflow_pages_follows():
+-    release = WORKFLOWS / "release.yml"
+-    if release.is_file():  # Phase 4 Task 8 makes it, and pins its name too
+-        assert yaml.safe_load(release.read_text(encoding="utf-8"))["name"] == "release"
++def test_release_yml_is_the_only_workflow_pages_follows():
++    # why: workflow_run follows every workflow by that name, so a second one (on branch pushes,
++    # say) would start deploys too; release.yml runs on v* tags only (Phase 4 Task 8).
++    named = [p.name for p in sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")])
++             if yaml.safe_load(p.read_text(encoding="utf-8")).get("name") == "release"]
++    assert named == ["release.yml"]
+ 
+ 
+ @pytest.mark.parametrize("name", EVENTS)
+diff --git a/tests/test_release.py b/tests/test_release.py
+index 229a651..ab61912 100644
+--- a/tests/test_release.py
++++ b/tests/test_release.py
+@@ -332,6 +332,17 @@ def test_the_tag_is_checked_before_the_build_and_the_files_after():
+         "run"] == 'uv run scripts/release_check.py "$TAG" dist'
+ 
+ 
++def test_no_step_or_job_can_be_switched_off_or_allowed_to_fail():
++    # why: the guard tests run each step's script; an `if:` or `continue-on-error:` on the step
++    # (or its job) would switch it off, or let it fail, without changing the script (the Tier 1
++    # review of the replay, Phase 4 Task 8).
++    assert "continue-on-error" not in RELEASE.read_text(encoding="utf-8")
++    for name, job in workflow()["jobs"].items():
++        assert "if" not in job, name
++        for s in job["steps"]:
++            assert set(s) <= {"name", "run", "uses", "with", "working-directory"}, s
++
++
+ def test_every_action_is_pinned_and_no_run_step_expands_an_expression():
+     # why: spec §23.1; and a tag name may hold `$(...)`, so it reaches a shell only through env.
+     text = RELEASE.read_text(encoding="utf-8")
+```
+
+- [ ] **Step 23: Run them; they pass, and fail with the holes opened.** `uv run pytest
+  tests/test_release.py tests/test_pages_workflow.py -q`: `38 passed`. With `        continue-on-error:
+  true` under `      - name: the tag has no release yet`, or `        if: false` under `      -
+  name: the tag is on main`: `FAILED
+  tests/test_release.py::test_no_step_or_job_can_be_switched_off_or_allowed_to_fail` (`1
+  failed, 16 passed`); with a second workflow, `.github/workflows/other.yml`, named `release`:
+  `FAILED tests/test_pages_workflow.py::test_release_yml_is_the_only_workflow_pages_follows`
+  (`1 failed, 20 passed`). Revert each. Then `make check`. Expected: `1146 passed, 2 skipped, 51
+  deselected` (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`, `All checks
+  passed!`, `no leaks found`.
+- [ ] **Step 24: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+test(release): 🤖 no release step can be switched off or allowed to fail, and release.yml is the only workflow pages.yml follows
+
+The Tier 1 review of this task's replay (one independent reviewer, AGENTS.md's checklist) found
+nothing Critical or Important, and two Minor gaps, both closed here:
+
+- The guard tests run each step's script, so an `if: false` or `continue-on-error: true` on a
+  step (or an `if:` on a job) would switch a guard off and leave them green (the reviewer tried
+  both on four guarding steps). A new test forbids continue-on-error anywhere in release.yml,
+  any job `if:`, and any step key beyond name, run, uses, with and working-directory. With
+  `continue-on-error: true` on "the tag has no release yet", or `if: false` on "the tag is on
+  main": "FAILED tests/test_release.py::test_no_step_or_job_can_be_switched_off_or_allowed_to_
+  fail".
+- pages.yml follows every workflow named `release`; a second one, on branch pushes, would start
+  deploys too (of main's own files, so no code of its reaches Pages, but Decision 2's "a tag
+  push" would rest on release.yml alone). Task 7's test now checks, unconditionally, that
+  release.yml is the only workflow by that name; with a second one added: "FAILED
+  tests/test_pages_workflow.py::test_release_yml_is_the_only_workflow_pages_follows".
+
+The reviewer's checklist: secrets fine; permissions fine; network exposure fine; failing closed
+fine but for the first gap, now closed; injection fine; logging fine.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 8
+Co-Authored-By: <the model's own line>
+```
+
+  `git add tests/test_release.py tests/test_pages_workflow.py`, `git commit -F .git/COMMIT_MSG`,
+  then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 25: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review). Worth the
   reviewers' time: the GITHUB_TOKEN's permissions in each job and what code runs while they are
   held (the publish job has no checkout); what a tag pushed from a fork can do (nothing here: a
@@ -10364,6 +12415,7 @@ Co-Authored-By: <the model's own line>
   uv download, Sigstore); failing closed fine after round 8d; injection fine (env only, no
   `${{` in a run step, ref names can't hold `:` or a newline); logging fine (the tag, file
   names, `dist`; attestations go to the public Rekor log, as a public repo's should).
+  The replay's review (round 8e) agreed item by item, its two Minor gaps closed in that round.
   CI can't run this workflow before a tag, so the first proof is Task 12's step 9c.
 
   The forward review over Tasks 7, 9, 10, 11 and 12:
@@ -10418,13 +12470,844 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 2 · **Scenarios:** S51
 
+Spec §23.4, S51 and S52's second half: `pages.yml` builds a PEP 503 simple index at
+`/simple/vid2sub/`, linking every release's wheel on GitHub Releases with its `#sha256=`
+fragment, and a post-deploy smoke job installs the newest release from the live index on all
+three operating systems. There is no PyPI (Dan, 2026-10-14).
+
+**Why it is built this way** (read 2026-10-24):
+- **The hash comes from GitHub, the link from the repository.** GitHub computes every release
+  asset's SHA-256 at upload ("immutable", its changelog of 2025-06-03), and the REST API gives it
+  as each asset's `digest` (the reference types it "string or null", with no example; the
+  builder reads `sha256:<64 hex>`, the form the API returns, and leaves out anything else, so a
+  different form shows as an empty index, which Task 12's step 9c catches). Each link is made
+  from the repository, the tag and the wheel's name, never taken from the listing's
+  `browser_download_url`.
+- **Only what is certainly there is linked** (Review Focus 5): a draft (the listing shows drafts
+  only to a token with push access, but the builder doesn't rely on that), a tag that isn't `v` +
+  a version, a release without its `vid2sub-<version>-py3-none-any.whl` (deleted, or never
+  made), a wheel named for another version, and one GitHub gives no SHA-256 for (or still
+  uploading) are left out, each with a line on stderr. The index is rebuilt on every deploy, so a
+  deleted release leaves it at the next. Wheels only: an sdist would build with hatchling from
+  PyPI.
+- **uv is the proof.** The last test serves an index and a wheel on this machine and has the real
+  uv install from it, then refuses a wheel whose bytes aren't the indexed ones (`Hash mismatch`):
+  the page is one uv reads, and the fragment one it checks. No test reaches GitHub or PyPI.
+- **In `pages.yml`:** the listing is `gh api --paginate --slurp` with the build job's read-only
+  token (`--slurp` wraps the pages in one array; gh 2.103.1's `gh api --help`), after `make
+  pages-test` (`make pages` empties `_site/`, and the index isn't part of the editor's files);
+  the builder prints `wheels=` and `newest=` into `$GITHUB_OUTPUT`. `newest` is the most
+  recently published release in the index.
+- **The smoke job installs as a person does:** `uv tool install "vid2sub$EXTRA" --index
+  "$INDEX"` (`[mac]` on macos-14, none on Ubuntu and Windows), from the deploy's own `page_url`,
+  after the deploy; then `vid2sub --version` must be the newest release's, and the tool's own
+  Python must find `www/ui.js` and `ui.css`. It runs no repository code (no checkout,
+  `permissions: {}`), waits up to three minutes for the live index to list the wheel, and is
+  skipped while the index is empty (before the first release). Its three steps were run on macOS
+  against an index and a wheel served on this machine (the wheel built as `make dist` builds it,
+  with the frontend; uv installing its dependencies from PyPI): all three pass; with `ui.js`
+  gone, "the wheel has no frontend"; with another version, the version check fails; with a wheel the
+  index doesn't list, the wait fails with `::error::…doesn't list vid2sub 9.9.9`. Windows' step
+  differs only in the tool's Python path (`Scripts/python.exe`, through `cygpath`) and is proven by
+  the first real run.
+
+**Files:**
+- Create: `scripts/build_index.py`, `tests/test_build_index.py`
+- Modify: `.github/workflows/pages.yml` (the index step, the build and deploy jobs' outputs, the
+  `smoke` job), `tests/test_pages_workflow.py`
+- Modify at the close: this plan; the spec (§23.4; S51, S52's Proof)
+
 **Interfaces:**
 - Consumes: Task 8's releases, whose assets are exactly `vid2sub-<version>-py3-none-any.whl`
   and `vid2sub-<version>.tar.gz`; Task 8 sets S52 to `built`, and the index keeps its "the index
-  lists it" half true. Task 7's `pages.yml` runs the index build when `release` succeeds
-  (Decision 2).
+  lists it" half true. Task 7's `pages.yml` (its build job, after `make pages-test`; the deploy
+  job's `deployment` step) and `tests/test_pages_workflow.py` (`evaluate`, `steps`, `runs`,
+  `uses`).
+- Produces:
+  - `scripts/build_index.py RELEASES.json OUT --repo OWNER/REPO` (PEP 723, no dependencies; `uv
+    run scripts/build_index.py …`): writes `OUT/index.html` and `OUT/vid2sub/index.html`, prints
+    `wheels=<n>` and `newest=<version>`, a line per release or wheel left out on stderr; exit 2
+    on a usage error or an unreadable listing, writing nothing. Functions `releases_of(listing)`,
+    `wheels(releases, repo) -> (list[Wheel], list[str])`, `project_page(found)`,
+    `root_page()`, `write(out, found)`, `main(argv)`; `Wheel(version, name, url, sha256,
+    published)`.
+  - `pages.yml`: the build job's step `the install index` (id `index`), its outputs `wheels`
+    and `newest`; the deploy job's output `page_url`; job `smoke` (needs build and deploy; if
+    the index has a wheel; ubuntu-24.04, macos-14, windows-2022; 20 minutes; no permissions).
+  - `tests/test_pages_workflow.py`: `value_of(expression, context)`, an expression's value
+    (its `${{ }}` optional), which `evaluate` makes a bool.
+  - For Task 12's step 9c and 9d: the build log's `build_index: 1 wheel from 1 release into
+    _site/simple`; `curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c
+    '#sha256='` is 1; the smoke job's three entries green.
 
-<!-- steps: written in the next pass -->
+The `make check` counts below come from a clone of the finished Phase 2 with this phase's Tasks 1
+to 8; yours are higher once Phase 3 is in. What matters is no failure, ruff's `All checks passed!`
+and gitleaks' `no leaks found`; the new tests' own counts are exact.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+
+#### Round 9a: the index builder
+
+- [ ] **Step 1: Write the failing tests,** `tests/test_build_index.py`:
+
+```python
+"""scripts/build_index.py, the install index pages.yml publishes at /simple/ (spec §23.4; S51,
+S52; Phase 4 Task 9).
+
+The release listings here are written by hand in the shape GitHub's REST API gives them (`gh api
+--paginate --slurp repos/OWNER/REPO/releases`); no test reaches GitHub. The last test serves an
+index and a wheel on this machine and has the real uv install from it, so the page is one uv
+reads and its `#sha256=` fragment is one uv checks (the Phase 4 plan's Review Focus 5: a link to a
+file that isn't there, or isn't the file the index names, never installs).
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import http.server
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import zipfile
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[1]
+OWNER_REPO = "chendaniely/vid2sub"
+ONE, TWO = "1" * 64, "2" * 64  # stand-in SHA-256s
+
+
+def build_index():
+    spec = importlib.util.spec_from_file_location("build_index",
+                                                  REPO / "scripts" / "build_index.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["build_index"] = module  # its dataclass looks its module up by name
+    spec.loader.exec_module(module)
+    return module
+
+
+def asset(name: str, sha256: str | None = ONE, state: str = "uploaded") -> dict:
+    return {"name": name, "state": state, "digest": f"sha256:{sha256}" if sha256 else None,
+            "browser_download_url": f"https://github.com/{OWNER_REPO}/releases/download/x/{name}"}
+
+
+def release(tag: str, *assets: dict, draft: bool = False,
+            published: str = "2026-11-01T00:00:00Z") -> dict:
+    return {"tag_name": tag, "draft": draft, "prerelease": False, "published_at": published,
+            "assets": list(assets)}
+
+
+def link(tag: str, name: str, sha256: str) -> str:
+    return (f'<a href="https://github.com/{OWNER_REPO}/releases/download/{tag}/{name}'
+            f'#sha256={sha256}">{name}</a>')
+
+
+def test_each_releases_wheel_is_linked_on_github_with_its_sha256():
+    index = build_index()
+    found, notes = index.wheels([
+        release("v0.1.0", asset("vid2sub-0.1.0-py3-none-any.whl", ONE),
+                asset("vid2sub-0.1.0.tar.gz", TWO), published="2026-11-01T00:00:00Z"),
+        release("v0.2.0", asset("vid2sub-0.2.0-py3-none-any.whl", TWO),
+                published="2026-12-01T00:00:00Z"),
+    ], OWNER_REPO)
+    assert notes == []
+    assert [w.version for w in found] == ["0.2.0", "0.1.0"]  # newest release first
+    page = index.project_page(found)
+    assert link("v0.1.0", "vid2sub-0.1.0-py3-none-any.whl", ONE) in page
+    assert link("v0.2.0", "vid2sub-0.2.0-py3-none-any.whl", TWO) in page
+    assert ".tar.gz" not in page  # wheels only: an sdist would build with hatchling from PyPI
+    assert '<a href="vid2sub/">vid2sub</a>' in index.root_page()
+
+
+def test_a_draft_a_release_with_no_wheel_and_a_wheel_with_no_sha256_are_left_out_and_said():
+    # why: Review Focus 5. The index never links a file that isn't there, or one uv couldn't
+    # check, and an install still gets the newest good release.
+    found, notes = build_index().wheels([
+        release("v0.4.0", asset("vid2sub-0.4.0-py3-none-any.whl"), draft=True),
+        release("v0.3.0", asset("vid2sub-0.3.0.tar.gz")),  # its wheel deleted, or never made
+        release("v0.2.1", asset("vid2sub-0.2.1-py3-none-any.whl", None)),
+        release("v0.2.2", asset("vid2sub-0.2.2-py3-none-any.whl", state="open")),  # mid-upload
+        release("v0.2.0", asset("vid2sub-0.2.0-py3-none-any.whl")),
+    ], OWNER_REPO)
+    assert [w.version for w in found] == ["0.2.0"]
+    assert notes == ["v0.4.0: a draft, left out",
+                     "v0.3.0: no vid2sub-0.3.0-py3-none-any.whl, left out",
+                     "v0.2.1: vid2sub-0.2.1-py3-none-any.whl has no SHA-256 from GitHub, left out",
+                     "v0.2.2: vid2sub-0.2.2-py3-none-any.whl has no SHA-256 from GitHub, left out"]
+
+
+def test_a_wheel_named_for_another_version_or_a_tag_that_isnt_a_version_is_left_out():
+    found, notes = build_index().wheels([
+        release("v1.0.0", asset("vid2sub-0.9.0-py3-none-any.whl")),
+        release("latest", asset("vid2sub-1.0.0-py3-none-any.whl")),
+        release("v1.0.0\"><script>", asset("vid2sub-1.0.0-py3-none-any.whl")),
+        release("v1.0.0", asset("other-1.0.0-py3-none-any.whl"), asset("notes.txt")),
+    ], OWNER_REPO)
+    assert found == []
+    assert notes == [
+        "v1.0.0: vid2sub-0.9.0-py3-none-any.whl named for another version, left out",
+        "v1.0.0: no vid2sub-1.0.0-py3-none-any.whl, left out",
+        "'latest': not v + a version, left out",
+        "'v1.0.0\"><script>': not v + a version, left out",
+        "v1.0.0: no vid2sub-1.0.0-py3-none-any.whl, left out"]
+
+
+def test_a_link_is_made_from_the_repository_and_never_taken_from_the_listing():
+    # why: the page is the one place uv learns where to download from; a listing that said
+    # otherwise (or a repository renamed under it) can't send installs anywhere but this
+    # repository's own releases.
+    elsewhere = asset("vid2sub-1.0.0-py3-none-any.whl")
+    elsewhere["browser_download_url"] = "https://example.invalid/vid2sub-1.0.0-py3-none-any.whl"
+    found, _ = build_index().wheels([release("v1.0.0", elsewhere)], OWNER_REPO)
+    assert [w.url for w in found] == [
+        f"https://github.com/{OWNER_REPO}/releases/download/v1.0.0/vid2sub-1.0.0-py3-none-any.whl"]
+
+
+def test_gh_slurps_pages_of_releases_and_both_shapes_read_as_one_list():
+    index = build_index()
+    a, b = release("v0.1.0"), release("v0.2.0")
+    assert index.releases_of([[a], [b]]) == [a, b]
+    assert index.releases_of([a, b]) == [a, b]
+    assert index.releases_of([[]]) == []
+    for bad in ({"message": "Not Found"}, [1, 2], [[a], b]):
+        with pytest.raises(TypeError):
+            index.releases_of(bad)
+
+
+def test_main_writes_both_pages_and_prints_the_count_and_the_newest_version(tmp_path, capsys):
+    listing = tmp_path / "releases.json"
+    listing.write_text(json.dumps([[
+        release("v0.2.0", asset("vid2sub-0.2.0-py3-none-any.whl", TWO),
+                published="2026-12-01T00:00:00Z"),
+        release("v0.1.0", asset("vid2sub-0.1.0-py3-none-any.whl", ONE)),
+        release("v0.3.0", draft=True)]]), encoding="utf-8")
+    out = tmp_path / "_site" / "simple"
+    assert build_index().main([str(listing), str(out), "--repo", OWNER_REPO]) == 0
+    assert sorted(p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()) == [
+        "index.html", "vid2sub/index.html"]
+    page = (out / "vid2sub" / "index.html").read_text(encoding="utf-8")
+    assert page.count("#sha256=") == 2
+    printed = capsys.readouterr()
+    assert printed.out == "wheels=2\nnewest=0.2.0\n"
+    assert printed.err == ("build_index: v0.3.0: a draft, left out\n"
+                           f"build_index: 2 wheels from 3 releases into {out}\n")
+
+
+def test_with_no_release_yet_the_index_is_empty_and_says_so(tmp_path, capsys):
+    listing = tmp_path / "releases.json"
+    listing.write_text("[[]]", encoding="utf-8")
+    assert build_index().main([str(listing), str(tmp_path / "simple"), "--repo",
+                               OWNER_REPO]) == 0
+    assert capsys.readouterr().out == "wheels=0\nnewest=\n"
+    assert "#sha256=" not in (tmp_path / "simple" / "vid2sub" / "index.html").read_text(
+        encoding="utf-8")
+
+
+def test_main_refuses_a_bad_repository_name_or_a_listing_it_cant_read(tmp_path, capsys):
+    index = build_index()
+    listing = tmp_path / "releases.json"
+    listing.write_text('{"message": "Bad credentials"}', encoding="utf-8")
+    out = str(tmp_path / "simple")
+    assert index.main([str(listing), out, "--repo", OWNER_REPO]) == 2
+    assert "can't read the release listing" in capsys.readouterr().err
+    assert index.main([str(tmp_path / "missing.json"), out, "--repo", OWNER_REPO]) == 2
+    assert index.main([str(listing), out, "--repo", "../../elsewhere"]) == 2
+    assert index.main([str(listing), out]) == 2
+    assert not (tmp_path / "simple").exists()  # nothing written on a refusal
+
+
+def a_wheel(path: Path, version: str) -> bytes:
+    """A minimal valid wheel of `vid2sub` at `version`, as an installer reads one."""
+    files = {"vid2sub_index_check/__init__.py": b"",
+             f"vid2sub-{version}.dist-info/METADATA":
+                 f"Metadata-Version: 2.1\nName: vid2sub\nVersion: {version}\n".encode(),
+             f"vid2sub-{version}.dist-info/WHEEL":
+                 b"Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n"}
+
+    def record(data: bytes) -> str:
+        digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+        return f"sha256={digest},{len(data)}"
+
+    lines = [f"{name},{record(data)}" for name, data in files.items()]
+    lines.append(f"vid2sub-{version}.dist-info/RECORD,,")
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in files.items():
+            z.writestr(name, data)
+        z.writestr(f"vid2sub-{version}.dist-info/RECORD", "\n".join(lines) + "\n")
+    return path.read_bytes()
+
+
+def test_uv_installs_the_indexed_wheel_and_refuses_one_whose_bytes_arent_the_indexed_ones(
+        tmp_path):
+    # why: S51. The index is only as good as an installer's reading of it: uv reads this page,
+    # downloads the wheel it links, and checks the bytes against the #sha256= fragment.
+    uv = os.environ.get("UV") or shutil.which("uv")
+    assert uv, "uv not found: run the tests with `uv run pytest`"
+    root = tmp_path / "served"
+    files = root / OWNER_REPO / "releases" / "download" / "v9.9.9"
+    files.mkdir(parents=True)
+    name = "vid2sub-9.9.9-py3-none-any.whl"
+    data = a_wheel(files / name, "9.9.9")
+    index = build_index()
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(root), **kwargs)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Quiet)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    here = f"http://127.0.0.1:{server.server_address[1]}"
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("UV_", "VIRTUAL_ENV"))}
+
+    def install(sha256: str) -> subprocess.CompletedProcess:
+        found, _ = index.wheels([release("v9.9.9", asset(name, sha256))], OWNER_REPO)
+        shutil.rmtree(root / "simple", ignore_errors=True)
+        index.write(root / "simple", found)
+        page = root / "simple" / "vid2sub" / "index.html"  # GitHub's address, here this server
+        page.write_text(page.read_text(encoding="utf-8").replace("https://github.com", here),
+                        encoding="utf-8")
+        target = tmp_path / f"target-{sha256[:4]}"
+        return subprocess.run(
+            [uv, "pip", "install", "--no-config", "--no-cache", "--no-deps", "--target",
+             str(target), "--python", sys.executable, "--index-url",
+             f"{here}/simple/", "vid2sub"], env=env, capture_output=True, text=True,
+            check=False, timeout=120)
+
+    try:
+        good = install(hashlib.sha256(data).hexdigest())
+        assert good.returncode == 0, good.stderr
+        assert (tmp_path / f"target-{hashlib.sha256(data).hexdigest()[:4]}"
+                / "vid2sub-9.9.9.dist-info" / "METADATA").is_file()
+        bad = install(TWO)
+        assert bad.returncode != 0
+        assert "Hash mismatch" in bad.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+```
+
+- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_build_index.py -q`.
+  Expected: `9 failed`, each `FileNotFoundError: [Errno 2] No such file or directory:
+  '…/scripts/build_index.py'`.
+- [ ] **Step 3: Write the builder,** `scripts/build_index.py`:
+
+```python
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+"""Builds the install index, a PEP 503 simple repository of vid2sub's release wheels, into the
+Pages site (spec §23.4; S51, S52; Phase 4 Task 9).
+
+    gh api --paginate --slurp "repos/OWNER/REPO/releases?per_page=100" > releases.json
+    uv run scripts/build_index.py releases.json _site/simple --repo OWNER/REPO
+
+Why: there is no PyPI (Dan, 2026-10-14). `uv tool install 'vid2sub[mac]' --index
+https://chendaniely.github.io/vid2sub/simple/` reads simple/vid2sub/, which links each release's
+wheel on GitHub Releases with its `#sha256=` fragment, so uv checks every byte it downloads.
+Only what is certainly there is linked (the Phase 4 plan's Review Focus 5): a draft, a release
+whose tag isn't `v` + a version, one with no wheel, a wheel named for another version, and a
+wheel GitHub gives no SHA-256 for are left out, each with a line on stderr; and each link is made
+from the repository, the tag and the wheel's name, never taken from the listing. pages.yml
+builds the index on every deploy, so a deleted release or wheel leaves it at the next one.
+
+Prints `wheels=<count>` and `newest=<version>` (the most recently published release in the
+index), for pages.yml's GITHUB_OUTPUT; exits 2 on a usage error or a listing it can't read.
+"""
+
+from __future__ import annotations
+
+import html
+import json
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+PROJECT = "vid2sub"
+# A wheel release.yml publishes (Phase 4 Task 8): the one pure-Python wheel of a release.
+WHEEL = re.compile(r"vid2sub-(?P<version>[0-9][0-9A-Za-z.!+]*)-py3-none-any\.whl")
+DIGEST = re.compile(r"sha256:(?P<hex>[0-9a-f]{64})")
+REPOSITORY = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
+
+
+@dataclass(frozen=True)
+class Wheel:
+    version: str
+    name: str
+    url: str
+    sha256: str
+    published: str
+
+
+def releases_of(listing) -> list[dict]:
+    """The releases in `gh api --paginate --slurp`'s output (a list of pages, each a list) or in
+    a plain list of releases."""
+    if not isinstance(listing, list):
+        raise TypeError("a release listing is a JSON list")
+    flat = [r for page in listing for r in page] if all(
+        isinstance(p, list) for p in listing) else listing
+    if not all(isinstance(r, dict) for r in flat):
+        raise TypeError("each release in the listing is a JSON object")
+    return flat
+
+
+def wheels(releases: list[dict], repo: str) -> tuple[list[Wheel], list[str]]:
+    """The wheels the index links, newest release first, and a line for each release or wheel
+    left out."""
+    found: list[Wheel] = []
+    notes: list[str] = []
+    for release in releases:
+        tag = str(release.get("tag_name", ""))
+        if release.get("draft") is not False:
+            notes.append(f"{tag or 'a release'}: a draft, left out")
+            continue
+        if not tag.startswith("v") or not WHEEL.fullmatch(f"vid2sub-{tag[1:]}-py3-none-any.whl"):
+            notes.append(f"{tag!r}: not v + a version, left out")
+            continue
+        version = tag[1:]
+        name = f"vid2sub-{version}-py3-none-any.whl"
+        assets = [a for a in release.get("assets", []) if isinstance(a, dict)]
+        wheel = next((a for a in assets if a.get("name") == name), None)
+        others = sorted(str(a.get("name")) for a in assets if WHEEL.fullmatch(str(a.get("name")))
+                        and a.get("name") != name)
+        if others:
+            notes.append(f"{tag}: {', '.join(others)} named for another version, left out")
+        if wheel is None:
+            notes.append(f"{tag}: no {name}, left out")
+            continue
+        digest = DIGEST.fullmatch(str(wheel.get("digest")))
+        if wheel.get("state") != "uploaded" or digest is None:
+            notes.append(f"{tag}: {name} has no SHA-256 from GitHub, left out")
+            continue
+        url = f"https://github.com/{repo}/releases/download/{tag}/{name}"
+        found.append(Wheel(version, name, url, digest["hex"], str(release.get("published_at"))))
+    found.sort(key=lambda w: w.published, reverse=True)
+    return found, notes
+
+
+def project_page(found: list[Wheel]) -> str:
+    links = "".join(f'    <a href="{html.escape(w.url)}#sha256={w.sha256}">'
+                    f"{html.escape(w.name)}</a><br>\n" for w in found)
+    return ("<!DOCTYPE html>\n<html>\n  <head>\n"
+            '    <meta name="pypi:repository-version" content="1.0">\n'
+            f"    <title>Links for {PROJECT}</title>\n  </head>\n  <body>\n"
+            f"    <h1>Links for {PROJECT}</h1>\n{links}  </body>\n</html>\n")
+
+
+def root_page() -> str:
+    return ("<!DOCTYPE html>\n<html>\n  <head>\n"
+            '    <meta name="pypi:repository-version" content="1.0">\n'
+            "    <title>Simple index</title>\n  </head>\n  <body>\n"
+            f'    <a href="{PROJECT}/">{PROJECT}</a>\n  </body>\n</html>\n')
+
+
+def write(out: Path, found: list[Wheel]) -> None:
+    (out / PROJECT).mkdir(parents=True, exist_ok=True)
+    (out / "index.html").write_text(root_page(), encoding="utf-8")
+    (out / PROJECT / "index.html").write_text(project_page(found), encoding="utf-8")
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 4 or argv[2] != "--repo" or not REPOSITORY.fullmatch(argv[3]):
+        print("usage: build_index.py RELEASES.json OUT --repo OWNER/REPO", file=sys.stderr)
+        return 2
+    try:
+        releases = releases_of(json.loads(Path(argv[0]).read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError) as err:
+        print(f"build_index: can't read the release listing: {err}", file=sys.stderr)
+        return 2
+    found, notes = wheels(releases, argv[3])
+    for note in notes:
+        print(f"build_index: {note}", file=sys.stderr)
+    write(Path(argv[1]), found)
+    wheel_s, release_s = ("" if len(found) == 1 else "s"), ("" if len(releases) == 1 else "s")
+    print(f"build_index: {len(found)} wheel{wheel_s} from {len(releases)} release{release_s} "
+          f"into {argv[1]}", file=sys.stderr)
+    print(f"wheels={len(found)}")
+    print(f"newest={found[0].version if found else ''}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_build_index.py -q`: `9
+  passed` (the last runs the real uv against an index served on 127.0.0.1; nothing leaves the
+  machine). The guards, each made in the script, run, and reverted:
+  - `if wheel.get("state") != "uploaded" or digest is None:` made `if False:`, and the
+    `Wheel(…)` line given `digest["hex"] if digest else ""`: `FAILED
+    tests/test_build_index.py::test_a_draft_a_release_with_no_wheel_and_a_wheel_with_no_sha256_are_left_out_and_said`
+    (`1 failed, 8 passed`);
+  - the `url = …` line made `url = str(wheel.get("browser_download_url"))`: `FAILED
+    …::test_each_releases_wheel_is_linked_on_github_with_its_sha256`, `FAILED
+    …::test_a_link_is_made_from_the_repository_and_never_taken_from_the_listing`, `FAILED
+    …::test_uv_installs_the_indexed_wheel_and_refuses_one_whose_bytes_arent_the_indexed_ones`
+    (`3 failed, 6 passed`);
+  - `if release.get("draft") is not False:` made `if False:`: `FAILED
+    …::test_a_draft_a_release_with_no_wheel_and_a_wheel_with_no_sha256_are_left_out_and_said`,
+    `FAILED …::test_main_writes_both_pages_and_prints_the_count_and_the_newest_version` (`2
+    failed, 7 passed`).
+
+  By hand, with a listing holding one release (its wheel with a `sha256:` digest, its sdist with
+  none) and a draft, saved as `.git/releases.json`: `uv run scripts/build_index.py
+  .git/releases.json .git/simple --repo chendaniely/vid2sub` prints `build_index: v0.2.0: a
+  draft, left out`, `build_index: 1 wheel from 2 releases into .git/simple`, `wheels=1`,
+  `newest=0.1.0.dev0`, and `.git/simple/vid2sub/index.html` links the wheel alone; then `rm -r
+  .git/simple .git/releases.json`. Then `make check`. Expected: `1155 passed, 2 skipped, 51
+  deselected` (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`, `All checks
+  passed!`, `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+build(index): 🤖 scripts/build_index.py writes the install index from GitHub's release listing, linking each release's wheel with its SHA-256 and leaving out anything not certainly there
+
+Spec §23.4, S51 and S52's second half, and the Phase 4 plan's Review Focus 5: no PyPI (Dan,
+2026-10-14), so `uv tool install 'vid2sub[mac]' --index https://chendaniely.github.io/vid2sub/simple/`
+reads a PEP 503 simple index that pages.yml publishes with the site.
+
+- scripts/build_index.py (PEP 723, no dependencies) reads `gh api --paginate --slurp
+  repos/OWNER/REPO/releases` (a list of pages, or a plain list) and writes simple/index.html and
+  simple/vid2sub/index.html: each release's `vid2sub-<version>-py3-none-any.whl`, linked at
+  https://github.com/<repo>/releases/download/<tag>/<name> with `#sha256=` and GitHub's own
+  SHA-256 of it (the asset's `digest`, `sha256:<64 hex>`, computed at upload).
+- Left out, each with a line on stderr: a draft; a tag that isn't `v` + a version; a release
+  without its wheel (deleted, or never made); a wheel named for another version; a wheel GitHub
+  has no SHA-256 for, or one still uploading. The link is made from the repository, the tag and
+  the name, never taken from the listing's browser_download_url. Wheels only: an sdist would
+  build with hatchling from PyPI. Names are escaped, though the patterns already allow no markup.
+- It prints `wheels=<n>` and `newest=<version>` (the most recently published release indexed)
+  for pages.yml's GITHUB_OUTPUT, and exits 2, writing nothing, on a usage error, a repository
+  name that isn't OWNER/REPO, or a listing it can't read (an API error's JSON object included).
+
+tests/test_build_index.py uses listings written by hand in the API's shape; no test reaches
+GitHub. Its last test serves an index and a minimal wheel on 127.0.0.1 and has the real uv
+(`uv pip install --no-config --no-cache --no-deps --index-url …`) install from it, then refuse
+the same wheel under another SHA-256 ("Hash mismatch"): the page is one uv reads and the
+fragment one it checks. They failed first with FileNotFoundError for scripts/build_index.py (9
+failed). Guard checks, each reverted: the digest check skipped (a wheel without a SHA-256
+indexed): "FAILED tests/test_build_index.py::test_a_draft_a_release_with_no_wheel_and_a_wheel_
+with_no_sha256_are_left_out_and_said"; the link taken from browser_download_url: "FAILED
+...::test_a_link_is_made_from_the_repository_and_never_taken_from_the_listing"; drafts let
+through: the left-out test again.
+
+Docs read: PEP 503 (the root and project pages, one anchor per file, `#sha256=<hex>`
+fragments) and PEP 629's `<meta name="pypi:repository-version" content="1.0">`; GitHub's REST
+reference for List releases (drafts only for push
+access; per_page at most 100; an asset's `digest`, string or null, `state` uploaded or open)
+and its changelog of 2025-06-03 (SHA-256 digests computed at upload, immutable); gh 2.103.1's
+`gh api --help` (--paginate, --slurp); uv's indexes documentation (a command-line --index
+before the default index, PyPI; first-index, so a package found there is never taken from
+PyPI). uv's docs don't say it verifies a fragment's hash: the uv test shows it does.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 9
+Co-Authored-By: <the model's own line>
+```
+
+  `git add scripts/build_index.py tests/test_build_index.py`, `git commit -F .git/COMMIT_MSG`,
+  then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 9b: the index in `pages.yml`, and the smoke job
+
+- [ ] **Step 6: Write the failing tests.** In `tests/test_pages_workflow.py`, split the evaluator
+  (from the repository's root):
+
+```python
+"""Task 9: split the test's evaluator into value_of (an expression's value) and evaluate (a bool)."""
+from pathlib import Path
+
+p = Path("tests/test_pages_workflow.py")
+t = p.read_text(encoding="utf-8")
+reps = [
+    ('''def evaluate(expression: str, context: dict) -> bool:
+    """`expression`, in as much of GitHub's syntax''',
+     '''def value_of(expression: str, context: dict):
+    """The value of `expression` (with or without its `${{ }}`), in as much of GitHub's syntax'''),
+    ('''    tokens, at, text = [], 0, expression.strip()
+''',
+     '''    tokens, at = [], 0
+    text = expression.strip().removeprefix("${{").removesuffix("}}").strip()
+'''),
+    ('''    value = either()
+    take("end")
+    return bool(value)
+''',
+     '''    value = either()
+    take("end")
+    return value
+
+
+def evaluate(expression: str, context: dict) -> bool:
+    """`expression` as an `if:` reads it: its value, true or false."""
+    return bool(value_of(expression, context))
+'''),
+]
+for a, b in reps:
+    assert t.count(a) == 1, a[:60]
+    t = t.replace(a, b)
+p.write_text(t, encoding="utf-8")
+print("patched")
+```
+
+  (save it as `.git/evalpatch.py`, run `python3 .git/evalpatch.py`, then delete it), and append
+  to the file:
+
+```python
+
+
+# ---- Task 9: the install index and the post-deploy smoke job ------------------------------------
+
+
+def test_the_index_is_built_after_the_pages_tests_and_uploaded_with_the_site(workflow):
+    order = [s.get("name") or s.get("run") or s.get("uses", "").split("@")[0]
+             for s in steps(workflow, "build")]
+    assert order.index("make pages-test") < order.index("the install index") < order.index(
+        "the site holds no symbolic links") < order.index("actions/upload-pages-artifact")
+    index = next(s for s in steps(workflow, "build") if s.get("id") == "index")
+    assert index["env"] == {"GH_TOKEN": "${{ github.token }}",
+                            "GH_REPO": "${{ github.repository }}"}
+    assert index["run"].splitlines() == [
+        ('gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100" > '
+         '"$RUNNER_TEMP/releases.json"'),
+        ('uv run scripts/build_index.py "$RUNNER_TEMP/releases.json" _site/simple --repo '
+         '"$GH_REPO" >> "$GITHUB_OUTPUT"')]
+    assert workflow["jobs"]["build"]["outputs"] == {
+        "wheels": "${{ steps.index.outputs.wheels }}",
+        "newest": "${{ steps.index.outputs.newest }}"}
+    assert workflow["jobs"]["deploy"]["outputs"] == {
+        "page_url": "${{ steps.deployment.outputs.page_url }}"}
+
+
+def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_system(workflow):
+    # why: S51. A person installs with `uv tool install 'vid2sub[mac]' --index <site>/simple/`;
+    # this does the same after each deploy, and checks the release's version and frontend.
+    smoke = workflow["jobs"]["smoke"]
+    assert smoke["needs"] == ["build", "deploy"]
+    assert smoke["if"] == "needs.build.outputs.wheels != '0'"  # nothing to install before v1
+    assert smoke["strategy"] == {"fail-fast": False, "matrix": {
+        "os": ["ubuntu-24.04", "macos-14", "windows-2022"]}}
+    assert smoke["runs-on"] == "${{ matrix.os }}"
+    assert smoke["permissions"] == {}
+    assert smoke["defaults"] == {"run": {"shell": "bash"}}
+    assert uses(workflow, "smoke") == ["astral-sh/setup-uv"]  # no checkout: no repository code
+    assert smoke["env"]["INDEX"] == "${{ needs.deploy.outputs.page_url }}simple/"
+    assert smoke["env"]["NEWEST"] == "${{ needs.build.outputs.newest }}"
+    extra = smoke["env"]["EXTRA"]
+    assert value_of(extra, {"matrix": {"os": "macos-14"}}) == "[mac]"
+    assert value_of(extra, {"matrix": {"os": "ubuntu-24.04"}}) == ""
+    assert value_of(extra, {"matrix": {"os": "windows-2022"}}) == ""
+    scripts = "\n".join(runs(workflow, "smoke"))
+    assert 'uv tool install "vid2sub$EXTRA" --index "$INDEX"' in scripts
+    assert 'test "$(vid2sub --version | tr -d \'\\r\')" = "vid2sub $NEWEST"' in scripts
+```
+
+  and in `test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys`, replace
+  `    assert set(workflow["jobs"]) == {"build", "deploy"}` with
+  `    assert set(workflow["jobs"]) == {"build", "deploy", "smoke"}`; and in
+  `test_every_action_is_pinned_and_every_job_is_hardened`, replace
+  `        assert job["runs-on"] == "ubuntu-24.04", name` with
+  `        assert job["runs-on"] in ("ubuntu-24.04", "${{ matrix.os }}"), name`.
+- [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_pages_workflow.py -q`.
+  Expected: `3 failed, 20 passed`: `FAILED
+  tests/test_pages_workflow.py::test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys`
+  (`Extra items in the right set: 'smoke'`), `FAILED
+  …::test_the_index_is_built_after_the_pages_tests_and_uploaded_with_the_site` (`ValueError:
+  list.index(x): x not in list`), `FAILED
+  …::test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_system`
+  (`KeyError: 'smoke'`).
+- [ ] **Step 8: The workflow.** In `.github/workflows/pages.yml`: below the build job's
+  `      - run: make pages-test`, add
+
+```yaml
+      # The install index (spec §23.4, S51, S52): every release's wheel, linked on GitHub
+      # Releases with its SHA-256 (scripts/build_index.py). After the Pages tests, since make
+      # pages empties _site/; its counts go to the smoke job.
+      - name: the install index
+        id: index
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+          uv run scripts/build_index.py "$RUNNER_TEMP/releases.json" _site/simple --repo "$GH_REPO" >> "$GITHUB_OUTPUT"
+```
+
+  between the build job's `      contents: read` (under `permissions:`) and its `    env:`,
+  add
+
+```yaml
+    outputs:
+      wheels: ${{ steps.index.outputs.wheels }}
+      newest: ${{ steps.index.outputs.newest }}
+```
+
+  between the deploy job's `      url: ${{ steps.deployment.outputs.page_url }}` and its
+  `    steps:`, add
+
+```yaml
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+```
+
+  and at the end of the file, add
+
+```yaml
+
+  smoke:
+    # S51: the newest release installs from the live index, frontend included, on all three
+    # operating systems, as a person installs it (spec §23.4). Before the first release the index
+    # is empty and there is nothing to install. No checkout: it runs nothing of the repository's.
+    needs: [build, deploy]
+    if: needs.build.outputs.wheels != '0'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions: {}
+    defaults:
+      run:
+        shell: bash
+    env:
+      INDEX: ${{ needs.deploy.outputs.page_url }}simple/
+      NEWEST: ${{ needs.build.outputs.newest }}
+      # The Mac's extra, as the README installs it there; the others take none.
+      EXTRA: ${{ matrix.os == 'macos-14' && '[mac]' || '' }}
+    steps:
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with: { version: "0.13.1", enable-cache: false }
+      # Pages may take a moment to serve the new deploy everywhere.
+      - name: the live index lists the newest wheel
+        run: |
+          for _ in 1 2 3 4 5 6; do
+            if curl -fsS --max-time 30 "${INDEX}vid2sub/" | grep -Fq "vid2sub-$NEWEST-py3-none-any.whl#sha256="; then
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::${INDEX}vid2sub/ doesn't list vid2sub $NEWEST"
+          exit 1
+      - name: install it as a person does
+        run: |
+          uv tool install "vid2sub$EXTRA" --index "$INDEX"
+          uv tool dir --bin >> "$GITHUB_PATH"
+      - name: the newest release runs, with the editor's frontend
+        run: |
+          test "$(vid2sub --version | tr -d '\r')" = "vid2sub $NEWEST"
+          tool="$(uv tool dir | tr -d '\r')/vid2sub"
+          python="$tool/bin/python"
+          if [ "$RUNNER_OS" = Windows ]; then python="$(cygpath -u "$tool")/Scripts/python.exe"; fi
+          "$python" -c "import sys, vid2sub.web as w; sys.exit(0 if (w.WWW / 'ui.js').is_file() and (w.WWW / 'ui.css').is_file() else 'the wheel has no frontend')"
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_pages_workflow.py -q`:
+  `23 passed`. `make actionlint`: its command line only. The guards, each made, run, and
+  reverted: the smoke job's `permissions: {}` made `contents: read`, a checkout step added to it,
+  or its `if:` dropped: `FAILED
+  tests/test_pages_workflow.py::test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_system`;
+  the index step moved below the upload: `FAILED
+  …::test_the_index_is_built_after_the_pages_tests_and_uploaded_with_the_site`. Each prints `1
+  failed, 22 passed`. The smoke job's three steps were run as the commit below says. Then
+  `make check`. Expected: `1157 passed, 2 skipped, 51 deselected` (twice), `Test Files  21
+  passed (21)`, `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+ci(pages): 🤖 pages.yml publishes the install index with the site, and a smoke job installs the newest release from the live index on macOS, Windows and Linux
+
+Spec §23.4 and S51: the index is built on every deploy, and "a post-deploy smoke job installs
+from the live index on all three operating systems".
+
+- The build job's step `the install index` (after make pages-test, since make pages empties
+  _site/, and before the link check and the upload) lists the releases with `gh api --paginate
+  --slurp` and the job's read-only token (GH_TOKEN, GH_REPO by env, never an expression in the
+  run step) and runs scripts/build_index.py into _site/simple; its `wheels` and `newest` become
+  the build job's outputs, and the deploy job's `page_url` its output.
+- Job `smoke` (needs build and deploy; only when the index has a wheel, so nothing runs before
+  the first release; ubuntu-24.04, macos-14 and windows-2022, fail-fast off; 20 minutes; no
+  permissions at all; bash; no checkout, so no repository code runs): setup-uv 0.13.1 with its
+  cache off; waits up to three minutes for the live index to list the newest wheel; `uv tool
+  install "vid2sub$EXTRA" --index "$INDEX"` (`[mac]` on macos-14, as the README installs it
+  there), adding uv's tool folder to GITHUB_PATH; then `vid2sub --version` must be the newest
+  release's, and the tool's own Python must find www/ui.js and ui.css.
+- tests/test_pages_workflow.py: the index step's place, env and commands, the outputs, and the
+  smoke job's needs, condition, matrix, permissions, steps and EXTRA (through value_of, the
+  evaluator's value, which evaluate now makes a bool); the job set and runs-on checks take the
+  smoke job in. They failed first (3 failed, 20 passed): the job set without 'smoke',
+  "ValueError: list.index(x): x not in list" (no index step) and "KeyError: 'smoke'". Guard
+  checks, each reverted: the smoke job given `contents: read`, or a checkout, or its condition
+  dropped: "FAILED tests/test_pages_workflow.py::test_the_smoke_job_installs_the_newest_release_
+  from_the_live_index_on_every_system"; the index step moved after the upload: "FAILED
+  ...::test_the_index_is_built_after_the_pages_tests_and_uploaded_with_the_site".
+
+The smoke job's three steps were run on macOS against an index and a wheel served on 127.0.0.1
+(the wheel built as make dist builds it; uv installed its dependencies from PyPI): all pass;
+with ui.js removed from the installed tool, "the wheel has no frontend"; with another version
+expected, the version check fails; with a wheel the index doesn't list, the wait ends
+"::error::…doesn't list vid2sub 9.9.9". Windows' path (Scripts/python.exe through cygpath, the
+version's CR stripped) is proven only by the first real run. make actionlint (shellcheck
+included): no findings, once the wait's loop variable was `_` (SC2034).
+
+Docs read: setup-uv v10.3.0's README and docs/environment-and-tools.md (UV_TOOL_BIN_DIR is on
+PATH on Windows only, so the step adds `uv tool dir --bin` to GITHUB_PATH); GitHub's workflow
+syntax for jobs.<id>.outputs, needs.<id>.outputs and matrix expressions; deploy-pages
+v5.0.1's page_url output.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 9
+Co-Authored-By: <the model's own line>
+```
+
+  `git add .github/workflows/pages.yml tests/test_pages_workflow.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*: Matt's `code-review`, two axes in two subagents; fix Critical and
+  Important). Worth the reviewers' time: Review Focus 5 (a release with no wheel, a deleted
+  wheel, a draft: never linked; an install still gets the newest good release); that a link can
+  only point at this repository's releases; the smoke job's permissions (none) and that it runs
+  no repository code; that an empty index skips it rather than failing every push before the
+  first release. The forward review over Tasks 10, 11 and 12: Task 10's README gives the
+  install from the index and the release process; Task 12's step 9c looks for `build_index: 1
+  wheel from 1 release into _site/simple` in the `pages.yml` run the release starts, and
+  checks the live index with `curl … | grep -c '#sha256='`; its step 9d is the smoke job's three
+  green entries (they replace the manual install on a clean machine only if Dan says so: S51's
+  exit test is his). The docs this task made untrue: spec §23.4's index line gains "links each
+  release's wheel on GitHub Releases with GitHub's SHA-256 of it, leaving out a draft or a
+  release without its wheel; built on every deploy", and its smoke line "after each deploy,
+  once a release exists". Then the close, its own commit, holding this plan with this task's
+  boxes ticked and **Now** set to `Task 10: The README and the docs, open.`, and the spec's §23.4
+  lines, S51's Proof (`the post-deploy smoke job (pages.yml's smoke); tests/test_build_index.py;
+  the exit test`) and S52's Proof (`tests/test_release.py; tests/test_build_index.py; the
+  release.yml and pages.yml runs on the first tag (Task 12, step 9c)`), S51 set to `built`,
+  with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 9: The install index and its smoke test
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 9
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -10432,14 +13315,368 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 3
 
+What Tasks 1–9 built, written where a person looks for it: the README (installing from the
+index, the Pages editor, the demo, releases, the new targets), `tests/README.md` (the Pages,
+Pyodide, release, workflow and index tests) and `docs/architecture.md` (the Pages site, the
+workflows and the index, built, so solid). `CHANGELOG.md` is the phase end's (step 7); the spec's
+status line and scenario rows are each task's close.
+
+**Why it is built this way** (read 2026-10-24):
+- **Every claim checked against the code:** the buttons are **Open folder**, **Open the demo**
+  and **Save** (`FolderPicker.tsx`, `Editor.tsx`, `SaveBar.tsx`; in Safari and Firefox Save
+  downloads, there is no Download button); the editor reads the sidecar, the subtitle files and
+  the glossary (`web/browser.py`); `make pages-serve` prints `Serving _site/ at
+  http://127.0.0.1:8008/vid2sub/` (`scripts/rangeserver.py`); the install banner links
+  `…/vid2sub#install` (`TopBar.tsx`'s `INSTALL_URL`), which is the README's `## Install`.
+- **The index is empty until the first release**, so the README keeps the install from a clone
+  beside the one from the index.
+- **The diagrams:** the first diagram's Pages node was dashed "(Phase 4)"; built now, it is solid.
+  The new diagram draws only what is built, every name taken from the files (ci.yml's six jobs,
+  release.yml's `build` and `publish`, pages.yml's `build`, `deploy` and `smoke`, the
+  `workflow_run` between them, `start.js`, the bundle's parts, `simple/vid2sub/`). Mermaid 11's
+  own parser read all four diagrams while this listing was written (a scratch script beside the
+  repository, not part of it); GitHub's rendering of them in the PR is the check here.
+
+**Files:**
+- Modify: `README.md`, `tests/README.md`, `docs/architecture.md`
+- Modify at the close: this plan
+
 **Interfaces:**
 - Consumes, from Tasks 2–4: the README gives `make pages`, `make pages-serve` and
   `make pages-test`; the Pages editor's **Open folder** (read and write in Chrome and Edge,
   read-only with downloads in Safari and Firefox); the demo; that the editor refuses to run in a
   frame; and that a reload asks for the folder again (handles are never kept).
   `docs/architecture.md` draws the Pages site (Task 1 drew `web.folder` and the browser backend).
+- Consumes, from Tasks 5–9: the demo's committed clip and `demo/CREDITS.md`; `make test-pyodide`
+  and CI's `pyodide` job; `pages.yml` (deploys from `main`, after a push, a manual run or a
+  release; the `github-pages` environment's rule); `make dist`, `make build-constraints`, how a
+  release is cut (both versions, merge, Dan tags `main`'s merge commit, Task 8) and `gh
+  attestation verify … --signer-workflow chendaniely/vid2sub/.github/workflows/release.yml`; the
+  index at `/simple/` and the smoke job (Task 9).
+- Produces: nothing later tasks consume but the docs Task 11 and Dan read.
 
-<!-- steps: written in the next pass -->
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: The docs.** Apply (from the repository's root, saved to a file first; `git apply`):
+
+```diff
+diff --git a/README.md b/README.md
+index bb3e85a..60b0d24 100644
+--- a/README.md
++++ b/README.md
+@@ -6,8 +6,8 @@ optionally ASS) next to the video, named the way Plex and Jellyfin expect. It ru
+ your computer, on a machine you run (such as a DGX Spark), or, only when you allow it for a run,
+ on OpenAI.
+ 
+-Status: Phase 1 (M1, the command line) and Phase 2 (M2, the web editor) are built; the spec's
+-status line says which have merged.
++Status: Phase 1 (M1, the command line), Phase 2 (M2, the web editor) and Phase 4 (M4, the
++Pages editor and releases) are built; the spec's status line says which have merged.
+ Design: [`docs/superpowers/specs/2026-10-14-vid2sub-design.md`](docs/superpowers/specs/2026-10-14-vid2sub-design.md),
+ whose Outline and Scenarios say what is built. Diagrams:
+ [`docs/architecture.md`](docs/architecture.md). How it is built: [`AGENTS.md`](AGENTS.md).
+@@ -25,7 +25,25 @@ build; `vid2sub doctor` tells you.
+ | ffmpeg | `brew install ffmpeg` | `winget install Gyan.FFmpeg` | your package manager |
+ | deno | `brew install deno` | `winget install DenoLand.Deno` | `curl -fsSL https://deno.land/install.sh \| sh` |
+ 
+-Then install the CLI from a clone (release wheels arrive with M4). None of this needs Node:
++Then install vid2sub from a release, through its own package index (vid2sub isn't on PyPI; the
++index lists every release's wheel, each with its SHA-256, and uv checks it). Release wheels carry
++the editor's frontend, built. None of this needs Node:
++
++```bash
++uv tool install 'vid2sub[mac]' --index https://chendaniely.github.io/vid2sub/simple/   # Mac
++uv tool install vid2sub --index https://chendaniely.github.io/vid2sub/simple/          # elsewhere
++vid2sub doctor
++uv tool upgrade vid2sub   # later: uv keeps the index and the extra in its tool receipt
++```
++
++An index named with `--index` is checked before PyPI, so a `vid2sub` someone else puts on PyPI
++can't take its place. Each release's files have a build-provenance attestation: `gh attestation
++verify <file> --repo chendaniely/vid2sub --signer-workflow
++chendaniely/vid2sub/.github/workflows/release.yml` checks a download was built by this
++repository's `release.yml`.
++
++Or install from a clone, to follow `main` or to change vid2sub (and until the first release,
++when the index is still empty):
+ 
+ ```bash
+ git clone https://github.com/chendaniely/vid2sub && cd vid2sub
+@@ -37,8 +55,8 @@ vid2sub doctor
+ `--editable` follows your clone, so `git pull` updates it. To work inside the project's own
+ environment instead: `uv sync --extra mac` and `uv run vid2sub …`.
+ 
+-The editor (`vid2sub serve`) also needs its frontend built, once, and again whenever it
+-changes; release wheels will carry it built (M4). Without it, `vid2sub serve` says to build it
++From a clone, the editor (`vid2sub serve`) also needs its frontend built, once, and again
++whenever it changes; release wheels carry it built. Without it, `vid2sub serve` says to build it
+ first. The build needs Node 22 or later, such as Homebrew's `node`, or nvm's: `nvm install` in
+ `frontend/` reads its `.nvmrc`. In your clone, in any shell:
+ 
+@@ -217,7 +235,40 @@ shows them and closing a tab cancels nothing; **Open in editor** opens a finishe
+ demo, jobs run only on the demo's own clip.
+ 
+ Retranslate, Settings and Jobs need an engine that makes subtitles, so the Pages editor
+-(Phase 4) leaves them out.
++(below) leaves them out.
++
++## The Pages editor
++
++<https://chendaniely.github.io/vid2sub/> is the same editor with nothing to install: it runs in
++your browser, through Shinylive and Pyodide, and edits subtitles vid2sub has already made. It
++can't make subtitles, so Add, Review, Jobs, Retranslate and the settings aren't there; a banner
++says so and links to installing vid2sub.
++
++- **Open folder** picks the folder a video is in (a browser can't open a file's folder from the
++  file), lists the episodes vid2sub made subtitles for, and opens the one you pick. The video
++  plays from your disk; only the sidecar, the subtitle files and the glossary are read into the
++  editor, and nothing leaves your machine.
++- In **Chrome and Edge**, allow read and write and **Save** writes next to the video, as
++  `vid2sub serve` does, reading the sidecar again first, so a change another program made in the
++  meantime is kept. If the folder moved or its permission was taken back, nothing is written,
++  the editor says why, and your edits stay in the tab.
++- In **Safari and Firefox** the folder is read only, so **Save** downloads the sidecar and every
++  subtitle file it projects (and the glossary), a quarter second apart; your browser may ask once
++  to allow several downloads. Put them next to the video, replacing the old ones.
++- **Open the demo** plays the demo clip in `demo/` with its subtitles and translation; its Save
++  downloads.
++- The editor never keeps a folder: after a reload, open it again. It refuses to run inside
++  another site's frame, and asks for nothing beyond its own files.
++
++The site is built from this repository by `.github/workflows/pages.yml` on every push to `main`
++and after every release; to build and try it here (the first build downloads Shinylive's assets,
++about 435 MB, checked by hash):
++
++```bash
++make pages         # build the site into _site/
++make pages-serve   # serve it as Pages does, at http://127.0.0.1:8008/vid2sub/
++make pages-test    # the browser tests against the built site
++```
+ 
+ ## Models
+ 
+@@ -246,7 +297,11 @@ make build         # build the frontend into src/vid2sub/web/www/ (vid2sub serve
+ make test          # pytest, without the live and browser tests (media tests need ffmpeg)
+ make test-utc      # the same under TZ=UTC, as on CI's Ubuntu runners
+ make test-js       # typecheck the frontend and run its Vitest tests
++make test-pyodide  # the pure packages' tests inside Pyodide 0.27.7 (needs the network)
+ make e2e           # build, then the browser tests in Playwright's Chromium
++make pages         # build the Pages editor into _site/
++make pages-serve   # serve _site/ as GitHub Pages does
++make pages-test    # the browser tests against the built Pages site
+ make check         # everything CI checks: the suite, again under UTC, the frontend's tests,
+                    # lint, the leak scan
+ make lint          # ruff
+@@ -254,6 +309,8 @@ make actionlint    # lint the GitHub workflows
+ make leaks         # gitleaks over the whole history
+ make demo          # build, then vid2sub serve --demo
+ make demo-sidecar  # remake demo/'s canned sidecar and subtitles with the pipeline
++make dist          # build the wheel and sdist into dist/, the frontend inside, as a release does
++make build-constraints  # re-pin make dist's build backend (hatchling), with hashes
+ make brand         # regenerate frontend/src/theme.css from _brand.yml
+ make skills        # install the shinyreact and shadcn agent skills (never committed)
+ make hooks         # install the git hooks (none are built yet)
+@@ -263,6 +320,23 @@ make readme        # refresh the model table above from the catalog
+ 
+ `make readme` keeps the model table in step with `src/vid2sub/catalog.py`: run it whenever the
+ catalog changes (`make check` fails while the table is stale). The tests, and the variables that
+-opt into more of them, are in [`tests/README.md`](tests/README.md). CI runs the suite on Ubuntu,
+-macOS and Windows, typechecks, tests and builds the frontend, and runs the browser tests in
+-Chromium.
++opt into more of them, are in [`tests/README.md`](tests/README.md). CI (`ci.yml`) runs the suite
++on Ubuntu, macOS and Windows, typechecks, tests and builds the frontend, runs the pure packages'
++tests inside Pyodide, and runs the browser tests in Chromium. `pages.yml` builds and tests the
++Pages editor on every pull request and deploys it from `main`; `release.yml` publishes a release.
++
++### Releases
++
++A release is a `v*` tag on `main`; tags are Dan's.
++
++1. Set the new version in both `pyproject.toml` (`[project] version`) and
++   `src/vid2sub/__init__.py` (`__version__`); a test holds them equal. Merge it to `main`.
++2. Tag `main`'s merge commit and push the tag:
++   `git fetch origin && git tag -a v<version> origin/main -m "vid2sub <version>"`, then
++   `git push origin v<version>`.
++3. `release.yml` checks the tag names the package's version and is on `main`, builds the wheel
++   and the sdist with the frontend inside (`make dist`, its build backend pinned by hash),
++   attests them, and publishes the release. It refuses a tag that already has a release,
++   published or draft: a release's files are never replaced, so a mistake takes a new version.
++4. `pages.yml` follows it: the index at `/simple/` gains the release's wheel, and the smoke job
++   installs it from there on macOS, Windows and Linux.
+diff --git a/docs/architecture.md b/docs/architecture.md
+index f542da6..dab74d1 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -25,7 +25,7 @@ flowchart LR
+   spark["DGX Spark via SSH tunnel<br/>127.0.0.1:9100/v1<br/>whisper.cpp · Gemma 4"]
+   sparkqwen["DGX Spark<br/>Qwen3-ASR + forced aligner<br/>(Phase 2, once local-ai serves it)"]
+   cloud["OpenAI<br/>only with --allow-cloud"]
+-  pages["GitHub Pages<br/>Shinylive editor<br/>(Phase 4)"]
++  pages["GitHub Pages<br/>Shinylive editor"]
+   term --> core
+   browser -->|"websocket + token cookie"| web
+   web --> core
+@@ -38,7 +38,7 @@ flowchart LR
+   core -->|"chunks, cue text"| cloud
+   pages -.->|"File System Access"| files
+   classDef planned stroke-dasharray: 5 5
+-  class fw,sparkqwen,pages planned
++  class fw,sparkqwen planned
+ ```
+ 
+ ## The local web app
+@@ -117,3 +117,41 @@ flowchart TB
+   queue -->|"runtime.job_runner"| core
+   core <--> files
+ ```
++
++## The Pages site, the workflows and the index
++
++The Pages editor is the same server and UI in the browser (spec §21, Phase 4): Shinylive runs
++`web.server` with a `BrowserBackend` in Pyodide, in a Web Worker; React holds the folder's
++handles, hands Python the sidecar's and subtitles' bytes, and writes back the files Python
++returns, so a video's bytes never reach Python. `start.js` refuses to run in a frame and
++revalidates the deploy's files before the app starts. `pages.yml` is the only workflow that
++deploys it, from `main`: after a push, a manual run, or a release, which it follows by
++`release.yml`'s name (Decision 2). The index under `simple/` links each release's wheel on GitHub
++Releases with its SHA-256, for `uv tool install … --index`.
++
++```mermaid
++flowchart LR
++  subgraph repo["github.com/chendaniely/vid2sub"]
++    ci["ci.yml<br/>python · floor · pyodide · frontend · e2e · leaks"]
++    release["release.yml, named release<br/>on a v* tag: build (make dist) ·<br/>publish (attest, gh release create)"]
++    pagesyml["pages.yml<br/>build: make pages · make pages-test · the index<br/>deploy, main only · smoke, 3 systems"]
++    releases[("GitHub Releases<br/>wheel and sdist, www/ inside,<br/>build-provenance attestations")]
++  end
++  subgraph site["chendaniely.github.io/vid2sub/"]
++    start["index.html · start.js<br/>no frames; revalidates the deploy"]
++    worker["Shinylive 0.8.12 · Pyodide 0.27.7<br/>in a Web Worker"]
++    app["app.json: pages/app.py · web.server ·<br/>BrowserBackend · subs, parse, catalog ·<br/>vendored pysubs2, opencc, charset-normalizer"]
++    demovideo["demo/ clip"]
++    simple["simple/vid2sub/<br/>PEP 503: each wheel #sha256="]
++  end
++  dan["a v* tag on main (Dan)"] --> release --> releases
++  release -->|"workflow_run: completed, success, push"| pagesyml
++  push["push to main · manual run"] --> pagesyml
++  releases -->|"gh api: release assets and digests"| pagesyml
++  pagesyml -->|"upload-pages-artifact · deploy-pages"| site
++  browser["Browser"] --> start --> worker --> app
++  browser -->|"the demo plays from ../demo/"| demovideo
++  browser <-->|"Chrome, Edge: File System Access, read and write<br/>Safari, Firefox: read, then downloads;<br/>a video plays from a blob URL"| folder[("the person's folder")]
++  uv["uv tool install 'vid2sub[mac]' --index …/simple/"] --> simple
++  simple -->|"wheel, checked by its SHA-256"| releases
++```
+diff --git a/tests/README.md b/tests/README.md
+index 7d71069..70f00c2 100644
+--- a/tests/README.md
++++ b/tests/README.md
+@@ -29,4 +29,25 @@
+   `ffmpeg -hide_banner -encoders | grep libopus` lists it. Each server's output
+   is `server.log` in its test's temporary folder; CI sets `PYTEST_ADDOPTS=--basetemp=e2e-tmp`
+   and keeps them when the job fails.
++- Pages tests (`make pages-test`, marked `pages`) drive Playwright's Chromium against the site
++  `make pages` built in `_site/`, served as GitHub Pages serves it (`scripts/rangeserver.py`:
++  under `/vid2sub/`, with Range requests and `Cache-Control: max-age=600`). Each fails on a console
++  error and on any request outside the site's own files (`tests/pagesite.py`'s `Watch`). Opening
++  and saving a folder is driven through a folder in the browser's own private file system, since
++  Playwright can't click through the folder picker; the picker's dialog, a real disk, and Safari
++  and Firefox are the M4 exit test's. `tests/pages/test_pages_files.py` is a `media` test too.
++  CI runs them in `pages.yml`, before every deploy.
++- `make test-pyodide` runs the pure packages' tests (every `tests/test_*.py` that imports only
++  `vid2sub.subs`, `vid2sub.parse` or `vid2sub.catalog`, the standard library and what the run
++  installs) inside Pyodide 0.27.7, as the Pages editor runs them (`tests/pyodide_run.py`, through
++  Node and the `pyodide` npm package). It needs the network (Pyodide's CDN, and PyPI for
++  pysubs2, opencc-purepy, charset-normalizer and hypothesis), so `make check` leaves it out; CI's
++  `pyodide` job runs it.
++- `tests/test_release.py` builds a wheel and an sdist as `make dist` does, on a copy of the
++  project; the first run downloads hatchling and its dependencies, pinned by hash in
++  `build-constraints.txt`. Its workflow tests read `release.yml`, and run its guarding steps'
++  scripts with a stand-in `gh` and a scratch git repository; they skip on Windows, where there is
++  no bash. `tests/test_pages_workflow.py` reads `pages.yml` and evaluates its jobs' conditions
++  against the events that can start it. `tests/test_build_index.py` builds the install index
++  from release listings written by hand, and has uv install from it, served on this machine.
+ - Fixtures are synthetic or public domain (`tests/fixtures/CREDITS.md`).
+```
+
+- [ ] **Step 2: Check the words left behind.** `git grep -n -e 'not yet' -e planned -e 'Phase 4'
+  -e unverified -- README.md tests/README.md docs/architecture.md demo/CREDITS.md`. Expected,
+  and each still true: the README's status line naming Phase 4; `durations) are shown, not yet
+  changeable` (the cue rules, Phase 2's); `docs/architecture.md`'s legend, `classDef planned`,
+  `class fw,sparkqwen planned` (Phase 3's and local-ai's), "since Phase 4 runs them in
+  Pyodide", "which Pages' runtime holds (Phase 4)" and the new section's "(spec §21, Phase 4)";
+  `demo/CREDITS.md`'s "(Phase 4 Task 5)". Nothing says a Phase 4 part is to come.
+- [ ] **Step 3: Run the checks; they pass.** `uv run pytest tests/test_readme.py -q`: `1
+  passed` (the model table is untouched). `make help` lists every target the README names. Then
+  `make check`. Expected: `1157 passed, 2 skipped, 51 deselected` (twice), `Test Files  21 passed
+  (21)`, `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 4: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+docs: 🤖 the README, tests/README.md and the architecture page describe the Pages editor, the demo, releases and the install index as Phase 4 built them
+
+Phase 4 Task 10. What Tasks 1–9 built, written where a person looks for it:
+
+- README: installing from a release through the index (`uv tool install 'vid2sub[mac]' --index
+  https://chendaniely.github.io/vid2sub/simple/`, `uv tool upgrade`, why the index outranks
+  PyPI, checking a download's attestation with `gh attestation verify … --signer-workflow`),
+  with a clone as the other way; release wheels carry the frontend; a "Pages editor" section
+  (Open folder; Save writing next to the video in Chrome and Edge after re-reading the sidecar,
+  or downloading the set in Safari and Firefox; the demo; no folder kept across a reload; no
+  frames; nothing fetched beyond its own files; make pages, pages-serve, pages-test); the
+  Develop list gains test-pyodide, pages, pages-serve, pages-test, dist and build-constraints;
+  CI's sentence names the Pyodide job, pages.yml and release.yml; a "Releases" section says how
+  a release is cut (both versions, merge, Dan tags main's merge commit) and what follows. The
+  status line names Phase 4.
+- tests/README.md: the Pages tests (`make pages-test`, the `pages` marker, how a folder is
+  handed to the page, what only the exit test covers), make test-pyodide, and the release,
+  workflow and index tests.
+- docs/architecture.md: the first diagram's Pages node is built, so solid; a new section draws
+  the Pages site (start.js, Shinylive and Pyodide in a worker, the app bundle, the demo clip,
+  simple/), the workflows (ci.yml's jobs, release.yml's build and publish, pages.yml's build,
+  deploy and smoke, the workflow_run between them) and the index's links to GitHub Releases.
+  Every name in it was checked against the code; mermaid 11's parser reads all four diagrams.
+
+The words "not yet", "planned", "Phase 4" and "unverified" were grepped in README.md,
+tests/README.md, docs/architecture.md and demo/CREDITS.md where Phase 4 built the thing: the
+README's "(release wheels arrive with M4)", "release wheels will carry it built (M4)" and the
+Pages editor's "(Phase 4)" were the stale ones. The spec's status lines and scenario rows are
+the closes'; CHANGELOG.md is the phase end's.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 10
+Co-Authored-By: <the model's own line>
+```
+
+  `git add README.md tests/README.md docs/architecture.md`, `git commit -F .git/COMMIT_MSG`,
+  then `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 5: Review, look forward, close.** The Tier 3 self-review from
+  `$(cat .git/TASK_BASE)` (*Standards*, *Spec*) plus `make check`. Worth checking: each command
+  and button the README names exists (`make help`; the frontend's labels); British spelling;
+  §23.5's README list (install per OS, configure, endpoints, the model table, upgrading yt-dlp,
+  installing the CLI three ways, the web UI from a clone, plain uv and npm commands beside the
+  Makefile) still holds with the index's install first. The forward review over Tasks 11 and 12:
+  Task 11's Step 4 names Safari's **Save**, which downloads (there is no Download button);
+  Task 12's step 8 PR body links the README's Pages section; its step 9e's
+  `CHANGELOG.md` entry names the release. Then the close, its own commit, holding this plan with
+  this task's boxes ticked and **Now** set to `Task 11: The M4 exit test (with Dan), open.`, with
+  the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 10: The README and the docs
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 3
+Rounds: self-review (Standards, Spec); make check
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 10
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md`, `git commit -F
+  .git/CLOSE_MSG`.
 
 ***
 
@@ -10460,8 +13697,10 @@ Access status). The implementer prepares and records; Dan runs every step.
 
 **Interfaces:**
 - Consumes: Task 2's `make pages` (the site in `_site/`) and `make pages-serve` (serves it under
-  `/vid2sub/` with Range requests on `127.0.0.1`, as `recordings` does); Task 3's folder picker,
-  Save and Download; Task 5's demo.
+  `/vid2sub/` with Range requests on `127.0.0.1`, as `recordings` does; since Task 5 `make pages`
+  needs no ffmpeg, while `make pages-test` does); Task 3's folder picker and Save, which writes in
+  Chrome and Edge and downloads in Safari and Firefox (`SaveBar.tsx`; there is no Download
+  button); Task 5's committed clip, the one Dan chose at its Step 1.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: List the [Dan] steps** (2 to 6 below), one line each, with the count, then present
@@ -10489,12 +13728,14 @@ make pages-serve
   edits stay in the tab (Review Focus 1). Last, open a multi-gigabyte video's folder: it opens
   at once and plays, and the tab's memory in Activity Monitor stays flat (Review Focus 2).
 - [ ] **Step 4: [Dan] In Safari, edit and download (S48):** open the same address in Safari and
-  pick the folder (Safari reads it only). Fix one line, then **Download**. Expected: the sidecar
+  pick the folder (Safari reads it only). Fix one line, then **Save**, which downloads here.
+  Expected: the sidecar
   and every subtitle file it projects download (and the glossary, if there is one), a quarter
   second apart; Safari may ask once to allow several downloads. Put them next to the video,
   replacing the old ones, and reopen the episode in Chrome: the fix is there.
-- [ ] **Step 5: [Dan] The demo (S50):** from the start screen, open the demo. Expected: the
-  public-domain clip plays with its captions and its translation.
+- [ ] **Step 5: [Dan] The demo (S50):** from the start screen, open the demo, in Chrome and then
+  in Safari. Expected: the clip Task 5 committed plays with its captions and its translation, in
+  both (it is VP9 and Opus in an MP4: Safari playing it is checked here first).
 - [ ] **Step 6: [Dan] Hand back the notes** from Steps 2–5, with Chrome's and Safari's versions.
 - [ ] **Step 7: Record the results in the spec.**
   - §29's M4 bullet, dated: the Pyodide and Shinylive versions the build used (`make pages`
@@ -10591,7 +13832,8 @@ git log --format='%h %s' --grep='reopen Task' --grep='escaped from Task' "$base.
   Task 8's check needs both to match the tag. The version is Dan's, asked by *Asking Dan*.
 - [ ] **8. The PR:** superpowers:finishing-a-development-branch, its PR option. The title is
   `chore(repo): 🤖 merge Phase 4: Pages and releases`; the body summarises what each task built,
-  the council's findings and what became of them, links the retro, lists every file no scan can
+  the council's findings and what became of them, links the retro and the README's Pages editor
+  section (Task 10), lists every file no scan can
   read for Dan to check by eye, says that the live checks and the first release follow the merge
   (step 9), and ends with `Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Phase end`.
   The files no scan can read:
@@ -10618,7 +13860,9 @@ fi
 - [ ] **9. After the merge: the live site, the first release and the install (S47, S51, S52).**
   Tags, releases and repo settings are Dan's (`AGENTS.md`, *Stops*), so the agent lists these
   steps, presents them one at a time (*Asking Dan*), and runs only the read-only checks.
-  - [ ] **9a. The live site:** `pages.yml`'s run on the merge commit is green, and
+  - [ ] **9a. The live site:** Task 7's Step 14 settings were set before the merge (without
+    them the first deploy fails). `pages.yml`'s run on the merge commit is green, its build and
+    deploy jobs, with the smoke job skipped (no release has a wheel yet, Task 9), and
     `https://chendaniely.github.io/vid2sub/` serves the editor. **[Dan]** In Chrome, repeat Task
     11's Step 3 on the live site, without the re-read part (S47).
   - [ ] **9b. [Dan] The first release.** First the settings Task 8's review named (Settings →
@@ -10639,10 +13883,14 @@ gh attestation verify .git/release-check/*.whl --repo chendaniely/vid2sub \
 curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c '#sha256='
 ```
 
-    Expected: the wheel and the sdist; the attestation verifies; the index lists the wheel with
-    its `#sha256=` fragment (a count of at least 1). Then `rm -r .git/release-check`.
-  - [ ] **9d. The install from the index (S51):** the post-deploy smoke job is green on all three
-    operating systems. **[Dan]** On a clean machine (or a fresh user account) with uv:
+    Expected: the wheel and the sdist; the attestation verifies; the `pages.yml` run's index step
+    logged `build_index: 1 wheel from 1 release into _site/simple` (Task 9); the count is `1`,
+    the wheel with its `#sha256=` fragment (`0` would mean GitHub's asset digest isn't in the
+    `sha256:<hex>` form Task 9 accepts, so the index left the wheel out). Then
+    `rm -r .git/release-check`.
+  - [ ] **9d. The install from the index (S51):** in that same `pages.yml` run, the smoke job
+    (Task 9) is green on ubuntu-24.04, macos-14 (which installs the `[mac]` extra) and
+    windows-2022. **[Dan]** On a clean machine (or a fresh user account) with uv:
     `uv tool install 'vid2sub[mac]' --index https://chendaniely.github.io/vid2sub/simple/`,
     then `vid2sub --version` and `vid2sub serve`. Expected: the release's version, and the
     editor opens, so the frontend came with the wheel.
@@ -10663,3 +13911,4 @@ curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c '#sha2
 | Task 3 (planning) | Minor | `frontend/src/lib/folder.ts` | Only the sidecar is compared before a write, so a subtitle file another program creates in that moment is written over (§14.6 asks for the sidecar only) | open |
 | Task 3 (planning) | Minor | `frontend/src/lib/folder.ts` | After a close fails past the sidecar, the notice says nothing was saved, though the sidecar was | open |
 | Task 3 (planning) | Minor | `src/vid2sub/web/browser.py` | On a case-sensitive disk, vid2sub's spelling beside a case variant of its own file makes a duplicate | open |
+| Task 7 (planning) | Minor | `.github/workflows/pages.yml` | A cache entry saved by a main-ref run is restored, every member of it, into the workspace of a run that can deploy, so it could carry the unpacked Shinylive folder or any path. Closing it means restoring caches only on pull requests and saving them on main (`actions/cache/restore` and `/save`), or `assets()` unpacking fresh from the checked tarball every time | open |
