@@ -47,6 +47,17 @@ ffmpeg ≥6 for the playback audio.
    a committed canned sidecar. Phase 4 replaces it with the non-English clip spec §21 asks for.
 7. **Cancel stops between chunks and between translation batches;** a running ffmpeg finishes its
    (short) step first. M1's pipeline has no cancellation, so Task 4 adds a check to `RunContext`.
+8. **Retranslating cues a person names replaces them even where a translation was edited:** the
+   person asked, so it isn't "replaced automatically" (spec §13.4). **Retranslate stale** never
+   replaces an edited cue (S30).
+9. **Stale follows spec §13.4 in full, as M1 does:** a cue is stale when its source changed, and
+   every unedited cue of a track is stale when the glossary or the translation model changed. So a
+   term added at Save makes the whole track stale on the next open. An outside edit keeps the
+   glossary hash and model of the version its file was written from, so fixing a typo in an SRT
+   marks nothing stale (Task 5, Task 6 round 6f, Task 7).
+10. **An outside edit to a file written from an older version diverges** rather than replacing the
+    head (spec §14.4), and a Save whose file write fails records the version the file still holds.
+    M1's `store` did neither; Task 6 round 6f fixes both (escaped from M1 Task 28).
 
 ## Global Constraints
 
@@ -2473,28 +2484,1952 @@ Co-Authored-By: <the model's own line>
 
 **Files:**
 - Create: `src/vid2sub/web/__init__.py`, `src/vid2sub/web/backend.py`, `src/vid2sub/web/views.py`
+- Create: `tests/episodes.py` (M1-shaped episodes for the editor's tests; Tasks 6 and 7 use it)
 - Test: `tests/test_backend_open.py`, `tests/test_views.py`
 
 **Interfaces:**
-- Consumes: `store.load`, `store.check_external`, `store.current_cues`, `store.source_track`,
-  `store.header_for`; `subs.sidecar.Sidecar.head`, `Conflict`; `subs.rendition.transcript_from_body`;
-  `subs.lint.lint`, `subs.rules.rules_for`; `subs.translate_shape.stale_ids`, `untranslated`;
-  `subs.edit.Tracks`; `media.probe`; `cache.Cache`.
-- Produces:
+- Consumes: `store.load`, `store.check_external`, `store.source_track`, `store.header_for`;
+  `subs.sidecar.Sidecar.head`, `Conflict`, `HeadRecord`; `subs.rendition.cues_from_body`,
+  `transcript_from_body`; `subs.lint.lint`, `subs.rules.rules_for`;
+  `subs.translate_shape.stale_ids`, `untranslated`; `subs.edit.Tracks`;
+  `subs.glossary.parse_glossary`, `Glossary`, `EMPTY_GLOSSARY`, `GlossaryError`;
+  `detect.candidates` (`probe_endpoints=False`), `catalog.suggest`; `media.probe.probe`,
+  `pick_track`; `media.identity.identify`; `pipeline.video_change`, `pipeline.MEDIA_SUFFIXES`;
+  `security.resolve_input`; `cache.Cache`.
+- Produces (`vid2sub.web.backend`):
+  - `UNPLAYABLE_AUDIO = frozenset({"ac3", "eac3", "dts", "truehd"})` (ffprobe's codec names);
+    `NO_SUBTITLES` (the refusal for a video with no sidecar)
   - `@dataclass(frozen=True) class Capabilities: engine: Literal["local", "browser"];
     generate: bool; save: Literal["disk", "download"]; path_input: bool`
-  - `class OpenError(Exception)` (a reason fit to show: no sidecar yet, not a video, refused)
-  - `@dataclass class Episode: id: str; video: Path; header: Header; source_key: str;
+  - `class OpenError(Exception)` (a reason fit to show: no sidecar yet, not a full path, not a
+    file, a twin with the same name, a sidecar vid2sub can't read, ffprobe's refusal)
+  - `@dataclass(frozen=True) class Episode: id: str; video: Path; header: Header; source_key: str;
     tracks: Tracks; heads: dict[str, str]; conflicts: dict[str, tuple[str, ...]];
     words: tuple[Word, ...]; notes: list[str]; playable_audio: bool; audio_index: int;
-    undo: list[Tracks]; redo: list[Tracks]; taken: set[str]; glossary_adds: dict[str, str]`
-  - `class LocalBackend: __init__(self, config: Config, tools: Tools, keys: KeyRing, cache: Cache)`;
-    `capabilities(self) -> Capabilities`; `open(self, path: str) -> Episode`;
-    `close(self, episode_id: str) -> None`
-  - `views.episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None) -> dict`
-    (JSON: `video`, `tracks`, `rows`, `words`, `dirty`, `notes`, `conflicts`)
+    sidecar: Sidecar; base: Tracks; glossary: Glossary | None; translate_model: str | None;
+    undo: list[tuple[Tracks, dict[str, str]]] = [];
+    redo: list[tuple[Tracks, dict[str, str]]] = []; taken: set[str] = set();
+    glossary_adds: dict[str, str] = {}`, and the property `dirty -> bool` (`tracks != base` or a
+    glossary add waiting). Frozen: every backend call returns a new Episode, so a reactive value
+    that holds one sees each change. `header` is the video as probed at open, so
+    `header.video.quick_sha256` is the cache key `preview.playback_audio` takes; `heads` names, per
+    loaded track, the rendition its cues came from; a track in `conflicts` (its diverged versions'
+    rendition ids) isn't in `tracks` or `heads`; a source in conflict opens with
+    `tracks.source == ()`; `sidecar` and `base` are as of the open (Task 6: or the last Save);
+    `taken` is every cue id any version of any track has used; `audio_index` is the `a:N` index
+    of the audio track the transcript was made from (`inputs.audio_track`), else §8.4's pick;
+    `glossary` is `vid2sub.glossary.toml` beside the video as M1 reads it (`EMPTY_GLOSSARY` when
+    there's none; None, with a note, when it can't be read); `translate_model` is the server's
+    name (`ModelEntry.model`) of the model Retranslate would use with none named and no cloud:
+    M1's catalog route over the configured models, each local server taken to answer, so open
+    makes no request (None when no translation model is usable). Retranslate probes the servers
+    and refuses a down one, so the two can differ only when a server answers without listing its
+    model.
+  - `class LocalBackend: __init__(self, config: Config, tools: Tools, keys: KeyRing, cache: Cache)`
+    (`config`, `tools`, `keys`, `cache` attributes); `capabilities(self) -> Capabilities`;
+    `open(self, path: str) -> Episode` (the path must be fully qualified, §6.5; it probes, hashes
+    the ends and may append outside edits to the sidecar, so it blocks); `is_open(self,
+    episode_id: str) -> bool`; `close(self, episode_id: str) -> None`
+  - `load_tracks(side: Sidecar) -> tuple[str, Tracks, dict[str, str], dict[str, tuple[str, ...]]]`
+    (source key, tracks, heads, conflicts); `cue_ids(side: Sidecar) -> set[str]`
+  - Spec §13.4's other two legs, as M1 decides them (`pipeline._translate_targets`):
+    `read_glossary(video: Path) -> Glossary` (`GlossaryError` when unreadable);
+    `glossary_with(glossary, adds: dict[str, str]) -> Glossary` (as it will read once Save has
+    added the terms); `track_setup(ep, track) -> tuple[str, str | None]` (the glossary hash, ""
+    for none, and the model the head was made with); `setup_changed(setup, glossary_sha: str |
+    None, model: str | None) -> bool` (a None leg is left out); `all_stale(ep, track) -> bool`
+    (against the glossary with the terms waiting for Save, and `ep.translate_model`)
+  - `vid2sub.web.views.episode_view(ep: Episode, *, video_url: str | None,
+    audio_url: str | None) -> dict` (plain JSON, never a path): `id`; `video` (`name`, the bare
+    file name; `duration_ms`; `url`; `audio_url`; `playable_audio`); `source`; `tracks` (each
+    `key`, `label`, `role` "source" or "translation", `head_by`, `in_conflict`, `all_stale`
+    (every cue stale: made with another glossary or model); the source first,
+    then the sidecar's order, conflicted tracks included); `rows` (one per source cue: `id`, `n`,
+    `start_ms`, `end_ms`, `text`, `w` (`[i, j]` or null), `flags`, and `tr`: per loaded
+    translation track `{"cues": [{"id", "start_ms", "end_ms", "text", "src", "detached",
+    "flags"}], "flags": [] or ["untranslated"]}`, each cue in the row of the first source cue it
+    covers, else the row at its time); `words` (`start_ms`, `end_ms`, `text`, in transcript order:
+    `w` indexes them); `dirty`; `can_undo`; `can_redo`; `notes`; `conflicts` (track → its
+    versions, each `rendition`, `by`, `at`, `cue_count`); `glossary_adds` (term → translation).
+    Flags are sorted: the stored ones (`est`, `halluc`, `edited`) with lint (`cps`, `width`,
+    `duration`) by the track's own language rules, `stale` from `translate_shape.stale_ids`, or
+    on every cue of a track `all_stale` names (spec §13.4; edited cues too, which keep `edited`).
+- Produces (`tests/episodes.py`, for Tasks 5–7): `make_episode(folder, name="Show -
+  S01E01.mkv", *, n=3, targets=("en",), audio_langs=("jpn",), audio_codec="aac",
+  audio_track=0, project=("ja", "en")) -> Path`; `write_track(video, track, cues, *, role,
+  parents=(), by="auto", replaces=None) -> RenditionRecord`; `sid(i)`, `tid(i)` (cue ids
+  `ca…`, `cb…`); `LINES`, `ENGLISH`; `source_cues(n)`, `translation_cues(source)`,
+  `header_of(video)`, `track_body(cues, track, *, role, engine="vid2sub", model=None)`.
 
-<!-- steps: written in the next pass -->
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing test,** in two files. First `tests/episodes.py`, the episodes
+  the editor's tests open (built with store's own functions in the shape M1 writes):
+
+```python
+"""M1-shaped episodes for the editor's tests: a short video, its sidecar and its subtitle files.
+
+Built with store's own functions in the shape M1's pipeline writes (pipeline._transcribe and
+_translate_targets): a transcript, a source track whose cues point into its words, a
+translation per target whose cues record src and src_sha, auto heads, and each track's SRT
+projected next to the video. Ids are fixed (`sid(i)`, `tid(i)`) so tests can name cues; they
+have new_cue_id's shape, as the editor's edits require.
+"""
+
+from __future__ import annotations
+
+import tempfile
+from collections.abc import Sequence
+from pathlib import Path
+
+from helpers import make_clip
+
+from vid2sub import store
+from vid2sub.media.identity import identify
+from vid2sub.media.probe import probe
+from vid2sub.media.tools import Tools
+from vid2sub.subs.model import Cue, Segment, Transcript, Word
+from vid2sub.subs.rendition import cues_body, transcript_body
+from vid2sub.subs.sidecar import Header, HeadRecord, RenditionRecord, Sidecar, make_rendition
+from vid2sub.subs.translate_shape import src_sha
+
+LINES = ("おはよう", "元気ですか", "はい、元気です")
+ENGLISH = ("Good morning", "How are you?", "Yes, I'm fine")
+STEP_MS, LENGTH_MS = 3600, 3000  # cue i runs from i × 3.6 s for 3 s
+
+
+def sid(i: int) -> str:
+    return f"ca{i:07x}"
+
+
+def tid(i: int) -> str:
+    return f"cb{i:07x}"
+
+
+def source_cues(n: int) -> list[Cue]:
+    texts = LINES if n == len(LINES) else [f"台詞{i}" for i in range(n)]
+    return [Cue(id=sid(i), start_ms=i * STEP_MS, end_ms=i * STEP_MS + LENGTH_MS, text=texts[i],
+                w=(2 * i, 2 * i + 2)) for i in range(n)]
+
+
+def translation_cues(source: Sequence[Cue]) -> list[Cue]:
+    texts = ENGLISH if len(source) == len(ENGLISH) else [f"Line {i}" for i in range(len(source))]
+    return [Cue(id=tid(i), start_ms=c.start_ms, end_ms=c.end_ms, text=texts[i], src=(c.id,),
+                src_sha=src_sha([c.text])) for i, c in enumerate(source)]
+
+
+def transcript_for(source: Sequence[Cue], *, audio_track: int, quick: str) -> dict:
+    """Two words per cue, so cue i's words are 2i and 2i+1 (its `w`)."""
+    segments = []
+    for c in source:
+        mid = (c.start_ms + c.end_ms) // 2
+        half = len(c.text) // 2 or 1
+        words = (Word(text=c.text[:half], start_ms=c.start_ms, end_ms=mid),
+                 Word(text=c.text[half:] or "。", start_ms=mid, end_ms=c.end_ms))
+        segments.append(Segment(text=c.text, start_ms=c.start_ms, end_ms=c.end_ms, words=words))
+    return transcript_body(
+        Transcript(language="ja", segments=tuple(segments)), engine="whisper.cpp",
+        model="fake", version="fake@test", created_at=store.now(),
+        inputs={"audio_sha256": "0" * 64, "video_quick_sha256": quick,
+                "audio_track": audio_track, "timeline_offset_ms": 0},
+        meta={})
+
+
+def header_of(video: Path) -> Header:
+    with tempfile.TemporaryDirectory() as scratch:
+        duration = probe(video, Tools.find(), scratch=Path(scratch)).duration_ms
+    return store.header_for(video, identify(video), duration)
+
+
+def track_body(cues: Sequence[Cue], track: str, *, role: str, engine: str = "vid2sub",
+               model: str | None = None) -> dict:
+    lang = "ja" if track == "ja" else track.split("-")[0]
+    return cues_body(cues, language=lang, script=None, engine=engine, model=model,
+                     version="test", created_at=store.now(), inputs={}, meta={"role": role})
+
+
+def write_track(video: Path, track: str, cues: Sequence[Cue], *, role: str,
+                parents: Sequence[str] = (), by: str = "auto",
+                replaces: str | None = None) -> RenditionRecord:
+    """Appends a rendition of `track`, and a head for it that replaces `replaces`, to the
+    episode's existing sidecar, as another writer (a CLI run, another tab) would."""
+    engine, model = ("vid2sub", None) if role == "source" else ("translate:gemma", "gemma")
+    rec = make_rendition(list(parents), track, track_body(cues, track, role=role, engine=engine,
+                                                          model=model))
+    header = store.load(video)[0].header
+    store.append(video, header, [rec, HeadRecord(track=track, rendition=rec.id,
+                                                 replaces=replaces, by=by, at=store.now())])
+    return rec
+
+
+def make_episode(folder: Path, name: str = "Show - S01E01.mkv", *, n: int = len(LINES),
+                 targets: Sequence[str] = ("en",), audio_langs: Sequence[str] = ("jpn",),
+                 audio_codec: str = "aac", audio_track: int = 0,
+                 project: Sequence[str] = ("ja", "en")) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    video = make_clip(folder, name, seconds=2.0, audio_langs=tuple(audio_langs),
+                      audio_codec=audio_codec)
+    header = header_of(video)
+    source = source_cues(n)
+    transcript = make_rendition([], None, transcript_for(
+        source, audio_track=audio_track, quick=header.video.quick_sha256))
+    src = make_rendition([transcript.id], "ja", track_body(source, "ja", role="source"))
+    records: list = [transcript, src,
+                     HeadRecord(track="ja", rendition=src.id, by="auto", at=store.now())]
+    for target in targets:
+        rec = make_rendition([src.id], target, track_body(
+            translation_cues(source), target, role="translation", engine="translate:gemma",
+            model="gemma"))
+        records += [rec, HeadRecord(track=target, rendition=rec.id, by="auto", at=store.now())]
+    side: Sidecar = store.append(video, header, records)
+    for track in project:
+        side, _, _ = store.project(video, header, side, track, "srt", overwrite_foreign=False)
+    return video
+```
+
+  Then `tests/test_backend_open.py`:
+
+```python
+import pytest
+from episodes import (
+    ENGLISH,
+    LINES,
+    header_of,
+    make_episode,
+    sid,
+    source_cues,
+    tid,
+    track_body,
+    write_track,
+)
+from helpers import make_clip
+
+from vid2sub import store
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.subs.edit import Tracks
+from vid2sub.subs.model import Cue, Segment, Transcript, Word
+from vid2sub.subs.rendition import transcript_body
+from vid2sub.subs.sidecar import HeadRecord, make_rendition
+from vid2sub.web import backend as web_backend
+from vid2sub.web.backend import Capabilities, LocalBackend, OpenError
+
+pytestmark = pytest.mark.media
+
+
+@pytest.fixture
+def backend(tmp_path) -> LocalBackend:
+    return LocalBackend(Config(), Tools.find(), KeyRing(environ={}),
+                        Cache(tmp_path / "cache", max_bytes=10**9))
+
+
+@pytest.fixture
+def video(tmp_path):
+    return make_episode(tmp_path / "show")
+
+
+def test_the_local_backend_has_every_control(backend):
+    assert backend.capabilities() == Capabilities(engine="local", generate=True, save="disk",
+                                                  path_input=True)
+
+
+def test_an_m1_episode_opens_with_its_source_its_translation_and_their_heads(backend, video):
+    ep = backend.open(str(video))
+    side, _ = store.load(video)
+    assert ep.video == video and ep.source_key == "ja"
+    assert [c.text for c in ep.tracks.source] == list(LINES)
+    assert [c.text for c in ep.tracks.translations["en"]] == list(ENGLISH)
+    assert ep.heads == {"ja": side.head("ja").rendition, "en": side.head("en").rendition}
+    assert ep.conflicts == {} and ep.notes == []
+    assert ep.base == ep.tracks and not ep.dirty
+    assert ep.undo == [] and ep.redo == [] and ep.glossary_adds == {}
+    assert {sid(0), sid(2), tid(1)} <= ep.taken
+    assert ep.header.video.quick_sha256 == side.header.video.quick_sha256
+    assert backend.is_open(ep.id)
+
+
+def test_each_open_is_its_own_episode_and_closing_one_forgets_only_it(backend, video):
+    first, second = backend.open(str(video)), backend.open(str(video))
+    assert first.id != second.id
+    backend.close(first.id)
+    assert not backend.is_open(first.id) and backend.is_open(second.id)
+    backend.close("no-such-episode")
+
+
+def test_the_spoken_words_come_from_the_transcript_the_source_was_built_from(backend, video):
+    newer = make_rendition([], None, transcript_body(
+        _one_word_transcript(), engine="whisper.cpp", model="other", version="other",
+        created_at=store.now(), inputs={"audio_track": 0}, meta={}))
+    store.append(video, store.load(video)[0].header, [newer])
+    ep = backend.open(str(video))
+    assert [w.text for w in ep.words] == ["おは", "よう", "元気", "ですか", "はい、", "元気です"]
+    assert (ep.words[2].start_ms, ep.words[3].end_ms) == (3600, 6600)
+
+
+def _one_word_transcript() -> Transcript:
+    word = Word(text="x", start_ms=0, end_ms=10)
+    return Transcript(language="ja", segments=(Segment(text="x", start_ms=0, end_ms=10,
+                                                       words=(word,)),))
+
+
+@pytest.mark.parametrize("codec, playable", [("aac", True), ("ac3", False), ("eac3", False)])
+def test_a_browser_cant_play_ac3_or_e_ac3_audio(backend, tmp_path, codec, playable):
+    ep = backend.open(str(make_episode(tmp_path / codec, audio_codec=codec)))
+    assert ep.playable_audio is playable and ep.audio_index == 0
+
+
+def test_dts_and_truehd_are_unplayable_too():
+    assert web_backend.UNPLAYABLE_AUDIO == {"ac3", "eac3", "dts", "truehd"}
+
+
+def test_the_audio_track_is_the_one_the_transcript_was_made_from(backend, tmp_path):
+    video = make_episode(tmp_path / "two", audio_langs=("jpn", "eng"), audio_codec="ac3",
+                         audio_track=1)
+    ep = backend.open(str(video))
+    assert ep.audio_index == 1 and ep.playable_audio is False
+
+
+def test_with_no_transcript_the_audio_track_is_the_source_languages(backend, tmp_path):
+    folder = tmp_path / "imported"
+    folder.mkdir()
+    video = make_clip(folder, "Show - S01E01.mkv", seconds=2.0, audio_langs=("eng", "jpn"),
+                      default_audio=0)
+    rec = make_rendition([], "ja", track_body(source_cues(3), "ja", role="source"))
+    store.append(video, header_of(video), [rec, HeadRecord(track="ja", rendition=rec.id,
+                                                           by="import", at=store.now())])
+    ep = backend.open(str(video))
+    assert ep.audio_index == 1 and ep.words == ()
+
+
+def test_a_video_with_no_sidecar_says_how_to_make_its_subtitles(backend, tmp_path):
+    video = make_clip(tmp_path, "Plain.mkv", seconds=1.0)
+    with pytest.raises(OpenError, match="no subtitles yet: make them with vid2sub run"):
+        backend.open(str(video))
+
+
+@pytest.mark.parametrize("path", ["relative/Show.mkv", "{tmp}", "{tmp}/missing.mkv"])
+def test_only_the_full_path_of_a_file_is_opened(backend, tmp_path, path):
+    with pytest.raises(OpenError):
+        backend.open(path.format(tmp=tmp_path))
+
+
+def test_an_outside_edit_comes_back_as_the_head_and_the_editor_says_so(backend, video):
+    srt = video.with_name("Show - S01E01.en.srt")
+    srt.write_text(srt.read_text(encoding="utf-8").replace("How are you?", "How have you been?"),
+                   encoding="utf-8")
+    ep = backend.open(str(video))
+    side, _ = store.load(video)
+    assert ep.notes == ["kept your outside edit to en"]
+    assert ep.tracks.translations["en"][1].text == "How have you been?"
+    assert "edited" in ep.tracks.translations["en"][1].flags
+    assert side.head("en").by == "external" and ep.heads["en"] == side.head("en").rendition
+
+
+def test_an_unreadable_subtitle_file_is_left_alone_and_named_without_its_folder(backend, video,
+                                                                               tmp_path):
+    srt = video.with_name("Show - S01E01.en.srt")
+    srt.write_bytes(b"\x00\x01 not subtitles")
+    ep = backend.open(str(video))
+    assert ep.notes == ["left Show - S01E01.en.srt alone: it isn't a readable subtitle file"]
+    assert srt.read_bytes() == b"\x00\x01 not subtitles"
+    assert not any(str(tmp_path) in note for note in ep.notes)
+
+
+def test_a_track_in_conflict_lists_both_versions_and_isnt_loaded(backend, video):
+    side, _ = store.load(video)
+    head = side.head("en").rendition
+    mine = write_track(video, "en", [Cue(id=tid(0), start_ms=0, end_ms=3000, text="Mine",
+                                         src=(sid(0),))], role="translation", replaces=head,
+                       by="editor")
+    theirs = write_track(video, "en", [Cue(id=tid(0), start_ms=0, end_ms=3000, text="Theirs",
+                                           src=(sid(0),))], role="translation", replaces=head)
+    ep = backend.open(str(video))
+    assert ep.conflicts == {"en": (mine.id, theirs.id)}
+    assert "en" not in ep.tracks.translations and "en" not in ep.heads
+    assert [c.text for c in ep.tracks.source] == list(LINES)
+
+
+def test_a_source_in_conflict_opens_with_nothing_to_edit(backend, video):
+    side, _ = store.load(video)
+    head = side.head("ja").rendition
+    one = write_track(video, "ja", source_cues(3)[:1], role="source", replaces=head, by="editor")
+    two = write_track(video, "ja", source_cues(3)[1:], role="source", replaces=head)
+    ep = backend.open(str(video))
+    assert ep.source_key == "ja" and ep.tracks.source == ()
+    assert ep.conflicts == {"ja": (one.id, two.id)} and "ja" not in ep.heads
+
+
+def test_a_sidecar_vid2sub_cant_read_is_refused_and_left_alone(backend, video):
+    path = store.sidecar_path(video)
+    broken = path.read_bytes() + b"not json\n{}\n"
+    path.write_bytes(broken)
+    with pytest.raises(OpenError, match="can't read"):
+        backend.open(str(video))
+    assert path.read_bytes() == broken
+
+
+def test_another_video_with_the_same_name_is_refused(backend, video):
+    video.with_suffix(".mp4").write_bytes(b"x")
+    with pytest.raises(OpenError, match="same name"):
+        backend.open(str(video))
+
+
+def test_a_replaced_video_is_noted_with_the_difference(backend, video):
+    make_clip(video.parent, video.name, seconds=3.0)
+    ep = backend.open(str(video))
+    assert len(ep.notes) == 1
+    assert ep.notes[0].startswith("this video changed since its subtitles were made (size")
+
+
+def test_an_episode_holds_tracks_the_edit_rules_take(backend, video):
+    ep = backend.open(str(video))
+    assert isinstance(ep.tracks, Tracks) and set(ep.tracks.translations) == {"en"}
+```
+
+- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_backend_open.py -q`. Expected:
+  `E   ModuleNotFoundError: No module named 'vid2sub.web'` and `1 error`.
+- [ ] **Step 3: Write the code.** `src/vid2sub/web/__init__.py` (Tasks 8–11 add modules to this
+  package):
+
+```python
+"""The local web app: the editor's backend, the app shell and its server (spec §19)."""
+```
+
+  Then `src/vid2sub/web/backend.py`:
+
+```python
+"""The editor's backend: opening an episode M1 made, from its sidecar (spec §19.1, §20, §15.3).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change.
+"""
+
+from __future__ import annotations
+
+import os
+import secrets
+import tempfile
+import threading
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+from vid2sub import store
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.identity import identify
+from vid2sub.media.probe import Probe, ProbeError, pick_track, probe
+from vid2sub.media.tools import ToolFailed, ToolMissing, Tools
+from vid2sub.pipeline import MEDIA_SUFFIXES, video_change
+from vid2sub.security import InputRefused, WriteRefused, resolve_input
+from vid2sub.subs import naming
+from vid2sub.subs.edit import Tracks
+from vid2sub.subs.model import Word
+from vid2sub.subs.rendition import cues_from_body, transcript_from_body
+from vid2sub.subs.sidecar import (
+    Conflict,
+    Header,
+    HeadRecord,
+    RenditionRecord,
+    Sidecar,
+    SidecarError,
+)
+
+UNPLAYABLE_AUDIO = frozenset({"ac3", "eac3", "dts", "truehd"})  # ffprobe's codec names (§8.2)
+NO_SUBTITLES = "no subtitles yet: make them with vid2sub run or the Jobs page first"
+
+
+class OpenError(Exception):
+    """An episode that can't be opened; the reason is fit to show."""
+
+
+@dataclass(frozen=True)
+class Capabilities:
+    engine: Literal["local", "browser"]
+    generate: bool
+    save: Literal["disk", "download"]
+    path_input: bool
+
+
+@dataclass(frozen=True)
+class Episode:
+    id: str
+    video: Path
+    header: Header  # the video as it is now, from the probe at open
+    source_key: str
+    tracks: Tracks
+    heads: dict[str, str]  # track → the head rendition its cues came from
+    conflicts: dict[str, tuple[str, ...]]  # track → its diverged versions (rendition ids)
+    words: tuple[Word, ...]
+    notes: list[str]
+    playable_audio: bool
+    audio_index: int  # among audio tracks: ffmpeg's a:N, as preview.playback_audio takes
+    sidecar: Sidecar  # as of the open or the last Save
+    base: Tracks  # the tracks as of the open or the last Save
+    undo: list[tuple[Tracks, dict[str, str]]] = field(default_factory=list)
+    redo: list[tuple[Tracks, dict[str, str]]] = field(default_factory=list)
+    taken: set[str] = field(default_factory=set)
+    glossary_adds: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def dirty(self) -> bool:
+        return self.tracks != self.base or bool(self.glossary_adds)
+
+
+class LocalBackend:
+    def __init__(self, config: Config, tools: Tools, keys: KeyRing, cache: Cache):
+        self.config = config
+        self.tools = tools
+        self.keys = keys
+        self.cache = cache
+        self._open: dict[str, Path] = {}
+        self._lock = threading.Lock()
+
+    def capabilities(self) -> Capabilities:
+        return Capabilities(engine="local", generate=True, save="disk", path_input=True)
+
+    def open(self, path: str) -> Episode:
+        """Probes the video and reads its sidecar, recording outside edits first (§15.3)."""
+        video = _video(path)
+        try:
+            side, warnings = store.load(video)
+        except SidecarError as err:
+            raise OpenError(str(err)) from None
+        if side is None:
+            raise OpenError(NO_SUBTITLES)
+        p = self._probe(video)
+        header = store.header_for(video, identify(video), p.duration_ms)
+        notes = list(warnings)
+        change = video_change(side.header.video, header.video)
+        if change:
+            notes.append(f"this video changed since its subtitles were made ({change}); its "
+                         "transcript may no longer line up")
+
+        def unreadable(name: str) -> None:
+            notes.append(f"left {name} alone: it isn't a readable subtitle file")
+
+        try:
+            side, changed = store.check_external(video, header, side, on_unreadable=unreadable)
+        except (SidecarError, store.StoreError, WriteRefused) as err:
+            raise OpenError(str(err)) from None
+        except OSError as err:  # never err.filename: a full path
+            raise OpenError("couldn't read or write the files next to the video"
+                            + (f" ({err.strerror})" if err.strerror else "")) from None
+        notes += [f"kept your outside edit to {t}" for t in changed]
+        source_key, tracks, heads, conflicts = load_tracks(side)
+        transcript = _transcript(side, heads.get(source_key))
+        track = _audio_track(p, transcript, naming.TRACKS.get(source_key))
+        ep = Episode(
+            id="e" + secrets.token_hex(8), video=video, header=header, source_key=source_key,
+            tracks=tracks, heads=heads, conflicts=conflicts,
+            words=tuple(transcript_from_body(transcript.body).words()) if transcript else (),
+            notes=notes, playable_audio=track.codec not in UNPLAYABLE_AUDIO,
+            audio_index=track.index, sidecar=side, base=tracks, taken=cue_ids(side))
+        with self._lock:
+            self._open[ep.id] = video
+        return ep
+
+    def is_open(self, episode_id: str) -> bool:
+        with self._lock:
+            return episode_id in self._open
+
+    def close(self, episode_id: str) -> None:
+        """Forgets the episode; unsaved edits in it are dropped (the tab keeps a draft, §14.5)."""
+        with self._lock:
+            self._open.pop(episode_id, None)
+
+    def _probe(self, video: Path) -> Probe:
+        try:
+            with tempfile.TemporaryDirectory(prefix="vid2sub-") as scratch:
+                return probe(video, self.tools, scratch=Path(scratch))
+        except (ProbeError, ToolMissing) as err:
+            raise OpenError(str(err)) from None
+        except ToolFailed:
+            raise OpenError("ffprobe couldn't read this file: check that it plays in a media "
+                            "player") from None
+
+
+def _video(path: str) -> Path:
+    """A typed path must be fully qualified (spec §6.5): the server's folder means nothing to
+    the person typing."""
+    try:
+        if not os.path.isabs(os.path.expanduser(path)):
+            raise OpenError("give the video's full path")
+        video = resolve_input(path)
+    except InputRefused as err:
+        raise OpenError(str(err)) from None
+    if not video.is_file():
+        raise OpenError("there's no video at that path")
+    twins = [p for p in video.parent.iterdir() if p != video
+             and p.stem.casefold() == video.stem.casefold() and p.suffix.lower() in MEDIA_SUFFIXES]
+    if twins:
+        raise OpenError("another video in this folder has the same name, so their subtitles "
+                        "would collide: rename one of them")
+    return video
+
+
+def load_tracks(side: Sidecar) -> tuple[str, Tracks, dict[str, str], dict[str, tuple[str, ...]]]:
+    """The source track's key, every track's cues at its head, the heads, and the tracks in
+    conflict (not loaded: a person picks a version first, §14.4)."""
+    source_key = store.source_track(side) or _forked_source(side)
+    if source_key is None:
+        raise OpenError(NO_SUBTITLES)
+    renditions = side.renditions()
+    heads: dict[str, str] = {}
+    conflicts: dict[str, tuple[str, ...]] = {}
+    loaded: dict[str, tuple] = {}
+    for track in side.tracks():
+        head = side.head(track)
+        if isinstance(head, Conflict):
+            conflicts[track] = head.leaves
+        elif isinstance(head, HeadRecord):
+            heads[track] = head.rendition
+            loaded[track] = tuple(cues_from_body(renditions[head.rendition].body))
+    source = loaded.pop(source_key, ())
+    return source_key, Tracks(source, loaded), heads, conflicts
+
+
+def cue_ids(side: Sidecar) -> set[str]:
+    """Every cue id any version of any track has used: ids are never reused (spec §14.3)."""
+    return {c["id"] for r in side.renditions().values() if r.body.get("kind") == "cues"
+            for c in r.body["payload"]["cues"]}
+
+
+def _forked_source(side: Sidecar) -> str | None:
+    """A source track in conflict: one of its versions says it is the source."""
+    renditions = side.renditions()
+    for track in side.tracks():
+        head = side.head(track)
+        if isinstance(head, Conflict) and any(
+                renditions[i].body.get("meta", {}).get("role") == "source"
+                for i in head.leaves if i in renditions):
+            return track
+    return None
+
+
+def _transcript(side: Sidecar, source_head: str | None) -> RenditionRecord | None:
+    """The transcript the source's head was built from, else the newest one."""
+    renditions = side.renditions()
+    seen: set[str] = set()
+    todo = [source_head] if source_head else []
+    while todo:
+        rid = todo.pop(0)
+        if rid in seen or rid not in renditions:
+            continue
+        seen.add(rid)
+        rec = renditions[rid]
+        if rec.body.get("kind") == "transcript":
+            return rec
+        todo += rec.parents
+    found = side.transcripts()
+    return found[-1] if found else None
+
+
+def _audio_track(p: Probe, transcript: RenditionRecord | None, info: naming.TrackInfo | None):
+    """The track the transcript was made from (its `inputs.audio_track`), else §8.4's pick."""
+    if transcript is not None:
+        value = str(transcript.body.get("inputs", {}).get("audio_track", ""))
+        if value.isdigit() and int(value) < len(p.audio):
+            return p.audio[int(value)]
+    return pick_track(p, info.lang if info else None)
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_backend_open.py -q` first
+  (`22 passed`), then `make check`. Expected: `558 passed, 2 skipped, 4 deselected` twice (the
+  local zone, then UTC), `All checks passed!` and `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the editor's backend opens an M1 episode from its sidecar and keeps outside edits
+
+vid2sub.web.backend (spec §19.1, §20, §15.3; S27, S31):
+LocalBackend(config, tools, keys, cache).open(path) takes the full path of
+a video that already has a sidecar (else "no subtitles yet: make them with
+vid2sub run or the Jobs page first"), probes it, records edits made
+outside vid2sub through store.check_external, and says so in notes that
+name a file by its bare name only ("kept your outside edit to en", "left
+<name> alone: it isn't a readable subtitle file"); a replaced video is
+noted with the difference, as M1 does. The Episode holds the source and
+translation tracks at their heads as subs.edit.Tracks, the heads, the
+tracks in conflict (listed, not loaded; a source in conflict opens with
+nothing to edit), the words of the transcript the source was built from,
+the audio track that transcript used (else §8.4's pick) and whether a
+browser can play it (not AC-3, E-AC-3, DTS or TrueHD: the plan's Decision
+2), and every cue id any version has used. Episodes are frozen: every call
+returns a new one. tests/episodes.py builds M1-shaped episodes for this
+task and the next two.
+
+The new test failed first with: ModuleNotFoundError: No module named
+'vid2sub.web'.
+
+Docs read: none beyond the code (store.load, check_external and
+source_track; pipeline._check_external, _resolve and video_change;
+media.probe.pick_track; subs.sidecar.Sidecar.head).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 5
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/__init__.py src/vid2sub/web/backend.py tests/episodes.py
+  tests/test_backend_open.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1
+  --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 6: Write the failing test,** `tests/test_views.py`:
+
+```python
+import dataclasses
+import json
+import time
+from pathlib import Path
+
+import pytest
+from episodes import ENGLISH, LINES, make_episode, sid, source_cues, tid, translation_cues
+
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.subs.edit import Tracks
+from vid2sub.subs.model import Cue, Word
+from vid2sub.subs.rendition import cues_body
+from vid2sub.subs.sidecar import Header, HeadRecord, Sidecar, VideoInfo, make_rendition
+from vid2sub.web import views
+from vid2sub.web.backend import Episode, LocalBackend
+
+VIDEO = Path("/Users/someone/Secret Shows/Show - S01E01.mkv")
+HEADER = Header(video=VideoInfo(name=VIDEO.name, size=1, quick_sha256="a" * 64,
+                                duration_ms=20_000))
+AT = "2026-10-23T10:00:00Z"
+
+
+def body(cues, lang: str, role: str) -> dict:
+    return cues_body(cues, language=lang, script=None, engine="vid2sub", model=None,
+                     version="t", created_at=AT, inputs={}, meta={"role": role})
+
+
+def episode(source=None, en=None, *, records=(), **changes) -> Episode:
+    source = tuple(source_cues(3) if source is None else source)
+    en = tuple(translation_cues(source) if en is None else en)
+    ja_rec = make_rendition([], "ja", body(source, "ja", "source"))
+    en_rec = make_rendition([ja_rec.id], "en", body(en, "en", "translation"))
+    side = Sidecar(HEADER, (ja_rec, HeadRecord(track="ja", rendition=ja_rec.id, by="auto", at=AT),
+                            en_rec, HeadRecord(track="en", rendition=en_rec.id, by="editor",
+                                               at="2026-10-23T11:00:00Z"), *records))
+    tracks = Tracks(source, {"en": en})
+    words = tuple(Word(text=t, start_ms=k * 500, end_ms=k * 500 + 400)
+                  for k, t in enumerate(["おは", "よう"]))
+    ep = Episode(id="e1", video=VIDEO, header=HEADER, source_key="ja", tracks=tracks,
+                 heads={"ja": ja_rec.id, "en": en_rec.id}, conflicts={}, words=words, notes=[],
+                 playable_audio=True, audio_index=0, sidecar=side, base=tracks)
+    return dataclasses.replace(ep, **changes)
+
+
+def view(ep: Episode, **urls) -> dict:
+    return views.episode_view(ep, video_url=urls.get("video_url"),
+                              audio_url=urls.get("audio_url"))
+
+
+def test_each_source_cue_is_a_row_with_its_number_times_text_and_word_range():
+    rows = view(episode())["rows"]
+    assert [(r["id"], r["n"], r["text"]) for r in rows] == [
+        (sid(0), 1, LINES[0]), (sid(1), 2, LINES[1]), (sid(2), 3, LINES[2])]
+    assert (rows[1]["start_ms"], rows[1]["end_ms"], rows[1]["w"]) == (3600, 6600, [2, 4])
+
+
+def test_a_rows_flags_are_its_stored_flags_and_its_lint_flags():
+    source = source_cues(3)
+    source[2] = source[2].model_copy(update={"end_ms": 7200 + 1000, "flags": ("est",)})
+    rows = view(episode(source))["rows"]
+    assert rows[2]["flags"] == ["cps", "est"]  # 7 characters in a second, past Japanese's 4
+    assert rows[0]["flags"] == []
+
+
+def test_a_translation_shows_in_the_row_of_its_first_source_cue():
+    source = source_cues(3)
+    en = translation_cues(source)
+    both = Cue(id=tid(9), start_ms=3600, end_ms=10_200, text="How are you? Fine.",
+               src=(sid(1), sid(2)), src_sha=en[1].src_sha)
+    rows = view(episode(source, [en[0], both]))["rows"]
+    assert [c["id"] for c in rows[1]["tr"]["en"]["cues"]] == [tid(9)]
+    assert rows[1]["tr"]["en"]["cues"][0]["src"] == [sid(1), sid(2)]
+    assert rows[2]["tr"]["en"] == {"cues": [], "flags": []}
+
+
+def test_a_translation_whose_source_changed_is_stale_and_an_edited_one_says_so():
+    source = source_cues(3)
+    en = translation_cues(source)
+    en[1] = en[1].model_copy(update={"text": "How are things?", "flags": ("edited",)})
+    source[0] = source[0].model_copy(update={"text": "こんばんは"})
+    rows = view(episode(source, en))["rows"]
+    assert rows[0]["tr"]["en"]["cues"][0]["flags"] == ["stale"]
+    assert rows[1]["tr"]["en"]["cues"][0]["flags"] == ["edited"]
+    assert rows[2]["tr"]["en"]["cues"][0]["flags"] == []
+
+
+def test_a_source_cue_no_translation_covers_is_untranslated_in_that_track():
+    source = source_cues(3)
+    rows = view(episode(source, translation_cues(source)[:2]))["rows"]
+    assert rows[2]["tr"]["en"] == {"cues": [], "flags": ["untranslated"]}
+    assert rows[1]["tr"]["en"]["flags"] == []
+
+
+def test_a_translation_whose_source_cues_are_gone_shows_at_its_time_and_is_stale():
+    source = source_cues(3)
+    lost = Cue(id=tid(5), start_ms=4000, end_ms=5000, text="Lost", src=("c00000000",))
+    rows = view(episode(source, [*translation_cues(source)[:1], lost]))["rows"]
+    (cue,) = rows[1]["tr"]["en"]["cues"]
+    assert cue["id"] == tid(5) and cue["flags"] == ["stale"]
+
+
+def test_translations_are_linted_by_their_own_languages_rules():
+    source = source_cues(3)
+    en = translation_cues(source)
+    en[0] = en[0].model_copy(update={"text": "A single line that is far too wide for a screen"})
+    cue = view(episode(source, en))["rows"][0]["tr"]["en"]["cues"][0]
+    assert cue["flags"] == ["width"]
+
+
+def test_the_tracks_say_their_role_who_set_their_head_and_whether_they_are_in_conflict():
+    other = make_rendition([], "zh-Hant", body([], "zh", "translation"))
+    ep = episode(records=(other,), conflicts={"zh-Hant": (other.id, "r_other")})
+    ep = dataclasses.replace(ep, sidecar=Sidecar(HEADER, ep.sidecar.records + (
+        HeadRecord(track="zh-Hant", rendition=other.id, by="auto", at=AT),
+        HeadRecord(track="zh-Hant", rendition="r_other", by="editor", at=AT))))
+    assert view(ep)["tracks"] == [
+        {"key": "ja", "label": "Japanese", "role": "source", "head_by": "auto",
+         "in_conflict": False},
+        {"key": "en", "label": "English", "role": "translation", "head_by": "editor",
+         "in_conflict": False},
+        {"key": "zh-Hant", "label": "Mandarin (Traditional)", "role": "translation",
+         "head_by": None, "in_conflict": True},
+    ]
+
+
+def test_each_version_of_a_track_in_conflict_says_who_made_it_when_and_how_many_cues():
+    source = source_cues(3)
+    mine = make_rendition([], "en", body(translation_cues(source)[:2], "en", "translation"))
+    theirs = make_rendition([], "en", body(translation_cues(source), "en", "translation"))
+    ep = episode(source, records=(
+        mine, HeadRecord(track="en", rendition=mine.id, by="editor", at="2026-10-23T12:00:00Z"),
+        theirs, HeadRecord(track="en", rendition=theirs.id, by="auto", at="2026-10-23T12:05:00Z")))
+    ep = dataclasses.replace(ep, conflicts={"en": (mine.id, theirs.id)},
+                             tracks=Tracks(ep.tracks.source, {}))
+    v = view(ep)
+    assert v["conflicts"] == {"en": [
+        {"rendition": mine.id, "by": "editor", "at": "2026-10-23T12:00:00Z", "cue_count": 2},
+        {"rendition": theirs.id, "by": "auto", "at": "2026-10-23T12:05:00Z", "cue_count": 3}]}
+    assert "en" not in v["rows"][0]["tr"]
+
+
+def test_dirty_undo_and_redo_follow_the_episode():
+    ep = episode()
+    assert (view(ep)["dirty"], view(ep)["can_undo"], view(ep)["can_redo"]) == (False, False, False)
+    changed = Tracks(ep.tracks.source[:2], ep.tracks.translations)
+    v = view(dataclasses.replace(ep, tracks=changed, undo=[(ep.tracks, {})]))
+    assert (v["dirty"], v["can_undo"], v["can_redo"]) == (True, True, False)
+    v = view(dataclasses.replace(ep, glossary_adds={"工藤": "Kudo"}))
+    assert v["dirty"] is True and v["glossary_adds"] == {"工藤": "Kudo"}
+
+
+def test_the_words_are_listed_in_transcript_order_with_their_times():
+    assert view(episode())["words"] == [{"start_ms": 0, "end_ms": 400, "text": "おは"},
+                                        {"start_ms": 500, "end_ms": 900, "text": "よう"}]
+
+
+def test_the_video_has_the_urls_it_was_given_its_name_and_never_its_folder():
+    ep = episode(notes=["kept your outside edit to en"])
+    v = view(ep, audio_url="/media/abc")
+    assert v["video"] == {"name": "Show - S01E01.mkv", "duration_ms": 20_000, "url": None,
+                          "audio_url": "/media/abc", "playable_audio": True}
+    assert (v["id"], v["source"], v["notes"]) == ("e1", "ja", ["kept your outside edit to en"])
+    text = json.dumps(v, ensure_ascii=False)
+    assert "Secret Shows" not in text and "/Users/" not in text
+
+
+def test_a_view_is_plain_json():
+    v = view(episode())
+    assert json.loads(json.dumps(v, ensure_ascii=False)) == v
+    assert v["rows"][0]["tr"]["en"]["cues"][0] == {
+        "id": tid(0), "start_ms": 0, "end_ms": 3000, "text": ENGLISH[0], "src": [sid(0)],
+        "detached": False, "flags": []}
+
+
+@pytest.mark.media
+def test_a_two_hour_episode_opens_and_becomes_a_view_in_under_a_second(tmp_path):
+    video = make_episode(tmp_path / "long", n=2000)
+    backend = LocalBackend(Config(), Tools.find(), KeyRing(environ={}),
+                           Cache(tmp_path / "cache", max_bytes=10**9))
+    began = time.perf_counter()
+    ep = backend.open(str(video))
+    v = views.episode_view(ep, video_url="/media/v", audio_url=None)
+    elapsed = time.perf_counter() - began
+    assert len(v["rows"]) == 2000 and len(v["words"]) == 4000
+    # Review Focus 3 asks for under a second; this took about 0.1 s where it was built,
+    # so the bound leaves room for a slow CI runner without hiding a real slowdown.
+    assert elapsed < 1.0, f"{elapsed:.2f} s"
+```
+
+- [ ] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_views.py -q`. Expected:
+  `E   ImportError: cannot import name 'views' from 'vid2sub.web' (…/src/vid2sub/web/__init__.py)`
+  and `1 error`.
+- [ ] **Step 8: Write the code,** `src/vid2sub/web/views.py`:
+
+```python
+"""The editor's view of an episode: plain JSON for the React frontend (spec §19.1, §20, §12.5).
+
+A pure function of the `Episode`, so the shinyreact server only sends what it returns, and every
+flag the cue list shows is computed here once. One row per source cue, in order, with each
+translation track's cues in the row of the first source cue they cover; a translation whose
+source cues are all gone sits in the row at its time, so nothing is hidden. Flags are the stored
+ones (`est`, `halluc`, `edited`) with the lint flags recomputed each time, never stored as truth
+(§12.5): reading speed, width and duration by each track's own language rules; `stale` from the
+source text a translation was made from (§13.4); `untranslated` for a source cue no translation
+in a track covers. The view never holds a path, only the video's bare file name (§6.8).
+"""
+
+from __future__ import annotations
+
+from bisect import bisect_right
+from typing import Any
+
+from vid2sub.subs import langs, naming
+from vid2sub.subs.lint import lint
+from vid2sub.subs.model import Cue
+from vid2sub.subs.rules import rules_for
+from vid2sub.subs.sidecar import HeadRecord
+from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.web.backend import Episode
+
+_SCRIPTS = {"Hant": " (Traditional)", "Hans": " (Simplified)"}
+
+
+def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None) -> dict[str, Any]:
+    return {
+        "id": ep.id,
+        "video": {"name": ep.video.name, "duration_ms": ep.header.video.duration_ms,
+                  "url": video_url, "audio_url": audio_url, "playable_audio": ep.playable_audio},
+        "source": ep.source_key,
+        "tracks": _tracks(ep),
+        "rows": _rows(ep),
+        "words": [{"start_ms": w.start_ms, "end_ms": w.end_ms, "text": w.text}
+                  for w in ep.words],
+        "dirty": ep.dirty,
+        "can_undo": bool(ep.undo),
+        "can_redo": bool(ep.redo),
+        "notes": list(ep.notes),
+        "conflicts": _conflicts(ep),
+        "glossary_adds": dict(ep.glossary_adds),
+    }
+
+
+def _rows(ep: Episode) -> list[dict[str, Any]]:
+    source = ep.tracks.source
+    linted = lint(source, rules_for(_lang(ep.source_key)))
+    rows = [{"id": c.id, "n": n, "start_ms": c.start_ms, "end_ms": c.end_ms, "text": c.text,
+             "w": list(c.w) if c.w else None, "flags": _flags(c.flags, linted.get(c.id, ())),
+             "tr": {}} for n, c in enumerate(source, 1)]
+    if not rows:
+        return rows
+    by_id = {c.id: c for c in source}
+    index = {c.id: k for k, c in enumerate(source)}
+    starts = [c.start_ms for c in source]
+    for track, cues in ep.tracks.translations.items():
+        linted = lint(cues, rules_for(_lang(track)))
+        stale = stale_ids(cues, by_id)
+        cells: list[dict[str, list]] = [{"cues": [], "flags": []} for _ in rows]
+        for c in cues:
+            extra = ("stale",) if c.id in stale else ()
+            cells[_row_of(c, index, starts)]["cues"].append({
+                "id": c.id, "start_ms": c.start_ms, "end_ms": c.end_ms, "text": c.text,
+                "src": list(c.src or ()), "detached": c.detached,
+                "flags": _flags(c.flags, linted.get(c.id, ()) + extra)})
+        for cid in untranslated(list(index), cues):
+            cells[index[cid]]["flags"] = ["untranslated"]
+        for row, cell in zip(rows, cells, strict=True):
+            row["tr"][track] = cell
+    return rows
+
+
+def _row_of(c: Cue, index: dict[str, int], starts: list[int]) -> int:
+    """The row of the first source cue it covers; else the row at its time."""
+    covered = [index[i] for i in c.src or () if i in index]
+    if covered:
+        return min(covered)
+    return max(bisect_right(starts, c.start_ms) - 1, 0)
+
+
+def _tracks(ep: Episode) -> list[dict[str, Any]]:
+    keys = [ep.source_key] + [t for t in ep.sidecar.tracks() if t != ep.source_key
+                              and (t in ep.tracks.translations or t in ep.conflicts)]
+    out = []
+    for key in keys:
+        head = ep.sidecar.head(key)
+        out.append({"key": key, "label": _label(key),
+                    "role": "source" if key == ep.source_key else "translation",
+                    "head_by": head.by if isinstance(head, HeadRecord) else None,
+                    "in_conflict": key in ep.conflicts})
+    return out
+
+
+def _conflicts(ep: Episode) -> dict[str, list[dict[str, Any]]]:
+    renditions = ep.sidecar.renditions()
+    out: dict[str, list[dict[str, Any]]] = {}
+    for track, leaves in ep.conflicts.items():
+        heads = {h.rendition: h for h in ep.sidecar.heads(track)}  # the latest for each
+        out[track] = []
+        for rid in leaves:
+            head, rec = heads.get(rid), renditions.get(rid)
+            out[track].append({
+                "rendition": rid, "by": head.by if head else None, "at": head.at if head else None,
+                "cue_count": len(rec.body.get("payload", {}).get("cues", [])) if rec else 0})
+    return out
+
+
+def _flags(stored: tuple[str, ...], computed: tuple[str, ...]) -> list[str]:
+    return sorted(set(stored) | set(computed))
+
+
+def _lang(track: str) -> str:
+    info = naming.TRACKS.get(track)
+    return info.lang if info else track.split("-")[0]
+
+
+def _label(track: str) -> str:
+    info = naming.TRACKS.get(track)
+    if info is None:
+        return track
+    name = langs.LANGS[info.lang].name if info.lang in langs.LANGS else info.lang
+    return name + _SCRIPTS.get(info.script or "", "")
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_views.py -q` first
+  (`14 passed`; the two-hour test took about 0.08 s where this listing was built: 0.06 s to open,
+  0.02 s for the view), then `make check`. Expected: `572 passed, 2 skipped, 4 deselected` twice,
+  `All checks passed!` and `no leaks found`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the editor's view lists one row per source cue with its translations, flags and words, as JSON
+
+vid2sub.web.views.episode_view(ep, *, video_url, audio_url) (spec §19.1,
+§20, §12.5; S27): a pure function of the Episode, so the server sends
+only what it returns. One row per source cue, in order: its number, times,
+text, word range and flags (stored est and halluc with the lint flags
+recomputed by the source language's rules); per translation track, the
+cues whose first source cue is this row, each with its stored flags,
+lint by its own language's rules, and stale when its source text changed
+(translate_shape.stale_ids); untranslated where no cue of that track
+covers the row. A translation whose source cues are all gone sits in the
+row at its time. Also the tracks (key, label, role, who set the head, in
+conflict), the words, dirty, can_undo and can_redo, the notes, each
+version of a track in conflict (who, when, how many cues) and the
+pending glossary adds. Never a path: only the video's bare name.
+
+The new test failed first with: ImportError: cannot import name 'views'
+from 'vid2sub.web'. Review Focus 3: opening a 2,000-cue episode and
+building its view took about 0.08 s here (0.06 s open, 0.02 s view);
+the test bounds it at 1 s.
+
+Docs read: none beyond the code (subs.lint.lint, rules.rules_for,
+translate_shape.stale_ids and untranslated, naming.TRACKS, langs.LANGS).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 5
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/views.py tests/test_views.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 11: Write the failing tests:** a translation made with another glossary or model is
+  stale (spec §13.4). Replace `tests/test_views.py` with this version (the `episode` helper
+  gains the glossary and model; each track says `all_stale`; six new tests above the two-hour
+  test):
+
+```python
+import dataclasses
+import json
+import time
+from pathlib import Path
+
+import pytest
+from episodes import ENGLISH, LINES, make_episode, sid, source_cues, tid, translation_cues
+
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.subs.edit import Tracks
+from vid2sub.subs.glossary import EMPTY_GLOSSARY, parse_glossary
+from vid2sub.subs.model import Cue, Word
+from vid2sub.subs.rendition import cues_body
+from vid2sub.subs.sidecar import Header, HeadRecord, Sidecar, VideoInfo, make_rendition
+from vid2sub.web import views
+from vid2sub.web.backend import Episode, LocalBackend
+
+VIDEO = Path("/Users/someone/Secret Shows/Show - S01E01.mkv")
+HEADER = Header(video=VideoInfo(name=VIDEO.name, size=1, quick_sha256="a" * 64,
+                                duration_ms=20_000))
+AT = "2026-10-23T10:00:00Z"
+GLOSSARY = parse_glossary('[terms]\n"工藤新一" = "Shinichi Kudo"\n')
+
+
+def body(cues, lang: str, role: str, *, model=None, glossary_sha=None) -> dict:
+    return cues_body(cues, language=lang, script=None, engine="vid2sub", model=model,
+                     version="t", created_at=AT, inputs={}, meta={"role": role},
+                     glossary_sha=glossary_sha)
+
+
+def episode(source=None, en=None, *, records=(), en_model=None, en_glossary_sha=None,
+            **changes) -> Episode:
+    source = tuple(source_cues(3) if source is None else source)
+    en = tuple(translation_cues(source) if en is None else en)
+    ja_rec = make_rendition([], "ja", body(source, "ja", "source"))
+    en_rec = make_rendition([ja_rec.id], "en", body(en, "en", "translation", model=en_model,
+                                                    glossary_sha=en_glossary_sha))
+    side = Sidecar(HEADER, (ja_rec, HeadRecord(track="ja", rendition=ja_rec.id, by="auto", at=AT),
+                            en_rec, HeadRecord(track="en", rendition=en_rec.id, by="editor",
+                                               at="2026-10-23T11:00:00Z"), *records))
+    tracks = Tracks(source, {"en": en})
+    words = tuple(Word(text=t, start_ms=k * 500, end_ms=k * 500 + 400)
+                  for k, t in enumerate(["おは", "よう"]))
+    ep = Episode(id="e1", video=VIDEO, header=HEADER, source_key="ja", tracks=tracks,
+                 heads={"ja": ja_rec.id, "en": en_rec.id}, conflicts={}, words=words, notes=[],
+                 playable_audio=True, audio_index=0, sidecar=side, base=tracks,
+                 glossary=EMPTY_GLOSSARY, translate_model=None)
+    return dataclasses.replace(ep, **changes)
+
+
+def view(ep: Episode, **urls) -> dict:
+    return views.episode_view(ep, video_url=urls.get("video_url"),
+                              audio_url=urls.get("audio_url"))
+
+
+def test_each_source_cue_is_a_row_with_its_number_times_text_and_word_range():
+    rows = view(episode())["rows"]
+    assert [(r["id"], r["n"], r["text"]) for r in rows] == [
+        (sid(0), 1, LINES[0]), (sid(1), 2, LINES[1]), (sid(2), 3, LINES[2])]
+    assert (rows[1]["start_ms"], rows[1]["end_ms"], rows[1]["w"]) == (3600, 6600, [2, 4])
+
+
+def test_a_rows_flags_are_its_stored_flags_and_its_lint_flags():
+    source = source_cues(3)
+    source[2] = source[2].model_copy(update={"end_ms": 7200 + 1000, "flags": ("est",)})
+    rows = view(episode(source))["rows"]
+    assert rows[2]["flags"] == ["cps", "est"]  # 7 characters in a second, past Japanese's 4
+    assert rows[0]["flags"] == []
+
+
+def test_a_translation_shows_in_the_row_of_its_first_source_cue():
+    source = source_cues(3)
+    en = translation_cues(source)
+    both = Cue(id=tid(9), start_ms=3600, end_ms=10_200, text="How are you? Fine.",
+               src=(sid(1), sid(2)), src_sha=en[1].src_sha)
+    rows = view(episode(source, [en[0], both]))["rows"]
+    assert [c["id"] for c in rows[1]["tr"]["en"]["cues"]] == [tid(9)]
+    assert rows[1]["tr"]["en"]["cues"][0]["src"] == [sid(1), sid(2)]
+    assert rows[2]["tr"]["en"] == {"cues": [], "flags": []}
+
+
+def test_a_translation_whose_source_changed_is_stale_and_an_edited_one_says_so():
+    source = source_cues(3)
+    en = translation_cues(source)
+    en[1] = en[1].model_copy(update={"text": "How are things?", "flags": ("edited",)})
+    source[0] = source[0].model_copy(update={"text": "こんばんは"})
+    rows = view(episode(source, en))["rows"]
+    assert rows[0]["tr"]["en"]["cues"][0]["flags"] == ["stale"]
+    assert rows[1]["tr"]["en"]["cues"][0]["flags"] == ["edited"]
+    assert rows[2]["tr"]["en"]["cues"][0]["flags"] == []
+
+
+def test_a_source_cue_no_translation_covers_is_untranslated_in_that_track():
+    source = source_cues(3)
+    rows = view(episode(source, translation_cues(source)[:2]))["rows"]
+    assert rows[2]["tr"]["en"] == {"cues": [], "flags": ["untranslated"]}
+    assert rows[1]["tr"]["en"]["flags"] == []
+
+
+def test_a_translation_whose_source_cues_are_gone_shows_at_its_time_and_is_stale():
+    source = source_cues(3)
+    lost = Cue(id=tid(5), start_ms=4000, end_ms=5000, text="Lost", src=("c00000000",))
+    rows = view(episode(source, [*translation_cues(source)[:1], lost]))["rows"]
+    (cue,) = rows[1]["tr"]["en"]["cues"]
+    assert cue["id"] == tid(5) and cue["flags"] == ["stale"]
+
+
+def test_translations_are_linted_by_their_own_languages_rules():
+    source = source_cues(3)
+    en = translation_cues(source)
+    en[0] = en[0].model_copy(update={"text": "A single line that is far too wide for a screen"})
+    cue = view(episode(source, en))["rows"][0]["tr"]["en"]["cues"][0]
+    assert cue["flags"] == ["width"]
+
+
+def test_the_tracks_say_their_role_who_set_their_head_and_whether_they_are_in_conflict():
+    other = make_rendition([], "zh-Hant", body([], "zh", "translation"))
+    ep = episode(records=(other,), conflicts={"zh-Hant": (other.id, "r_other")})
+    ep = dataclasses.replace(ep, sidecar=Sidecar(HEADER, ep.sidecar.records + (
+        HeadRecord(track="zh-Hant", rendition=other.id, by="auto", at=AT),
+        HeadRecord(track="zh-Hant", rendition="r_other", by="editor", at=AT))))
+    assert view(ep)["tracks"] == [
+        {"key": "ja", "label": "Japanese", "role": "source", "head_by": "auto",
+         "in_conflict": False, "all_stale": False},
+        {"key": "en", "label": "English", "role": "translation", "head_by": "editor",
+         "in_conflict": False, "all_stale": False},
+        {"key": "zh-Hant", "label": "Mandarin (Traditional)", "role": "translation",
+         "head_by": None, "in_conflict": True, "all_stale": False},
+    ]
+
+
+def test_each_version_of_a_track_in_conflict_says_who_made_it_when_and_how_many_cues():
+    source = source_cues(3)
+    mine = make_rendition([], "en", body(translation_cues(source)[:2], "en", "translation"))
+    theirs = make_rendition([], "en", body(translation_cues(source), "en", "translation"))
+    ep = episode(source, records=(
+        mine, HeadRecord(track="en", rendition=mine.id, by="editor", at="2026-10-23T12:00:00Z"),
+        theirs, HeadRecord(track="en", rendition=theirs.id, by="auto", at="2026-10-23T12:05:00Z")))
+    ep = dataclasses.replace(ep, conflicts={"en": (mine.id, theirs.id)},
+                             tracks=Tracks(ep.tracks.source, {}))
+    v = view(ep)
+    assert v["conflicts"] == {"en": [
+        {"rendition": mine.id, "by": "editor", "at": "2026-10-23T12:00:00Z", "cue_count": 2},
+        {"rendition": theirs.id, "by": "auto", "at": "2026-10-23T12:05:00Z", "cue_count": 3}]}
+    assert "en" not in v["rows"][0]["tr"]
+
+
+def test_dirty_undo_and_redo_follow_the_episode():
+    ep = episode()
+    assert (view(ep)["dirty"], view(ep)["can_undo"], view(ep)["can_redo"]) == (False, False, False)
+    changed = Tracks(ep.tracks.source[:2], ep.tracks.translations)
+    v = view(dataclasses.replace(ep, tracks=changed, undo=[(ep.tracks, {})]))
+    assert (v["dirty"], v["can_undo"], v["can_redo"]) == (True, True, False)
+    v = view(dataclasses.replace(ep, glossary_adds={"工藤": "Kudo"}))
+    assert v["dirty"] is True and v["glossary_adds"] == {"工藤": "Kudo"}
+
+
+def test_the_words_are_listed_in_transcript_order_with_their_times():
+    assert view(episode())["words"] == [{"start_ms": 0, "end_ms": 400, "text": "おは"},
+                                        {"start_ms": 500, "end_ms": 900, "text": "よう"}]
+
+
+def test_the_video_has_the_urls_it_was_given_its_name_and_never_its_folder():
+    ep = episode(notes=["kept your outside edit to en"])
+    v = view(ep, audio_url="/media/abc")
+    assert v["video"] == {"name": "Show - S01E01.mkv", "duration_ms": 20_000, "url": None,
+                          "audio_url": "/media/abc", "playable_audio": True}
+    assert (v["id"], v["source"], v["notes"]) == ("e1", "ja", ["kept your outside edit to en"])
+    text = json.dumps(v, ensure_ascii=False)
+    assert "Secret Shows" not in text and "/Users/" not in text
+
+
+def test_a_view_is_plain_json():
+    v = view(episode())
+    assert json.loads(json.dumps(v, ensure_ascii=False)) == v
+    assert v["rows"][0]["tr"]["en"]["cues"][0] == {
+        "id": tid(0), "start_ms": 0, "end_ms": 3000, "text": ENGLISH[0], "src": [sid(0)],
+        "detached": False, "flags": []}
+
+
+# Spec §13.4: a translation made with another glossary or model is stale, as M1 decides it
+
+
+def en_flags(v: dict) -> list[list[str]]:
+    return [c["flags"] for row in v["rows"] for c in row["tr"]["en"]["cues"]]
+
+
+def test_a_translation_made_with_another_glossary_is_stale_in_every_cue():
+    v = view(episode(glossary=GLOSSARY))
+    assert en_flags(v) == [["stale"]] * 3
+    assert [t["all_stale"] for t in v["tracks"]] == [False, True]
+
+
+def test_a_translation_made_with_the_glossary_beside_the_video_is_not():
+    assert en_flags(view(episode(glossary=GLOSSARY, en_glossary_sha=GLOSSARY.sha()))) == [[]] * 3
+
+
+def test_a_glossary_term_waiting_for_save_makes_every_translation_stale():
+    ep = episode()
+    assert en_flags(view(ep)) == [[]] * 3
+    waiting = dataclasses.replace(ep, glossary_adds={"工藤新一": "Shinichi Kudo"})
+    assert en_flags(view(waiting)) == [["stale"]] * 3
+
+
+def test_a_translation_made_with_another_model_is_stale_in_every_cue():
+    assert en_flags(view(episode(en_model="gemma", translate_model="gemma-2"))) == [["stale"]] * 3
+    assert en_flags(view(episode(en_model="gemma", translate_model="gemma"))) == [[]] * 3
+
+
+def test_an_edited_translation_is_stale_too_and_keeps_its_edited_flag():
+    source = source_cues(3)
+    en = translation_cues(source)
+    en[1] = en[1].model_copy(update={"flags": ("edited",)})
+    assert en_flags(view(episode(source, en, glossary=GLOSSARY)))[1] == ["edited", "stale"]
+
+
+def test_an_unreadable_glossary_or_no_usable_model_leaves_that_leg_out():
+    ep = episode(en_model="old", en_glossary_sha="abcd1234", glossary=None, translate_model=None)
+    assert en_flags(view(ep)) == [[]] * 3
+
+
+@pytest.mark.media
+def test_a_two_hour_episode_opens_and_becomes_a_view_in_under_a_second(tmp_path):
+    video = make_episode(tmp_path / "long", n=2000)
+    backend = LocalBackend(Config(), Tools.find(), KeyRing(environ={}),
+                           Cache(tmp_path / "cache", max_bytes=10**9))
+    began = time.perf_counter()
+    ep = backend.open(str(video))
+    v = views.episode_view(ep, video_url="/media/v", audio_url=None)
+    elapsed = time.perf_counter() - began
+    assert len(v["rows"]) == 2000 and len(v["words"]) == 4000
+    # Review Focus 3 asks for under a second; this took about 0.1 s where it was built,
+    # so the bound leaves room for a slow CI runner without hiding a real slowdown.
+    assert elapsed < 1.0, f"{elapsed:.2f} s"
+```
+
+  and replace `tests/test_backend_open.py` with this version (the first test checks the two new
+  fields; four new tests at the end):
+
+```python
+import pytest
+from episodes import (
+    ENGLISH,
+    LINES,
+    header_of,
+    make_episode,
+    sid,
+    source_cues,
+    tid,
+    track_body,
+    write_track,
+)
+from fakes import FakeServer
+from helpers import make_clip
+
+from vid2sub import store
+from vid2sub.cache import Cache
+from vid2sub.config import Config, Endpoint, ModelEntry
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.subs.edit import Tracks
+from vid2sub.subs.glossary import EMPTY_GLOSSARY, parse_glossary
+from vid2sub.subs.model import Cue, Segment, Transcript, Word
+from vid2sub.subs.rendition import transcript_body
+from vid2sub.subs.sidecar import HeadRecord, make_rendition
+from vid2sub.web import backend as web_backend
+from vid2sub.web import views
+from vid2sub.web.backend import Capabilities, LocalBackend, OpenError
+
+pytestmark = pytest.mark.media
+
+
+@pytest.fixture
+def backend(tmp_path) -> LocalBackend:
+    return LocalBackend(Config(), Tools.find(), KeyRing(environ={}),
+                        Cache(tmp_path / "cache", max_bytes=10**9))
+
+
+@pytest.fixture
+def video(tmp_path):
+    return make_episode(tmp_path / "show")
+
+
+def test_the_local_backend_has_every_control(backend):
+    assert backend.capabilities() == Capabilities(engine="local", generate=True, save="disk",
+                                                  path_input=True)
+
+
+def test_an_m1_episode_opens_with_its_source_its_translation_and_their_heads(backend, video):
+    ep = backend.open(str(video))
+    side, _ = store.load(video)
+    assert ep.video == video and ep.source_key == "ja"
+    assert [c.text for c in ep.tracks.source] == list(LINES)
+    assert [c.text for c in ep.tracks.translations["en"]] == list(ENGLISH)
+    assert ep.heads == {"ja": side.head("ja").rendition, "en": side.head("en").rendition}
+    assert ep.conflicts == {} and ep.notes == []
+    assert ep.base == ep.tracks and not ep.dirty
+    assert ep.undo == [] and ep.redo == [] and ep.glossary_adds == {}
+    assert {sid(0), sid(2), tid(1)} <= ep.taken
+    assert ep.header.video.quick_sha256 == side.header.video.quick_sha256
+    assert ep.glossary == EMPTY_GLOSSARY and ep.translate_model is None
+    assert backend.is_open(ep.id)
+
+
+def test_each_open_is_its_own_episode_and_closing_one_forgets_only_it(backend, video):
+    first, second = backend.open(str(video)), backend.open(str(video))
+    assert first.id != second.id
+    backend.close(first.id)
+    assert not backend.is_open(first.id) and backend.is_open(second.id)
+    backend.close("no-such-episode")
+
+
+def test_the_spoken_words_come_from_the_transcript_the_source_was_built_from(backend, video):
+    newer = make_rendition([], None, transcript_body(
+        _one_word_transcript(), engine="whisper.cpp", model="other", version="other",
+        created_at=store.now(), inputs={"audio_track": 0}, meta={}))
+    store.append(video, store.load(video)[0].header, [newer])
+    ep = backend.open(str(video))
+    assert [w.text for w in ep.words] == ["おは", "よう", "元気", "ですか", "はい、", "元気です"]
+    assert (ep.words[2].start_ms, ep.words[3].end_ms) == (3600, 6600)
+
+
+def _one_word_transcript() -> Transcript:
+    word = Word(text="x", start_ms=0, end_ms=10)
+    return Transcript(language="ja", segments=(Segment(text="x", start_ms=0, end_ms=10,
+                                                       words=(word,)),))
+
+
+@pytest.mark.parametrize("codec, playable", [("aac", True), ("ac3", False), ("eac3", False)])
+def test_a_browser_cant_play_ac3_or_e_ac3_audio(backend, tmp_path, codec, playable):
+    ep = backend.open(str(make_episode(tmp_path / codec, audio_codec=codec)))
+    assert ep.playable_audio is playable and ep.audio_index == 0
+
+
+def test_dts_and_truehd_are_unplayable_too():
+    assert web_backend.UNPLAYABLE_AUDIO == {"ac3", "eac3", "dts", "truehd"}
+
+
+def test_the_audio_track_is_the_one_the_transcript_was_made_from(backend, tmp_path):
+    video = make_episode(tmp_path / "two", audio_langs=("jpn", "eng"), audio_codec="ac3",
+                         audio_track=1)
+    ep = backend.open(str(video))
+    assert ep.audio_index == 1 and ep.playable_audio is False
+
+
+def test_with_no_transcript_the_audio_track_is_the_source_languages(backend, tmp_path):
+    folder = tmp_path / "imported"
+    folder.mkdir()
+    video = make_clip(folder, "Show - S01E01.mkv", seconds=2.0, audio_langs=("eng", "jpn"),
+                      default_audio=0)
+    rec = make_rendition([], "ja", track_body(source_cues(3), "ja", role="source"))
+    store.append(video, header_of(video), [rec, HeadRecord(track="ja", rendition=rec.id,
+                                                           by="import", at=store.now())])
+    ep = backend.open(str(video))
+    assert ep.audio_index == 1 and ep.words == ()
+
+
+def test_a_video_with_no_sidecar_says_how_to_make_its_subtitles(backend, tmp_path):
+    video = make_clip(tmp_path, "Plain.mkv", seconds=1.0)
+    with pytest.raises(OpenError, match="no subtitles yet: make them with vid2sub run"):
+        backend.open(str(video))
+
+
+@pytest.mark.parametrize("path", ["relative/Show.mkv", "{tmp}", "{tmp}/missing.mkv"])
+def test_only_the_full_path_of_a_file_is_opened(backend, tmp_path, path):
+    with pytest.raises(OpenError):
+        backend.open(path.format(tmp=tmp_path))
+
+
+def test_an_outside_edit_comes_back_as_the_head_and_the_editor_says_so(backend, video):
+    srt = video.with_name("Show - S01E01.en.srt")
+    srt.write_text(srt.read_text(encoding="utf-8").replace("How are you?", "How have you been?"),
+                   encoding="utf-8")
+    ep = backend.open(str(video))
+    side, _ = store.load(video)
+    assert ep.notes == ["kept your outside edit to en"]
+    assert ep.tracks.translations["en"][1].text == "How have you been?"
+    assert "edited" in ep.tracks.translations["en"][1].flags
+    assert side.head("en").by == "external" and ep.heads["en"] == side.head("en").rendition
+
+
+def test_an_unreadable_subtitle_file_is_left_alone_and_named_without_its_folder(backend, video,
+                                                                               tmp_path):
+    srt = video.with_name("Show - S01E01.en.srt")
+    srt.write_bytes(b"\x00\x01 not subtitles")
+    ep = backend.open(str(video))
+    assert ep.notes == ["left Show - S01E01.en.srt alone: it isn't a readable subtitle file"]
+    assert srt.read_bytes() == b"\x00\x01 not subtitles"
+    assert not any(str(tmp_path) in note for note in ep.notes)
+
+
+def test_a_track_in_conflict_lists_both_versions_and_isnt_loaded(backend, video):
+    side, _ = store.load(video)
+    head = side.head("en").rendition
+    mine = write_track(video, "en", [Cue(id=tid(0), start_ms=0, end_ms=3000, text="Mine",
+                                         src=(sid(0),))], role="translation", replaces=head,
+                       by="editor")
+    theirs = write_track(video, "en", [Cue(id=tid(0), start_ms=0, end_ms=3000, text="Theirs",
+                                           src=(sid(0),))], role="translation", replaces=head)
+    ep = backend.open(str(video))
+    assert ep.conflicts == {"en": (mine.id, theirs.id)}
+    assert "en" not in ep.tracks.translations and "en" not in ep.heads
+    assert [c.text for c in ep.tracks.source] == list(LINES)
+
+
+def test_a_source_in_conflict_opens_with_nothing_to_edit(backend, video):
+    side, _ = store.load(video)
+    head = side.head("ja").rendition
+    one = write_track(video, "ja", source_cues(3)[:1], role="source", replaces=head, by="editor")
+    two = write_track(video, "ja", source_cues(3)[1:], role="source", replaces=head)
+    ep = backend.open(str(video))
+    assert ep.source_key == "ja" and ep.tracks.source == ()
+    assert ep.conflicts == {"ja": (one.id, two.id)} and "ja" not in ep.heads
+
+
+def test_a_sidecar_vid2sub_cant_read_is_refused_and_left_alone(backend, video):
+    path = store.sidecar_path(video)
+    broken = path.read_bytes() + b"not json\n{}\n"
+    path.write_bytes(broken)
+    with pytest.raises(OpenError, match="can't read"):
+        backend.open(str(video))
+    assert path.read_bytes() == broken
+
+
+def test_another_video_with_the_same_name_is_refused(backend, video):
+    video.with_suffix(".mp4").write_bytes(b"x")
+    with pytest.raises(OpenError, match="same name"):
+        backend.open(str(video))
+
+
+def test_a_replaced_video_is_noted_with_the_difference(backend, video):
+    make_clip(video.parent, video.name, seconds=3.0)
+    ep = backend.open(str(video))
+    assert len(ep.notes) == 1
+    assert ep.notes[0].startswith("this video changed since its subtitles were made (size")
+
+
+def test_an_episode_holds_tracks_the_edit_rules_take(backend, video):
+    ep = backend.open(str(video))
+    assert isinstance(ep.tracks, Tracks) and set(ep.tracks.translations) == {"en"}
+
+
+def test_the_glossary_beside_the_video_is_read_at_open(backend, video):
+    text = '[terms]\n"工藤新一" = "Shinichi Kudo"\n'
+    video.with_name("vid2sub.glossary.toml").write_text(text, encoding="utf-8")
+    assert backend.open(str(video)).glossary == parse_glossary(text)
+
+
+def test_a_glossary_vid2sub_cant_read_is_noted_and_left_out(backend, video):
+    video.with_name("vid2sub.glossary.toml").write_text("nonsense = [", encoding="utf-8")
+    ep = backend.open(str(video))
+    assert ep.glossary is None and len(ep.notes) == 1
+    assert ep.notes[0].startswith("couldn't read vid2sub.glossary.toml: the glossary isn't valid")
+
+
+def test_the_model_retranslate_would_use_is_picked_without_asking_any_server(tmp_path, video):
+    with FakeServer() as srv:
+        config = Config(endpoints={"spark": Endpoint(base_url=srv.url),
+                                   "openai": Endpoint(base_url=srv.url)},
+                        models={"gpt": ModelEntry(catalog="openai-gpt", endpoint="openai",
+                                                  model="gpt", task="translate"),
+                                "gemma": ModelEntry(catalog="gemma-4-26b-a4b", endpoint="spark",
+                                                    model="gemma-2", task="translate",
+                                                    local=True)})
+        ep = LocalBackend(config, Tools.find(), KeyRing(environ={}),
+                          Cache(tmp_path / "cache", max_bytes=10**9)).open(str(video))
+        assert srv.requests == []
+    assert ep.translate_model == "gemma-2"
+    flags = [c["flags"] for row in views.episode_view(ep, video_url=None, audio_url=None)["rows"]
+             for c in row["tr"]["en"]["cues"]]
+    assert flags == [["stale"]] * 3  # the episode's English was made by "gemma"
+
+
+def test_a_cloud_model_is_never_the_one_retranslate_would_use_unasked(tmp_path, video):
+    config = Config(endpoints={"openai": Endpoint(base_url="https://api.openai.com/v1")},
+                    models={"gpt": ModelEntry(catalog="openai-gpt", endpoint="openai",
+                                              model="gpt", task="translate")})
+    ep = LocalBackend(config, Tools.find(), KeyRing(environ={}),
+                      Cache(tmp_path / "cache", max_bytes=10**9)).open(str(video))
+    assert ep.translate_model is None
+```
+
+- [ ] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_views.py
+  tests/test_backend_open.py -q`. Expected: `E       TypeError: Episode.__init__() got an
+  unexpected keyword argument 'glossary'` (19 times), `E       AttributeError: 'Episode' object
+  has no attribute 'glossary'` and `… 'translate_model'`, and `24 failed, 22 passed`.
+- [ ] **Step 13: Write the code.**
+  In `src/vid2sub/web/backend.py`, replace the module docstring
+
+```python
+"""The editor's backend: opening an episode M1 made, from its sidecar (spec §19.1, §20, §15.3).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change.
+"""
+```
+
+  with
+
+```python
+"""The editor's backend: opening an episode M1 made, from its sidecar (spec §19.1, §20, §15.3).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
+changed, and every cue of it is when the glossary's hash or the translation model differs from
+the ones its head was made with; so the episode holds the glossary beside the video and the model
+Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
+taking every configured local server to answer (no request is made at open).
+"""
+```
+
+  Replace
+
+```python
+from vid2sub import store
+```
+
+  with
+
+```python
+from vid2sub import detect as detecting
+from vid2sub import store
+```
+
+  Replace
+
+```python
+from vid2sub.cache import Cache
+```
+
+  with
+
+```python
+from vid2sub.cache import Cache
+from vid2sub.catalog import suggest
+```
+
+  Replace
+
+```python
+from vid2sub.subs.edit import Tracks
+```
+
+  with
+
+```python
+from vid2sub.subs.edit import Tracks
+from vid2sub.subs.glossary import EMPTY_GLOSSARY, Glossary, GlossaryError, parse_glossary
+```
+
+  In `class Episode`, below `base: Tracks  # …`, add:
+
+```python
+    glossary: Glossary | None  # beside the video at open; None if it couldn't be read
+    translate_model: str | None  # the model Retranslate would use with none named (offline)
+```
+
+  In `open`, below `track = _audio_track(p, transcript, naming.TRACKS.get(source_key))`, add:
+
+```python
+        try:
+            glossary: Glossary | None = read_glossary(video)
+        except GlossaryError as err:
+            glossary = None
+            notes.append(f"couldn't read {naming.GLOSSARY_NAME}: {err}")
+```
+
+  and replace the last line of the `Episode(…)` call
+
+```python
+            audio_index=track.index, sidecar=side, base=tracks, taken=cue_ids(side))
+```
+
+  with
+
+```python
+            audio_index=track.index, sidecar=side, base=tracks, taken=cue_ids(side),
+            glossary=glossary, translate_model=self._route_model(_lang(source_key)))
+```
+
+  Directly above `    def _probe(self, video: Path) -> Probe:`, add (followed by one blank line):
+
+```python
+    def _route_model(self, lang: str) -> str | None:
+        """The model Retranslate would use with none named and no cloud: M1's catalog route over
+        the configured models, each local server taken to answer (`probe_endpoints=False`)."""
+        cands = detecting.candidates(self.config, self.keys, probe_endpoints=False)
+        name = suggest(lang, cands, "translate", allow_cloud=False).model
+        return self.config.models[name].model if name else None
+```
+
+  At the end of the file, after two blank lines, add (each function followed by two blank lines but the last):
+
+```python
+def read_glossary(video: Path) -> Glossary:
+    """The glossary beside the video, read as M1 reads it; EMPTY_GLOSSARY when there's none."""
+    path = video.with_name(naming.GLOSSARY_NAME)
+    if not path.is_file():
+        return EMPTY_GLOSSARY
+    try:
+        return parse_glossary(path.read_text(encoding="utf-8-sig"))
+    except UnicodeDecodeError:
+        raise GlossaryError("the glossary isn't UTF-8; save it as UTF-8") from None
+
+
+def glossary_with(glossary: Glossary, adds: dict[str, str]) -> Glossary:
+    """The glossary as it will read once Save has added `adds`: a term it has keeps its own."""
+    have = dict(glossary.terms)
+    return Glossary(glossary.description, glossary.terms + tuple(
+        (term, translation) for term, translation in adds.items() if term not in have))
+
+
+def track_setup(ep: Episode, track: str) -> tuple[str, str | None]:
+    """The glossary hash ("" for none) and the model the track's cues were made with."""
+    body = ep.sidecar.renditions()[ep.heads[track]].body
+    return body.get("payload", {}).get("glossary_sha") or "", body.get("model")
+
+
+def setup_changed(setup: tuple[str, str | None], glossary_sha: str | None,
+                  model: str | None) -> bool:
+    """Spec §13.4's other two legs, as M1 decides them: the glossary's hash, or the model, isn't
+    the one the cues were made with. A leg whose current value is unknown (None) is left out."""
+    made_sha, made_model = setup
+    return ((glossary_sha is not None and made_sha != glossary_sha)
+            or (model is not None and made_model != model))
+
+
+def all_stale(ep: Episode, track: str) -> bool:
+    """Every cue of a loaded translation track is stale: against the glossary beside the video
+    with the terms waiting for Save, and the model Retranslate would use with none named."""
+    sha = None if ep.glossary is None else glossary_with(ep.glossary, ep.glossary_adds).sha()
+    return setup_changed(track_setup(ep, track), sha, ep.translate_model)
+
+
+def _lang(track: str) -> str:
+    info = naming.TRACKS.get(track)
+    return info.lang if info else track.split("-")[0]
+```
+
+  Replace `src/vid2sub/web/views.py` with:
+
+```python
+"""The editor's view of an episode: plain JSON for the React frontend (spec §19.1, §20, §12.5).
+
+A pure function of the `Episode`, so the shinyreact server only sends what it returns, and every
+flag the cue list shows is computed here once. One row per source cue, in order, with each
+translation track's cues in the row of the first source cue they cover; a translation whose
+source cues are all gone sits in the row at its time, so nothing is hidden. Flags are the stored
+ones (`est`, `halluc`, `edited`) with the lint flags recomputed each time, never stored as truth
+(§12.5): reading speed, width and duration by each track's own language rules; `stale` from the
+source text a translation was made from, and on every cue of a track made with another glossary
+or model (§13.4, `backend.all_stale`); `untranslated` for a source cue no translation in a track
+covers. The view never holds a path, only the video's bare file name (§6.8).
+"""
+
+from __future__ import annotations
+
+from bisect import bisect_right
+from typing import Any
+
+from vid2sub.subs import langs, naming
+from vid2sub.subs.lint import lint
+from vid2sub.subs.model import Cue
+from vid2sub.subs.rules import rules_for
+from vid2sub.subs.sidecar import HeadRecord
+from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.web.backend import Episode, all_stale
+
+_SCRIPTS = {"Hant": " (Traditional)", "Hans": " (Simplified)"}
+
+
+def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None) -> dict[str, Any]:
+    return {
+        "id": ep.id,
+        "video": {"name": ep.video.name, "duration_ms": ep.header.video.duration_ms,
+                  "url": video_url, "audio_url": audio_url, "playable_audio": ep.playable_audio},
+        "source": ep.source_key,
+        "tracks": _tracks(ep),
+        "rows": _rows(ep),
+        "words": [{"start_ms": w.start_ms, "end_ms": w.end_ms, "text": w.text}
+                  for w in ep.words],
+        "dirty": ep.dirty,
+        "can_undo": bool(ep.undo),
+        "can_redo": bool(ep.redo),
+        "notes": list(ep.notes),
+        "conflicts": _conflicts(ep),
+        "glossary_adds": dict(ep.glossary_adds),
+    }
+
+
+def _rows(ep: Episode) -> list[dict[str, Any]]:
+    source = ep.tracks.source
+    linted = lint(source, rules_for(_lang(ep.source_key)))
+    rows = [{"id": c.id, "n": n, "start_ms": c.start_ms, "end_ms": c.end_ms, "text": c.text,
+             "w": list(c.w) if c.w else None, "flags": _flags(c.flags, linted.get(c.id, ())),
+             "tr": {}} for n, c in enumerate(source, 1)]
+    if not rows:
+        return rows
+    by_id = {c.id: c for c in source}
+    index = {c.id: k for k, c in enumerate(source)}
+    starts = [c.start_ms for c in source]
+    for track, cues in ep.tracks.translations.items():
+        linted = lint(cues, rules_for(_lang(track)))
+        stale = {c.id for c in cues} if all_stale(ep, track) else stale_ids(cues, by_id)
+        cells: list[dict[str, list]] = [{"cues": [], "flags": []} for _ in rows]
+        for c in cues:
+            extra = ("stale",) if c.id in stale else ()
+            cells[_row_of(c, index, starts)]["cues"].append({
+                "id": c.id, "start_ms": c.start_ms, "end_ms": c.end_ms, "text": c.text,
+                "src": list(c.src or ()), "detached": c.detached,
+                "flags": _flags(c.flags, linted.get(c.id, ()) + extra)})
+        for cid in untranslated(list(index), cues):
+            cells[index[cid]]["flags"] = ["untranslated"]
+        for row, cell in zip(rows, cells, strict=True):
+            row["tr"][track] = cell
+    return rows
+
+
+def _row_of(c: Cue, index: dict[str, int], starts: list[int]) -> int:
+    """The row of the first source cue it covers; else the row at its time."""
+    covered = [index[i] for i in c.src or () if i in index]
+    if covered:
+        return min(covered)
+    return max(bisect_right(starts, c.start_ms) - 1, 0)
+
+
+def _tracks(ep: Episode) -> list[dict[str, Any]]:
+    keys = [ep.source_key] + [t for t in ep.sidecar.tracks() if t != ep.source_key
+                              and (t in ep.tracks.translations or t in ep.conflicts)]
+    out = []
+    for key in keys:
+        head = ep.sidecar.head(key)
+        out.append({"key": key, "label": _label(key),
+                    "role": "source" if key == ep.source_key else "translation",
+                    "head_by": head.by if isinstance(head, HeadRecord) else None,
+                    "in_conflict": key in ep.conflicts,
+                    "all_stale": key in ep.tracks.translations and all_stale(ep, key)})
+    return out
+
+
+def _conflicts(ep: Episode) -> dict[str, list[dict[str, Any]]]:
+    renditions = ep.sidecar.renditions()
+    out: dict[str, list[dict[str, Any]]] = {}
+    for track, leaves in ep.conflicts.items():
+        heads = {h.rendition: h for h in ep.sidecar.heads(track)}  # the latest for each
+        out[track] = []
+        for rid in leaves:
+            head, rec = heads.get(rid), renditions.get(rid)
+            out[track].append({
+                "rendition": rid, "by": head.by if head else None, "at": head.at if head else None,
+                "cue_count": len(rec.body.get("payload", {}).get("cues", [])) if rec else 0})
+    return out
+
+
+def _flags(stored: tuple[str, ...], computed: tuple[str, ...]) -> list[str]:
+    return sorted(set(stored) | set(computed))
+
+
+def _lang(track: str) -> str:
+    info = naming.TRACKS.get(track)
+    return info.lang if info else track.split("-")[0]
+
+
+def _label(track: str) -> str:
+    info = naming.TRACKS.get(track)
+    if info is None:
+        return track
+    name = langs.LANGS[info.lang].name if info.lang in langs.LANGS else info.lang
+    return name + _SCRIPTS.get(info.script or "", "")
+```
+
+- [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_views.py
+  tests/test_backend_open.py -q` first (`46 passed`), then `make check`. Expected: `582
+  passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
+- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 a translation made with another glossary or model shows every cue stale, as spec §13.4 says
+
+The editor's stale follows spec §13.4 in full, as M1 decides it
+(pipeline._translate_targets): besides a source cue gone or changed, every
+cue of a translation track is stale when its head's payload.glossary_sha
+(absent is "") differs from the glossary's hash, or its `model` differs
+from the model a run would use. The Episode gains `glossary` (read at
+open as M1 reads it; None, with a note, when it can't be read) and
+`translate_model` (the model Retranslate would use with none named: M1's
+catalog route over the configured models with no cloud, each local
+server taken to answer, detect.candidates(probe_endpoints=False), so open
+makes no request). backend.all_stale(ep, track) compares against the
+glossary with the terms waiting for Save and that model; a leg whose
+current value is unknown is left out. The view flags every cue of such a
+track stale (edited cues too, which keep their flag) and each track says
+`all_stale`. Helpers for Tasks 6 and 7: read_glossary, glossary_with,
+track_setup, setup_changed.
+
+The new tests failed first with: TypeError: Episode.__init__() got an
+unexpected keyword argument 'glossary' (19 times) and AttributeError:
+'Episode' object has no attribute 'glossary' / 'translate_model';
+24 failed, 22 passed.
+
+Docs read: none beyond the code (pipeline._translate_targets lines
+645-647 and _translator, detect.candidates' probe_endpoints,
+catalog.suggest).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 5
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/backend.py src/vid2sub/web/views.py tests/test_views.py
+  tests/test_backend_open.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1
+  --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*); the forward review over Tasks 6, 7, 10, 14, 16 and 17 (Task 6 adds
+  `apply`, `undo`, `redo`, `save` and `resolve` on this `Episode`, reading `heads`, `base` and
+  `sidecar`; Task 7's `retranslate` reads `stale_ids` and `untranslated` as this view does;
+  Task 7's stale set takes the same two legs against the model it uses; Task 10's media tokens
+  are owned by `ep.id`; Task 14 calls `open` off Shiny's event loop (it
+  blocks on ffprobe and the disk), passes `video_url` only when `ep.playable_audio` and the
+  browser can play the file, else `audio_url` from `preview.playback_audio(ep.video,
+  key=ep.header.video.quick_sha256, audio_index=ep.audio_index, …)`, and renders `rows` and
+  `words`, and says why every cue of a track is stale when its `all_stale` is set (the glossary
+  or the model changed; a glossary term waiting for Save does it too); Task 16's conflict picker
+  reads `conflicts`); the docs this task made untrue: the
+  spec's S31 row names `tests/test_external.py`, a file that doesn't exist; its Proof becomes
+  `tests/test_backend_open.py::test_an_outside_edit_comes_back_as_the_head_and_the_editor_says_so;
+  the exit test`. Then the close, its own commit, holding this plan with this task's boxes ticked
+  and **Now** set to `Task 6: The editor backend: edits and Save, open.`, and the spec with S31's
+  Proof corrected; S27 and S31 stay `planned` (their Playwright and exit-test proofs are Tasks
+  14 and 23). The message, in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 5: The editor backend: opening an episode
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: none
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 5
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -2503,28 +4438,3359 @@ Co-Authored-By: <the model's own line>
 **Tier:** 1 · **Scenarios:** S28, S29, S32
 
 **Files:**
-- Modify: `src/vid2sub/web/backend.py`
 - Create: `src/vid2sub/web/ops.py`
-- Test: `tests/test_backend_save.py`, `tests/test_ops.py`
+- Modify: `src/vid2sub/web/backend.py`, `src/vid2sub/subs/glossary.py` (`add_terms`: the
+  glossary had no writer), `src/vid2sub/store.py` (`check_external` and `project`: round 6f,
+  escaped from M1 Task 28)
+- Test: `tests/test_ops.py`, `tests/test_backend_edit.py`, `tests/test_backend_save.py`,
+  `tests/test_glossary.py` (the writer's tests), `tests/test_store.py` (round 6f)
 
 **Interfaces:**
-- Consumes: Task 2's `subs.edit`; Task 5's `Episode`, `LocalBackend`; `store.append`,
-  `store.project`, `ForeignFile`, `EditedOnDisk`; `subs.sidecar.make_rendition`, `HeadRecord`;
-  `subs.rendition.cues_body`; `subs.glossary`.
+- Consumes: Task 2's `subs.edit` (every operation, `EditError`, `SOURCE`, `Tracks`); Task 5's
+  `Episode`, `LocalBackend`, `OpenError`, `load_tracks`, `cue_ids`, `tests/episodes.py`;
+  `store.append`, `store.project`, `store.load`, `store.sidecar_path`, `store.subtitle_path`,
+  `ForeignFile`, `EditedOnDisk`, `StoreError`; `subs.sidecar.make_rendition`, `HeadRecord`,
+  `Conflict`; `subs.rendition.cues_body`; `subs.glossary.parse_glossary`;
+  `security.safe_write`, `WriteRefused`.
 - Produces:
-  - `ops.EditOp`: a pydantic union discriminated on `op` (`extra="forbid"`): `set_text`,
-    `set_translation_text`, `set_times`, `nudge`, `split`, `merge_next`, `insert`, `delete`,
-    `detach`, `replace_all`, `glossary_add`; `ops.parse_op(data: object) -> EditOp` (raises
-    `ops.BadOp` naming the field, never echoing the value)
-  - `LocalBackend.apply(self, ep: Episode, op: EditOp) -> Episode` (pushes undo, clears redo);
-    `undo(self, ep) -> Episode`; `redo(self, ep) -> Episode`
-  - `@dataclass(frozen=True) class SaveResult: written: tuple[str, ...]; foreign: tuple[str, ...];
-    conflicts: tuple[str, ...]; notes: tuple[str, ...]`
-  - `LocalBackend.save(self, ep: Episode, *, formats: Sequence[Literal["srt", "ass"]])
-    -> tuple[Episode, SaveResult]`
-  - `LocalBackend.resolve(self, ep: Episode, track: str, rendition: str) -> Episode`
+  - `vid2sub.web.ops`: `SetText{cue, text}`, `SetTranslationText{track, cue, text}`,
+    `SetTimes{cue, start_ms?, end_ms?}` (one of them), `Nudge{cue, delta_ms, edge="both"}`,
+    `Split{cue, at_char, at_ms}`, `MergeNext{cue}`, `Insert{start_ms, end_ms, text}`,
+    `Delete{cue}`, `Detach{track, cue, detached}`, `ReplaceAll{find, replace, tracks}`,
+    `GlossaryAdd{term, translation}`: pydantic models with `extra="forbid"`, `strict`, frozen,
+    each `op` a Literal with its own name as default; `EditOp` (their union, discriminated on
+    `op`); `EDIT_KINDS`; bounds `MAX_MS` (48 h), `MAX_TEXT` (2,000), `MAX_TERM` (200); cue ids
+    `^c[0-9a-f]{8}$`; tracks the keys of `naming.TRACKS` (and `"source"` in `replace_all`);
+    `parse_op(data: object) -> EditOp`; `class BadOp(ValueError)` with `.field` (the field's
+    name, or None for an unknown field or a non-object), message
+    `this edit can't be made: <field> <reason>`, never the value, never chained.
+  - `LocalBackend.apply(self, ep, op: ops.EditOp) -> Episode` (one undo step; `ep` itself when
+    nothing changed; `EditError` when the rules refuse, when the track or the source is in
+    conflict, and for a split, merge or delete while any translation is); `undo(self, ep) ->
+    Episode`; `redo(self, ep) -> Episode` (`ep` itself with
+    nothing to step to); `backend.UNDO_STEPS = 200`. The undo and redo stacks hold
+    `(tracks, glossary_adds)`, so a glossary add is undone like an edit. A closed episode raises
+    `OpenError`.
+  - `class SaveError(Exception)` (nothing was saved; a reason fit to show);
+    `@dataclass(frozen=True) class SaveResult: written: tuple[str, ...]; foreign: tuple[str, ...];
+    conflicts: tuple[str, ...]; notes: tuple[str, ...]` (bare file names; `foreign` is left
+    alone: someone else's, or changed outside since; `conflicts` is every track in conflict after
+    the call, none of whose files were written)
+  - `LocalBackend.save(self, ep, *, formats: Sequence[Literal["srt", "ass"]])
+    -> tuple[Episode, SaveResult]` (SRT always; blocks on the disk). It records outside edits
+    first (`store.check_external`; its notes come back in `notes`), skips a track whose head on
+    disk already holds these cues, and once the versions are appended never raises. Afterwards
+    the episode's tracks, heads and conflicts are read back from the sidecar, `dirty` is false
+    unless glossary terms are still waiting, and undo and redo are empty.
+  - `LocalBackend.resolve(self, ep, track: str, rendition: str) -> tuple[Episode, SaveResult]`
+    (changed from the skeleton's `-> Episode`: a pick writes the track's files, and the server
+    must say which it couldn't); `SaveError` for an unknown track, a track not in conflict in
+    `ep`, or a rendition that isn't one of the track's versions. Saves and picks on one video
+    take turns within one `LocalBackend` (a lock per video).
+  - After a Save the episode's `glossary` is read back from the file, so a term just added makes
+    every translation made without it stale (`backend.all_stale`, spec §13.4), as M1 decides it:
+    intended (round 6g).
+  - `store.check_external`: an outside edit's head replaces the version its file was written
+    from (`proj.rendition`), not the current head, so an edit to a file the head has moved on
+    from diverges from it (spec §14.4); `store.project`: a write that fails with `OSError` or
+    `WriteRefused` puts the file's previous projection record back; the external version copies
+    the `model` and `payload.glossary_sha` of the version its file was written from; `align_ids`
+    marks a line with no match (added, or reworded and retimed) `edited`, as it already marked a
+    reworded one (round 6f).
+  - `subs.glossary.add_terms(text: str, adds: Mapping[str, str]) -> tuple[str, list[str]]`
+    (pure: the new text, and the terms kept with the file's other translation).
 
-<!-- steps: written in the next pass -->
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing test,** `tests/test_ops.py`:
+
+```python
+import pytest
+from pydantic import ValidationError
+
+from vid2sub.subs.model import new_cue_id
+from vid2sub.web import ops
+from vid2sub.web.ops import BadOp
+
+CUE = "ca0000001"
+SECRET = "SECRET-7f3a"  # stands for anything a hostile page might send
+
+
+@pytest.mark.parametrize("data, kind", [
+    ({"op": "set_text", "cue": CUE, "text": "こんにちは"}, ops.SetText),
+    ({"op": "set_translation_text", "track": "en", "cue": CUE, "text": "Hi"},
+     ops.SetTranslationText),
+    ({"op": "set_times", "cue": CUE, "start_ms": 100}, ops.SetTimes),
+    ({"op": "nudge", "cue": CUE, "delta_ms": -100, "edge": "start"}, ops.Nudge),
+    ({"op": "split", "cue": CUE, "at_char": 2, "at_ms": 1500}, ops.Split),
+    ({"op": "merge_next", "cue": CUE}, ops.MergeNext),
+    ({"op": "insert", "start_ms": 0, "end_ms": 900, "text": "えっ"}, ops.Insert),
+    ({"op": "delete", "cue": CUE}, ops.Delete),
+    ({"op": "detach", "track": "en", "cue": CUE, "detached": True}, ops.Detach),
+    ({"op": "replace_all", "find": "元気", "replace": "", "tracks": ["source", "en"]},
+     ops.ReplaceAll),
+    ({"op": "glossary_add", "term": "工藤新一", "translation": "Shinichi Kudo"},
+     ops.GlossaryAdd),
+])
+def test_each_edit_the_editor_sends_is_read_as_its_own_kind(data, kind):
+    op = ops.parse_op(data)
+    assert type(op) is kind and op.op == data["op"]
+    assert op.model_dump(exclude_defaults=True) | {"op": data["op"]} == data
+
+
+def test_a_nudge_moves_the_whole_cue_unless_told_otherwise():
+    assert ops.parse_op({"op": "nudge", "cue": CUE, "delta_ms": 500}).edge == "both"
+
+
+def test_cue_ids_have_the_shape_new_cue_id_makes():
+    cid = new_cue_id(set())
+    assert ops.parse_op({"op": "delete", "cue": cid}).cue == cid
+
+
+def test_an_edit_is_frozen():
+    op = ops.parse_op({"op": "delete", "cue": CUE})
+    with pytest.raises(ValidationError):
+        op.cue = "cb0000002"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("data", ["set_text", None, 3, [{"op": "delete", "cue": CUE}]])
+def test_an_edit_must_be_an_object(data):
+    with pytest.raises(BadOp, match="an edit is a JSON object"):
+        ops.parse_op(data)
+
+
+def test_an_unknown_edit_is_refused_without_echoing_it():
+    with pytest.raises(BadOp) as err:
+        ops.parse_op({"op": f"<script>{SECRET}</script>", "cue": CUE})
+    assert str(err.value) == "this edit can't be made: op isn't a known edit"
+    assert err.value.field == "op"
+
+
+def test_an_edit_with_no_kind_is_refused():
+    with pytest.raises(BadOp, match="op is missing"):
+        ops.parse_op({"cue": CUE})
+
+
+def test_an_unknown_field_is_refused_without_naming_it():
+    with pytest.raises(BadOp) as err:
+        ops.parse_op({"op": "set_text", "cue": CUE, "text": "x", f"evil_{SECRET}": 1})
+    assert str(err.value) == "this edit can't be made: it has a field no edit has"
+    assert SECRET not in str(err.value) and err.value.field is None
+
+
+@pytest.mark.parametrize("data, field, reason", [
+    ({"op": "set_text", "cue": CUE}, "text", "is missing"),
+    ({"op": "set_text", "cue": CUE, "text": "x" * 2000 + SECRET}, "text", "is too long"),
+    ({"op": "set_text", "cue": f"../{SECRET}", "text": "x"}, "cue", "isn't valid"),
+    ({"op": "set_text", "cue": "c1", "text": "x"}, "cue", "isn't valid"),
+    ({"op": "set_times", "cue": CUE, "start_ms": -1}, "start_ms", "is out of range"),
+    ({"op": "set_times", "cue": CUE, "end_ms": 48 * 3600 * 1000 + 1}, "end_ms",
+     "is out of range"),
+    ({"op": "nudge", "cue": CUE, "delta_ms": "100"}, "delta_ms", "has the wrong type"),
+    ({"op": "nudge", "cue": CUE, "delta_ms": 100, "edge": SECRET}, "edge",
+     "isn't one of the choices"),
+    ({"op": "split", "cue": CUE, "at_char": 1.5, "at_ms": 10}, "at_char", "has the wrong type"),
+    ({"op": "detach", "track": "en", "cue": CUE, "detached": "yes"}, "detached",
+     "has the wrong type"),
+    ({"op": "detach", "track": SECRET, "cue": CUE, "detached": True}, "track",
+     "isn't one of the choices"),
+    ({"op": "replace_all", "find": "", "replace": "x", "tracks": ["en"]}, "find",
+     "is too short"),
+    ({"op": "replace_all", "find": "a", "replace": "x", "tracks": []}, "tracks",
+     "has the wrong number of items"),
+    ({"op": "replace_all", "find": "a", "replace": "x", "tracks": ["source", SECRET]},
+     "tracks", "isn't one of the choices"),
+    ({"op": "glossary_add", "term": "工藤\n新一", "translation": "Kudo"}, "term",
+     "isn't valid"),
+    ({"op": "glossary_add", "term": "工藤", "translation": "   "}, "translation",
+     "isn't valid"),
+])
+def test_a_bad_value_names_its_field_and_never_echoes_the_value(data, field, reason):
+    with pytest.raises(BadOp) as err:
+        ops.parse_op(data)
+    assert str(err.value) == f"this edit can't be made: {field} {reason}"
+    assert err.value.field == field and SECRET not in str(err.value)
+    assert err.value.__cause__ is None and err.value.__context__ is None  # it quotes them
+
+
+def test_set_times_needs_a_start_or_an_end():
+    with pytest.raises(BadOp, match="this edit can't be made: set_times isn't valid"):
+        ops.parse_op({"op": "set_times", "cue": CUE})
+
+
+@pytest.mark.parametrize("text", ["a\ud800b", "nul\x00", "\x1b[31mred"])
+def test_text_with_characters_that_cant_be_saved_is_refused(text):
+    with pytest.raises(BadOp, match="text isn't valid"):
+        ops.parse_op({"op": "set_text", "cue": CUE, "text": text})
+
+
+def test_text_may_hold_line_breaks_tabs_and_bidi_marks():
+    op = ops.parse_op({"op": "set_text", "cue": CUE, "text": "שלום\u200f\nline\ttwo"})
+    assert op.text == "שלום\u200f\nline\ttwo"
+
+
+def test_every_kind_of_edit_is_in_the_union():
+    kinds = {k.model_fields["op"].default for k in ops.EDIT_KINDS}
+    assert kinds == {"set_text", "set_translation_text", "set_times", "nudge", "split",
+                     "merge_next", "insert", "delete", "detach", "replace_all", "glossary_add"}
+```
+
+- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_ops.py -q`. Expected:
+  `E   ImportError: cannot import name 'ops' from 'vid2sub.web' (…/src/vid2sub/web/__init__.py)`
+  and `1 error`.
+- [ ] **Step 3: Write the code,** `src/vid2sub/web/ops.py`:
+
+```python
+"""The edits the editor sends, as typed values checked at the door (spec §20, §6.3).
+
+Every edit arrives from the browser, so it is untrusted until `parse_op` has checked it: one
+pydantic model per kind, discriminated on `op`, with unknown fields refused (`extra="forbid"`)
+and nothing coerced (`strict`), so a string never becomes a number. Bounds keep a hostile page
+from handing the server work or text it can't save: text up to 2,000 characters with no control
+characters but line breaks and tabs and no lone surrogates (they can't be written as UTF-8),
+times from 0 to 48 hours, cue ids in the shape `model.new_cue_id` makes, tracks only the keys
+vid2sub knows. `BadOp` names the field and why, never the value or an unknown field's name, so
+nothing the page sent comes back in a message or a log (spec §6.8); pydantic's own error, which
+quotes the input, is dropped. Each kind maps to one `subs.edit` operation; `glossary_add` is held
+until Save writes the glossary (the Phase 2 plan's Decision 5).
+"""
+
+from __future__ import annotations
+
+import unicodedata
+from typing import Annotated, Literal
+
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
+
+from vid2sub.subs import naming
+from vid2sub.subs.edit import SOURCE
+
+MAX_MS = 48 * 60 * 60 * 1000
+MAX_TEXT = 2000
+MAX_TERM = 200
+_ALLOWED_CONTROLS = frozenset("\n\r\t")
+
+
+def _saveable(text: str) -> str:
+    for ch in text:
+        category = unicodedata.category(ch)
+        if category == "Cs" or (category == "Cc" and ch not in _ALLOWED_CONTROLS):
+            raise ValueError("a character that can't be saved")
+    return text
+
+
+def _one_line(text: str) -> str:
+    if not text.strip() or "\n" in text or "\r" in text:
+        raise ValueError("one line of text")
+    return _saveable(text)
+
+
+CueId = Annotated[str, StringConstraints(pattern=r"^c[0-9a-f]{8}$")]
+Ms = Annotated[int, Field(ge=0, le=MAX_MS)]
+Delta = Annotated[int, Field(ge=-MAX_MS, le=MAX_MS)]
+Text = Annotated[str, Field(max_length=MAX_TEXT), AfterValidator(_saveable)]
+Find = Annotated[str, Field(min_length=1, max_length=MAX_TEXT), AfterValidator(_saveable)]
+Term = Annotated[str, Field(min_length=1, max_length=MAX_TERM), AfterValidator(_one_line)]
+Track = Literal[tuple(naming.TRACKS)]  # type: ignore[valid-type]
+TrackOrSource = Literal[(SOURCE, *naming.TRACKS)]  # type: ignore[valid-type]
+
+
+class _Op(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
+class SetText(_Op):
+    op: Literal["set_text"] = "set_text"
+    cue: CueId
+    text: Text
+
+
+class SetTranslationText(_Op):
+    op: Literal["set_translation_text"] = "set_translation_text"
+    track: Track
+    cue: CueId
+    text: Text
+
+
+class SetTimes(_Op):
+    op: Literal["set_times"] = "set_times"
+    cue: CueId
+    start_ms: Ms | None = None
+    end_ms: Ms | None = None
+
+    @model_validator(mode="after")
+    def _an_edge(self) -> SetTimes:
+        if self.start_ms is None and self.end_ms is None:
+            raise ValueError("a start or an end")
+        return self
+
+
+class Nudge(_Op):
+    op: Literal["nudge"] = "nudge"
+    cue: CueId
+    delta_ms: Delta
+    edge: Literal["start", "end", "both"] = "both"
+
+
+class Split(_Op):
+    op: Literal["split"] = "split"
+    cue: CueId
+    at_char: Annotated[int, Field(ge=0, le=MAX_TEXT)]
+    at_ms: Ms
+
+
+class MergeNext(_Op):
+    op: Literal["merge_next"] = "merge_next"
+    cue: CueId
+
+
+class Insert(_Op):
+    op: Literal["insert"] = "insert"
+    start_ms: Ms
+    end_ms: Ms
+    text: Text
+
+
+class Delete(_Op):
+    op: Literal["delete"] = "delete"
+    cue: CueId
+
+
+class Detach(_Op):
+    op: Literal["detach"] = "detach"
+    track: Track
+    cue: CueId
+    detached: bool
+
+
+class ReplaceAll(_Op):
+    op: Literal["replace_all"] = "replace_all"
+    find: Find
+    replace: Text
+    tracks: Annotated[list[TrackOrSource], Field(min_length=1, max_length=len(naming.TRACKS) + 1)]
+
+
+class GlossaryAdd(_Op):
+    op: Literal["glossary_add"] = "glossary_add"
+    term: Term
+    translation: Term
+
+
+EDIT_KINDS = (SetText, SetTranslationText, SetTimes, Nudge, Split, MergeNext, Insert, Delete,
+              Detach, ReplaceAll, GlossaryAdd)
+EditOp = Annotated[SetText | SetTranslationText | SetTimes | Nudge | Split | MergeNext | Insert
+                   | Delete | Detach | ReplaceAll | GlossaryAdd, Field(discriminator="op")]
+_ADAPTER: TypeAdapter[EditOp] = TypeAdapter(EditOp)
+
+_REASONS = {
+    "missing": "is missing",
+    "union_tag_not_found": "is missing",
+    "union_tag_invalid": "isn't a known edit",
+    "string_too_long": "is too long",
+    "string_too_short": "is too short",
+    "greater_than_equal": "is out of range",
+    "less_than_equal": "is out of range",
+    "literal_error": "isn't one of the choices",
+    "too_short": "has the wrong number of items",
+    "too_long": "has the wrong number of items",
+    "int_type": "has the wrong type",
+    "string_type": "has the wrong type",
+    "bool_type": "has the wrong type",
+    "list_type": "has the wrong type",
+}
+
+
+class BadOp(ValueError):
+    """An edit that doesn't pass; the message names the field, never what was sent."""
+
+    def __init__(self, field: str | None, reason: str):
+        self.field = field
+        super().__init__(f"this edit can't be made: {reason}" if field is None
+                         else f"this edit can't be made: {field} {reason}")
+
+
+def parse_op(data: object) -> EditOp:
+    if not isinstance(data, dict):
+        raise BadOp(None, "an edit is a JSON object")
+    try:
+        return _ADAPTER.validate_python(data)
+    except ValidationError as err:
+        first = err.errors(include_url=False, include_context=False, include_input=False)[0]
+    kind = first["type"]
+    if kind == "extra_forbidden":
+        raise BadOp(None, "it has a field no edit has")
+    if kind in ("union_tag_invalid", "union_tag_not_found"):
+        raise BadOp("op", _REASONS[kind])
+    names = [part for part in first["loc"][1:] if isinstance(part, str)]
+    raise BadOp(names[0] if names else str(first["loc"][0]), _REASONS.get(kind, "isn't valid"))
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_ops.py -q` first
+  (`43 passed`), then the guard check, then `make check`. **Guard check** (an unknown field):
+  in `class _Op`, change `ConfigDict(extra="forbid", frozen=True, strict=True)` to
+  `ConfigDict(frozen=True, strict=True)`; `uv run pytest tests/test_ops.py -q` gives
+  `FAILED tests/test_ops.py::test_an_unknown_field_is_refused_without_naming_it` and
+  `1 failed, 42 passed`; restore it. `make check`. Expected: `625 passed, 2 skipped, 4
+  deselected` twice (the local zone, then UTC), `All checks passed!` and `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the editor's edits are typed and checked at the door, and a bad one is refused without echoing it
+
+vid2sub.web.ops (spec §20, §6.3, §6.8): one pydantic model per edit kind
+(set_text, set_translation_text, set_times, nudge, split, merge_next,
+insert, delete, detach, replace_all, glossary_add), a union discriminated
+on `op`, each with extra="forbid", strict and frozen. Text is at most
+2,000 characters with no control characters but line breaks and tabs and
+no lone surrogates (they can't be written as UTF-8); times are 0 to 48
+hours; cue ids have new_cue_id's shape (c + 8 hex); tracks are the keys
+naming.TRACKS knows ("source" too for replace_all); glossary terms are
+one line of at most 200 characters. parse_op(data) raises BadOp naming
+the field and why, never the value or an unknown field's name, and
+without chaining pydantic's ValidationError, which quotes the input.
+
+The new test failed first with: ImportError: cannot import name 'ops'
+from 'vid2sub.web'. Guard checked by reverting it: without
+extra="forbid", test_an_unknown_field_is_refused_without_naming_it
+fails.
+
+Docs read: pydantic 2.14.1's docs (concepts/unions.md: discriminated
+unions with Field(discriminator); errors/validation_errors.md:
+union_tag_invalid quotes the input tag, union_tag_not_found;
+concepts/strict_mode.md: strict=True refuses "123" for an int).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 6
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/ops.py tests/test_ops.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 6: Write the failing test,** `tests/test_backend_edit.py`:
+
+```python
+import time
+
+import pytest
+from episodes import LINES, make_episode, sid, source_cues, tid, write_track
+
+from vid2sub import store
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.subs.edit import EditError
+from vid2sub.subs.model import Cue
+from vid2sub.web import backend as web_backend
+from vid2sub.web import views
+from vid2sub.web.backend import LocalBackend, OpenError
+from vid2sub.web.ops import parse_op
+
+pytestmark = pytest.mark.media
+
+
+@pytest.fixture
+def backend(tmp_path) -> LocalBackend:
+    return LocalBackend(Config(), Tools.find(), KeyRing(environ={}),
+                        Cache(tmp_path / "cache", max_bytes=10**9))
+
+
+@pytest.fixture
+def video(tmp_path):
+    return make_episode(tmp_path / "show")
+
+
+def op(**data):
+    return parse_op(data)
+
+
+def texts(cues) -> list[str]:
+    return [c.text for c in cues]
+
+
+def test_an_edit_returns_a_new_episode_and_leaves_the_old_one_as_it_was(backend, video):
+    ep = backend.open(str(video))
+    out = backend.apply(ep, op(op="set_text", cue=sid(0), text="こんばんは"))
+    assert texts(out.tracks.source) == ["こんばんは", *LINES[1:]]
+    assert texts(ep.tracks.source) == list(LINES) and ep.undo == []
+    assert out.undo == [(ep.tracks, {})] and out.redo == [] and out.dirty
+    assert out.base == ep.base and out.id == ep.id
+
+
+@pytest.mark.parametrize("data, check", [
+    ({"op": "set_translation_text", "track": "en", "cue": tid(1), "text": "How's it going?"},
+     lambda t: "edited" in t.translations["en"][1].flags),
+    ({"op": "set_times", "cue": sid(1), "end_ms": 6000},
+     lambda t: t.source[1].end_ms == 6000 and t.translations["en"][1].end_ms == 6000),
+    ({"op": "nudge", "cue": sid(2), "delta_ms": 500},
+     lambda t: (t.source[2].start_ms, t.source[2].end_ms) == (7700, 10_700)),
+    ({"op": "split", "cue": sid(2), "at_char": 3, "at_ms": 8000},
+     lambda t: texts(t.source)[2:] == ["はい、", "元気です"]),
+    ({"op": "merge_next", "cue": sid(0)},
+     lambda t: texts(t.source)[0] == "おはよう\n元気ですか" and len(t.translations["en"]) == 2),
+    ({"op": "insert", "start_ms": 3100, "end_ms": 3500, "text": "えっ"},
+     lambda t: texts(t.source)[1] == "えっ"),
+    ({"op": "delete", "cue": sid(1)},
+     lambda t: texts(t.source) == [LINES[0], LINES[2]] and len(t.translations["en"]) == 2),
+    ({"op": "detach", "track": "en", "cue": tid(0), "detached": True},
+     lambda t: t.translations["en"][0].detached),
+    ({"op": "replace_all", "find": "元気", "replace": "げんき", "tracks": ["source"]},
+     lambda t: texts(t.source)[1:] == ["げんきですか", "はい、げんきです"]),
+])
+def test_every_kind_of_edit_runs_through_the_edit_rules(backend, video, data, check):
+    ep = backend.open(str(video))
+    out = backend.apply(ep, parse_op(data))
+    assert check(out.tracks) and out.tracks != ep.tracks and len(out.undo) == 1
+
+
+def test_new_cues_get_ids_no_version_of_the_track_has_used(backend, video):
+    ep = backend.open(str(video))
+    out = backend.apply(ep, op(op="split", cue=sid(0), at_char=2, at_ms=1500))
+    halves = {c.id for c in out.tracks.source} - {c.id for c in ep.tracks.source}
+    assert len(halves) == 2 and halves <= out.taken and not halves & ep.taken
+
+
+def test_undo_and_redo_step_back_and_forward(backend, video):
+    ep = backend.open(str(video))
+    one = backend.apply(ep, op(op="set_text", cue=sid(0), text="一"))
+    two = backend.apply(one, op(op="delete", cue=sid(2)))
+    back = backend.undo(two)
+    assert back.tracks == one.tracks and back.redo == [(two.tracks, {})]
+    back = backend.undo(back)
+    assert back.tracks == ep.tracks and not back.dirty and back.undo == []
+    forward = backend.redo(backend.redo(back))
+    assert forward.tracks == two.tracks and forward.redo == []
+
+
+def test_a_new_edit_after_an_undo_drops_what_could_have_been_redone(backend, video):
+    ep = backend.open(str(video))
+    one = backend.undo(backend.apply(ep, op(op="set_text", cue=sid(0), text="一")))
+    other = backend.apply(one, op(op="set_text", cue=sid(1), text="二"))
+    assert other.redo == [] and len(other.undo) == 1
+
+
+def test_undo_or_redo_with_nothing_to_step_to_changes_nothing(backend, video):
+    ep = backend.open(str(video))
+    assert backend.undo(ep) is ep and backend.redo(ep) is ep
+
+
+def test_an_edit_that_changes_nothing_adds_no_undo_step(backend, video):
+    ep = backend.open(str(video))
+    assert backend.apply(ep, op(op="replace_all", find="zzz", replace="y",
+                                tracks=["source", "en"])) is ep
+    assert backend.apply(ep, op(op="set_text", cue=sid(0), text=f" {LINES[0]} ")) is ep
+
+
+def test_undo_keeps_the_last_200_steps(backend, video):
+    ep = backend.open(str(video))
+    for k in range(web_backend.UNDO_STEPS + 5):
+        ep = backend.apply(ep, op(op="set_text", cue=sid(0), text=f"台詞{k}"))
+    assert len(ep.undo) == web_backend.UNDO_STEPS == 200
+    assert ep.undo[0][0].source[0].text == "台詞4"
+
+
+def test_an_edit_the_rules_refuse_says_why_and_changes_nothing(backend, video):
+    ep = backend.open(str(video))
+    with pytest.raises(EditError, match="delete it instead"):
+        backend.apply(ep, op(op="set_text", cue=sid(0), text="  "))
+    with pytest.raises(EditError, match="there is no zh-Hant track"):
+        backend.apply(ep, op(op="detach", track="zh-Hant", cue=tid(0), detached=True))
+    assert ep.undo == [] and ep.tracks == ep.base
+
+
+def test_a_glossary_add_waits_for_save_and_can_be_undone(backend, video):
+    ep = backend.open(str(video))
+    out = backend.apply(ep, op(op="glossary_add", term=" 工藤新一 ", translation="Shinichi Kudo"))
+    assert out.glossary_adds == {"工藤新一": "Shinichi Kudo"} and out.dirty
+    assert out.tracks == ep.tracks
+    assert backend.undo(out).glossary_adds == {} and not backend.undo(out).dirty
+
+
+def test_a_track_in_conflict_cant_be_edited_until_a_version_is_picked(backend, video):
+    head = store.load(video)[0].head("en").rendition
+    for text in ("Mine", "Theirs"):
+        write_track(video, "en", [Cue(id=tid(0), start_ms=0, end_ms=3000, text=text,
+                                      src=(sid(0),))], role="translation", replaces=head)
+    ep = backend.open(str(video))
+    with pytest.raises(EditError, match="the en track has two versions: pick one"):
+        backend.apply(ep, op(op="set_translation_text", track="en", cue=tid(0), text="x"))
+    with pytest.raises(EditError, match="the en track has two versions: pick one"):
+        backend.apply(ep, op(op="replace_all", find="M", replace="m", tracks=["source", "en"]))
+    out = backend.apply(ep, op(op="set_text", cue=sid(0), text="こんばんは"))
+    assert out.tracks.source[0].text == "こんばんは"
+
+
+def test_nothing_but_a_glossary_add_can_be_made_while_the_source_is_in_conflict(backend, video):
+    head = store.load(video)[0].head("ja").rendition
+    write_track(video, "ja", source_cues(3)[:1], role="source", replaces=head)
+    write_track(video, "ja", source_cues(3)[1:], role="source", replaces=head)
+    ep = backend.open(str(video))
+    for data in ({"op": "set_text", "cue": sid(0), "text": "x"},
+                 {"op": "insert", "start_ms": 0, "end_ms": 900, "text": "x"},
+                 {"op": "detach", "track": "en", "cue": tid(0), "detached": True}):
+        with pytest.raises(EditError, match="the ja track has two versions: pick one"):
+            backend.apply(ep, parse_op(data))
+    assert backend.apply(ep, op(op="glossary_add", term="工藤", translation="Kudo")).dirty
+
+
+def test_a_closed_episode_cant_be_edited(backend, video):
+    ep = backend.open(str(video))
+    backend.close(ep.id)
+    with pytest.raises(OpenError, match="closed"):
+        backend.apply(ep, op(op="delete", cue=sid(0)))
+    with pytest.raises(OpenError, match="closed"):
+        backend.undo(ep)
+
+
+def test_each_edit_on_a_two_hour_episode_and_its_new_view_take_well_under_a_second(backend,
+                                                                                    tmp_path):
+    ep = backend.open(str(make_episode(tmp_path / "long", n=2000)))
+    edits = [{"op": "set_text", "cue": sid(1000), "text": "変更"},
+             {"op": "nudge", "cue": sid(1000), "delta_ms": 100},
+             {"op": "split", "cue": sid(10), "at_char": 2, "at_ms": 36_100},
+             {"op": "merge_next", "cue": sid(20)},
+             {"op": "delete", "cue": sid(30)},
+             {"op": "replace_all", "find": "台詞", "replace": "セリフ", "tracks": ["source"]},
+             {"op": "set_translation_text", "track": "en", "cue": tid(5), "text": "x"}]
+    for data in edits:
+        began = time.perf_counter()
+        ep = backend.apply(ep, parse_op(data))
+        views.episode_view(ep, video_url=None, audio_url=None)
+        elapsed = time.perf_counter() - began
+        # Review Focus 3: about 0.02 s each where this was built; 1 s leaves CI room
+        assert elapsed < 1.0, f"{data['op']}: {elapsed:.2f} s"
+```
+
+- [ ] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_backend_edit.py -q`.
+  Expected: `E       AttributeError: 'LocalBackend' object has no attribute 'apply'` (and
+  `undo`, and `module 'vid2sub.web.backend' has no attribute 'UNDO_STEPS'`), `22 failed`.
+- [ ] **Step 8: Write the code.**
+  In `src/vid2sub/web/backend.py`, replace the module docstring
+
+```python
+"""The editor's backend: opening an episode M1 made, from its sidecar (spec §19.1, §20, §15.3).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
+changed, and every cue of it is when the glossary's hash or the translation model differs from
+the ones its head was made with; so the episode holds the glossary beside the video and the model
+Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
+taking every configured local server to answer (no request is made at open).
+"""
+```
+
+  with
+
+```python
+"""The editor's backend: opening an episode M1 made, and editing it (spec §19.1, §20, §15.3).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
+changed, and every cue of it is when the glossary's hash or the translation model differs from
+the ones its head was made with; so the episode holds the glossary beside the video and the model
+Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
+taking every configured local server to answer (no request is made at open). Edits run
+through the pure `subs.edit` rules, so they exist once (§20); each one that changes something
+pushes the tracks and the pending glossary adds onto the undo stack (the last 200 steps) and
+clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
+source is, until a person picks a version.
+"""
+```
+
+  Replace the imports and constants, from `from __future__ import annotations` down to `NO_SUBTITLES = …`,
+
+```python
+from __future__ import annotations
+
+import os
+import secrets
+import tempfile
+import threading
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+from vid2sub import detect as detecting
+from vid2sub import store
+from vid2sub.cache import Cache
+from vid2sub.catalog import suggest
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.identity import identify
+from vid2sub.media.probe import Probe, ProbeError, pick_track, probe
+from vid2sub.media.tools import ToolFailed, ToolMissing, Tools
+from vid2sub.pipeline import MEDIA_SUFFIXES, video_change
+from vid2sub.security import InputRefused, WriteRefused, resolve_input
+from vid2sub.subs import naming
+from vid2sub.subs.edit import Tracks
+from vid2sub.subs.glossary import EMPTY_GLOSSARY, Glossary, GlossaryError, parse_glossary
+from vid2sub.subs.model import Word
+from vid2sub.subs.rendition import cues_from_body, transcript_from_body
+from vid2sub.subs.sidecar import (
+    Conflict,
+    Header,
+    HeadRecord,
+    RenditionRecord,
+    Sidecar,
+    SidecarError,
+)
+
+UNPLAYABLE_AUDIO = frozenset({"ac3", "eac3", "dts", "truehd"})  # ffprobe's codec names (§8.2)
+NO_SUBTITLES = 
+```
+
+  with
+
+```python
+from __future__ import annotations
+
+import os
+import secrets
+import tempfile
+import threading
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Literal
+
+from vid2sub import detect as detecting
+from vid2sub import store
+from vid2sub.cache import Cache
+from vid2sub.catalog import suggest
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.identity import identify
+from vid2sub.media.probe import Probe, ProbeError, pick_track, probe
+from vid2sub.media.tools import ToolFailed, ToolMissing, Tools
+from vid2sub.pipeline import MEDIA_SUFFIXES, video_change
+from vid2sub.security import InputRefused, WriteRefused, resolve_input
+from vid2sub.subs import edit, naming
+from vid2sub.subs.edit import SOURCE, EditError, Tracks
+from vid2sub.subs.glossary import EMPTY_GLOSSARY, Glossary, GlossaryError, parse_glossary
+from vid2sub.subs.model import Word
+from vid2sub.subs.rendition import cues_from_body, transcript_from_body
+from vid2sub.subs.sidecar import (
+    Conflict,
+    Header,
+    HeadRecord,
+    RenditionRecord,
+    Sidecar,
+    SidecarError,
+)
+from vid2sub.web import ops
+
+UNPLAYABLE_AUDIO = frozenset({"ac3", "eac3", "dts", "truehd"})  # ffprobe's codec names (§8.2)
+NO_SUBTITLES = 
+```
+
+  Add the undo limit below `NO_SUBTITLES = …`:
+
+```python
+UNDO_STEPS = 200
+```
+
+  In `class LocalBackend`, directly above `def _route_model(self, lang: str)`, add (each method followed by one blank line):
+
+```python
+    def apply(self, ep: Episode, op: ops.EditOp) -> Episode:
+        """One edit; EditError (fit to show) if the rules refuse it. An edit that changes
+        nothing returns `ep` itself, with no undo step."""
+        self._check_open(ep)
+        taken = set(ep.taken)
+        tracks, adds = _edit(ep, op, taken)
+        if tracks == ep.tracks and adds == ep.glossary_adds:
+            return ep
+        return replace(ep, tracks=tracks, glossary_adds=adds, taken=taken, redo=[],
+                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+
+    def undo(self, ep: Episode) -> Episode:
+        self._check_open(ep)
+        if not ep.undo:
+            return ep
+        tracks, adds = ep.undo[-1]
+        return replace(ep, tracks=tracks, glossary_adds=adds, undo=ep.undo[:-1],
+                       redo=[*ep.redo, (ep.tracks, ep.glossary_adds)])
+
+    def redo(self, ep: Episode) -> Episode:
+        self._check_open(ep)
+        if not ep.redo:
+            return ep
+        tracks, adds = ep.redo[-1]
+        return replace(ep, tracks=tracks, glossary_adds=adds, redo=ep.redo[:-1],
+                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+
+    def _check_open(self, ep: Episode) -> None:
+        if not self.is_open(ep.id):
+            raise OpenError("this episode was closed: open it again")
+```
+
+  Directly above `def _video(path: str) -> Path:`, add (each function followed by two blank lines):
+
+```python
+def _edit(ep: Episode, op: ops.EditOp, taken: set[str]) -> tuple[Tracks, dict[str, str]]:
+    """The tracks and glossary adds after `op`; new cue ids are added to `taken`."""
+    if isinstance(op, ops.GlossaryAdd):
+        return ep.tracks, {**ep.glossary_adds, op.term.strip(): op.translation.strip()}
+    t = ep.tracks
+    match op:
+        case ops.SetText():
+            _editable(ep, ep.source_key)
+            return edit.set_text(t, op.cue, op.text), ep.glossary_adds
+        case ops.SetTranslationText():
+            _editable(ep, op.track)
+            return edit.set_translation_text(t, op.track, op.cue, op.text), ep.glossary_adds
+        case ops.SetTimes():
+            _editable(ep, ep.source_key)
+            return (edit.set_times(t, op.cue, start_ms=op.start_ms, end_ms=op.end_ms),
+                    ep.glossary_adds)
+        case ops.Nudge():
+            _editable(ep, ep.source_key)
+            return edit.nudge(t, op.cue, op.delta_ms, edge=op.edge), ep.glossary_adds
+        case ops.Split():
+            _editable(ep, ep.source_key)
+            return (edit.split(t, op.cue, at_char=op.at_char, at_ms=op.at_ms, taken=taken)[0],
+                    ep.glossary_adds)
+        case ops.MergeNext():
+            _editable(ep, ep.source_key)
+            return edit.merge_next(t, op.cue, taken=taken)[0], ep.glossary_adds
+        case ops.Insert():
+            _editable(ep, ep.source_key)
+            return (edit.insert(t, start_ms=op.start_ms, end_ms=op.end_ms, text=op.text,
+                                taken=taken)[0], ep.glossary_adds)
+        case ops.Delete():
+            _editable(ep, ep.source_key)
+            return edit.delete(t, op.cue), ep.glossary_adds
+        case ops.Detach():
+            _editable(ep, op.track)
+            return edit.detach(t, op.track, op.cue, op.detached), ep.glossary_adds
+        case ops.ReplaceAll():
+            _editable(ep, *(ep.source_key if name == SOURCE else name for name in op.tracks))
+            return edit.replace_all(t, op.find, op.replace, tracks=op.tracks)[0], ep.glossary_adds
+    raise EditError("that isn't an edit the editor knows")
+
+
+def _editable(ep: Episode, *tracks: str) -> None:
+    """A track in conflict waits for a person to pick a version (spec §14.4); while the source
+    is, so does every track, since translations hang off source cues."""
+    for name in (ep.source_key, *tracks):
+        if name in ep.conflicts:
+            raise EditError(f"the {name} track has two versions: pick one before editing")
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_backend_edit.py -q` first
+  (`22 passed`), then the guard check, then `make check`. **Guard check** (no edit on a
+  conflicted track): in `_editable`, change `for name in (ep.source_key, *tracks):` to
+  `for name in ():`; the run gives `FAILED
+  tests/test_backend_edit.py::test_a_track_in_conflict_cant_be_edited_until_a_version_is_picked`,
+  `FAILED tests/test_backend_edit.py::test_nothing_but_a_glossary_add_can_be_made_while_the_source_is_in_conflict`
+  and `2 failed, 20 passed`; restore it. `make check`. Expected: `647 passed, 2 skipped, 4
+  deselected` twice, `All checks passed!` and `no leaks found`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the editor's backend applies, undoes and redoes edits, and refuses them on a track in conflict
+
+LocalBackend.apply(ep, op) runs one ops.EditOp through its subs.edit
+operation (spec §20: the edit rules exist once) and returns a new
+Episode, the old one untouched; an edit that changes nothing returns ep
+itself, with no undo step. Each step pushes the tracks and the pending
+glossary adds onto the undo stack, the last 200 kept (UNDO_STEPS), and
+clears redo; undo() and redo() step back and forward and return ep when
+there's nothing to step to. glossary_add only records the term for Save
+(the plan's Decision 5), and is undone like an edit. A track in conflict
+can't be edited, and nothing but a glossary add can while the source is
+(spec §14.4), each refused with EditError: "the en track has two
+versions: pick one before editing". A closed episode is refused with
+OpenError. Review Focus 3: each edit on a 2,000-cue episode, with its new
+view, took about 0.02 s.
+
+The new test failed first with: AttributeError: 'LocalBackend' object has
+no attribute 'apply'. Guard checked by reverting it: with _editable
+checking no track, the two conflict tests fail.
+
+Docs read: none beyond the code (subs.edit, Task 2's listing).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 6
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/backend.py tests/test_backend_edit.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 11: Write the failing test.** In `tests/test_glossary.py`, replace
+
+```python
+from vid2sub.subs.glossary import (
+    EMPTY_GLOSSARY,
+    GlossaryError,
+    chunk_prompt,
+```
+
+  with
+
+```python
+from vid2sub.subs.glossary import (
+    EMPTY_GLOSSARY,
+    Glossary,
+    GlossaryError,
+    add_terms,
+    chunk_prompt,
+```
+
+  and append at the end of the file, after two blank lines:
+
+```python
+# Phase 2, Task 6: the editor's Save adds terms (spec §16; the plan's Decision 5)
+
+
+def test_adding_terms_keeps_the_description_the_terms_and_the_comments():
+    text = "# names from the first season\n" + TOML + "# more to come\n"
+    out, kept = add_terms(text, {"阿笠博士": "Professor Agasa"})
+    assert out == text + '"阿笠博士" = "Professor Agasa"\n' and kept == []
+    assert parse_glossary(out) == Glossary("Detective Conan, a Japanese anime", (
+        ("工藤新一", "Shinichi Kudo"), ("毛利蘭", "Ran Mouri"), ("阿笠博士", "Professor Agasa")))
+
+
+def test_adding_to_no_glossary_starts_one_with_a_terms_table():
+    assert add_terms("", {" 工藤新一 ": "Shinichi Kudo"}) == (
+        '[terms]\n"工藤新一" = "Shinichi Kudo"\n', [])
+
+
+def test_adding_to_a_glossary_with_only_a_description_gives_it_a_terms_table():
+    out, _ = add_terms('description = "A show"', {"a": "b"})
+    assert out == 'description = "A show"\n\n[terms]\n"a" = "b"\n'
+    assert parse_glossary(out) == Glossary("A show", (("a", "b"),))
+
+
+def test_a_file_with_windows_line_ends_keeps_them():
+    out, _ = add_terms('[terms]\r\n"a" = "b"\r\n', {"c": "d"})
+    assert out == '[terms]\r\n"a" = "b"\r\n"c" = "d"\r\n'
+
+
+def test_a_term_already_there_is_left_and_one_with_another_translation_is_reported():
+    out, kept = add_terms(TOML, {"工藤新一": "Shinichi Kudo", "毛利蘭": "Rachel Moore"})
+    assert out == TOML and kept == ["毛利蘭"]
+
+
+def test_terms_with_quotes_backslashes_and_control_characters_round_trip():
+    adds = {'say "hi"': "back\\slash", "tab\there": "bell\x07", "ü ✨": "ok"}
+    out, _ = add_terms("", adds)
+    assert dict(parse_glossary(out).terms) == adds
+
+
+def test_a_term_or_translation_with_no_text_is_refused():
+    with pytest.raises(GlossaryError, match="both need text"):
+        add_terms(TOML, {"x": "  "})
+
+
+def test_a_glossary_written_as_an_inline_table_is_refused_rather_than_rewritten():
+    with pytest.raises(GlossaryError, match="add them by hand"):
+        add_terms('terms = { "a" = "b" }\n', {"c": "d"})
+
+
+def test_a_glossary_that_isnt_toml_is_refused():
+    with pytest.raises(GlossaryError, match="isn't valid TOML"):
+        add_terms("nonsense = [", {"c": "d"})
+```
+
+- [ ] **Step 12: Run it; watch it fail.** `uv run pytest tests/test_glossary.py -q`. Expected:
+  `E   ImportError: cannot import name 'add_terms' from 'vid2sub.subs.glossary'
+  (…/src/vid2sub/subs/glossary.py)` and `1 error`.
+- [ ] **Step 13: Write the code,** in `src/vid2sub/subs/glossary.py`.
+  In the module docstring, replace
+
+```python
+versions so a glossary edit marks translations stale.
+```
+
+  with
+
+```python
+versions so a glossary edit marks translations stale. The editor's Save adds terms to it by
+appending lines to its `[terms]`, never by writing it out again, so the person's comments and
+layout survive (it is their file, spec §16); the result must read back as the old glossary plus
+the new terms, or nothing is written (Phase 2 plan, Task 6).
+```
+
+  Replace
+
+```python
+from collections.abc import Iterable
+```
+
+  with
+
+```python
+from collections.abc import Iterable, Mapping
+```
+
+  Directly above the comment `# vocabulary_prompt and prompt_sha are copied from audio-router,`, add (each function followed by two blank lines):
+
+```python
+def add_terms(text: str, adds: Mapping[str, str]) -> tuple[str, list[str]]:
+    """`text` (a glossary file's, or "" for none) with `adds` appended to its `[terms]`, and the
+    terms it already had with another translation: those keep the file's translation.
+
+    A layout that appending can't extend (an inline `terms = {...}` table) raises GlossaryError
+    rather than being rewritten."""
+    current = parse_glossary(text) if text.strip() else EMPTY_GLOSSARY
+    have = dict(current.terms)
+    new: dict[str, str] = {}
+    kept: list[str] = []
+    for term, translation in adds.items():
+        term, translation = term.strip(), translation.strip()
+        if not term or not translation:
+            raise GlossaryError("a glossary term and its translation both need text")
+        if term in have:
+            if have[term] != translation:
+                kept.append(term)
+            continue
+        new[term] = translation
+    if not new:
+        return text, kept
+    nl = "\r\n" if "\r\n" in text else "\n"
+    lines = "".join(f"{_toml_string(k)} = {_toml_string(v)}{nl}" for k, v in new.items())
+    base = text if not text or text.endswith("\n") else text + nl
+    expected = Glossary(current.description, current.terms + tuple(new.items()))
+    for candidate in (base + lines, base + (nl if base else "") + "[terms]" + nl + lines):
+        try:
+            if parse_glossary(candidate) == expected:
+                return candidate, kept
+        except GlossaryError:
+            continue
+    raise GlossaryError("the glossary's layout can't take new terms without being rewritten; "
+                        "add them by hand")
+
+
+def _toml_string(s: str) -> str:
+    """A TOML basic string: quotes, backslashes and control characters escaped."""
+    out = []
+    for ch in s:
+        if ch in '"\\':
+            out.append("\\" + ch)
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append(f"\\u{ord(ch):04X}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
+```
+
+- [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_glossary.py
+  tests/test_purity.py -q` first (`21 passed`: `subs` stays pure), then `make check`. Expected:
+  `656 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
+- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(subs): 🤖 a glossary takes new terms by appending to its [terms], keeping the person's comments and layout
+
+subs.glossary.add_terms(text, adds) -> (text, kept) (spec §16; the plan's
+Decision 5): the editor's Save adds glossary terms by appending
+`"term" = "translation"` lines to the file's [terms] (adding the table
+when there is none), in the file's own line ends, never by writing the
+file out again, so the person's comments, order and layout survive. The
+result is parsed again and must read as the old glossary plus the new
+terms; a layout appending can't extend (an inline `terms = {...}`
+table) raises GlossaryError ("add them by hand") rather than being
+rewritten. A term already there is left as it is; one there with another
+translation keeps the file's, and is returned in `kept` so the editor
+can say so. Keys and values are TOML basic strings with quotes,
+backslashes and control characters escaped. Pure, as subs must be
+(tests/test_purity.py stays green).
+
+The new tests failed first with: ImportError: cannot import name
+'add_terms' from 'vid2sub.subs.glossary'.
+
+Docs read: the TOML 1.0.0 spec (toml.io: basic strings must escape the
+quotation mark, the backslash and the control characters other than tab,
+U+007F included; \uXXXX escapes; dotted keys and inline tables can't be
+extended by a later table header); Python 3.12's tomllib (loads).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 6
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/subs/glossary.py tests/test_glossary.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 16: Write the failing test,** `tests/test_backend_save.py`:
+
+```python
+import sys
+
+import pytest
+from episodes import make_episode, sid, source_cues, tid, translation_cues, write_track
+from fakes import fake_make_ask
+
+from vid2sub import __version__, pipeline, store
+from vid2sub.cache import Cache
+from vid2sub.config import Config, Endpoint, ModelEntry
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.subs.formats import sha256_hex, to_srt
+from vid2sub.subs.glossary import parse_glossary
+from vid2sub.subs.model import Cue
+from vid2sub.subs.rendition import cues_body, cues_from_body
+from vid2sub.subs.sidecar import (
+    Conflict,
+    HeadRecord,
+    ProjectionRecord,
+    RenditionRecord,
+    Sidecar,
+    make_rendition,
+)
+from vid2sub.web.backend import LocalBackend, OpenError, SaveError, SaveResult
+from vid2sub.web.ops import parse_op
+
+pytestmark = pytest.mark.media
+JA, EN = "Show - S01E01.ja.srt", "Show - S01E01.en.srt"
+GLOSSARY = "vid2sub.glossary.toml"
+BAZARR = b"1\n00:00:00,000 --> 00:00:01,000\nBazarr's line\n"
+
+
+@pytest.fixture
+def backend(tmp_path) -> LocalBackend:
+    return LocalBackend(Config(), Tools.find(), KeyRing(environ={}),
+                        Cache(tmp_path / "cache", max_bytes=10**9))
+
+
+@pytest.fixture
+def video(tmp_path):
+    return make_episode(tmp_path / "show")
+
+
+def edit(backend, ep, **data):
+    return backend.apply(ep, parse_op(data))
+
+
+def added_since(video, before: Sidecar) -> list:
+    side, _ = store.load(video)
+    return list(side.records[len(before.records):])
+
+
+def leaf_texts(video, track: str) -> list[tuple[str, str]]:
+    """Each diverged version of `track`: its engine and its first cue's text, sorted."""
+    side, _ = store.load(video)
+    head = side.head(track)
+    assert isinstance(head, Conflict)
+    bodies = [side.renditions()[r].body for r in head.leaves]
+    return sorted((b["engine"], cues_from_body(b)[0].text) for b in bodies)
+
+
+def cli_translate(video, monkeypatch) -> None:
+    """`vid2sub translate` (not --stale-only) on the episode: M1's own pipeline, faked model."""
+    monkeypatch.setattr(pipeline, "make_ask", fake_make_ask)
+    config = Config(endpoints={"spark": Endpoint(base_url="http://127.0.0.1:9/v1")},
+                    models={"gemma": ModelEntry(catalog="gemma-4-26b-a4b", endpoint="spark",
+                                                model="gemma", task="translate", local=True)})
+    ctx = pipeline.RunContext(config=config, tools=Tools.find(), keys=KeyRing(environ={}),
+                              options=pipeline.RunOptions(targets=["en"], translate_model="gemma"))
+    result = pipeline.translate_one(str(video), ctx, fresh=True)
+    assert result.status == "done", (result.reason, result.hint)
+
+
+def conflicted(video, track: str = "en") -> None:
+    """Two writers each replace the track's head: it diverges."""
+    head = store.load(video)[0].head(track).rendition
+    for text in ("Mine", "Theirs"):
+        write_track(video, track, [Cue(id=tid(0), start_ms=0, end_ms=3000, text=text,
+                                       src=(sid(0),))], role="translation", replaces=head)
+
+
+# S29: what a Save writes (spec §14.5)
+
+
+def test_a_save_appends_a_version_and_a_head_per_changed_track_then_rewrites_its_files(backend,
+                                                                                       video):
+    ep = backend.open(str(video))
+    before, _ = store.load(video)
+    ep = edit(backend, ep, op="set_text", cue=sid(0), text="こんばんは")
+    ep = edit(backend, ep, op="set_translation_text", track="en", cue=tid(1),
+              text="How have you been?")
+    saved, result = backend.save(ep, formats=["srt"])
+    assert result == SaveResult(written=(JA, EN), foreign=(), conflicts=(), notes=())
+    added = added_since(video, before)
+    versions = [r for r in added if isinstance(r, RenditionRecord)]
+    heads = [r for r in added if isinstance(r, HeadRecord)]
+    projections = [r for r in added if isinstance(r, ProjectionRecord)]
+    assert [(r.track, r.parents, r.body["engine"]) for r in versions] == [
+        ("ja", (ep.heads["ja"],), "editor"), ("en", (ep.heads["en"],), "editor")]
+    assert [(h.track, h.rendition, h.replaces, h.by) for h in heads] == [
+        ("ja", versions[0].id, ep.heads["ja"], "editor"),
+        ("en", versions[1].id, ep.heads["en"], "editor")]
+    assert added.index(heads[-1]) < added.index(projections[0])
+    assert [p.path for p in projections] == [JA, EN]
+    for p in projections:
+        assert p.sha256 == sha256_hex(video.with_name(p.path).read_bytes())
+    assert video.with_name(JA).read_bytes() == to_srt(saved.tracks.source)
+    assert "How have you been?" in video.with_name(EN).read_text(encoding="utf-8")
+
+
+def test_an_editor_version_keeps_its_tracks_language_role_model_and_glossary_hash(backend, video):
+    side, _ = store.load(video)
+    head = side.head("en").rendition
+    body = cues_body(translation_cues(source_cues(3)), language="en", script=None,
+                     engine="translate:gemma", model="gemma", version="g", created_at=store.now(),
+                     inputs={}, meta={"role": "translation"}, glossary_sha="abcd1234")
+    rec = make_rendition([head], "en", body)
+    store.append(video, side.header, [rec, HeadRecord(track="en", rendition=rec.id,
+                                                      replaces=head, by="auto", at=store.now())])
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    ep = edit(backend, ep, op="set_translation_text", track="en", cue=tid(0), text="Evening")
+    saved, _ = backend.save(ep, formats=["srt"])
+    renditions = store.load(video)[0].renditions()
+    ja, en = renditions[saved.heads["ja"]].body, renditions[saved.heads["en"]].body
+    assert (ja["payload"]["language"], ja["meta"], ja["model"]) == ("ja", {"role": "source"}, None)
+    assert (en["payload"]["language"], en["meta"], en["model"]) == (
+        "en", {"role": "translation"}, "gemma")
+    assert en["payload"]["glossary_sha"] == "abcd1234" and "glossary_sha" not in ja["payload"]
+    assert en["inputs"] == {"source": saved.heads["ja"]} and ja["inputs"] == {}
+    assert ja["version"] == en["version"] == f"editor@{__version__}"
+
+
+def test_after_a_save_the_episode_is_clean_and_the_next_save_builds_on_it(backend, video):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="一")
+    saved, _ = backend.save(ep, formats=["srt"])
+    side, _ = store.load(video)
+    assert not saved.dirty and saved.undo == [] and saved.redo == []
+    assert saved.heads["ja"] == side.head("ja").rendition != ep.heads["ja"]
+    assert saved.base == saved.tracks == ep.tracks and saved.sidecar == side
+    again, result = backend.save(edit(backend, saved, op="set_text", cue=sid(0), text="二"),
+                                 formats=["srt"])
+    head = store.load(video)[0].head("ja")
+    assert isinstance(head, HeadRecord) and head.replaces == saved.heads["ja"]
+    assert result.conflicts == () and again.tracks.source[0].text == "二"
+
+
+def test_srt_is_always_written_and_ass_when_asked_for(backend, video):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="一")
+    _, result = backend.save(ep, formats=["ass"])
+    assert result.written == (JA, "Show - S01E01.ja.ass", "Show - S01E01.en.ass")
+
+
+def test_a_save_with_nothing_changed_writes_back_a_missing_file_and_no_version(backend, video):
+    video.with_name(EN).unlink()
+    ep = backend.open(str(video))
+    before, _ = store.load(video)
+    _, result = backend.save(ep, formats=["srt"])
+    assert result.written == (EN,)
+    assert all(isinstance(r, ProjectionRecord) for r in added_since(video, before))
+
+
+# Never overwrite an artifact (spec §6.6, §15.3)
+
+
+def test_someone_elses_subtitle_file_is_never_overwritten(backend, tmp_path):
+    video = make_episode(tmp_path / "show", project=("en",))
+    theirs = video.with_name(JA)
+    theirs.write_bytes(BAZARR)
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    saved, result = backend.save(ep, formats=["srt"])
+    assert result.foreign == (JA,) and result.written == ()
+    assert theirs.read_bytes() == BAZARR
+    assert store.load(video)[0].head("ja").rendition == saved.heads["ja"] != ep.heads["ja"]
+
+
+def test_a_file_changed_outside_since_the_episode_opened_is_never_overwritten(backend, video):
+    ep = backend.open(str(video))
+    srt = video.with_name(EN)
+    outside = srt.read_bytes().replace(b"How are you?", b"How do you do?")
+    srt.write_bytes(outside)
+    ep = edit(backend, ep, op="set_translation_text", track="en", cue=tid(0), text="Morning!")
+    saved, result = backend.save(ep, formats=["srt"])
+    assert result.foreign == (EN,) and srt.read_bytes() == outside
+    assert store.load(video)[0].head("en").rendition == saved.heads["en"]
+
+
+# Never lose a concurrent writer's records; a diverged track waits for a person (spec §14.4, §14.6)
+
+
+def test_a_cli_translation_made_while_the_episode_was_open_survives_and_both_are_kept(
+        backend, video, monkeypatch):
+    ep = edit(backend, backend.open(str(video)), op="set_translation_text", track="en",
+              cue=tid(0), text="Morning!")
+    cli_translate(video, monkeypatch)
+    cli_file = video.with_name(EN).read_bytes()
+    saved, result = backend.save(ep, formats=["srt"])
+    assert result.conflicts == ("en",) and result.written == ()
+    assert leaf_texts(video, "en") == [("editor", "Morning!"), ("translate:gemma", f"EN {sid(0)}")]
+    assert video.with_name(EN).read_bytes() == cli_file
+    side, _ = store.load(video)
+    assert saved.conflicts == {"en": side.head("en").leaves}
+    assert "en" not in saved.tracks.translations and "en" not in saved.heads
+    assert not [h for h in side.heads("en") if h.by == "user"]
+
+
+def test_a_cli_change_to_another_track_and_the_editors_save_both_land(backend, video, monkeypatch):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    cli_translate(video, monkeypatch)
+    saved, result = backend.save(ep, formats=["srt"])
+    side, _ = store.load(video)
+    assert result.conflicts == () and result.written == (JA,)
+    assert side.head("ja").by == "editor" and side.head("en").by == "auto"
+    assert saved.tracks.source[0].text == "こんばんは"
+    assert saved.tracks.translations["en"][0].text == f"EN {sid(0)}"
+
+
+def test_two_tabs_saving_one_track_keep_both_versions_and_the_second_sees_the_conflict(backend,
+                                                                                      video):
+    a = edit(backend, backend.open(str(video)), op="set_translation_text", track="en",
+             cue=tid(0), text="From tab A")
+    b = edit(backend, backend.open(str(video)), op="set_translation_text", track="en",
+             cue=tid(0), text="From tab B")
+    _, first = backend.save(a, formats=["srt"])
+    b_saved, second = backend.save(b, formats=["srt"])
+    assert first.conflicts == () and first.written == (EN,)
+    assert second.conflicts == ("en",) and "en" in b_saved.conflicts
+    assert leaf_texts(video, "en") == [("editor", "From tab A"), ("editor", "From tab B")]
+    assert "From tab A" in video.with_name(EN).read_text(encoding="utf-8")
+
+
+def test_two_tabs_saving_different_tracks_both_land_without_a_conflict(backend, video):
+    a = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    b = edit(backend, backend.open(str(video)), op="set_translation_text", track="en",
+             cue=tid(1), text="From tab B")
+    backend.save(a, formats=["srt"])
+    b_saved, result = backend.save(b, formats=["srt"])
+    side, _ = store.load(video)
+    assert result.conflicts == () and isinstance(side.head("en"), HeadRecord)
+    assert b_saved.tracks.source[0].text == "こんばんは"
+    assert b_saved.tracks.translations["en"][1].text == "From tab B"
+
+
+def test_a_save_never_moves_the_head_of_a_track_already_in_conflict(backend, video):
+    conflicted(video)
+    ep = backend.open(str(video))
+    leaves = ep.conflicts["en"]
+    en_file = video.with_name(EN).read_bytes()
+    before, _ = store.load(video)
+    _, result = backend.save(edit(backend, ep, op="set_text", cue=sid(0), text="こんばんは"),
+                             formats=["srt"])
+    assert store.load(video)[0].head("en") == Conflict("en", leaves)
+    assert not [r for r in added_since(video, before) if getattr(r, "track", None) == "en"]
+    assert result.written == (JA,) and result.conflicts == ("en",)
+    assert video.with_name(EN).read_bytes() == en_file
+
+
+# Picking a version (spec §14.4)
+
+
+def test_picking_a_version_makes_it_the_head_writes_its_files_and_loads_it(backend, video,
+                                                                          monkeypatch):
+    ep = edit(backend, backend.open(str(video)), op="set_translation_text", track="en",
+              cue=tid(0), text="Morning!")
+    cli_translate(video, monkeypatch)
+    saved, _ = backend.save(ep, formats=["srt"])
+    renditions = store.load(video)[0].renditions()
+    mine, theirs = sorted(saved.conflicts["en"],
+                          key=lambda r: renditions[r].body["engine"] != "editor")
+    picked, result = backend.resolve(saved, "en", mine)
+    side, _ = store.load(video)
+    assert side.head("en").rendition == mine and side.head("en").by == "user"
+    assert [(h.rendition, h.replaces) for h in side.heads("en") if h.by == "user"] == [
+        (mine, theirs)]
+    assert result == SaveResult(written=(EN,), foreign=(), conflicts=(), notes=())
+    assert "Morning!" in video.with_name(EN).read_text(encoding="utf-8")
+    assert picked.conflicts == {} and picked.heads["en"] == mine and not picked.dirty
+    assert picked.tracks.translations["en"][0].text == "Morning!"
+
+
+def test_picking_a_version_keeps_the_unsaved_edits_on_other_tracks(backend, video):
+    conflicted(video)
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    picked, _ = backend.resolve(ep, "en", ep.conflicts["en"][1])
+    assert picked.tracks.source[0].text == "こんばんは" and picked.dirty
+    assert picked.tracks.translations["en"][0].text == "Theirs"
+    assert picked.base.translations["en"] == picked.tracks.translations["en"]
+    saved, result = backend.save(picked, formats=["srt"])
+    assert result.conflicts == () and saved.tracks.source[0].text == "こんばんは"
+
+
+def test_picking_something_that_isnt_one_of_the_versions_is_refused(backend, video):
+    conflicted(video)
+    ep = backend.open(str(video))
+    with pytest.raises(SaveError, match="that isn't one of the en track's versions"):
+        backend.resolve(ep, "en", "r_0000000000000000")
+    with pytest.raises(SaveError, match="^there's no such track$"):
+        backend.resolve(ep, "<b>en</b>", ep.conflicts["en"][0])
+    assert isinstance(store.load(video)[0].head("en"), Conflict)
+
+
+def test_a_version_picked_in_another_tab_is_shown_rather_than_picked_again(backend, video):
+    conflicted(video)
+    a, b = backend.open(str(video)), backend.open(str(video))
+    backend.resolve(a, "en", a.conflicts["en"][0])
+    picked, result = backend.resolve(b, "en", b.conflicts["en"][1])
+    assert result.notes == ("the en track's version was already picked elsewhere: showing it",)
+    assert picked.tracks.translations["en"][0].text == "Mine"
+    assert [h.by for h in store.load(video)[0].heads("en")].count("user") == 1
+
+
+# A Save that goes wrong
+
+
+def test_a_save_cut_short_after_the_sidecar_never_makes_the_next_save_conflict_with_itself(
+        backend, video, monkeypatch):
+    real = store.safe_write
+
+    def full_disk(path, data, *, overwrite):
+        if path.suffix == ".srt":
+            raise OSError(28, "No space left on device")
+        return real(path, data, overwrite=overwrite)
+
+    monkeypatch.setattr(store, "safe_write", full_disk)
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    saved, result = backend.save(ep, formats=["srt"])
+    assert result.written == () and result.notes == (
+        f"couldn't write {JA} (No space left on device)",)
+    assert not saved.dirty
+    monkeypatch.setattr(store, "safe_write", real)
+    _, result = backend.save(saved, formats=["srt"])
+    assert result.written == (JA,) and result.conflicts == ()
+    assert isinstance(store.load(video)[0].head("ja"), HeadRecord)
+
+
+def test_a_sidecar_that_cant_be_read_any_more_stops_the_save_before_anything_is_written(backend,
+                                                                                         video):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    path = store.sidecar_path(video)
+    broken = path.read_bytes() + b"not json\n{}\n"
+    path.write_bytes(broken)
+    ja = video.with_name(JA).read_bytes()
+    with pytest.raises(SaveError, match="can't read"):
+        backend.save(ep, formats=["srt"])
+    assert path.read_bytes() == broken and video.with_name(JA).read_bytes() == ja
+
+
+def test_a_sidecar_deleted_since_the_episode_opened_stops_the_save(backend, video):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    store.sidecar_path(video).unlink()
+    with pytest.raises(SaveError, match="open the episode again"):
+        backend.save(ep, formats=["srt"])
+    assert not store.sidecar_path(video).exists()
+
+
+def test_a_closed_episode_cant_be_saved(backend, video):
+    ep = backend.open(str(video))
+    backend.close(ep.id)
+    with pytest.raises(OpenError, match="closed"):
+        backend.save(ep, formats=["srt"])
+
+
+# The glossary is written at Save (the plan's Decision 5; spec §16)
+
+
+def test_glossary_terms_are_added_beside_the_video_at_save_keeping_what_was_there(backend, video):
+    glossary = video.with_name(GLOSSARY)
+    glossary.write_text('# mine\ndescription = "A show"\n[terms]\n"毛利蘭" = "Ran Mouri"\n',
+                        encoding="utf-8")
+    ep = edit(backend, backend.open(str(video)), op="glossary_add", term="工藤新一",
+              translation="Shinichi Kudo")
+    ep = edit(backend, ep, op="glossary_add", term="毛利蘭", translation="Rachel Moore")
+    saved, result = backend.save(ep, formats=["srt"])
+    assert result.notes == (f"added 1 term to {GLOSSARY}",
+                            f"{GLOSSARY} already has 毛利蘭 with another translation: kept that one")
+    text = glossary.read_text(encoding="utf-8")
+    assert text.startswith('# mine\ndescription = "A show"\n')
+    assert parse_glossary(text).terms == (("毛利蘭", "Ran Mouri"), ("工藤新一", "Shinichi Kudo"))
+    assert saved.glossary_adds == {} and not saved.dirty
+
+
+def test_a_new_glossary_is_made_when_there_is_none(backend, video):
+    ep = edit(backend, backend.open(str(video)), op="glossary_add", term="工藤新一",
+              translation="Shinichi Kudo")
+    backend.save(ep, formats=["srt"])
+    assert parse_glossary(video.with_name(GLOSSARY).read_text(encoding="utf-8")).terms == (
+        ("工藤新一", "Shinichi Kudo"),)
+
+
+def test_a_glossary_that_cant_take_the_terms_is_left_alone_and_they_wait(backend, video):
+    glossary = video.with_name(GLOSSARY)
+    glossary.write_text('terms = { "毛利蘭" = "Ran Mouri" }\n', encoding="utf-8")
+    ep = edit(backend, backend.open(str(video)), op="glossary_add", term="工藤新一",
+              translation="Shinichi Kudo")
+    saved, result = backend.save(ep, formats=["srt"])
+    assert len(result.notes) == 1 and result.notes[0].startswith(f"couldn't add to {GLOSSARY}: ")
+    assert "by hand" in result.notes[0]
+    assert glossary.read_text(encoding="utf-8") == 'terms = { "毛利蘭" = "Ran Mouri" }\n'
+    assert saved.glossary_adds == {"工藤新一": "Shinichi Kudo"} and saved.dirty
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_a_glossary_that_is_a_link_is_neither_read_nor_written(backend, video, tmp_path):
+    target = tmp_path / "elsewhere.toml"
+    target.write_text('[terms]\n"a" = "b"\n', encoding="utf-8")
+    video.with_name(GLOSSARY).symlink_to(target)
+    ep = edit(backend, backend.open(str(video)), op="glossary_add", term="工藤新一",
+              translation="Shinichi Kudo")
+    saved, result = backend.save(ep, formats=["srt"])
+    assert result.notes == (f"couldn't add to {GLOSSARY}: it isn't a regular file",)
+    assert target.read_text(encoding="utf-8") == '[terms]\n"a" = "b"\n' and saved.dirty
+
+
+# Review Focus 1: a hostile path
+
+
+def test_a_save_next_to_a_video_with_a_hostile_name_lands_next_to_it(backend, tmp_path):
+    folder = tmp_path / "Ünïcödé 番組 🎬"
+    name = f"Show {chr(0x202E)}evil S01E01 ✨.mkv"
+    video = make_episode(folder, name)
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    _, result = backend.save(ep, formats=["srt"])
+    stem = name.removesuffix(".mkv")
+    assert result.written == (f"{stem}.ja.srt",)
+    assert (folder / f"{stem}.ja.srt").read_text(encoding="utf-8").count("こんばんは") == 1
+    assert str(folder) not in repr(result)
+```
+
+- [ ] **Step 17: Run it; watch it fail.** `uv run pytest tests/test_backend_save.py -q`.
+  Expected: `E   ImportError: cannot import name 'SaveError' from 'vid2sub.web.backend'
+  (…/src/vid2sub/web/backend.py)` and `1 error`.
+- [ ] **Step 18: Write the code.**
+  In `src/vid2sub/web/backend.py`, replace the module docstring
+
+```python
+"""The editor's backend: opening an episode M1 made, and editing it (spec §19.1, §20, §15.3).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
+changed, and every cue of it is when the glossary's hash or the translation model differs from
+the ones its head was made with; so the episode holds the glossary beside the video and the model
+Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
+taking every configured local server to answer (no request is made at open). Edits run
+through the pure `subs.edit` rules, so they exist once (§20); each one that changes something
+pushes the tracks and the pending glossary adds onto the undo stack (the last 200 steps) and
+clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
+source is, until a person picks a version.
+"""
+```
+
+  with
+
+```python
+"""The editor's backend: opening an episode M1 made, editing it and saving it (spec §19.1, §20).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
+changed, and every cue of it is when the glossary's hash or the translation model differs from
+the ones its head was made with; so the episode holds the glossary beside the video and the model
+Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
+taking every configured local server to answer (no request is made at open). Edits run
+through the pure `subs.edit` rules, so they exist once (§20); each one that changes something
+pushes the tracks and the pending glossary adds onto the undo stack (the last 200 steps) and
+clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
+source is, until a person picks a version.
+
+Save (spec §14.5, §14.6) appends one `editor` version per changed track, whose parent is the head
+the editor's cues came from, and a head that replaces that same head: never the head on disk now,
+so a CLI run or another tab that moved it meanwhile leaves two heads, a conflict both versions
+survive, rather than one silently replacing the other (Review Focus 2 and 4). The records go in
+one `store.append`, which is compare-and-swap with a union merge, so no other writer's records
+are lost. Only then are the files written, through `store.project` with `overwrite_foreign` off:
+someone else's file, or one changed outside since, is left alone and reported (§6.6, §15.3), and
+a track in conflict isn't written until a person picks a version with `resolve`, the only thing
+that moves a head on a conflicted track. Once the versions are in the sidecar nothing raises: a
+file that can't be written is a note, and the episode moves to the new heads either way, so a
+second Save never conflicts with the first. Glossary terms are written at Save (the plan's
+Decision 5), appended to the file beside the video so its comments survive. A Save, like a pick,
+starts the undo history again, because the tracks are read back from the sidecar.
+"""
+```
+
+  Replace everything from `from __future__ import annotations` down to `class OpenError`'s docstring
+
+```python
+from __future__ import annotations
+
+import os
+import secrets
+import tempfile
+import threading
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Literal
+
+from vid2sub import detect as detecting
+from vid2sub import store
+from vid2sub.cache import Cache
+from vid2sub.catalog import suggest
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.identity import identify
+from vid2sub.media.probe import Probe, ProbeError, pick_track, probe
+from vid2sub.media.tools import ToolFailed, ToolMissing, Tools
+from vid2sub.pipeline import MEDIA_SUFFIXES, video_change
+from vid2sub.security import InputRefused, WriteRefused, resolve_input
+from vid2sub.subs import edit, naming
+from vid2sub.subs.edit import SOURCE, EditError, Tracks
+from vid2sub.subs.glossary import EMPTY_GLOSSARY, Glossary, GlossaryError, parse_glossary
+from vid2sub.subs.model import Word
+from vid2sub.subs.rendition import cues_from_body, transcript_from_body
+from vid2sub.subs.sidecar import (
+    Conflict,
+    Header,
+    HeadRecord,
+    RenditionRecord,
+    Sidecar,
+    SidecarError,
+)
+from vid2sub.web import ops
+
+UNPLAYABLE_AUDIO = frozenset({"ac3", "eac3", "dts", "truehd"})  # ffprobe's codec names (§8.2)
+NO_SUBTITLES = "no subtitles yet: make them with vid2sub run or the Jobs page first"
+UNDO_STEPS = 200
+
+
+class OpenError(Exception):
+    """An episode that can't be opened; the reason is fit to show."""
+```
+
+  with
+
+```python
+from __future__ import annotations
+
+import codecs
+import os
+import secrets
+import tempfile
+import threading
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Literal
+
+from vid2sub import __version__, store
+from vid2sub import detect as detecting
+from vid2sub.cache import Cache
+from vid2sub.catalog import suggest
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.identity import identify
+from vid2sub.media.probe import Probe, ProbeError, pick_track, probe
+from vid2sub.media.tools import ToolFailed, ToolMissing, Tools
+from vid2sub.pipeline import MEDIA_SUFFIXES, video_change
+from vid2sub.security import InputRefused, WriteRefused, resolve_input, safe_write
+from vid2sub.subs import edit, naming
+from vid2sub.subs.edit import SOURCE, EditError, Tracks
+from vid2sub.subs.glossary import (
+    EMPTY_GLOSSARY,
+    Glossary,
+    GlossaryError,
+    add_terms,
+    parse_glossary,
+)
+from vid2sub.subs.model import Cue, Word
+from vid2sub.subs.rendition import cues_body, cues_from_body, transcript_from_body
+from vid2sub.subs.sidecar import (
+    Conflict,
+    Header,
+    HeadRecord,
+    RenditionRecord,
+    Sidecar,
+    SidecarError,
+    make_rendition,
+)
+from vid2sub.web import ops
+
+UNPLAYABLE_AUDIO = frozenset({"ac3", "eac3", "dts", "truehd"})  # ffprobe's codec names (§8.2)
+NO_SUBTITLES = "no subtitles yet: make them with vid2sub run or the Jobs page first"
+UNDO_STEPS = 200
+FORMATS = ("srt", "ass")
+GONE = "the sidecar next to the video is gone, so nothing was saved: open the episode again"
+
+
+class OpenError(Exception):
+    """An episode that can't be opened; the reason is fit to show."""
+```
+
+  Below `class OpenError` and its docstring, add (with two blank lines before each class):
+
+```python
+class SaveError(Exception):
+    """Nothing was saved; the reason is fit to show."""
+
+
+@dataclass(frozen=True)
+class SaveResult:
+    written: tuple[str, ...]  # file names written
+    foreign: tuple[str, ...]  # file names left alone: someone else's, or changed outside since
+    conflicts: tuple[str, ...]  # tracks in conflict, so not written until a version is picked
+    notes: tuple[str, ...]
+```
+
+  In `class LocalBackend`, directly above `def _check_open(self, ep: Episode)`, add (each method followed by one blank line):
+
+```python
+    def save(self, ep: Episode, *, formats: Sequence[Literal["srt", "ass"]]
+             ) -> tuple[Episode, SaveResult]:
+        """SRT is always written, ASS when asked for (spec §15.2). SaveError means nothing was
+        saved; once the versions are in the sidecar, every later problem is a note."""
+        self._check_open(ep)
+        fmts = _formats(formats)
+        records = _versions(ep)
+        try:
+            if not store.sidecar_path(ep.video).is_file():
+                raise SaveError(GONE)
+            side = store.append(ep.video, ep.header, records) if records else _reload(ep.video)
+        except (SidecarError, store.StoreError, WriteRefused) as err:
+            raise SaveError(str(err)) from None
+        except OSError as err:  # never err.filename: a full path
+            raise SaveError(_failed("couldn't save next to the video", err)) from None
+        side, written, foreign, conflicts, notes = _project(ep.video, ep.header, side,
+                                                             side.tracks(), fmts)
+        adds, glossary_notes = _write_glossary(ep.video, ep.glossary_adds)
+        source_key, tracks, heads, in_conflict = load_tracks(side)
+        saved = replace(ep, sidecar=side, source_key=source_key, tracks=tracks, base=tracks,
+                        heads=heads, conflicts=in_conflict, undo=[], redo=[],
+                        taken=ep.taken | cue_ids(side), glossary_adds=adds)
+        return saved, SaveResult(tuple(written), tuple(foreign), tuple(conflicts),
+                                 tuple(notes + glossary_notes))
+
+    def resolve(self, ep: Episode, track: str, rendition: str) -> tuple[Episode, SaveResult]:
+        """A person's pick of one of a conflicted track's versions (spec §14.4): it replaces
+        every other version, by "user", and the track is loaded and written. Unsaved edits on
+        other tracks are kept."""
+        self._check_open(ep)
+        if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
+            raise SaveError("there's no such track")
+        notes: list[str] = []
+        try:
+            side = _reload(ep.video)
+            head = side.head(track)
+            if isinstance(head, Conflict):
+                if rendition not in head.leaves:
+                    raise SaveError(f"that isn't one of the {track} track's versions")
+                now = store.now()
+                side = store.append(ep.video, ep.header, [
+                    HeadRecord(track=track, rendition=rendition, replaces=other, by="user", at=now)
+                    for other in head.leaves if other != rendition])
+            elif track in ep.conflicts:
+                notes.append(f"the {track} track's version was already picked elsewhere: "
+                             "showing it")
+        except (SidecarError, store.StoreError, WriteRefused) as err:
+            raise SaveError(str(err)) from None
+        except OSError as err:
+            raise SaveError(_failed("couldn't save next to the video", err)) from None
+        has_ass = any(p.track == track and p.format == "ass"
+                      for p in side.projections().values())
+        side, written, foreign, conflicts, more = _project(ep.video, ep.header, side, [track],
+                                                           ["srt", "ass"] if has_ass else ["srt"])
+        return _with_track(ep, side, track), SaveResult(tuple(written), tuple(foreign),
+                                                        tuple(conflicts), tuple(notes + more))
+```
+
+  Directly above `def _edit(ep: Episode, …)`, add (each function followed by two blank lines):
+
+```python
+def _formats(formats: Sequence[str]) -> list[str]:
+    if any(f not in FORMATS for f in formats):
+        raise ValueError("the formats are srt and ass")
+    return ["srt"] + (["ass"] if "ass" in formats else [])
+
+
+def _reload(video: Path) -> Sidecar:
+    side, _ = store.load(video)
+    if side is None:
+        raise SaveError(GONE)
+    return side
+
+
+def _failed(what: str, err: OSError) -> str:
+    return what + (f" ({err.strerror})" if err.strerror else "")
+
+
+def _cues(t: Tracks, track: str, source_key: str) -> tuple[Cue, ...] | None:
+    return t.source if track == source_key else t.translations.get(track)
+
+
+def _versions(ep: Episode) -> list:
+    """An editor version and a head for each track whose cues differ from its head's; the head
+    replaces the one the cues came from, never the head on disk now (spec §14.4)."""
+    renditions = ep.sidecar.renditions()
+    now = store.now()
+    records: list = []
+    source_rid = ep.heads.get(ep.source_key)
+    for track in [ep.source_key, *ep.tracks.translations]:
+        cues = _cues(ep.tracks, track, ep.source_key)
+        if track not in ep.heads or cues is None or cues == _cues(ep.base, track, ep.source_key):
+            continue
+        parent = ep.heads[track]
+        is_source = track == ep.source_key
+        body = _editor_body(renditions[parent].body, cues, is_source=is_source, created_at=now,
+                            inputs={} if is_source or not source_rid else {"source": source_rid})
+        rec = make_rendition([parent], track, body)
+        if is_source:
+            source_rid = rec.id
+        records += [rec, HeadRecord(track=track, rendition=rec.id, replaces=parent, by="editor",
+                                    at=now)]
+    return records
+
+
+def _editor_body(head: dict, cues: Sequence[Cue], *, is_source: bool, created_at: str,
+                 inputs: dict[str, str]) -> dict:
+    """The head's language, script and glossary hash; its model too, since the cues the person
+    didn't touch are still that model's, and M1 reads a changed model as every cue stale."""
+    payload = head.get("payload", {})
+    return cues_body(cues, language=payload["language"], script=payload.get("script"),
+                     engine="editor", model=head.get("model"), version=f"editor@{__version__}",
+                     created_at=created_at, inputs=inputs,
+                     meta={"role": "source" if is_source else "translation"},
+                     glossary_sha=payload.get("glossary_sha"))
+
+
+def _project(video: Path, header: Header, side: Sidecar, tracks: Sequence[str],
+             fmts: Sequence[str]) -> tuple[Sidecar, list[str], list[str], list[str], list[str]]:
+    """Writes each track's files; never raises, since the versions are already saved."""
+    written: list[str] = []
+    foreign: list[str] = []
+    conflicts: list[str] = []
+    notes: list[str] = []
+    for track in tracks:
+        head = side.head(track)
+        if isinstance(head, Conflict):
+            conflicts.append(track)
+            continue
+        if not isinstance(head, HeadRecord):
+            continue
+        for fmt in fmts:
+            try:
+                name = store.subtitle_path(video, track, fmt).name
+            except naming.UnknownTrack:
+                notes.append(f"couldn't write the {track} track: vid2sub has no file name for it")
+                break
+            try:
+                side, _, did = store.project(video, header, side, track, fmt,
+                                             overwrite_foreign=False)
+            except (store.ForeignFile, WriteRefused):
+                foreign.append(name)
+                continue
+            except (SidecarError, store.StoreError) as err:
+                notes.append(f"couldn't write {name}: {err}")
+                continue
+            except OSError as err:
+                notes.append(_failed(f"couldn't write {name}", err))
+                continue
+            if did:
+                written.append(name)
+    return side, written, foreign, conflicts, notes
+
+
+def _with_track(ep: Episode, side: Sidecar, track: str) -> Episode:
+    """The episode with one track read again from the sidecar; the others as they were."""
+    heads, conflicts = dict(ep.heads), dict(ep.conflicts)
+    tracks, base = ep.tracks, ep.base
+    head = side.head(track)
+    if isinstance(head, HeadRecord):
+        cues = tuple(cues_from_body(side.renditions()[head.rendition].body))
+        heads[track] = head.rendition
+        conflicts.pop(track, None)
+        tracks, base = (_put(t, track, cues, ep.source_key) for t in (tracks, base))
+    elif isinstance(head, Conflict):
+        conflicts[track] = head.leaves
+        heads.pop(track, None)
+    return replace(ep, sidecar=side, heads=heads, conflicts=conflicts, tracks=tracks, base=base,
+                   undo=[], redo=[], taken=ep.taken | cue_ids(side))
+
+
+def _put(t: Tracks, track: str, cues: tuple[Cue, ...], source_key: str) -> Tracks:
+    if track == source_key:
+        return Tracks(cues, t.translations)
+    return Tracks(t.source, {**t.translations, track: cues})
+
+
+def _write_glossary(video: Path, adds: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    """Appends the terms to the glossary beside the video, compare-and-swap like the sidecar;
+    returns the terms still waiting (all of them if it couldn't) and the notes."""
+    if not adds:
+        return {}, []
+    path = video.with_name(naming.GLOSSARY_NAME)
+    name = path.name
+    if path.is_symlink():  # never read or write through a link planted in the folder (§6.6)
+        return dict(adds), [f"couldn't add to {name}: it isn't a regular file"]
+    try:
+        for _ in range(3):
+            data = path.read_bytes() if path.is_file() else b""
+            text = data.decode("utf-8-sig")
+            out, kept = add_terms(text, adds)
+            if out == text:
+                break
+            latest = path.read_bytes() if path.is_file() else b""
+            if latest != data:
+                continue
+            bom = codecs.BOM_UTF8 if data.startswith(codecs.BOM_UTF8) else b""
+            safe_write(path, bom + out.encode("utf-8"), overwrite=bool(data))
+            break
+        else:
+            return dict(adds), [f"couldn't add to {name}: it kept changing; save again"]
+    except UnicodeDecodeError:
+        return dict(adds), [f"couldn't add to {name}: it isn't UTF-8"]
+    except (GlossaryError, WriteRefused) as err:
+        return dict(adds), [f"couldn't add to {name}: {err}"]
+    except OSError as err:
+        return dict(adds), [_failed(f"couldn't add to {name}", err)]
+    had = dict(parse_glossary(text).terms) if text.strip() else {}
+    new = sum(1 for term in adds if term not in had)
+    notes = [f"added {new} term{'' if new == 1 else 's'} to {name}"] if new else []
+    notes += [f"{name} already has {term} with another translation: kept that one"
+              for term in kept]
+    return {}, notes
+```
+
+- [ ] **Step 19: Run the checks; they pass.** `uv run pytest tests/test_backend_save.py -q` first
+  (`25 passed`), then the guard checks, then `make check`. **Guard checks** (Tier 1: each must
+  fail without its fix; revert one, run `uv run pytest tests/test_backend_save.py -q`, restore it,
+  then the next):
+  1. *Never overwrite someone else's file:* in `_project`, change `overwrite_foreign=False` to
+     `overwrite_foreign=True`: `FAILED
+     tests/test_backend_save.py::test_someone_elses_subtitle_file_is_never_overwritten`,
+     `1 failed, 24 passed`.
+  2. *Never lose a concurrent writer's records:* in `save`, replace
+     `side = store.append(ep.video, ep.header, records) if records else _reload(ep.video)` with
+     the three lines `from vid2sub.subs.sidecar import serialize`, `side =
+     ep.sidecar.add(*records)` and `safe_write(store.sidecar_path(ep.video),
+     serialize(side).encode(), overwrite=True)` (a write from the copy read at open): six fail,
+     among them `test_a_cli_translation_made_while_the_episode_was_open_survives_and_both_are_kept`,
+     `test_a_cli_change_to_another_track_and_the_editors_save_both_land` and both two-tabs tests,
+     `6 failed, 19 passed`.
+  3. *Never move a head on a conflicted track without the person:* in `_versions`, replace
+     `records += [rec, HeadRecord(track=track, rendition=rec.id, replaces=parent, by="editor",`
+     and its next line with `on_disk = store.load(ep.video)[0].head(track)` and `records +=
+     [rec, HeadRecord(track=track, rendition=rec.id, replaces=on_disk.rendition, by="editor",
+     at=now)]` (the head on disk now): five fail, among them the CLI-translation test,
+     `test_two_tabs_saving_one_track_keep_both_versions_and_the_second_sees_the_conflict` and
+     `test_picking_a_version_makes_it_the_head_writes_its_files_and_loads_it`, `5 failed, 20
+     passed` (the CLI's version is silently displaced).
+  4. *A Save cut short never conflicts with the next:* in `_project`, make the `except OSError`
+     branch `raise SaveError(_failed(f"couldn't write {name}", err)) from None`: `FAILED
+     tests/test_backend_save.py::test_a_save_cut_short_after_the_sidecar_never_makes_the_next_save_conflict_with_itself`,
+     `1 failed, 24 passed`.
+  5. *Never through a planted link:* in `_write_glossary`, change `if path.is_symlink():` to
+     `if False:`: `FAILED
+     tests/test_backend_save.py::test_a_glossary_that_is_a_link_is_neither_read_nor_written`,
+     `1 failed, 24 passed`.
+
+  `make check`. Expected: `681 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
+  `no leaks found`.
+- [ ] **Step 20: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 Save appends an editor version per changed track and writes only vid2sub's files, and a diverged track waits for the person's pick
+
+LocalBackend.save(ep, *, formats) -> (Episode, SaveResult) (spec §14.5,
+§14.6, §15.2, §15.3; S29, S32): one `editor` version per changed track,
+whose parent is the head its cues came from, with the head's language,
+script, glossary hash and model and meta.role "source" or "translation",
+and a head (by "editor") that replaces that same head, never the head on
+disk now; all in one store.append, compare-and-swap with a union merge.
+So a CLI run or another tab that moved the head meanwhile leaves two
+heads, a conflict in which both versions survive (Review Focus 2 and 4),
+and no other writer's record is lost. Then every track not in conflict is
+projected, SRT always and ASS when asked, with overwrite_foreign off:
+someone else's file, or one changed outside since, is left alone and
+listed in `foreign`; a missing file is written back (§15.3). Once the
+versions are in the sidecar nothing raises: a file that can't be written
+is a note, and the episode moves to the new heads either way, so the next
+Save never conflicts with the first. SaveError (nothing saved) when the
+sidecar can't be read or is gone. Glossary adds are appended beside the
+video with safe_write, compare-and-swap, keeping the file's comments; a
+glossary that can't take them is left alone and they wait. A Save starts
+the undo history again: the tracks are read back from the sidecar.
+
+LocalBackend.resolve(ep, track, rendition) -> (Episode, SaveResult): the
+person's pick appends one head by "user" replacing each other version,
+then loads and writes that track only, keeping unsaved edits on the
+others; a pick already made in another tab is shown, not made again.
+
+A glossary beside the video that is a link is neither read nor written
+(spec §6.6): the terms wait, with a note.
+
+The new test failed first with: ImportError: cannot import name
+'SaveError' from 'vid2sub.web.backend'. Guards checked by reverting each:
+with overwrite_foreign=True, test_someone_elses_subtitle_file_is_never_
+overwritten fails; with the sidecar written from the copy read at open
+instead of store.append, six tests fail (the CLI's and the other tab's
+records are lost); with the head replacing the head on disk now instead
+of the one the edits came from, the CLI-translation, two-tabs and pick
+tests fail (the CLI's version is silently displaced); with a file error
+after the append raised as SaveError, test_a_save_cut_short_after_the_
+sidecar_never_makes_the_next_save_conflict_with_itself fails. With the
+link check removed, test_a_glossary_that_is_a_link_is_neither_read_nor_
+written fails.
+
+Docs read: none beyond the code (store.append, project, check_external,
+ForeignFile and EditedOnDisk; subs.sidecar.Sidecar.head's leaves;
+pipeline._translate_targets, which reads a changed `model` as every cue
+stale, hence the copied model).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 6
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/backend.py tests/test_backend_save.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 21: Write the failing tests:** Save and pick with other writers about (an outside
+  edit since the open, the same Save sent twice, two picks at once, a stale pick), the words of
+  a picked source, an empty glossary file, and a source edit that would orphan a conflicted
+  translation's cues.
+  In `tests/test_backend_save.py`, replace the imports from `import sys` to `from fakes import fake_make_ask`
+
+```python
+import sys
+
+import pytest
+from episodes import make_episode, sid, source_cues, tid, translation_cues, write_track
+from fakes import fake_make_ask
+```
+
+  with
+
+```python
+import sys
+import threading
+
+import pytest
+from episodes import (
+    make_episode,
+    sid,
+    source_cues,
+    tid,
+    transcript_for,
+    translation_cues,
+    write_track,
+)
+from fakes import fake_make_ask
+```
+
+  Replace the test `test_a_file_changed_outside_since_the_episode_opened_is_never_overwritten` (an outside edit is now kept, and diverges from the editor's) with two
+
+```python
+def test_a_file_changed_outside_since_the_episode_opened_is_never_overwritten(backend, video):
+    ep = backend.open(str(video))
+    srt = video.with_name(EN)
+    outside = srt.read_bytes().replace(b"How are you?", b"How do you do?")
+    srt.write_bytes(outside)
+    ep = edit(backend, ep, op="set_translation_text", track="en", cue=tid(0), text="Morning!")
+    saved, result = backend.save(ep, formats=["srt"])
+    assert result.foreign == (EN,) and srt.read_bytes() == outside
+    assert store.load(video)[0].head("en").rendition == saved.heads["en"]
+
+
+# Never lose a concurrent writer's records
+```
+
+  with
+
+```python
+def test_a_file_changed_outside_since_the_episode_opened_is_kept_and_both_versions_wait(backend,
+                                                                                       video):
+    ep = backend.open(str(video))
+    srt = video.with_name(EN)
+    outside = srt.read_bytes().replace(b"How are you?", b"How do you do?")
+    srt.write_bytes(outside)
+    ep = edit(backend, ep, op="set_translation_text", track="en", cue=tid(0), text="Morning!")
+    saved, result = backend.save(ep, formats=["srt"])
+    assert result.conflicts == ("en",) and result.notes == ("kept your outside edit to en",)
+    assert srt.read_bytes() == outside
+    assert leaf_texts(video, "en") == [("editor", "Morning!"), ("external", "Good morning")]
+    reopened = backend.open(str(video))
+    assert reopened.conflicts == saved.conflicts and reopened.notes == []
+
+
+def test_an_outside_edit_to_another_track_is_kept_at_save_and_the_save_says_so(backend, video):
+    ep = backend.open(str(video))
+    srt = video.with_name(JA)
+    srt.write_bytes(srt.read_bytes().replace("おはよう".encode(), "おっす".encode()))
+    ep = edit(backend, ep, op="set_translation_text", track="en", cue=tid(0), text="Morning!")
+    saved, result = backend.save(ep, formats=["srt"])
+    assert result.conflicts == () and result.notes == ("kept your outside edit to ja",)
+    assert saved.tracks.source[0].text == "おっす"
+    assert saved.tracks.translations["en"][0].text == "Morning!"
+
+
+# Never lose a concurrent writer's records
+```
+
+  Directly above `def test_a_save_cut_short_after_the_sidecar_never_makes_the_next_save_conflict_with_itself(`, add (each test followed by two blank lines):
+
+```python
+def test_saving_one_episode_twice_writes_its_versions_once(backend, video, monkeypatch):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    backend.save(ep, formats=["srt"])
+    monkeypatch.setattr(store, "now", lambda: "2099-01-01T00:00:00Z")  # a later second
+    before, _ = store.load(video)
+    again, result = backend.save(ep, formats=["srt"])  # a retry, or a second click
+    assert result.conflicts == () and isinstance(store.load(video)[0].head("ja"), HeadRecord)
+    assert not [r for r in added_since(video, before) if isinstance(r, RenditionRecord)]
+    assert again.tracks.source[0].text == "こんばんは" and not again.dirty
+
+
+def test_two_picks_at_once_are_made_one_after_the_other(backend, video, monkeypatch):
+    conflicted(video)
+    a, b = backend.open(str(video)), backend.open(str(video))
+    real, entered, release = store.append, threading.Event(), threading.Event()
+
+    def slow_append(*args, **kwargs):
+        if not entered.is_set():
+            entered.set()
+            release.wait(5)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store, "append", slow_append)
+    results = {}
+    first = threading.Thread(target=lambda: results.update(a=backend.resolve(
+        a, "en", a.conflicts["en"][0])))
+    second = threading.Thread(target=lambda: results.update(b=backend.resolve(
+        b, "en", b.conflicts["en"][1])))
+    first.start()
+    assert entered.wait(5)
+    second.start()
+    second.join(0.2)
+    assert second.is_alive()  # waiting for the first pick to finish
+    release.set()
+    first.join(5)
+    second.join(5)
+    head = store.load(video)[0].head("en")
+    assert isinstance(head, HeadRecord) and head.rendition == a.conflicts["en"][0]
+    assert results["b"][1].notes == (
+        "the en track's version was already picked elsewhere: showing it",)
+```
+
+  Directly above `def test_a_version_picked_in_another_tab_is_shown_rather_than_picked_again(`, add:
+
+```python
+def test_a_pick_on_a_track_with_one_version_is_refused_and_keeps_unsaved_edits(backend, video):
+    ep = edit(backend, backend.open(str(video)), op="set_translation_text", track="en",
+              cue=tid(0), text="Unsaved!")
+    with pytest.raises(SaveError, match="the en track has only one version"):
+        backend.resolve(ep, "en", ep.heads["en"])
+    assert ep.tracks.translations["en"][0].text == "Unsaved!" and ep.dirty
+
+
+def test_picking_a_version_of_the_source_brings_the_words_it_was_built_from(backend, video):
+    side, _ = store.load(video)
+    head = side.head("ja").rendition
+    ours = [c.model_copy(update={"text": c.text + "ね"}) for c in source_cues(3)]
+    theirs = [c.model_copy(update={"text": c.text + "よ"}) for c in source_cues(3)]
+    transcripts = [make_rendition([], None, transcript_for(cues, audio_track=0, quick="q"))
+                   for cues in (ours, theirs)]
+    store.append(video, side.header, transcripts)
+    mine = write_track(video, "ja", ours, role="source", parents=(transcripts[0].id,),
+                       replaces=head)
+    write_track(video, "ja", theirs, role="source", parents=(transcripts[1].id,), replaces=head)
+    ep = backend.open(str(video))
+    assert ep.words[-1].text == "気ですよ"  # in conflict: the newest transcript's words
+    picked, _ = backend.resolve(ep, "ja", mine.id)
+    assert picked.words[-1].text == "気ですね" and picked.tracks.source[0].text == "おはようね"
+```
+
+  Directly above `def test_a_glossary_that_cant_take_the_terms_is_left_alone_and_they_wait(`, add:
+
+```python
+def test_an_empty_glossary_file_takes_terms(backend, video):
+    video.with_name(GLOSSARY).write_bytes(b"")
+    ep = edit(backend, backend.open(str(video)), op="glossary_add", term="工藤新一",
+              translation="Shinichi Kudo")
+    _, result = backend.save(ep, formats=["srt"])
+    assert result.notes == (f"added 1 term to {GLOSSARY}",)
+    assert parse_glossary(video.with_name(GLOSSARY).read_text(encoding="utf-8")).terms == (
+        ("工藤新一", "Shinichi Kudo"),)
+```
+
+  In `tests/test_backend_edit.py`, directly above `def test_nothing_but_a_glossary_add_can_be_made_while_the_source_is_in_conflict(`, add:
+
+```python
+def test_no_cue_can_be_split_merged_or_deleted_while_a_translation_is_in_conflict(backend,
+                                                                                    video):
+    head = store.load(video)[0].head("en").rendition
+    for text in ("Mine", "Theirs"):
+        write_track(video, "en", [Cue(id=tid(0), start_ms=0, end_ms=3000, text=text,
+                                      src=(sid(0),))], role="translation", replaces=head)
+    ep = backend.open(str(video))
+    for data in ({"op": "delete", "cue": sid(0)}, {"op": "merge_next", "cue": sid(0)},
+                 {"op": "split", "cue": sid(0), "at_char": 2, "at_ms": 1500}):
+        with pytest.raises(EditError, match="the en track has two versions: pick one"):
+            backend.apply(ep, parse_op(data))
+    assert backend.apply(ep, op(op="nudge", cue=sid(0), delta_ms=100)).dirty
+```
+
+- [ ] **Step 22: Run them; watch them fail.** `uv run pytest tests/test_backend_save.py
+  tests/test_backend_edit.py -q`. Expected: `8 failed, 46 passed`, the eight being
+  `test_a_file_changed_outside_since_the_episode_opened_is_kept_and_both_versions_wait`
+  (`assert () == ('en',)`), `test_an_outside_edit_to_another_track_is_kept_at_save_and_the_save_says_so`,
+  `test_saving_one_episode_twice_writes_its_versions_once` (`assert ('ja',) == ()`),
+  `test_two_picks_at_once_are_made_one_after_the_other` (the second pick isn't waiting),
+  `test_a_pick_on_a_track_with_one_version_is_refused_and_keeps_unsaved_edits` (`DID NOT RAISE`),
+  `test_picking_a_version_of_the_source_brings_the_words_it_was_built_from`
+  (`assert '気ですよ' == '気ですね'`), `test_an_empty_glossary_file_takes_terms`
+  (`vid2sub.glossary.toml already exists`) and
+  `test_no_cue_can_be_split_merged_or_deleted_while_a_translation_is_in_conflict`
+  (`DID NOT RAISE`).
+- [ ] **Step 23: Write the code.**
+  In `src/vid2sub/web/backend.py`, replace the module docstring
+
+```python
+"""The editor's backend: opening an episode M1 made, editing it and saving it (spec §19.1, §20).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
+changed, and every cue of it is when the glossary's hash or the translation model differs from
+the ones its head was made with; so the episode holds the glossary beside the video and the model
+Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
+taking every configured local server to answer (no request is made at open). Edits run
+through the pure `subs.edit` rules, so they exist once (§20); each one that changes something
+pushes the tracks and the pending glossary adds onto the undo stack (the last 200 steps) and
+clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
+source is, until a person picks a version.
+
+Save (spec §14.5, §14.6) appends one `editor` version per changed track, whose parent is the head
+the editor's cues came from, and a head that replaces that same head: never the head on disk now,
+so a CLI run or another tab that moved it meanwhile leaves two heads, a conflict both versions
+survive, rather than one silently replacing the other (Review Focus 2 and 4). The records go in
+one `store.append`, which is compare-and-swap with a union merge, so no other writer's records
+are lost. Only then are the files written, through `store.project` with `overwrite_foreign` off:
+someone else's file, or one changed outside since, is left alone and reported (§6.6, §15.3), and
+a track in conflict isn't written until a person picks a version with `resolve`, the only thing
+that moves a head on a conflicted track. Once the versions are in the sidecar nothing raises: a
+file that can't be written is a note, and the episode moves to the new heads either way, so a
+second Save never conflicts with the first. Glossary terms are written at Save (the plan's
+Decision 5), appended to the file beside the video so its comments survive. A Save, like a pick,
+starts the undo history again, because the tracks are read back from the sidecar.
+"""
+```
+
+  with
+
+```python
+"""The editor's backend: opening an episode M1 made, editing it and saving it (spec §19.1, §20).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
+changed, and every cue of it is when the glossary's hash or the translation model differs from
+the ones its head was made with; so the episode holds the glossary beside the video and the model
+Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
+taking every configured local server to answer (no request is made at open). Edits run
+through the pure `subs.edit` rules, so they exist once (§20); each one that changes something
+pushes the tracks and the pending glossary adds onto the undo stack (the last 200 steps) and
+clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
+source is, until a person picks a version.
+
+Save (spec §14.5, §14.6) first records any outside edit to a subtitle file as M1 does, so an
+edit made in another program since the open is a version too, never something a later open puts
+over the editor's. Then it appends one `editor` version per changed track, whose parent is the
+head the editor's cues came from, and a head that replaces that same head: never the head on disk
+now, so a CLI run, another tab or that outside edit leaves two heads, a conflict both versions
+survive, rather than one silently replacing the other (Review Focus 2 and 4). A track whose head
+on disk already holds exactly these cues (the same Save sent twice) gets nothing. The records go
+in one `store.append`, compare-and-swap with a union merge, so no other writer's records are
+lost. Only then are the files written, through `store.project` with `overwrite_foreign` off:
+someone else's file is left alone and reported (§6.6, §15.3), and a track in conflict isn't
+written until a person picks a version with `resolve`, the only thing that moves a head on a
+conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
+written is a note, and the episode moves to the new heads either way. Saves and picks on one
+video take turns within this engine, so two picks at once can't replace each other in a cycle.
+Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
+so its comments survive. A Save, like a pick, starts the undo history again, because the tracks
+are read back from the sidecar. While a translation is in conflict, no source cue can be split,
+merged or deleted: the unloaded version's cues would keep pointing at ids that are gone.
+"""
+```
+
+  Replace
+
+```python
+from collections.abc import Sequence
+```
+
+  with
+
+```python
+from collections.abc import Callable, Sequence
+```
+
+  In `LocalBackend.__init__`, replace
+
+```python
+        self._lock = threading.Lock()
+```
+
+  with
+
+```python
+        self._lock = threading.Lock()
+        self._writing: dict[Path, threading.Lock] = {}  # one per video: saves and picks take turns
+```
+
+  In `open`, replace
+
+```python
+        ep = Episode(
+            id="e" + secrets.token_hex(8), video=video, header=header, source_key=source_key,
+            tracks=tracks, heads=heads, conflicts=conflicts,
+            words=tuple(transcript_from_body(transcript.body).words()) if transcript else (),
+            notes=notes, playable_audio=track.codec not in UNPLAYABLE_AUDIO,
+            audio_index=
+```
+
+  with
+
+```python
+        ep = Episode(
+            id="e" + secrets.token_hex(8), video=video, header=header, source_key=source_key,
+            tracks=tracks, heads=heads, conflicts=conflicts, words=_words(transcript), notes=notes,
+            playable_audio=track.codec not in UNPLAYABLE_AUDIO,
+            audio_index=
+```
+
+  Replace the methods `save` and `resolve`, from `    def save(self` to the end of `resolve`,
+
+```python
+    def save(self, ep: Episode, *, formats: Sequence[Literal["srt", "ass"]]
+             ) -> tuple[Episode, SaveResult]:
+        """SRT is always written, ASS when asked for (spec §15.2). SaveError means nothing was
+        saved; once the versions are in the sidecar, every later problem is a note."""
+        self._check_open(ep)
+        fmts = _formats(formats)
+        records = _versions(ep)
+        try:
+            if not store.sidecar_path(ep.video).is_file():
+                raise SaveError(GONE)
+            side = store.append(ep.video, ep.header, records) if records else _reload(ep.video)
+        except (SidecarError, store.StoreError, WriteRefused) as err:
+            raise SaveError(str(err)) from None
+        except OSError as err:  # never err.filename: a full path
+            raise SaveError(_failed("couldn't save next to the video", err)) from None
+        side, written, foreign, conflicts, notes = _project(ep.video, ep.header, side,
+                                                             side.tracks(), fmts)
+        adds, glossary_notes = _write_glossary(ep.video, ep.glossary_adds)
+        source_key, tracks, heads, in_conflict = load_tracks(side)
+        saved = replace(ep, sidecar=side, source_key=source_key, tracks=tracks, base=tracks,
+                        heads=heads, conflicts=in_conflict, undo=[], redo=[],
+                        taken=ep.taken | cue_ids(side), glossary_adds=adds)
+        return saved, SaveResult(tuple(written), tuple(foreign), tuple(conflicts),
+                                 tuple(notes + glossary_notes))
+
+    def resolve(self, ep: Episode, track: str, rendition: str) -> tuple[Episode, SaveResult]:
+        """A person's pick of one of a conflicted track's versions (spec §14.4): it replaces
+        every other version, by "user", and the track is loaded and written. Unsaved edits on
+        other tracks are kept."""
+        self._check_open(ep)
+        if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
+            raise SaveError("there's no such track")
+        notes: list[str] = []
+        try:
+            side = _reload(ep.video)
+            head = side.head(track)
+            if isinstance(head, Conflict):
+                if rendition not in head.leaves:
+                    raise SaveError(f"that isn't one of the {track} track's versions")
+                now = store.now()
+                side = store.append(ep.video, ep.header, [
+                    HeadRecord(track=track, rendition=rendition, replaces=other, by="user", at=now)
+                    for other in head.leaves if other != rendition])
+            elif track in ep.conflicts:
+                notes.append(f"the {track} track's version was already picked elsewhere: "
+                             "showing it")
+        except (SidecarError, store.StoreError, WriteRefused) as err:
+            raise SaveError(str(err)) from None
+        except OSError as err:
+            raise SaveError(_failed("couldn't save next to the video", err)) from None
+        has_ass = any(p.track == track and p.format == "ass"
+                      for p in side.projections().values())
+        side, written, foreign, conflicts, more = _project(ep.video, ep.header, side, [track],
+                                                           ["srt", "ass"] if has_ass else ["srt"])
+        return _with_track(ep, side, track), SaveResult(tuple(written), tuple(foreign),
+                                                        tuple(conflicts), tuple(notes + more))
+```
+
+  with
+
+```python
+    def save(self, ep: Episode, *, formats: Sequence[Literal["srt", "ass"]]
+             ) -> tuple[Episode, SaveResult]:
+        """SRT is always written, ASS when asked for (spec §15.2). SaveError means nothing was
+        saved; once the versions are in the sidecar, every later problem is a note."""
+        self._check_open(ep)
+        fmts = _formats(formats)
+        notes: list[str] = []
+        with self._writing_lock(ep.video):
+            try:
+                side, changed = store.check_external(ep.video, ep.header, _reload(ep.video),
+                                                     on_unreadable=_unreadable(notes))
+                notes += [f"kept your outside edit to {t}" for t in changed]
+                records = _versions(ep, side)
+                if records:
+                    side = store.append(ep.video, ep.header, records)
+            except (SidecarError, store.StoreError, WriteRefused) as err:
+                raise SaveError(str(err)) from None
+            except OSError as err:  # never err.filename: a full path
+                raise SaveError(_failed("couldn't save next to the video", err)) from None
+            side, written, foreign, conflicts, more = _project(ep.video, ep.header, side,
+                                                               side.tracks(), fmts)
+            notes += more
+            adds, glossary_notes = _write_glossary(ep.video, ep.glossary_adds)
+        source_key, tracks, heads, in_conflict = load_tracks(side)
+        saved = replace(ep, sidecar=side, source_key=source_key, tracks=tracks, base=tracks,
+                        heads=heads, conflicts=in_conflict, undo=[], redo=[],
+                        taken=ep.taken | cue_ids(side), glossary_adds=adds)
+        return saved, SaveResult(tuple(written), tuple(foreign), tuple(conflicts),
+                                 tuple(notes + glossary_notes))
+
+    def resolve(self, ep: Episode, track: str, rendition: str) -> tuple[Episode, SaveResult]:
+        """A person's pick of one of a conflicted track's versions (spec §14.4): it replaces
+        every other version, by "user", and the track is loaded and written. Unsaved edits on
+        other tracks are kept."""
+        self._check_open(ep)
+        if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
+            raise SaveError("there's no such track")
+        if track not in ep.conflicts:  # a stale request must never reload a track being edited
+            raise SaveError(f"the {track} track has only one version: there's nothing to pick")
+        notes: list[str] = []
+        with self._writing_lock(ep.video):
+            try:
+                side = _reload(ep.video)
+                head = side.head(track)
+                if isinstance(head, Conflict):
+                    if rendition not in head.leaves:
+                        raise SaveError(f"that isn't one of the {track} track's versions")
+                    now = store.now()
+                    side = store.append(ep.video, ep.header, [
+                        HeadRecord(track=track, rendition=rendition, replaces=other, by="user",
+                                   at=now)
+                        for other in head.leaves if other != rendition])
+                else:
+                    notes.append(f"the {track} track's version was already picked elsewhere: "
+                                 "showing it")
+            except (SidecarError, store.StoreError, WriteRefused) as err:
+                raise SaveError(str(err)) from None
+            except OSError as err:
+                raise SaveError(_failed("couldn't save next to the video", err)) from None
+            has_ass = any(p.track == track and p.format == "ass"
+                          for p in side.projections().values())
+            side, written, foreign, conflicts, more = _project(
+                ep.video, ep.header, side, [track], ["srt", "ass"] if has_ass else ["srt"])
+        return _with_track(ep, side, track), SaveResult(tuple(written), tuple(foreign),
+                                                        tuple(conflicts), tuple(notes + more))
+```
+
+  Directly above `    def _check_open(self, ep: Episode) -> None:`, add (followed by one blank line):
+
+```python
+    def _writing_lock(self, video: Path) -> threading.Lock:
+        with self._lock:
+            return self._writing.setdefault(video, threading.Lock())
+```
+
+  In `_edit`, under `case ops.Split():`, replace
+
+```python
+        case ops.Split():
+            _editable(ep, ep.source_key)
+```
+
+  with
+
+```python
+        case ops.Split():
+            _editable(ep, ep.source_key, *ep.conflicts)
+```
+
+  In `_edit`, under `case ops.MergeNext():`, replace
+
+```python
+        case ops.MergeNext():
+            _editable(ep, ep.source_key)
+```
+
+  with
+
+```python
+        case ops.MergeNext():
+            _editable(ep, ep.source_key, *ep.conflicts)
+```
+
+  In `_edit`, under `case ops.Delete():`, replace
+
+```python
+        case ops.Delete():
+            _editable(ep, ep.source_key)
+```
+
+  with
+
+```python
+        case ops.Delete():
+            _editable(ep, ep.source_key, *ep.conflicts)
+```
+
+  Replace the function `_versions`, from `def _versions(` to its `return records`,
+
+```python
+def _versions(ep: Episode) -> list:
+    """An editor version and a head for each track whose cues differ from its head's; the head
+    replaces the one the cues came from, never the head on disk now (spec §14.4)."""
+    renditions = ep.sidecar.renditions()
+    now = store.now()
+    records: list = []
+    source_rid = ep.heads.get(ep.source_key)
+    for track in [ep.source_key, *ep.tracks.translations]:
+        cues = _cues(ep.tracks, track, ep.source_key)
+        if track not in ep.heads or cues is None or cues == _cues(ep.base, track, ep.source_key):
+            continue
+        parent = ep.heads[track]
+        is_source = track == ep.source_key
+        body = _editor_body(renditions[parent].body, cues, is_source=is_source, created_at=now,
+                            inputs={} if is_source or not source_rid else {"source": source_rid})
+        rec = make_rendition([parent], track, body)
+        if is_source:
+            source_rid = rec.id
+        records += [rec, HeadRecord(track=track, rendition=rec.id, replaces=parent, by="editor",
+                                    at=now)]
+    return records
+```
+
+  with
+
+```python
+def _versions(ep: Episode, side: Sidecar) -> list:
+    """An editor version and a head for each track whose cues differ from its head's; the head
+    replaces the one the cues came from, never the head on disk now (spec §14.4). A track whose
+    head on disk, or one of whose diverged versions, already holds these cues gets nothing."""
+    renditions = side.renditions()
+    now = store.now()
+    records: list = []
+    source_rid = ep.heads.get(ep.source_key)
+    for track in [ep.source_key, *ep.tracks.translations]:
+        cues = _cues(ep.tracks, track, ep.source_key)
+        if track not in ep.heads or cues is None or cues == _cues(ep.base, track, ep.source_key):
+            continue
+        is_source = track == ep.source_key
+        same = _holding(side, track, cues)
+        if same is not None:
+            if is_source:
+                source_rid = same
+            continue
+        parent = ep.heads[track]
+        body = _editor_body(renditions[parent].body, cues, is_source=is_source, created_at=now,
+                            inputs={} if is_source or not source_rid else {"source": source_rid})
+        rec = make_rendition([parent], track, body)
+        if is_source:
+            source_rid = rec.id
+        records += [rec, HeadRecord(track=track, rendition=rec.id, replaces=parent, by="editor",
+                                    at=now)]
+    return records
+```
+
+  Directly above `def _editor_body(`, add (each function followed by two blank lines):
+
+```python
+def _holding(side: Sidecar, track: str, cues: tuple[Cue, ...]) -> str | None:
+    """The rendition at the track's head on disk (or among its diverged versions) whose cues are
+    exactly `cues`, if there is one."""
+    head = side.head(track)
+    current = (head.leaves if isinstance(head, Conflict)
+               else (head.rendition,) if isinstance(head, HeadRecord) else ())
+    renditions = side.renditions()
+    for rid in current:
+        if rid in renditions and tuple(cues_from_body(renditions[rid].body)) == cues:
+            return rid
+    return None
+
+
+def _unreadable(notes: list[str]) -> Callable[[str], None]:
+    def note(name: str) -> None:
+        notes.append(f"left {name} alone: it isn't a readable subtitle file")
+    return note
+
+
+def _words(transcript: RenditionRecord | None) -> tuple[Word, ...]:
+    return tuple(transcript_from_body(transcript.body).words()) if transcript else ()
+```
+
+  In `_project`, below the `except OSError as err:` branch (its `continue`), add:
+
+```python
+            except Exception as err:  # noqa: BLE001 - the versions are saved; this is one file
+                notes.append(f"couldn't write {name} ({type(err).__name__})")
+                continue
+```
+
+  Replace the function `_with_track`'s body, from its docstring to its `return`,
+
+```python
+    """The episode with one track read again from the sidecar; the others as they were."""
+    heads, conflicts = dict(ep.heads), dict(ep.conflicts)
+    tracks, base = ep.tracks, ep.base
+    head = side.head(track)
+    if isinstance(head, HeadRecord):
+        cues = tuple(cues_from_body(side.renditions()[head.rendition].body))
+        heads[track] = head.rendition
+        conflicts.pop(track, None)
+        tracks, base = (_put(t, track, cues, ep.source_key) for t in (tracks, base))
+    elif isinstance(head, Conflict):
+        conflicts[track] = head.leaves
+        heads.pop(track, None)
+    return replace(ep, sidecar=side, heads=heads, conflicts=conflicts, tracks=tracks, base=base,
+                   undo=[], redo=[], taken=ep.taken | cue_ids(side))
+```
+
+  with
+
+```python
+    """The episode with one track read again from the sidecar; the others as they were."""
+    heads, conflicts = dict(ep.heads), dict(ep.conflicts)
+    tracks, base, words = ep.tracks, ep.base, ep.words
+    head = side.head(track)
+    if isinstance(head, HeadRecord):
+        cues = tuple(cues_from_body(side.renditions()[head.rendition].body))
+        heads[track] = head.rendition
+        conflicts.pop(track, None)
+        tracks, base = (_put(t, track, cues, ep.source_key) for t in (tracks, base))
+        if track == ep.source_key:
+            words = _words(_transcript(side, head.rendition))
+    elif isinstance(head, Conflict):
+        conflicts[track] = head.leaves
+        heads.pop(track, None)
+    return replace(ep, sidecar=side, heads=heads, conflicts=conflicts, tracks=tracks, base=base,
+                   words=words, undo=[], redo=[], taken=ep.taken | cue_ids(side))
+```
+
+  In `_write_glossary`, replace
+
+```python
+            data = path.read_bytes() if path.is_file() else b""
+```
+
+  with
+
+```python
+            existed = path.is_file()
+            data = path.read_bytes() if existed else b""
+```
+
+  and replace
+
+```python
+overwrite=bool(data))
+```
+
+  with
+
+```python
+overwrite=existed)
+```
+
+- [ ] **Step 24: Run the checks; they pass.** `uv run pytest tests/test_backend_save.py
+  tests/test_backend_edit.py -q` first (`54 passed`), then `make check`. Expected: `688 passed,
+  2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
+- [ ] **Step 25: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 Save keeps an outside edit made since the open as a version, saves each change once, and picks take turns
+
+Save and pick when other writers are about (spec §14.4, §14.6, §15.3, §13.5):
+- Save first runs store.check_external, as every M1 command does, so a
+  subtitle file edited in another program since the open becomes an
+  external version; when the editor changed that track too, the two
+  diverge and the person picks. Before, the editor's head went on and the
+  next open put the outside edit over it with only a note.
+- A changed track whose head on disk (or one of whose diverged versions)
+  already holds exactly these cues gets no new version, so the same Save
+  sent twice never conflicts with itself.
+- Saves and picks on one video take turns within the engine (a lock per
+  video), so two picks at once can't append "A replaces B" and "B
+  replaces A", a cycle that left the track with no head.
+- resolve refuses a track that isn't in conflict ("only one version"),
+  so a stale pick never reloads a track being edited; a pick on the
+  source brings the words of the transcript it was built from.
+- No source cue can be split, merged or deleted while a translation is
+  in conflict: that unloaded version's cues would point at ids that are
+  gone.
+- An empty glossary file takes terms (it was refused as "already
+  exists"); a file that fails to project for any reason is a note, never
+  an exception, once the versions are in the sidecar.
+
+The eight new tests failed first, each on the finding it covers (among
+them: assert () == ('en',) for the outside edit; DID NOT RAISE SaveError
+for the one-version pick; the second pick wasn't waiting).
+
+Docs read: none beyond the code (store.check_external, Sidecar.head's
+replacement-cycle rule).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 6
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/backend.py tests/test_backend_save.py tests/test_backend_edit.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 26: Write the failing tests:** an outside edit to a file written from an older
+  version than the head diverges from it (spec §14.4); a failed write leaves the file counted as
+  the version it holds; an outside edit keeps the glossary hash and model its translation was
+  made with (a text edit changes neither, §13.4), so fixing one typo doesn't make every cue
+  stale; and a line the person added, or reworded and retimed, is `edited`, so Retranslate stale
+  never replaces it. This round fixes M1's `store` (escaped from M1 Task 28). The `--stale-only`
+  test is a check: M1 keeps a track whose head isn't `auto`, before and after.
+  In `tests/test_store.py`, replace
+
+```python
+from vid2sub.subs.sidecar import HeadRecord, SidecarError, make_rendition, parse_sidecar
+```
+
+  with
+
+```python
+from vid2sub.subs.sidecar import (
+    Conflict,
+    HeadRecord,
+    SidecarError,
+    make_rendition,
+    parse_sidecar,
+)
+```
+
+  In `test_a_write_interrupted_after_its_record_is_not_taken_for_an_outside_edit`, replace (the record now names what the file holds)
+
+```python
+    assert side.projections()[path.name].sha256 != store.sha256_hex(old)
+```
+
+  with
+
+```python
+    assert side.projections()[path.name].sha256 == store.sha256_hex(old)  # what the file holds
+```
+
+  At the end of the file, after two blank lines, add:
+
+```python
+# Phase 2, Task 6: an outside edit to a file written from an older version diverges (spec §14.4)
+
+
+def newer_head(video, side):
+    """A newer version of en that becomes the head without being written to the file."""
+    projected = side.head("en").rendition
+    body = cues_body([CUES[0], CUES[1].model_copy(update={"text": "Planet"})], language="en",
+                     script=None, engine="editor", model=None, version="e",
+                     created_at=store.now(), inputs={}, meta={"role": "source"})
+    rec = make_rendition([projected], "en", body)
+    side = store.append(video, header(video), [rec, HeadRecord(
+        track="en", rendition=rec.id, replaces=projected, by="editor", at=store.now())])
+    return side, rec.id
+
+
+def test_an_outside_edit_to_a_file_from_an_older_version_diverges_from_the_head(video):
+    side = with_track(video)
+    side, path, _ = store.project(video, header(video), side, "en", "srt",
+                                  overwrite_foreign=False)
+    side, newer = newer_head(video, side)
+    path.write_bytes(path.read_bytes().replace(b"World", b"Earth"))
+    side, changed = store.check_external(video, header(video), side)
+    assert changed == ["en"]
+    head = side.head("en")
+    assert isinstance(head, Conflict)
+    (external,) = [r for r in head.leaves if r != newer]
+    assert newer in head.leaves and side.renditions()[external].body["engine"] == "external"
+
+
+def test_a_failed_write_leaves_the_file_counted_as_the_version_it_still_holds(video,
+                                                                             monkeypatch):
+    side = with_track(video)
+    side, path, _ = store.project(video, header(video), side, "en", "srt",
+                                  overwrite_foreign=False)
+    written = side.projections()[path.name]
+    side, newer = newer_head(video, side)
+    real = store.safe_write
+
+    def full_disk(target, data, **kwargs):
+        if target == path:
+            raise OSError(28, "No space left on device")
+        return real(target, data, **kwargs)
+
+    monkeypatch.setattr(store, "safe_write", full_disk)
+    with pytest.raises(OSError):
+        store.project(video, header(video), side, "en", "srt", overwrite_foreign=False)
+    monkeypatch.setattr(store, "safe_write", real)
+    side, _ = store.load(video)
+    latest = side.projections()[path.name]
+    assert (latest.rendition, latest.sha256) == (written.rendition, written.sha256)
+    path.write_bytes(path.read_bytes().replace(b"World", b"Earth"))
+    side, _ = store.check_external(video, header(video), side)
+    assert isinstance(side.head("en"), Conflict) and newer in side.head("en").leaves
+```
+
+  In `tests/test_backend_save.py`, replace
+
+```python
+from vid2sub.web.backend import LocalBackend, OpenError, SaveError, SaveResult
+```
+
+  with
+
+```python
+from vid2sub.web import views
+from vid2sub.web.backend import LocalBackend, OpenError, SaveError, SaveResult
+```
+
+  and
+
+```python
+GLOSSARY = "vid2sub.glossary.toml"
+```
+
+  with
+
+```python
+GLOSSARY = "vid2sub.glossary.toml"
+TERMS = '[terms]\n"工藤新一" = "Shinichi Kudo"\n'
+```
+
+  Replace `cli_translate` (it takes `fresh` and returns the result; the config is shared)
+
+```python
+def cli_translate(video, monkeypatch) -> None:
+    """`vid2sub translate` (not --stale-only) on the episode: M1's own pipeline, faked model."""
+    monkeypatch.setattr(pipeline, "make_ask", fake_make_ask)
+    config = Config(endpoints={"spark": Endpoint(base_url="http://127.0.0.1:9/v1")},
+                    models={"gemma": ModelEntry(catalog="gemma-4-26b-a4b", endpoint="spark",
+                                                model="gemma", task="translate", local=True)})
+    ctx = pipeline.RunContext(config=config, tools=Tools.find(), keys=KeyRing(environ={}),
+                              options=pipeline.RunOptions(targets=["en"], translate_model="gemma"))
+    result = pipeline.translate_one(str(video), ctx, fresh=True)
+    assert result.status == "done", (result.reason, result.hint)
+```
+
+  with
+
+```python
+def gemma() -> Config:
+    return Config(endpoints={"spark": Endpoint(base_url="http://127.0.0.1:9/v1")},
+                  models={"gemma": ModelEntry(catalog="gemma-4-26b-a4b", endpoint="spark",
+                                              model="gemma", task="translate", local=True)})
+
+
+def cli_translate(video, monkeypatch, *, fresh: bool = True) -> pipeline.InputResult:
+    """`vid2sub translate` on the episode (`--stale-only` when not `fresh`): M1's own pipeline,
+    with the model faked."""
+    monkeypatch.setattr(pipeline, "make_ask", fake_make_ask)
+    ctx = pipeline.RunContext(config=gemma(), tools=Tools.find(), keys=KeyRing(environ={}),
+                              options=pipeline.RunOptions(targets=["en"], translate_model="gemma"))
+    result = pipeline.translate_one(str(video), ctx, fresh=fresh)
+    assert result.status == "done", (result.reason, result.hint)
+    return result
+```
+
+  Directly above `def test_a_sidecar_that_cant_be_read_any_more_stops_the_save_before_anything_is_written(`, add (each function followed by two blank lines):
+
+```python
+def test_an_outside_edit_to_a_file_a_save_couldnt_write_diverges_from_the_save(backend, video,
+                                                                              monkeypatch):
+    real = store.safe_write
+
+    def full_disk(path, data, *, overwrite):
+        if path.suffix == ".srt":
+            raise OSError(28, "No space left on device")
+        return real(path, data, overwrite=overwrite)
+
+    monkeypatch.setattr(store, "safe_write", full_disk)
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    backend.save(ep, formats=["srt"])  # the head moves on; the file still holds the old version
+    monkeypatch.setattr(store, "safe_write", real)
+    srt = video.with_name(JA)
+    srt.write_bytes(srt.read_bytes().replace("元気ですか".encode(), "お元気ですか".encode()))
+    reopened = backend.open(str(video))  # check_external, as every M1 command runs it
+    assert set(reopened.conflicts) == {"ja"}
+    assert leaf_texts(video, "ja") == [("editor", "こんばんは"), ("external", "おはよう")]
+
+
+def en_stale(ep) -> list[bool]:
+    return ["stale" in c["flags"]
+            for row in views.episode_view(ep, video_url=None, audio_url=None)["rows"]
+            for c in row["tr"]["en"]["cues"]]
+
+
+def test_an_outside_edit_keeps_the_glossary_and_model_its_translation_was_made_with(tmp_path,
+                                                                                  video):
+    sha = parse_glossary(TERMS).sha()
+    video.with_name(GLOSSARY).write_text(TERMS, encoding="utf-8")
+    side, _ = store.load(video)
+    head = side.head("en").rendition
+    rec = make_rendition([head], "en", cues_body(
+        translation_cues(source_cues(3)), language="en", script=None, engine="translate:gemma",
+        model="gemma", version="g", created_at=store.now(), inputs={},
+        meta={"role": "translation"}, glossary_sha=sha))
+    side = store.append(video, side.header, [rec, HeadRecord(
+        track="en", rendition=rec.id, replaces=head, by="auto", at=store.now())])
+    store.project(video, side.header, side, "en", "srt", overwrite_foreign=False)
+    srt = video.with_name(EN)
+    srt.write_bytes(srt.read_bytes().replace(b"How are you?", b"How do you do?"))
+    backend = LocalBackend(gemma(), Tools.find(), KeyRing(environ={}),
+                           Cache(tmp_path / "cache", max_bytes=10**9))
+    ep = backend.open(str(video))
+    body = ep.sidecar.renditions()[ep.heads["en"]].body
+    assert (body["engine"], body["model"], body["payload"].get("glossary_sha")) == (
+        "external", "gemma", sha)
+    assert en_stale(ep) == [False, False, False]
+    assert en_stale(edit(backend, ep, op="set_text", cue=sid(2), text="はい")) == [
+        False, False, True]
+
+
+def test_vid2sub_translate_stale_only_still_keeps_a_track_edited_outside(video, monkeypatch):
+    srt = video.with_name(EN)
+    srt.write_bytes(srt.read_bytes().replace(b"How are you?", b"How do you do?"))
+    result = cli_translate(video, monkeypatch, fresh=False)
+    assert result.kept == ["en"] and store.load(video)[0].head("en").by == "external"
+    assert "How do you do?" in srt.read_text(encoding="utf-8")
+
+
+def test_a_line_reworded_and_retimed_outside_is_kept_as_a_persons_edit(backend, video):
+    srt = video.with_name(EN)
+    srt.write_text(srt.read_text(encoding="utf-8").replace(
+        "00:00:03,600 --> 00:00:06,600\nHow are you?",
+        "00:00:04,100 --> 00:00:06,600\nHow have you been?"), encoding="utf-8")
+    ep = backend.open(str(video))
+    (fixed,) = [c for c in ep.tracks.translations["en"] if c.text == "How have you been?"]
+    assert fixed.flags == ("edited",)  # so Retranslate stale never replaces it (§13.4)
+```
+
+- [ ] **Step 27: Run them; watch them fail.** `uv run pytest tests/test_store.py
+  tests/test_backend_save.py -q`. Expected: `6 failed, 50 passed`:
+  `test_an_outside_edit_to_a_file_from_an_older_version_diverges_from_the_head`
+  (`E       AssertionError: assert False`, at `isinstance(head, Conflict)`),
+  `test_a_failed_write_leaves_the_file_counted_as_the_version_it_still_holds`
+  (`E       AssertionError: assert ('r_…') == ('r_…')`),
+  `test_an_outside_edit_to_a_file_a_save_couldnt_write_diverges_from_the_save`
+  (`E       AssertionError: assert set() == {'ja'}`),
+  `test_an_outside_edit_keeps_the_glossary_and_model_its_translation_was_made_with`
+  (`E       AssertionError: assert ('external', None, None) == ('external', ...', '7537b9fd')`),
+  `test_a_line_reworded_and_retimed_outside_is_kept_as_a_persons_edit`
+  (`E       AssertionError: assert () == ('edited',)`), and M1's
+  `test_a_write_interrupted_after_its_record_is_not_taken_for_an_outside_edit`, whose one changed
+  line now asserts what the file holds (`E       AssertionError: assert '…' == '…'`).
+- [ ] **Step 28: Write the code,** in `src/vid2sub/store.py`.
+  Replace the module docstring's last sentence
+
+```python
+ours edited since vid2sub wrote it is never overwritten until the edit has been recorded as a
+version (controller ruling, Task 28).
+"""
+```
+
+  with
+
+```python
+ours edited since vid2sub wrote it is never overwritten until the edit has been recorded as a
+version (controller ruling, Task 28). That version replaces the one its file was written from, not
+whatever head is current, so an edit to a file the head has moved on from diverges from the head,
+a conflict the person resolves (spec §14.4); and a write that fails puts back the file's previous
+projection record, so the file still counts as the version it holds. The external version keeps
+the glossary hash and model of the version its file was written from, since a text edit changes
+neither (§13.4), and every line the person changed or added is `edited`, so it is never replaced
+automatically (Phase 2, Task 6).
+"""
+```
+
+  In `project`, replace
+
+```python
+    sidecar = append(video, header, [record])
+    safe_write(path, data, overwrite=existing is not None)
+    return sidecar, path, True
+```
+
+  with
+
+```python
+    sidecar = append(video, header, [record])
+    try:
+        safe_write(path, data, overwrite=existing is not None)
+    except (OSError, WriteRefused):
+        if previous is not None:  # the file still holds the version `previous` recorded
+            # a finer time than now()'s seconds, so it never merges into the record it copies
+            at = datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+            append(video, header, [previous.model_copy(update={"at": at})])
+        raise
+    return sidecar, path, True
+```
+
+  In `check_external`'s docstring, replace
+
+```python
+    An unreadable or emptied file is neither adopted nor touched, so `project` later refuses it
+    as `EditedOnDisk`. Two edited files of one track chain their heads rather than diverge.
+    """
+```
+
+  with
+
+```python
+    An unreadable or emptied file is neither adopted nor touched, so `project` later refuses it
+    as `EditedOnDisk`. The new version's head replaces the version the file was written from, so
+    if the head has moved on since, the two diverge (spec §14.4); two edited files of one track
+    chain their heads rather than diverge.
+    """
+```
+
+  In `align_ids`, replace
+
+```python
+        if match is None:
+            out.append(Cue(id=new_cue_id(taken), start_ms=p.start_ms, end_ms=p.end_ms,
+                           text=p.text))
+```
+
+  with
+
+```python
+        if match is None:  # a line the person added, or reworded and retimed: theirs
+            out.append(Cue(id=new_cue_id(taken), start_ms=p.start_ms, end_ms=p.end_ms,
+                           text=p.text, flags=("edited",)))
+```
+
+  In `check_external`, replace
+
+```python
+        body = cues_body(align_ids(parsed, projected), language=language, script=script,
+                         engine="external", model=None, version=f"external@{digest[:12]}",
+                         created_at=now(), inputs={"file_sha256": digest},
+                         meta={"file": name, "role": projected_body.get("meta", {}).get("role")})
+        rec = make_rendition(
+```
+
+  with
+
+```python
+        body = cues_body(align_ids(parsed, projected), language=language, script=script,
+                         engine="external", model=projected_body.get("model"),
+                         version=f"external@{digest[:12]}", created_at=now(),
+                         inputs={"file_sha256": digest},
+                         meta={"file": name, "role": projected_body.get("meta", {}).get("role")},
+                         glossary_sha=projected_body.get("payload", {}).get("glossary_sha"))
+        rec = make_rendition(
+```
+
+  and in its loop, replace
+
+```python
+        if proj.track not in latest:
+            head = sidecar.head(proj.track)
+            if isinstance(head, HeadRecord):
+                latest[proj.track] = head.rendition
+```
+
+  with
+
+```python
+        latest.setdefault(proj.track, proj.rendition)
+```
+
+- [ ] **Step 29: Run the checks; they pass.** `uv run pytest tests/test_store.py
+  tests/test_backend_save.py tests/test_pipeline.py tests/test_cli_more.py -q` first (every M1
+  external-edit test passes unchanged but the one line above), then the guard checks, then
+  `make check`. **Guard checks** (revert one, run `uv run pytest tests/test_store.py
+  tests/test_backend_save.py -q`, restore it, then the next):
+  1. *An outside edit never silently replaces a newer head:* replace
+     `latest.setdefault(proj.track, proj.rendition)` with M1's `if proj.track not in latest:`,
+     `head = sidecar.head(proj.track)`, `if isinstance(head, HeadRecord):`,
+     `latest[proj.track] = head.rendition`: the two outside-edit tests and the failed-write test
+     fail, `3 failed, 53 passed`.
+  2. *A failed write leaves the file counted as what it holds:* replace
+     `append(video, header, [previous.model_copy(update={"at": at})])` with `pass`: the
+     failed-write test, the editor test and M1's interrupted-write test fail, `3 failed, 53
+     passed`.
+  3. *A text edit keeps the model:* in `check_external`, change `model=projected_body.get(
+     "model"),` to `model=None,`: `FAILED tests/test_backend_save.py::test_an_outside_edit_keeps_the_glossary_and_model_its_translation_was_made_with`,
+     `1 failed, 55 passed`.
+  4. *A person's added line is theirs:* in `align_ids`, drop `, flags=("edited",)`: `FAILED
+     tests/test_backend_save.py::test_a_line_reworded_and_retimed_outside_is_kept_as_a_persons_edit`,
+     `1 failed, 55 passed`.
+
+  `make check`. Expected: `694 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
+  `no leaks found`.
+- [ ] **Step 30: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(store): 🤖 an outside edit diverges from a newer head, keeps its glossary and model, and marks the person's lines edited
+
+Escaped from M1 Task 28 (no tier: built before this workflow), found by
+Task 6's Tier 1 review. Spec §14.4: two heads neither of which descends
+from the other are a conflict the person resolves; §15.3: an outside edit
+comes back as an external version; §13.4: a translation is stale when its
+source, the glossary's hash or the model changed, and one the user edited
+is never replaced automatically.
+
+- store.check_external made the external version's head replace the
+  track's current head, so an edit to a file the head had moved on from
+  silently replaced the newer version. It now replaces the version the
+  file was written from (proj.rendition); two edited files of one track
+  still chain, starting from that version. When the file was written
+  from the current head, which is the usual case, nothing changes.
+- store.project appends a file's projection record before writing it
+  (so an interrupted write is never taken for a person's edit), so after
+  a failed write the latest record named a version the file never held,
+  and the fix above alone wouldn't help: a Save whose file write failed,
+  then an outside edit, then any M1 command still replaced the editor's
+  version. A write that fails with OSError or WriteRefused now appends
+  the previous record again (at a microsecond time, so it never merges
+  into the record it copies), and the file counts as the version it
+  holds.
+- The external version had model None and no glossary_sha, so one typo
+  fixed in en.srt made every English cue stale (§13.4's model and
+  glossary legs) and Retranslate stale would redo every unedited one. It
+  now copies the model and payload.glossary_sha of the version its file
+  was written from, as editor versions copy their head's: a text edit
+  changes neither.
+- align_ids flagged a changed line `edited` only when it kept its times
+  (within 100 ms); a line the person added, or reworded and retimed, got
+  no flag and no src, so Retranslate stale could replace it through the
+  time-overlap rule. Such lines are now `edited` too.
+
+M1's test_a_write_interrupted_after_its_record_is_not_taken_for_an_
+outside_edit asserted the old record (sha256 != the old bytes'); it now
+asserts the record names what the file holds (==). Everything else in
+that test, and every other M1 external-edit test, passes unchanged.
+`vid2sub translate --stale-only` after an outside edit to a translation
+track still keeps the whole track (its head isn't auto): checked by
+test_vid2sub_translate_stale_only_still_keeps_a_track_edited_outside.
+
+The new tests failed first with: assert False (isinstance(head,
+Conflict)) for test_an_outside_edit_to_a_file_from_an_older_version_
+diverges_from_the_head; assert ('r_…') == ('r_…') for test_a_failed_
+write_leaves_the_file_counted_as_the_version_it_still_holds; assert set()
+== {'ja'} for test_an_outside_edit_to_a_file_a_save_couldnt_write_
+diverges_from_the_save; assert ('external', None, None) == ('external',
+'gemma', '7537b9fd') for test_an_outside_edit_keeps_the_glossary_and_
+model_its_translation_was_made_with; assert () == ('edited',) for test_a_
+line_reworded_and_retimed_outside_is_kept_as_a_persons_edit. Guards
+checked by reverting each: with the head replacing the current head, or
+with no record restored, three fail; without the copy, or without the
+flag, one fails.
+
+Docs read: none beyond the code (store.project, check_external,
+align_ids, projected_digests; subs.sidecar.Sidecar.add, which merges
+records by content; pipeline._translate_targets).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 6
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/store.py tests/test_store.py tests/test_backend_save.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 31: Write the failing test:** a term added at Save makes every translation stale
+  straight away, as it does while it waits and on the next open (spec §13.4; M1 decides it the
+  same way, and this is intended, not a side effect).
+  In `tests/test_backend_save.py`, directly above `def test_a_new_glossary_is_made_when_there_is_none(`, add (each function followed by two blank lines):
+
+```python
+def every_translation_stale(ep) -> bool:
+    flags = [c["flags"] for row in views.episode_view(ep, video_url=None, audio_url=None)["rows"]
+             for c in row["tr"]["en"]["cues"]]
+    return bool(flags) and all("stale" in f for f in flags)
+
+
+def test_a_term_added_at_save_makes_every_translation_stale_as_intended(backend, video):
+    """Spec §13.4: the glossary's hash is part of what a translation was made with, so once a
+    term is added every translation made without it is stale, as M1 decides it too."""
+    ep = backend.open(str(video))
+    assert not every_translation_stale(ep)
+    ep = edit(backend, ep, op="glossary_add", term="工藤新一", translation="Shinichi Kudo")
+    assert every_translation_stale(ep)  # already, while the term waits for Save
+    saved, _ = backend.save(ep, formats=["srt"])
+    assert saved.glossary == parse_glossary(video.with_name(GLOSSARY).read_text(encoding="utf-8"))
+    assert every_translation_stale(saved) and every_translation_stale(backend.open(str(video)))
+```
+
+- [ ] **Step 32: Run it; watch it fail.** `uv run pytest tests/test_backend_save.py -q`.
+  Expected: `E       AssertionError: assert Glossary(desc...='', terms=()) == Glossary(desc...ichi
+  Kudo'),))` (the saved episode still held the glossary as it was at open) and `1 failed, 35
+  passed`.
+- [ ] **Step 33: Write the code.**
+  In `src/vid2sub/web/backend.py`'s module docstring, replace
+
+```python
+Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
+so its comments survive. A Save, like a pick, starts the undo history again, because the tracks
+are read back from the sidecar. While a translation is in conflict, no source cue can be split,
+merged or deleted: the unloaded version's cues would keep pointing at ids that are gone.
+```
+
+  with
+
+```python
+Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
+so its comments survive, and the file is read back: a term just added makes every translation
+made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
+starts the undo history again, because the tracks are read back from the sidecar. While a
+translation is in conflict, no source cue can be split, merged or deleted: the unloaded version's
+cues would keep pointing at ids that are gone.
+```
+
+  In `save`, below `adds, glossary_notes = _write_glossary(ep.video, ep.glossary_adds)`, add:
+
+```python
+            try:  # read back, so a term just added makes translations stale (§13.4), as at open
+                glossary: Glossary | None = read_glossary(ep.video)
+            except (GlossaryError, OSError):
+                glossary = None
+```
+
+  and replace
+
+```python
+                        taken=ep.taken | cue_ids(side), glossary_adds=adds)
+```
+
+  with
+
+```python
+                        taken=ep.taken | cue_ids(side), glossary_adds=adds, glossary=glossary)
+```
+
+- [ ] **Step 34: Run the checks; they pass.** `uv run pytest tests/test_backend_save.py -q` first
+  (`36 passed`), then `make check`. Expected: `695 passed, 2 skipped, 4 deselected` twice,
+  `All checks passed!` and `no leaks found`.
+- [ ] **Step 35: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 Save reads the glossary back, so a term just added makes every translation stale, as spec §13.4 intends
+
+After writing the glossary terms, Save reads vid2sub.glossary.toml back
+into the episode's `glossary` (None if it can't be read), as open does.
+So once a term is added, every translation made without it shows stale
+straight away, as it already did while the term waited for Save and as
+it will on the next open: the glossary's hash is part of what a
+translation was made with (spec §13.4), and M1's pipeline decides it the
+same way. This is intended, not a side effect: Retranslate stale then
+redoes those translations with the term, keeping edited ones.
+
+The new test failed first with: AssertionError: assert Glossary(
+description='', terms=()) == Glossary(… ('工藤新一', 'Shinichi Kudo'),))
+(the saved episode still held the glossary as it was at open).
+
+Docs read: none beyond the code (pipeline._translate_targets).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 6
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/backend.py tests/test_backend_save.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 36: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist: secrets (none touched: no key or
+  token is read here); permissions (the glossary and subtitle files go through `safe_write`,
+  never through a link); network exposure (none: no network call in this task); failing closed
+  (a sidecar vid2sub can't read, or one that's gone, stops the Save before anything is written;
+  a conflicted track is never written or re-headed); injection (`parse_op` refuses unknown
+  fields and kinds, coerces nothing, bounds every value, and never echoes one; `resolve` checks
+  the track before naming it); logging (no logger here; every message names files by their bare
+  name only)); the forward review over Tasks 7, 15, 16 and 17 (Task 7's `retranslate` pushes
+  one undo step as `apply` does and reads `_editable`; Task 15's `edit`, `undo` and `redo`
+  inputs call `parse_op`, show a `BadOp` or `EditError` as a notice, and may run `apply` on the
+  event loop (about 0.02 s for a 2,000-cue episode); Task 16's `save` and `resolve` inputs run
+  off the event loop, show `SaveResult` as the `save_result` message (written, foreign, conflicts,
+  notes), offer the conflict picker from the view's `conflicts`, and now take `resolve`'s
+  `(Episode, SaveResult)`; after a Save that added a glossary term, every translation shows
+  stale, which is intended); the docs this task made untrue: the skeleton's `resolve -> Episode`
+  (now `-> tuple[Episode, SaveResult]`, in Task 6's Interfaces and any later listing that names
+  it), and the spec's S29 and S32 rows, which name `tests/test_save.py`: their Proof becomes
+  `tests/test_backend_save.py` (S29: `tests/test_backend_save.py; the exit test`). Then the
+  close, its own commit, holding this plan with this task's boxes ticked and **Now** set to
+  `Task 7: The editor backend: retranslate, open.`, and the spec's S32 set to `built`; S28 and
+  S29 stay `planned` (Task 15's Playwright and the exit test). The message, in
+  `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 6: The editor backend: edits and Save
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 1
+Rounds: none
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 6
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -2537,13 +7803,1293 @@ Co-Authored-By: <the model's own line>
 - Test: `tests/test_backend_retranslate.py`
 
 **Interfaces:**
-- Consumes: `translate.run.translate_cues`, `make_ask`; `catalog` routing; Task 6's `apply`.
-- Produces: `LocalBackend.retranslate(self, ep: Episode, track: str, *,
-  ids: Sequence[str] | None, model: str | None = None, allow_cloud: bool = False,
-  on_batch: Callable[[int, int], None] | None = None) -> Episode` (`ids=None` means every stale
-  or untranslated cue; edited cues are never replaced; undoable)
+- Consumes: `translate.run.translate_cues`, `make_ask`; `detect.candidates`; `catalog.suggest`
+  (M1's translate route); `engines.clients.RunPolicy`, `check_allowed`; `engines.base.EngineError`;
+  `subs.translate_shape.stale_ids`, `untranslated`; `subs.model.check_track`; Task 5's
+  `read_glossary`, `glossary_with`, `track_setup`, `setup_changed`, `_lang`; Task 6's undo stack,
+  `_editable` and `_editor_body`; `tests/fakes.FakeServer`, `chat_responder`, `closed_port_url`.
+- Produces:
+  - `LocalBackend.retranslate(self, ep: Episode, track: str, *, ids: Sequence[str] | None,
+    model: str | None = None, allow_cloud: bool = False,
+    on_batch: Callable[[int, int], None] | None = None) -> Episode`: `ids=None` is every stale
+    or untranslated source cue, never replacing a translation flagged `edited` (spec §13.4);
+    named `ids` are source cue ids, translated whatever their translation (the person asked).
+    One undo step; `ep` itself when there's nothing to translate (no model is asked). The model
+    is `model` (a translation model in `vid2sub.toml`), else the catalog route's pick, as M1
+    picks; a route whose model's server isn't answering raises rather than taking the next
+    model or the cloud. Cloud only when this call's `allow_cloud` is set, checked before
+    anything is sent. It blocks on the model's server, for minutes on a whole episode: the
+    server runs it off Shiny's event loop, holds edits to that episode until it returns, and
+    shows progress from `on_batch(n, of)`, which runs on the calling thread. Raises
+    `EditError` (a track in conflict; an unknown track or cue, named without echoing it),
+    `EngineError` (`.kind`, `.hint`: no usable model, a cloud model not allowed, the server down
+    or refusing), `TranslationFailed` or `GlossaryError`; the episode is unchanged then. With
+    `ids=None`, spec §13.4's other two legs apply as M1 applies them: when the track's glossary
+    hash or model (`track_setup`) isn't the one this call uses (the glossary beside the video with
+    the terms waiting for Save; `model`, else the route's pick), every unedited cue is stale. The
+    model is chosen before the plan, so with none named the route's servers are asked which
+    models they serve even when nothing turns out stale.
+  - `Episode.made_with: dict[str, tuple[str, str | None]] = {}`: the glossary hash and model of
+    a retranslation that redid every unedited cue of a track; `track_setup` returns it while none
+    of the cues it replaced is back (an undo), so the view stops flagging the track and Save
+    records that pair in the editor version (`_editor_body` takes `setup=track_setup(ep,
+    track)`). Save and a pick clear it.
+  - `backend.retranslation(source: Sequence[Cue], cues: Sequence[Cue],
+    ids: Sequence[str] | None, *, everything: bool = False) -> tuple[list[str], set[str]]`
+    (pure; `everything`: every cue stale, for the two legs above; returns the source ids to
+    translate, in order, and the translation ids they replace, in whole groups so the result
+    never overlaps; with `ids=None`, cues an edited translation would have to give up are left
+    out)
 
-<!-- steps: written in the next pass -->
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing test,** `tests/test_backend_retranslate.py`:
+
+```python
+import re
+
+import pytest
+from episodes import ENGLISH, LINES, make_episode, sid, tid, translation_cues, write_track
+from fakes import FakeServer, chat_responder, closed_port_url
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+from vid2sub import store
+from vid2sub.cache import Cache
+from vid2sub.catalog import Candidate
+from vid2sub.config import Config, Endpoint, ModelEntry
+from vid2sub.engines.base import EngineError
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.subs.edit import EditError
+from vid2sub.subs.model import Cue, check_track
+from vid2sub.subs.translate_shape import src_sha
+from vid2sub.web import backend as web_backend
+from vid2sub.web.backend import LocalBackend
+from vid2sub.web.ops import parse_op
+
+pytestmark = pytest.mark.media
+GEMMA = ModelEntry(catalog="gemma-4-26b-a4b", endpoint="spark", model="gemma", task="translate",
+                   local=True)
+
+
+def config(spark: str = "http://127.0.0.1:9/v1", cloud: str | None = None) -> Config:
+    endpoints = {"spark": Endpoint(base_url=spark)}
+    models = {"gemma": GEMMA}
+    if cloud:
+        endpoints["openai"] = Endpoint(base_url=cloud)
+        models["cloud"] = ModelEntry(catalog="openai-gpt", endpoint="openai", model="gpt",
+                                     task="translate", api="completions")
+    return Config(endpoints=endpoints, models=models)
+
+
+def make_backend(tmp_path, cfg: Config) -> LocalBackend:
+    return LocalBackend(cfg, Tools.find(), KeyRing(environ={}),
+                        Cache(tmp_path / "cache", max_bytes=10**9))
+
+
+@pytest.fixture
+def asked(monkeypatch) -> list[list[str]]:
+    """The source cue ids each batch asked the model to translate; it answers 'EN <id>'. The
+    server is there and lists gemma, so the route picks it without a request."""
+    batches: list[list[str]] = []
+
+    def make_ask(*args, **kwargs):
+        def ask(system, prompt, model):
+            ids = re.findall(r"^\[(\S+)\] \(max", prompt, flags=re.MULTILINE)
+            batches.append(ids)
+            return model.model_validate({"items": [{"src": [i], "text": f"EN {i}"} for i in ids]})
+        return ask
+
+    monkeypatch.setattr(web_backend, "make_ask", make_ask)
+    monkeypatch.setattr(web_backend.detecting, "candidates", lambda config, keys, **kw: [
+        Candidate("gemma", "gemma-4-26b-a4b", "endpoint", True)])
+    return batches
+
+
+@pytest.fixture
+def backend(tmp_path) -> LocalBackend:
+    return make_backend(tmp_path, config())
+
+
+@pytest.fixture
+def video(tmp_path):
+    return make_episode(tmp_path / "show")
+
+
+def edit(backend, ep, **data):
+    return backend.apply(ep, parse_op(data))
+
+
+def en(ep) -> list[tuple[str, str]]:
+    return [(c.id, c.text) for c in ep.tracks.translations["en"]]
+
+
+def spanning(video, *, edited: bool = False) -> None:
+    """The en track as one cue for sid(0) and one covering sid(1) and sid(2) together."""
+    head = store.load(video)[0].head("en").rendition
+    first = translation_cues(_source(video))[0]
+    both = Cue(id=tid(9), start_ms=3600, end_ms=10_200, text="How are you? Fine.",
+               src=(sid(1), sid(2)), src_sha=src_sha([LINES[1], LINES[2]]),
+               flags=("edited",) if edited else ())
+    write_track(video, "en", [first, both], role="translation", replaces=head)
+
+
+def _source(video):
+    return store.current_cues(store.load(video)[0], "ja")[1]
+
+
+# S30: Retranslate stale (spec §13.4)
+
+
+def test_retranslating_stale_redoes_only_the_cues_whose_source_changed(backend, video, asked):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(1), text="お元気ですか")
+    out = backend.retranslate(ep, "en", ids=None)
+    assert asked == [[sid(1)]]
+    (new,) = [c for c in out.tracks.translations["en"] if c.id not in (tid(0), tid(2))]
+    assert en(out) == [(tid(0), ENGLISH[0]), (new.id, f"EN {sid(1)}"), (tid(2), ENGLISH[2])]
+    assert new.src == (sid(1),) and new.src_sha == src_sha(["お元気ですか"])
+    assert new.id in out.taken and new.id not in ep.taken
+
+
+def test_an_edited_translation_is_kept_when_retranslating_stale(backend, video, asked):
+    ep = edit(backend, backend.open(str(video)), op="set_translation_text", track="en",
+              cue=tid(1), text="How have you been?")
+    ep = edit(backend, ep, op="set_text", cue=sid(1), text="お元気ですか")
+    ep = edit(backend, ep, op="set_text", cue=sid(2), text="はい")
+    out = backend.retranslate(ep, "en", ids=None)
+    assert asked == [[sid(2)]]
+    assert en(out)[:2] == [(tid(0), ENGLISH[0]), (tid(1), "How have you been?")]
+    assert en(out)[2][1] == f"EN {sid(2)}"
+
+
+def test_an_inserted_cue_is_translated_as_untranslated(backend, video, asked):
+    ep = edit(backend, backend.open(str(video)), op="insert", start_ms=3100, end_ms=3500,
+              text="えっ")
+    inserted = ep.tracks.source[1].id
+    out = backend.retranslate(ep, "en", ids=None)
+    assert asked == [[inserted]]
+    assert [t for _, t in en(out)] == [ENGLISH[0], f"EN {inserted}", *ENGLISH[1:]]
+
+
+def test_a_cue_inserted_inside_a_translation_spanning_two_cues_is_translated_with_them(
+        backend, video, asked):
+    spanning(video)
+    ep = edit(backend, backend.open(str(video)), op="insert", start_ms=6700, end_ms=7100,
+              text="えっ")
+    inserted = ep.tracks.source[2].id
+    out = backend.retranslate(ep, "en", ids=None)
+    assert asked == [[sid(1), inserted, sid(2)]]
+    track = out.tracks.translations["en"]
+    check_track(track)
+    assert [c.src for c in track] == [(sid(0),), (sid(1),), (inserted,), (sid(2),)]
+    assert tid(9) not in {c.id for c in track}
+
+
+def test_an_edited_translation_spanning_an_inserted_cue_keeps_it_untranslated(backend, video,
+                                                                             asked):
+    spanning(video, edited=True)
+    ep = edit(backend, backend.open(str(video)), op="insert", start_ms=6700, end_ms=7100,
+              text="えっ")
+    assert backend.retranslate(ep, "en", ids=None) is ep and asked == []
+
+
+def test_named_cues_are_retranslated_even_an_edited_one(backend, video, asked):
+    ep = edit(backend, backend.open(str(video)), op="set_translation_text", track="en",
+              cue=tid(0), text="Morning!")
+    out = backend.retranslate(ep, "en", ids=[sid(0)])
+    assert asked == [[sid(0)]] and en(out)[0][1] == f"EN {sid(0)}"
+    assert backend.undo(out).tracks == ep.tracks
+
+
+def test_a_named_cue_brings_the_other_cues_its_translation_covers(backend, video, asked):
+    spanning(video, edited=True)
+    out = backend.retranslate(backend.open(str(video)), "en", ids=[sid(1)])
+    assert asked == [[sid(1), sid(2)]]
+    assert [c.src for c in out.tracks.translations["en"]] == [(sid(0),), (sid(1),), (sid(2),)]
+
+
+def test_with_nothing_stale_no_model_is_asked(backend, video, asked):
+    ep = backend.open(str(video))
+    assert backend.retranslate(ep, "en", ids=None) is ep and asked == []
+    assert backend.retranslate(ep, "en", ids=[]) is ep
+
+
+def test_a_retranslation_is_one_undo_step_and_reports_each_batch(backend, video, asked):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(1), text="お元気ですか")
+    progress = []
+    out = backend.retranslate(ep, "en", ids=None, on_batch=lambda n, of: progress.append((n, of)))
+    assert progress == [(1, 1)]
+    assert len(out.undo) == len(ep.undo) + 1 and out.redo == []
+    assert backend.undo(out).tracks == ep.tracks
+
+
+def test_a_track_in_conflict_or_an_unknown_one_cant_be_retranslated(backend, video, asked):
+    head = store.load(video)[0].head("en").rendition
+    for text in ("Mine", "Theirs"):
+        write_track(video, "en", [Cue(id=tid(0), start_ms=0, end_ms=3000, text=text,
+                                      src=(sid(0),))], role="translation", replaces=head)
+    ep = backend.open(str(video))
+    with pytest.raises(EditError, match="the en track has two versions: pick one"):
+        backend.retranslate(ep, "en", ids=None)
+    with pytest.raises(EditError, match="^there's no such track$"):
+        backend.retranslate(ep, "<b>en</b>", ids=None)
+    with pytest.raises(EditError, match="^there is no zh-Hant track$"):
+        backend.retranslate(ep, "zh-Hant", ids=None)
+    assert asked == []
+
+
+def test_a_named_cue_that_isnt_in_the_source_is_refused_without_echoing_it(backend, video, asked):
+    with pytest.raises(EditError, match="^one of those cues isn't in the source track$"):
+        backend.retranslate(backend.open(str(video)), "en", ids=["<script>"])
+
+
+# The model: chosen as M1 chooses it, cloud only when this call allows it (spec §7.2, §11.2)
+
+
+def test_a_named_model_must_be_a_translation_model(backend, video, asked):
+    with pytest.raises(EngineError, match="isn't a translation model in vid2sub.toml"):
+        backend.retranslate(backend.open(str(video)), "en", ids=[sid(0)], model="nope")
+
+
+def test_the_route_picks_a_model_and_the_request_goes_through_the_client_factory(tmp_path,
+                                                                                video):
+    def responder(req):
+        if req.path.endswith("/models"):
+            return 200, {"object": "list", "data": [{"id": "gemma", "object": "model"}]}, {}
+        return chat_responder(req)
+
+    with FakeServer(responder=responder) as srv:
+        backend = make_backend(tmp_path, config(spark=srv.url))
+        out = backend.retranslate(backend.open(str(video)), "en", ids=[sid(1)])
+        chats = [r for r in srv.requests if r.path.endswith("/chat/completions")]
+    assert out.tracks.translations["en"][1].text == f"EN {sid(1)}"
+    assert len(chats) == 1 and chats[0].json()["model"] == "gemma"
+    assert "Show" not in chats[0].body.decode("utf-8")  # no file name or title (spec §7.1)
+
+
+def test_a_cloud_model_is_used_only_when_this_retranslation_allows_it(tmp_path, video):
+    with FakeServer(responder=chat_responder) as srv:
+        backend = make_backend(tmp_path, config(cloud=srv.url))
+        ep = backend.open(str(video))
+        with pytest.raises(EngineError) as err:
+            backend.retranslate(ep, "en", ids=[sid(0)], model="cloud")
+        assert err.value.kind == "cloud_not_allowed" and srv.requests == []
+        out = backend.retranslate(ep, "en", ids=[sid(0)], model="cloud", allow_cloud=True)
+        assert len(srv.requests) == 1
+    assert out.tracks.translations["en"][0].text == f"EN {sid(0)}"
+
+
+def test_a_down_server_never_falls_back_to_another_model_or_the_cloud(tmp_path, video):
+    with FakeServer(responder=chat_responder) as srv:
+        backend = make_backend(tmp_path, config(spark=closed_port_url(), cloud=srv.url))
+        ep = backend.open(str(video))
+        with pytest.raises(EngineError) as err:
+            backend.retranslate(ep, "en", ids=[sid(0)], allow_cloud=True)
+        assert err.value.kind == "connection" and srv.requests == []
+
+
+# The plan itself, on any track: whole groups, so the result never overlaps
+
+
+@st.composite
+def tracks(draw):
+    """Source cues with gaps; translations as contiguous groups, some edited, some stale, some
+    left out (untranslated), and some cues sitting inside a group's span without being in its
+    src, as a cue inserted between two that one translation covers."""
+    source, t = [], 0
+    for i in range(draw(st.integers(1, 12))):
+        t += draw(st.integers(0, 500))
+        dur = draw(st.integers(100, 2000))
+        source.append(Cue(id=f"s{i}", start_ms=t, end_ms=t + dur, text=f"w{i}"))
+        t += dur
+    cues, k = [], 0
+    while k < len(source):
+        size = draw(st.integers(1, 3))
+        group = source[k:k + size]
+        k += size
+        if draw(st.booleans()) and len(group) == 3:
+            src = (group[0].id, group[2].id)  # the middle one was inserted later
+        elif draw(st.integers(0, 4)) == 0:
+            continue  # untranslated
+        else:
+            src = tuple(c.id for c in group)
+        texts = [c.text for c in source if c.id in src]
+        cues.append(Cue(id=f"t{k}", start_ms=group[0].start_ms, end_ms=group[-1].end_ms,
+                        text="T", src=src,
+                        src_sha=src_sha(texts) if draw(st.booleans()) else "stale",
+                        flags=("edited",) if draw(st.integers(0, 3)) == 0 else ()))
+    ids = draw(st.none() | st.lists(st.sampled_from([c.id for c in source]), max_size=4))
+    return source, cues, ids
+
+
+@settings(max_examples=300, deadline=None)
+@given(tracks(), st.randoms())
+def test_a_retranslation_never_overlaps_never_covers_a_cue_twice_and_keeps_edits(case, rnd):
+    source, cues, ids = case
+    check_track(cues)
+    wanted, replaced = web_backend.retranslation(source, cues, ids)
+    by_id = {c.id: c for c in source}
+    order = [c.id for c in source]
+    assert wanted == sorted(set(wanted), key=order.index)
+    new, run = [], []
+    for cid in wanted + [None]:  # the model may group any adjacent cues of a run
+        if run and (cid is None or order.index(cid) != order.index(run[-1]) + 1
+                    or rnd.random() < 0.5):
+            new.append(Cue(id=f"n{len(new)}", start_ms=by_id[run[0]].start_ms,
+                           end_ms=by_id[run[-1]].end_ms, text="N", src=tuple(run)))
+            run = []
+        if cid is not None:
+            run.append(cid)
+    kept = [c for c in cues if c.id not in replaced]
+    result = sorted(kept + new, key=lambda c: (c.start_ms, c.end_ms))
+    check_track(result)
+    covered = [i for c in result for i in c.src or ()]
+    assert len(covered) == len(set(covered))
+    if ids is None:
+        assert not {c.id for c in cues if "edited" in c.flags} & replaced
+    else:
+        assert set(ids) <= set(wanted)  # a named cue is always translated
+```
+
+- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_backend_retranslate.py -q`.
+  Expected: `E       AttributeError: <module 'vid2sub.web.backend' from
+  '…/src/vid2sub/web/backend.py'> has no attribute 'make_ask'` (twelve times, from the `asked`
+  fixture), `E           AttributeError: 'LocalBackend' object has no attribute 'retranslate'`,
+  `E       AttributeError: module 'vid2sub.web.backend' has no attribute 'retranslation'`, and
+  `4 failed, 12 errors`.
+- [ ] **Step 3: Write the code.**
+  In `src/vid2sub/web/backend.py`, replace the module docstring
+
+```python
+"""The editor's backend: opening an episode M1 made, editing it and saving it (spec §19.1, §20).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
+changed, and every cue of it is when the glossary's hash or the translation model differs from
+the ones its head was made with; so the episode holds the glossary beside the video and the model
+Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
+taking every configured local server to answer (no request is made at open). Edits run
+through the pure `subs.edit` rules, so they exist once (§20); each one that changes something
+pushes the tracks and the pending glossary adds onto the undo stack (the last 200 steps) and
+clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
+source is, until a person picks a version.
+
+Save (spec §14.5, §14.6) first records any outside edit to a subtitle file as M1 does, so an
+edit made in another program since the open is a version too, never something a later open puts
+over the editor's. Then it appends one `editor` version per changed track, whose parent is the
+head the editor's cues came from, and a head that replaces that same head: never the head on disk
+now, so a CLI run, another tab or that outside edit leaves two heads, a conflict both versions
+survive, rather than one silently replacing the other (Review Focus 2 and 4). A track whose head
+on disk already holds exactly these cues (the same Save sent twice) gets nothing. The records go
+in one `store.append`, compare-and-swap with a union merge, so no other writer's records are
+lost. Only then are the files written, through `store.project` with `overwrite_foreign` off:
+someone else's file is left alone and reported (§6.6, §15.3), and a track in conflict isn't
+written until a person picks a version with `resolve`, the only thing that moves a head on a
+conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
+written is a note, and the episode moves to the new heads either way. Saves and picks on one
+video take turns within this engine, so two picks at once can't replace each other in a cycle.
+Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
+so its comments survive, and the file is read back: a term just added makes every translation
+made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
+starts the undo history again, because the tracks are read back from the sidecar. While a
+translation is in conflict, no source cue can be split, merged or deleted: the unloaded version's
+cues would keep pointing at ids that are gone.
+"""
+```
+
+  with
+
+```python
+"""The editor's backend: opening, editing, retranslating and saving an episode (spec §19.1, §20).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
+changed, and every cue of it is when the glossary's hash or the translation model differs from
+the ones its head was made with; so the episode holds the glossary beside the video and the model
+Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
+taking every configured local server to answer (no request is made at open). Edits run
+through the pure `subs.edit` rules, so they exist once (§20); each one that changes something
+pushes the tracks and the pending glossary adds onto the undo stack (the last 200 steps) and
+clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
+source is, until a person picks a version.
+
+Save (spec §14.5, §14.6) first records any outside edit to a subtitle file as M1 does, so an
+edit made in another program since the open is a version too, never something a later open puts
+over the editor's. Then it appends one `editor` version per changed track, whose parent is the
+head the editor's cues came from, and a head that replaces that same head: never the head on disk
+now, so a CLI run, another tab or that outside edit leaves two heads, a conflict both versions
+survive, rather than one silently replacing the other (Review Focus 2 and 4). A track whose head
+on disk already holds exactly these cues (the same Save sent twice) gets nothing. The records go
+in one `store.append`, compare-and-swap with a union merge, so no other writer's records are
+lost. Only then are the files written, through `store.project` with `overwrite_foreign` off:
+someone else's file is left alone and reported (§6.6, §15.3), and a track in conflict isn't
+written until a person picks a version with `resolve`, the only thing that moves a head on a
+conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
+written is a note, and the episode moves to the new heads either way. Saves and picks on one
+video take turns within this engine, so two picks at once can't replace each other in a cycle.
+Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
+so its comments survive, and the file is read back: a term just added makes every translation
+made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
+starts the undo history again, because the tracks are read back from the sidecar. While a
+translation is in conflict, no source cue can be split, merged or deleted: the unloaded version's
+cues would keep pointing at ids that are gone.
+
+Retranslate (spec §13.4, §20) redoes the stale and untranslated cues, or the cues a person names,
+as one undoable edit. The model is the one named, else the one M1's catalog route picks; a cloud
+model only when this call allows it (§7.2), checked before anything is sent, and a route whose
+model's server is down is never passed over for the next one or the cloud (§17.4). Retranslating
+stale never replaces a translation a person edited (§13.4); naming a cue does, since that is the
+person asking. Translations are replaced in whole groups: every source cue a replaced translation
+covers is translated with it, and a translation whose time overlaps the cues being translated is
+replaced too (a cue inserted inside a translation that spans two cues), so the track never
+overlaps; where that would replace an edited translation, those cues are left as they are.
+"""
+```
+
+  Replace the imports, from `from __future__ import annotations` down to `from vid2sub.web import ops`,
+
+```python
+from __future__ import annotations
+
+import codecs
+import os
+import secrets
+import tempfile
+import threading
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Literal
+
+from vid2sub import __version__, store
+from vid2sub import detect as detecting
+from vid2sub.cache import Cache
+from vid2sub.catalog import suggest
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.identity import identify
+from vid2sub.media.probe import Probe, ProbeError, pick_track, probe
+from vid2sub.media.tools import ToolFailed, ToolMissing, Tools
+from vid2sub.pipeline import MEDIA_SUFFIXES, video_change
+from vid2sub.security import InputRefused, WriteRefused, resolve_input, safe_write
+from vid2sub.subs import edit, naming
+from vid2sub.subs.edit import SOURCE, EditError, Tracks
+from vid2sub.subs.glossary import (
+    EMPTY_GLOSSARY,
+    Glossary,
+    GlossaryError,
+    add_terms,
+    parse_glossary,
+)
+from vid2sub.subs.model import Cue, Word
+from vid2sub.subs.rendition import cues_body, cues_from_body, transcript_from_body
+from vid2sub.subs.sidecar import (
+    Conflict,
+    Header,
+    HeadRecord,
+    RenditionRecord,
+    Sidecar,
+    SidecarError,
+    make_rendition,
+)
+from vid2sub.web import ops
+```
+
+  with
+
+```python
+from __future__ import annotations
+
+import codecs
+import os
+import secrets
+import tempfile
+import threading
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Literal
+
+from vid2sub import __version__, store
+from vid2sub import detect as detecting
+from vid2sub.cache import Cache
+from vid2sub.catalog import suggest
+from vid2sub.config import Config
+from vid2sub.engines.base import EngineError
+from vid2sub.engines.clients import KeyRing, RunPolicy, check_allowed
+from vid2sub.media.identity import identify
+from vid2sub.media.probe import Probe, ProbeError, pick_track, probe
+from vid2sub.media.tools import ToolFailed, ToolMissing, Tools
+from vid2sub.pipeline import MEDIA_SUFFIXES, video_change
+from vid2sub.security import InputRefused, WriteRefused, resolve_input, safe_write
+from vid2sub.subs import edit, naming
+from vid2sub.subs.edit import SOURCE, EditError, Tracks
+from vid2sub.subs.glossary import (
+    EMPTY_GLOSSARY,
+    Glossary,
+    GlossaryError,
+    add_terms,
+    parse_glossary,
+)
+from vid2sub.subs.model import Cue, TrackError, Word, check_track
+from vid2sub.subs.rendition import cues_body, cues_from_body, transcript_from_body
+from vid2sub.subs.sidecar import (
+    Conflict,
+    Header,
+    HeadRecord,
+    RenditionRecord,
+    Sidecar,
+    SidecarError,
+    make_rendition,
+)
+from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.translate.run import make_ask, translate_cues
+from vid2sub.web import ops
+```
+
+  In `class LocalBackend`, directly above `    def _check_open(self, ep: Episode) -> None:`, add (each method followed by one blank line):
+
+```python
+    def retranslate(self, ep: Episode, track: str, *, ids: Sequence[str] | None,
+                    model: str | None = None, allow_cloud: bool = False,
+                    on_batch: Callable[[int, int], None] | None = None) -> Episode:
+        """`ids=None`: every stale or untranslated source cue, never replacing an edited
+        translation; else those source cues, whatever their translation. One undo step; `ep`
+        itself when there's nothing to translate. Blocks on the model's server. Raises EditError
+        (a track in conflict, an unknown track or cue), EngineError (no usable model, a cloud
+        model this call doesn't allow, the server down or refusing: `.hint` names the fix),
+        TranslationFailed, or GlossaryError (a glossary beside the video vid2sub can't read);
+        nothing changes then."""
+        self._check_open(ep)
+        if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
+            raise EditError("there's no such track")
+        _editable(ep, track)
+        if track not in ep.tracks.translations:
+            raise EditError(f"there is no {track} track")
+        source, cues = ep.tracks.source, ep.tracks.translations[track]
+        wanted, replaced = retranslation(source, cues, ids)
+        if not wanted:
+            return ep
+        lang = _lang(ep.source_key)
+        name = self._translator(lang, model, allow_cloud)
+        entry = self.config.models[name]
+        policy = RunPolicy(allow_cloud)
+        check_allowed(name, entry, self.config, policy)
+        ask = make_ask(name, entry, self.config, policy, self.keys)
+        taken = set(ep.taken)
+        new = translate_cues(source, source_lang=lang, target_track=track,
+                             glossary=glossary_with(read_glossary(ep.video), ep.glossary_adds),
+                             ask=ask, only=wanted, taken=taken, on_batch=on_batch)
+        result = tuple(sorted([c for c in cues if c.id not in replaced] + new,
+                              key=lambda c: (c.start_ms, c.end_ms)))
+        try:
+            check_track(result)
+        except TrackError as err:
+            raise EditError(f"the {track} track would break: {err}") from None
+        tracks = Tracks(source, {**ep.tracks.translations, track: result})
+        return replace(ep, tracks=tracks, taken=taken, redo=[],
+                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+
+    def _translator(self, lang: str, model: str | None, allow_cloud: bool) -> str:
+        """The named model, else the catalog route's pick, as M1's pipeline picks (§11.2). A route
+        whose model's server isn't answering stops here rather than taking the next model."""
+        if model is not None:
+            entry = self.config.models.get(model)
+            if entry is None or entry.task != "translate":
+                raise EngineError("unavailable", "that isn't a translation model in vid2sub.toml",
+                                  hint="`vid2sub models` lists them")
+            return model
+        cands = detecting.candidates(self.config, self.keys)
+
+        def pick(c: list) -> str | None:
+            return suggest(lang, c, "translate", allow_cloud=allow_cloud).model
+
+        hoped = pick([replace(c, available=True, reason="") if c.unreachable else c
+                      for c in cands])
+        if any(c.name == hoped and c.unreachable for c in cands):
+            raise EngineError("connection", "the translation model's server isn't reachable",
+                              hint="is it running? For the Spark: is `make tunnel` running?")
+        s = suggest(lang, cands, "translate", allow_cloud=allow_cloud)
+        if s.model is None:
+            raise EngineError("unavailable", "no usable translation model",
+                              hint="; ".join(f"{n}: {r}" for n, r in s.considered)
+                              or "add one to vid2sub.toml (`vid2sub config init`)")
+        return s.model
+```
+
+  Directly above `def _formats(formats: Sequence[str]) -> list[str]:`, add (each function followed by two blank lines):
+
+```python
+def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str] | None
+                  ) -> tuple[list[str], set[str]]:
+    """The source cue ids to translate, in order, and the translation cue ids they replace.
+
+    Whole groups, so the new cues never overlap the kept ones: a replaced translation brings
+    every source cue it covers, and a translation that covers a cue being translated, or whose
+    time overlaps a run of them, is replaced too. With `ids=None` an edited translation is never
+    replaced; the cues it would have brought in are left out instead."""
+    order = {c.id: k for k, c in enumerate(source)}
+    by_id = {c.id: c for c in source}
+    if ids is None:
+        stale = stale_ids(cues, by_id)
+        wanted = {i for c in cues if c.id in stale and "edited" not in c.flags
+                  for i in c.src or () if i in by_id}
+        wanted |= set(untranslated(list(order), cues))
+    else:
+        if any(i not in by_id for i in ids):
+            raise EditError("one of those cues isn't in the source track")
+        wanted = set(ids)
+    blocked: set[str] = set()
+    while True:
+        chosen = sorted(wanted - blocked, key=order.__getitem__)
+        runs = _runs(chosen, order, by_id)
+        replaced: set[str] = set()
+        grow: set[str] = set()
+        block: set[str] = set()
+        for c in cues:
+            covers = {i for i in c.src or () if i in by_id}
+            hits = [ids_ for start, end, ids_ in runs
+                    if covers & ids_ or (c.start_ms < end and start < c.end_ms)]
+            if not hits:
+                continue
+            if (ids is not None or "edited" not in c.flags) and not covers & blocked:
+                replaced.add(c.id)
+                grow |= covers
+            else:
+                block |= covers.union(*hits)
+        if block - blocked:
+            blocked |= block
+        elif grow - wanted:
+            wanted |= grow
+        else:
+            return chosen, replaced
+
+
+def _runs(chosen: Sequence[str], order: dict[str, int], by_id: dict[str, Cue]
+          ) -> list[tuple[int, int, set[str]]]:
+    """Each run of adjacent source cues: its start, its end and its ids."""
+    runs: list[tuple[int, int, set[str]]] = []
+    last = -2
+    for cid in chosen:
+        c = by_id[cid]
+        if order[cid] == last + 1:
+            start, _, members = runs[-1]
+            runs[-1] = (start, c.end_ms, members | {cid})
+        else:
+            runs.append((c.start_ms, c.end_ms, {cid}))
+        last = order[cid]
+    return runs
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_backend_retranslate.py -q`
+  first (`16 passed`), then the group check, then `make check`. **Group check** (Task 2's author
+  found the hazard: a cue inserted inside a translation that spans two cues): in
+  `retranslation`, change `if covers & ids_ or (c.start_ms < end and start < c.end_ms)]` to
+  `if covers & ids_]`; the run gives `FAILED
+  tests/test_backend_retranslate.py::test_a_cue_inserted_inside_a_translation_spanning_two_cues_is_translated_with_them`
+  (`the en track would break: cue … overlaps cb0000009`), the edited variant, and the property
+  test (`cue n0 overlaps t3`, or another), `3 failed, 13 passed`; restore it. `make check`.
+  Expected: `711 passed, 2 skipped, 4 deselected` twice (the local zone, then UTC),
+  `All checks passed!` and `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the editor retranslates stale cues, or the cues a person names, in whole groups, as one undoable edit
+
+LocalBackend.retranslate(ep, track, *, ids, model=None, allow_cloud=False,
+on_batch=None) (spec §13.4, §20, §7.2; S30). ids=None takes every stale
+source cue (translate_shape.stale_ids) and every untranslated one, never
+replacing a translation flagged edited; named ids are translated whatever
+their translation, since the person asked. backend.retranslation plans
+it in whole groups: a replaced translation brings every source cue it
+covers, and a translation that covers a cue being translated, or whose
+time overlaps a run of them, is replaced too, so a cue inserted inside a
+translation spanning two cues is translated with both and the track never
+overlaps (subs.edit would refuse it); where that would replace an edited
+translation, those cues are left out. The model is the one named (it must
+be a translation model in vid2sub.toml), else the one M1's catalog route
+picks from detect.candidates; a route whose model's server isn't
+answering raises EngineError("connection") rather than taking the next
+model or the cloud (§17.4); a cloud model is used only when this call sets
+allow_cloud, checked with clients.check_allowed before anything is sent;
+make_ask goes through the one client factory. The glossary is read as M1
+reads it, with the terms waiting for Save. translate_cues gets
+taken=ep.taken and on_batch; the result is checked with check_track and
+pushed as one undo step. It blocks on the network: the server calls it
+off Shiny's event loop.
+
+The new test failed first with: AttributeError: <module
+'vid2sub.web.backend'> has no attribute 'make_ask' (12 errors) and
+AttributeError: 'LocalBackend' object has no attribute 'retranslate'.
+With the time-overlap rule removed from retranslation, the two
+inserted-cue tests fail ("the en track would break: cue … overlaps
+cb0000009") and so does the hypothesis property test ("cue n0 overlaps
+t3"), which checks over random tracks (groups, edited, stale, untranslated
+and inserted cues) that the plan never overlaps, never covers a source
+cue twice and, for stale, never replaces an edited cue.
+
+Docs read: none beyond the code (translate.run.make_ask and
+translate_cues, clients.check_allowed and chat, detect.candidates,
+catalog.suggest, pipeline._translator and _candidates_that_work); chatlas
+is reached only through the existing client factory, unchanged.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 7
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/backend.py tests/test_backend_retranslate.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 6: Write the failing tests:** retranslating stale takes spec §13.4's other two legs,
+  the glossary and the model, as M1 does. In `tests/test_backend_retranslate.py`:
+  replace
+
+```python
+from vid2sub.subs.edit import EditError
+```
+
+  with
+
+```python
+from vid2sub.subs.edit import EditError
+from vid2sub.subs.glossary import parse_glossary
+```
+
+  and
+
+```python
+from vid2sub.web import backend as web_backend
+```
+
+  with
+
+```python
+from vid2sub.web import backend as web_backend
+from vid2sub.web import views
+```
+
+  Then directly above the comment `# The model: chosen as M1 chooses it, cloud only when this call allows it (spec §7.2, §11.2)`, add:
+
+```python
+# Spec §13.4's other two legs: a track made with another glossary or model is stale throughout
+
+TERMS = '[terms]\n"工藤新一" = "Shinichi Kudo"\n'
+
+
+def stale_flags(ep) -> list[bool]:
+    return ["stale" in c["flags"]
+            for row in views.episode_view(ep, video_url=None, audio_url=None)["rows"]
+            for c in row["tr"]["en"]["cues"]]
+
+
+def test_retranslating_stale_redoes_every_unedited_cue_when_the_glossary_changed(backend, video,
+                                                                                asked):
+    video.with_name("vid2sub.glossary.toml").write_text(TERMS, encoding="utf-8")
+    ep = edit(backend, backend.open(str(video)), op="set_translation_text", track="en",
+              cue=tid(1), text="How have you been?")
+    out = backend.retranslate(ep, "en", ids=None)
+    assert asked == [[sid(0)], [sid(2)]]
+    assert en(out)[1] == (tid(1), "How have you been?")
+
+
+def test_retranslating_stale_redoes_every_unedited_cue_when_the_model_changed(tmp_path, video,
+                                                                             asked):
+    newer = GEMMA.model_copy(update={"model": "gemma-2"})
+    backend = make_backend(tmp_path, Config(endpoints={"spark": Endpoint(
+        base_url="http://127.0.0.1:9/v1")}, models={"gemma": newer}))
+    backend.retranslate(backend.open(str(video)), "en", ids=None)
+    assert asked == [[sid(0), sid(1), sid(2)]]
+
+
+def test_the_model_leg_compares_with_the_model_this_retranslation_uses(tmp_path, video, asked):
+    other = GEMMA.model_copy(update={"model": "other-model"})
+    backend = make_backend(tmp_path, Config(endpoints={"spark": Endpoint(
+        base_url="http://127.0.0.1:9/v1")}, models={"gemma": GEMMA, "other": other}))
+    ep = backend.open(str(video))
+    assert backend.retranslate(ep, "en", ids=None) is ep and asked == []
+    backend.retranslate(ep, "en", ids=None, model="other")
+    assert asked == [[sid(0), sid(1), sid(2)]]
+
+
+def test_after_retranslating_everything_and_saving_nothing_is_stale_any_more(backend, video,
+                                                                            asked):
+    video.with_name("vid2sub.glossary.toml").write_text(TERMS, encoding="utf-8")
+    ep = backend.open(str(video))
+    assert stale_flags(ep) == [True] * 3
+    out = backend.retranslate(ep, "en", ids=None)
+    assert stale_flags(out) == [False] * 3
+    assert stale_flags(backend.undo(out)) == [True] * 3  # undone: the old glossary's again
+    saved, _ = backend.save(out, formats=["srt"])
+    body = store.load(video)[0].renditions()[saved.heads["en"]].body
+    assert (body["payload"]["glossary_sha"], body["model"]) == (parse_glossary(TERMS).sha(),
+                                                                "gemma")
+    reopened = backend.open(str(video))
+    assert stale_flags(saved) == stale_flags(reopened) == [False] * 3
+    assert backend.retranslate(reopened, "en", ids=None) is reopened and len(asked) == 1
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_backend_retranslate.py
+  -q`. Expected: `E       AssertionError: assert [] == [['ca0000000'], ['ca0000002']]` (the
+  glossary), `E       AssertionError: assert [] == [['ca0000000'... 'ca0000002']]` (twice: the
+  model, and the named model), `E       assert [True, True, True] == [False, False, False]` (after
+  redoing everything), and `4 failed, 16 passed`.
+- [ ] **Step 8: Write the code.**
+  In `src/vid2sub/web/backend.py`, replace the module docstring
+
+```python
+"""The editor's backend: opening, editing, retranslating and saving an episode (spec §19.1, §20).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
+changed, and every cue of it is when the glossary's hash or the translation model differs from
+the ones its head was made with; so the episode holds the glossary beside the video and the model
+Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
+taking every configured local server to answer (no request is made at open). Edits run
+through the pure `subs.edit` rules, so they exist once (§20); each one that changes something
+pushes the tracks and the pending glossary adds onto the undo stack (the last 200 steps) and
+clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
+source is, until a person picks a version.
+
+Save (spec §14.5, §14.6) first records any outside edit to a subtitle file as M1 does, so an
+edit made in another program since the open is a version too, never something a later open puts
+over the editor's. Then it appends one `editor` version per changed track, whose parent is the
+head the editor's cues came from, and a head that replaces that same head: never the head on disk
+now, so a CLI run, another tab or that outside edit leaves two heads, a conflict both versions
+survive, rather than one silently replacing the other (Review Focus 2 and 4). A track whose head
+on disk already holds exactly these cues (the same Save sent twice) gets nothing. The records go
+in one `store.append`, compare-and-swap with a union merge, so no other writer's records are
+lost. Only then are the files written, through `store.project` with `overwrite_foreign` off:
+someone else's file is left alone and reported (§6.6, §15.3), and a track in conflict isn't
+written until a person picks a version with `resolve`, the only thing that moves a head on a
+conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
+written is a note, and the episode moves to the new heads either way. Saves and picks on one
+video take turns within this engine, so two picks at once can't replace each other in a cycle.
+Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
+so its comments survive, and the file is read back: a term just added makes every translation
+made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
+starts the undo history again, because the tracks are read back from the sidecar. While a
+translation is in conflict, no source cue can be split, merged or deleted: the unloaded version's
+cues would keep pointing at ids that are gone.
+
+Retranslate (spec §13.4, §20) redoes the stale and untranslated cues, or the cues a person names,
+as one undoable edit. The model is the one named, else the one M1's catalog route picks; a cloud
+model only when this call allows it (§7.2), checked before anything is sent, and a route whose
+model's server is down is never passed over for the next one or the cloud (§17.4). Retranslating
+stale never replaces a translation a person edited (§13.4); naming a cue does, since that is the
+person asking. Translations are replaced in whole groups: every source cue a replaced translation
+covers is translated with it, and a translation whose time overlaps the cues being translated is
+replaced too (a cue inserted inside a translation that spans two cues), so the track never
+overlaps; where that would replace an edited translation, those cues are left as they are.
+"""
+```
+
+  with
+
+```python
+"""The editor's backend: opening, editing, retranslating and saving an episode (spec §19.1, §20).
+
+The web app's server calls this, never the store directly, so the CLI and the editor share one
+core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
+Pages, is Phase 4's). Phase 2's editor opens only episodes that already have a sidecar: making
+subtitles is `vid2sub run` or the Jobs page. Opening folds in edits made outside vid2sub, as
+every M1 command does (§15.3, S31), and says so in notes that name files only by their bare name
+(§6.8). A track whose heads diverged is in conflict (§14.4): it isn't loaded, and its versions
+are listed for the person to pick; when that is the source, every edit waits for the pick, since
+translations hang off source cues. The spoken words come from the transcript the source was
+built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
+in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
+playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
+changed, and every cue of it is when the glossary's hash or the translation model differs from
+the ones its head was made with; so the episode holds the glossary beside the video and the model
+Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
+taking every configured local server to answer (no request is made at open). Edits run
+through the pure `subs.edit` rules, so they exist once (§20); each one that changes something
+pushes the tracks and the pending glossary adds onto the undo stack (the last 200 steps) and
+clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
+source is, until a person picks a version.
+
+Save (spec §14.5, §14.6) first records any outside edit to a subtitle file as M1 does, so an
+edit made in another program since the open is a version too, never something a later open puts
+over the editor's. Then it appends one `editor` version per changed track, whose parent is the
+head the editor's cues came from, and a head that replaces that same head: never the head on disk
+now, so a CLI run, another tab or that outside edit leaves two heads, a conflict both versions
+survive, rather than one silently replacing the other (Review Focus 2 and 4). A track whose head
+on disk already holds exactly these cues (the same Save sent twice) gets nothing. The records go
+in one `store.append`, compare-and-swap with a union merge, so no other writer's records are
+lost. Only then are the files written, through `store.project` with `overwrite_foreign` off:
+someone else's file is left alone and reported (§6.6, §15.3), and a track in conflict isn't
+written until a person picks a version with `resolve`, the only thing that moves a head on a
+conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
+written is a note, and the episode moves to the new heads either way. Saves and picks on one
+video take turns within this engine, so two picks at once can't replace each other in a cycle.
+Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
+so its comments survive, and the file is read back: a term just added makes every translation
+made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
+starts the undo history again, because the tracks are read back from the sidecar. While a
+translation is in conflict, no source cue can be split, merged or deleted: the unloaded version's
+cues would keep pointing at ids that are gone.
+
+Retranslate (spec §13.4, §20) redoes the stale and untranslated cues, or the cues a person names,
+as one undoable edit. The model is the one named, else the one M1's catalog route picks; a cloud
+model only when this call allows it (§7.2), checked before anything is sent, and a route whose
+model's server is down is never passed over for the next one or the cloud (§17.4). Retranslating
+stale never replaces a translation a person edited (§13.4); naming a cue does, since that is the
+person asking. Translations are replaced in whole groups: every source cue a replaced translation
+covers is translated with it, and a translation whose time overlaps the cues being translated is
+replaced too (a cue inserted inside a translation that spans two cues), so the track never
+overlaps; where that would replace an edited translation, those cues are left as they are. When
+the glossary or the model this call uses isn't the one the track was made with, every unedited
+cue is stale (§13.4, as M1 decides it); once a retranslation has redone them all, the track counts
+as made with the new pair, which Save records, for as long as none of the cues it replaced is back.
+"""
+```
+
+  In `class Episode`, below `glossary_adds: …`, add:
+
+```python
+    made_with: dict[str, tuple[str, str | None]] = field(default_factory=dict)  # since a redo-all
+```
+
+  Replace the method `retranslate`, from `    def retranslate(self` to its `return`,
+
+```python
+    def retranslate(self, ep: Episode, track: str, *, ids: Sequence[str] | None,
+                    model: str | None = None, allow_cloud: bool = False,
+                    on_batch: Callable[[int, int], None] | None = None) -> Episode:
+        """`ids=None`: every stale or untranslated source cue, never replacing an edited
+        translation; else those source cues, whatever their translation. One undo step; `ep`
+        itself when there's nothing to translate. Blocks on the model's server. Raises EditError
+        (a track in conflict, an unknown track or cue), EngineError (no usable model, a cloud
+        model this call doesn't allow, the server down or refusing: `.hint` names the fix),
+        TranslationFailed, or GlossaryError (a glossary beside the video vid2sub can't read);
+        nothing changes then."""
+        self._check_open(ep)
+        if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
+            raise EditError("there's no such track")
+        _editable(ep, track)
+        if track not in ep.tracks.translations:
+            raise EditError(f"there is no {track} track")
+        source, cues = ep.tracks.source, ep.tracks.translations[track]
+        wanted, replaced = retranslation(source, cues, ids)
+        if not wanted:
+            return ep
+        lang = _lang(ep.source_key)
+        name = self._translator(lang, model, allow_cloud)
+        entry = self.config.models[name]
+        policy = RunPolicy(allow_cloud)
+        check_allowed(name, entry, self.config, policy)
+        ask = make_ask(name, entry, self.config, policy, self.keys)
+        taken = set(ep.taken)
+        new = translate_cues(source, source_lang=lang, target_track=track,
+                             glossary=glossary_with(read_glossary(ep.video), ep.glossary_adds),
+                             ask=ask, only=wanted, taken=taken, on_batch=on_batch)
+        result = tuple(sorted([c for c in cues if c.id not in replaced] + new,
+                              key=lambda c: (c.start_ms, c.end_ms)))
+        try:
+            check_track(result)
+        except TrackError as err:
+            raise EditError(f"the {track} track would break: {err}") from None
+        tracks = Tracks(source, {**ep.tracks.translations, track: result})
+        return replace(ep, tracks=tracks, taken=taken, redo=[],
+                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+```
+
+  with
+
+```python
+    def retranslate(self, ep: Episode, track: str, *, ids: Sequence[str] | None,
+                    model: str | None = None, allow_cloud: bool = False,
+                    on_batch: Callable[[int, int], None] | None = None) -> Episode:
+        """`ids=None`: every stale or untranslated source cue, never replacing an edited
+        translation; else those source cues, whatever their translation. One undo step; `ep`
+        itself when there's nothing to translate (no model is asked to translate; with none
+        named, the route's servers are asked which models they serve). Blocks on the network.
+        Raises EditError (a track in conflict, an unknown track or cue), EngineError (no usable
+        model, a cloud model this call doesn't allow, the server down or refusing: `.hint` names
+        the fix), TranslationFailed, or GlossaryError (a glossary beside the video vid2sub can't
+        read); nothing changes then."""
+        self._check_open(ep)
+        if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
+            raise EditError("there's no such track")
+        _editable(ep, track)
+        if track not in ep.tracks.translations:
+            raise EditError(f"there is no {track} track")
+        if ids is not None and not ids:
+            return ep
+        source, cues = ep.tracks.source, ep.tracks.translations[track]
+        lang = _lang(ep.source_key)
+        name = self._translator(lang, model, allow_cloud)
+        entry = self.config.models[name]
+        glossary = glossary_with(read_glossary(ep.video), ep.glossary_adds)
+        everything = ids is None and setup_changed(track_setup(ep, track), glossary.sha(),
+                                                   entry.model)
+        wanted, replaced = retranslation(source, cues, ids, everything=everything)
+        if not wanted:
+            return ep
+        policy = RunPolicy(allow_cloud)
+        check_allowed(name, entry, self.config, policy)
+        ask = make_ask(name, entry, self.config, policy, self.keys)
+        taken = set(ep.taken)
+        new = translate_cues(source, source_lang=lang, target_track=track,
+                             glossary=glossary, ask=ask, only=wanted, taken=taken,
+                             on_batch=on_batch)
+        result = tuple(sorted([c for c in cues if c.id not in replaced] + new,
+                              key=lambda c: (c.start_ms, c.end_ms)))
+        try:
+            check_track(result)
+        except TrackError as err:
+            raise EditError(f"the {track} track would break: {err}") from None
+        tracks = Tracks(source, {**ep.tracks.translations, track: result})
+        made_with = ({**ep.made_with, track: (glossary.sha(), entry.model)} if everything
+                     else ep.made_with)
+        return replace(ep, tracks=tracks, taken=taken, made_with=made_with, redo=[],
+                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+```
+
+  In `save`, replace
+
+```python
+                        taken=ep.taken | cue_ids(side), glossary_adds=adds, glossary=glossary)
+```
+
+  with
+
+```python
+                        taken=ep.taken | cue_ids(side), glossary_adds=adds, glossary=glossary,
+                        made_with={})
+```
+
+  In `_versions`, in the `_editor_body(…)` call, add an argument after `inputs=…`:
+
+```python
+,
+                            setup=track_setup(ep, track)
+```
+
+  Replace the function `_editor_body`
+
+```python
+def _editor_body(head: dict, cues: Sequence[Cue], *, is_source: bool, created_at: str,
+                 inputs: dict[str, str]) -> dict:
+    """The head's language, script and glossary hash; its model too, since the cues the person
+    didn't touch are still that model's, and M1 reads a changed model as every cue stale."""
+    payload = head.get("payload", {})
+    return cues_body(cues, language=payload["language"], script=payload.get("script"),
+                     engine="editor", model=head.get("model"), version=f"editor@{__version__}",
+                     created_at=created_at, inputs=inputs,
+                     meta={"role": "source" if is_source else "translation"},
+                     glossary_sha=payload.get("glossary_sha"))
+
+
+def _project(
+```
+
+  with
+
+```python
+def _editor_body(head: dict, cues: Sequence[Cue], *, is_source: bool, created_at: str,
+                 inputs: dict[str, str], setup: tuple[str, str | None]) -> dict:
+    """The head's language and script, and the glossary hash and model the cues were made with
+    (`track_setup`): the head's, or a retranslation's that redid them all; M1 reads a changed
+    glossary or model as every cue stale."""
+    payload = head.get("payload", {})
+    glossary_sha, model = setup
+    return cues_body(cues, language=payload["language"], script=payload.get("script"),
+                     engine="editor", model=model, version=f"editor@{__version__}",
+                     created_at=created_at, inputs=inputs,
+                     meta={"role": "source" if is_source else "translation"},
+                     glossary_sha=glossary_sha or None)
+
+
+def _project(
+```
+
+  In `_with_track`, replace
+
+```python
+                   words=words, undo=[], redo=[], taken=ep.taken | cue_ids(side))
+```
+
+  with
+
+```python
+                   words=words, undo=[], redo=[], taken=ep.taken | cue_ids(side),
+                   made_with={k: v for k, v in ep.made_with.items() if k != track})
+```
+
+  Replace the start of `retranslation`, down to its `wanted = {…}` set
+
+```python
+def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str] | None
+                  ) -> tuple[list[str], set[str]]:
+    """The source cue ids to translate, in order, and the translation cue ids they replace.
+
+    Whole groups, so the new cues never overlap the kept ones: a replaced translation brings
+    every source cue it covers, and a translation that covers a cue being translated, or whose
+    time overlaps a run of them, is replaced too. With `ids=None` an edited translation is never
+    replaced; the cues it would have brought in are left out instead."""
+    order = {c.id: k for k, c in enumerate(source)}
+    by_id = {c.id: c for c in source}
+    if ids is None:
+        stale = stale_ids(cues, by_id)
+        wanted = {i for c in cues if c.id in stale and "edited" not in c.flags
+                  for i in c.src or () if i in by_id}
+```
+
+  with
+
+```python
+def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str] | None, *,
+                  everything: bool = False) -> tuple[list[str], set[str]]:
+    """The source cue ids to translate, in order, and the translation cue ids they replace.
+
+    Whole groups, so the new cues never overlap the kept ones: a replaced translation brings
+    every source cue it covers, and a translation that covers a cue being translated, or whose
+    time overlaps a run of them, is replaced too. With `ids=None` an edited translation is never
+    replaced; the cues it would have brought in are left out instead. `everything`: the track
+    was made with another glossary or model, so with `ids=None` every cue of it is stale."""
+    order = {c.id: k for k, c in enumerate(source)}
+    by_id = {c.id: c for c in source}
+    if ids is None:
+        stale = {c.id for c in cues} if everything else stale_ids(cues, by_id)
+        wanted = {i for c in cues if c.id in stale and "edited" not in c.flags
+                  for i in c.src or () if i in by_id}
+```
+
+  Replace the start of `track_setup`, down to its `body = …` line
+
+```python
+def track_setup(ep: Episode, track: str) -> tuple[str, str | None]:
+    """The glossary hash ("" for none) and the model the track's cues were made with."""
+    body = ep.sidecar.renditions()[ep.heads[track]].body
+```
+
+  with
+
+```python
+def track_setup(ep: Episode, track: str) -> tuple[str, str | None]:
+    """The glossary hash ("" for none) and the model the track's cues were made with: those of a
+    retranslation that redid every unedited cue, while none of the cues it replaced is back (an
+    undo), else its head's."""
+    made = ep.made_with.get(track)
+    if made is not None:
+        before = {c.id for c in ep.base.translations.get(track, ())}
+        if not any(c.id in before for c in ep.tracks.translations.get(track, ())
+                   if "edited" not in c.flags):
+            return made
+    body = ep.sidecar.renditions()[ep.heads[track]].body
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_backend_retranslate.py -q`
+  first (`20 passed`), then the leg checks, then `make check`. **Leg checks:** in
+  `retranslate`, pass `None` for `glossary.sha()` in the `setup_changed(...)` call: the
+  glossary test and the save test fail, `2 failed, 18 passed`; restore it; then pass `None` for
+  `entry.model`: the two model tests fail, `2 failed, 18 passed`; restore it. `make check`.
+  Expected: `715 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks
+  found`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 Retranslate stale redoes every unedited cue when the glossary or the model changed, as spec §13.4 says
+
+retranslate(ids=None) takes spec §13.4's other two legs, as M1 decides
+them (pipeline._translate_targets): when the track's glossary hash or
+model (backend.track_setup) isn't the one this call uses, the glossary
+beside the video with the terms waiting for Save and the model named or
+picked by the route, every cue is stale (retranslation(everything=True));
+edited cues are still kept. So the model is chosen first; with none named
+the route's servers are asked which models they serve even when nothing
+turns out stale. Once a retranslation has redone every unedited cue, the
+episode's made_with remembers the pair it used, and track_setup returns
+it while none of the replaced cues is back (an undo brings them back):
+the view stops flagging the track, and Save records that glossary hash
+and model in the editor version, so reopening shows nothing stale. Save
+and a pick clear made_with.
+
+The new tests failed first with: assert [] == [['ca0000000'],
+['ca0000002']] (glossary), assert [] == [['ca0000000', …]] (model, and the
+named model), and assert [True, True, True] == [False, False, False]
+(after redoing everything). With the glossary leg left out, the glossary
+and save tests fail; with the model leg left out, the two model tests
+fail (2 failed, 18 passed each).
+
+Docs read: none beyond the code (pipeline._translate_targets lines
+645-647).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 7
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/backend.py tests/test_backend_retranslate.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*); the forward review over Tasks 17 and 23 (Task 17's `retranslate`
+  input runs `LocalBackend.retranslate` off the event loop for the current cue, the selection
+  or `ids=None` ("Retranslate stale"), holds other edits to the episode until it returns, sends
+  each `on_batch` as progress through the session's loop, takes `allow_cloud` from a control
+  that starts unticked every time (spec §7.2), and shows `EditError`, `EngineError` (with its
+  `hint`), `TranslationFailed` and `GlossaryError` as notices; with no model named it asks the
+  route's servers which models they serve before planning, so even "nothing stale" takes a
+  moment; after a glossary or model change "Retranslate stale" redoes every unedited cue, which
+  the view's `all_stale` explains; Task 23's Step 5 runs it on a real episode); the docs this
+  task made untrue (none expected). Then the close, its own commit,
+  holding this plan with this task's boxes ticked and **Now** set to `Task 8: The web
+  dependencies, the guards and the CSP, open.`; S30 stays `planned` (its proof is Task 17's
+  Playwright test and the exit test). The message, in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 7: The editor backend: retranslate
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: none
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 7
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md`, `git commit -F
+  .git/CLOSE_MSG`.
 
 ***
 
@@ -6516,3 +13062,5 @@ fi
 
 | Source task | Severity | File | Finding | Status |
 |---|---|---|---|---|
+| Task 7 (planning) | Minor | `src/vid2sub/web/backend.py` | With no model named, `retranslate` asks the route's servers which models they serve before it knows anything is stale, so a server that's down gives an error where "nothing is stale" would do | open |
+| Task 6 (planning) | Minor | `src/vid2sub/store.py` | A crash (not an exception) between a projection record and its file write leaves the record naming the new head while the file holds the old one; an outside edit to that file before the next Save would then replace the new head without a conflict | open |
