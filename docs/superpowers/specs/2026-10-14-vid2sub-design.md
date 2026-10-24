@@ -80,10 +80,10 @@ task numbers are filled in when their plans are written.
 | S40 | Review after adding a season | the first two files are sampled; each row suggests models; "apply to all" works; **Allow cloud** starts unticked every time | Phase 3 | `tests/test_review.py`; Playwright | planned |
 | S41 | the tunnel drops while the queue runs | the whole queue pauses with Resume, which restarts from the failed chunk | Phase 3 | `tests/test_jobs.py` | planned |
 | S42 | the queue runs overnight | the machine stays awake until the queue finishes | Phase 3 | `tests/test_awake.py` | planned |
-| S43 | an MKV with AC-3 audio opened in the editor | the playback audio plays straight away; **Make preview copy** makes an H.264 480p copy | Phase 3 | `tests/test_preview.py`; Playwright | planned |
+| S43 | an MKV with AC-3 audio opened in the editor | the playback audio (AAC stereo `.m4a`, made on demand) plays straight away ([Q&A item 13](2026-10-14-vid2sub-qa.md); the preview copy is S63) | Phase 2 | `tests/test_playback.py`; Playwright; the exit test | planned |
 | S44 | the Models page | the catalog, each model marked usable now or why not | Phase 3 | Playwright | planned |
 | S45 | `faster-whisper` on Windows and Linux | transcribes on CPU, or on NVIDIA with cuBLAS 12; CI passes on all three systems | Phase 3 | CI; one manual run | planned |
-| S46 | `vid2sub cache clear`, or the cache past `cache_max_gb` | cleared; the least recently used goes first | Phase 3 | `tests/test_cache.py` | planned |
+| S46 | `vid2sub cache clear`, or the cache past `cache_max_gb` | cleared; the least recently used goes first ([Q&A item 13](2026-10-14-vid2sub-qa.md): with the playback audio) | Phase 2 | `tests/test_cache.py` | planned |
 | S47 | Pages in Chrome: a local folder opened, edited and saved | saved next to the video through File System Access, the sidecar re-read first | Phase 4 | the Pages Playwright test; the exit test | planned |
 | S48 | Pages in Safari | edited, then the subtitle files and the sidecar downloaded | Phase 4 | the exit test | planned |
 | S49 | the Pages editor put inside a frame, or reaching for the network | it refuses to run in a frame and requests nothing outside its own files | Phase 4 | the Pages Playwright test (`Watch`) | planned |
@@ -91,6 +91,7 @@ task numbers are filled in when their plans are written.
 | S51 | `uv tool install 'vid2sub[mac]' --index https://chendaniely.github.io/vid2sub/simple/` on a clean machine | the latest release installs, frontend included | Phase 4 | the post-deploy smoke job; the exit test | planned |
 | S52 | a `v*` tag pushed | a GitHub Release with the wheel and sdist (`www/` inside) and attestations; the index lists it with `#sha256=` | Phase 4 | the `release.yml` and `pages.yml` runs | planned |
 | S53 | the `subs/` tests run inside Pyodide 0.27.7 | they pass | Phase 4 | CI's `pyodide` job | planned |
+| S63 | **Make preview copy** on a video the browser can't play | an H.264 480p MP4 with AAC stereo, from a hardware encoder when there is one, else `libx264 -preset veryfast`, plays in the editor | Phase 3 | `tests/test_preview.py`; Playwright | planned |
 
 ### Later
 
@@ -121,10 +122,9 @@ task numbers are filled in when their plans are written.
   `Qwen3-ForcedAligner-0.6B` too; vLLM serves the text but no words (§26.1, item 7). vid2sub has
   no parser for a Qwen endpoint yet (M1 plan, decision 3). Proposed as a Phase 2 task (S22), its
   first step recording a real response.
-- **Playback in Phase 2's editor:** the playback audio and preview copy are Phase 3 (§25, §8.8),
-  so in Phase 2 an episode whose audio the browser can't play (AC-3, E-AC-3, DTS, TrueHD) has no
-  sound in the editor. Many TV episodes are such files, and Phase 2's exit test opens one. For
-  Dan to decide with the plans.
+- **Playback in Phase 2's editor** (decided 2026-10-23, [Q&A item 13](2026-10-14-vid2sub-qa.md)):
+  the playback audio and the cache come into Phase 2, so an episode whose audio the browser can't
+  play (AC-3, E-AC-3, DTS, TrueHD) still has sound; the preview copy stays in Phase 3.
 - **The CSP Shiny and shinyreact need** (§29, M2): if it needs more than the spec allows, that is
   a spec change, for Dan.
 - **local-ai's Phase 3** (§17.4): role aliases, `x-spark-model`, inline refusals. Until then a
@@ -143,6 +143,8 @@ task numbers are filled in when their plans are written.
 - 2026-10-23: M1 is Phase 1 and M2–M4 are Phases 2–4; M1's exit test opens Phase 2; the spec
   gains these parts in place; all three plans are written in full before approval
   ([Q&A items 6–9](2026-10-14-vid2sub-qa.md)) (`a05066a`).
+- 2026-10-23: the playback audio and the cache move from M3 to Phase 2; the preview copy stays in
+  Phase 3 ([Q&A item 13](2026-10-14-vid2sub-qa.md)) (this commit).
 
 ## Contents
 
@@ -1500,7 +1502,9 @@ is Phase 1, M2 Phase 2, and so on); the Outline at the top tracks them.
 **M2: the editor.**
 - The FastAPI shell and every web security rule (§6.1–§6.3), the shinyreact app, the editor
   (§20), retranslate and staleness, external-edit handling, the settings drawer with typed keys, a
-  minimal Jobs page (paths in a text box, progress, cancel).
+  minimal Jobs page (paths in a text box, progress, cancel), and the playback audio with the cache
+  and `vid2sub cache clear` (§8.8, §8.9; Dan, 2026-10-23, so M1's episodes have sound in the
+  editor).
 - **Exit test:** open an M1 episode, fix lines, retranslate stale cues, save; edit the SRT in
   another editor and see it come back as an external version.
 
