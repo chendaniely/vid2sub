@@ -27,7 +27,8 @@ listings are run and revised at its phase start.)
 1. **The file browser never lists or follows a link,** and a typed path through one is refused
    (Task 1). Spec §6.5 doesn't mention links, and the CLI follows them. So a media folder linked
    into home (`~/Movies/Anime` pointing at a NAS share) is added from the app by its real path
-   under `/Volumes`, or from the CLI.
+   under `/Volumes`, or from the CLI. **This adds to the spec:** Task 1's close writes it, with
+   Decisions 3 and 24, into §6.5, so it waits for Dan's yes at approval.
 2. **The browser reaches only its roots** (home and mounted volumes) and typed UNC shares, so a
    Linux library under `/srv` is added from the CLI, not the app (Task 1). §6.5 limits what may be
    read; it doesn't promise that any typed path is accepted.
@@ -63,7 +64,8 @@ listings are run and revised at its phase start.)
     that made it.
 17. **faster-whisper's first run with no network fails the episode at once** (Task 9), as
     `unavailable`, naming the download, its size and `vid2sub doctor`. A `connection` error would
-    wait `wait_on_connection_s` (ten minutes, M1's) and then pause the queue (§17.3). The cost:
+    retry for `wait_on_connection_s` (M1's ten minutes in the CLI, 30 s in the app: Decision 23)
+    and then pause the queue (§17.3). The cost:
     with the network down, each queued faster-whisper episode fails in turn, each at once, where
     a pause would hold them. A model already downloaded loads from its cache folder, so later runs
     never need the network.
@@ -79,6 +81,20 @@ listings are run and revised at its phase start.)
     3.12, the `whisper` extra, apart from the `python` matrix; `VID2SUB_REQUIRE_WHISPER=1` makes
     its field check fail there rather than skip. **This changes the spec** (§23.2's job list
     doesn't name it), so it waits for Dan's yes at approval.
+21. **The demo's Add browses only its own folder,** which is also its home, rather than Add being
+    hidden there (Task 2): the smaller option, and it needs no capability beyond Phase 2
+    Decision 23's one gate.
+22. **The demo's Review suggests its canned models** under the catalog entries they stand in
+    for (Task 4), so its pickers name Whisper turbo and Gemma 4.
+23. **The app's jobs retry a dropped connection for 30 s, then pause the queue** (Task 6,
+    `runtime.APP_WAIT_S`); the CLI keeps M1's 600 s. §17.3 says connection errors "pause the
+    whole queue … with a **Resume** button". The cost: a short overnight blip pauses the queue
+    until someone presses Resume.
+24. **Beside Decision 3:** a user's `Library` and `AppData` stay hidden under any `Users/<name>/`
+    on any root (WSL's `/mnt/c`, a backup disk), not only in home; a disk's admin shares (`C$`,
+    `ADMIN$`, `IPC$`) are refused, while a person's own `name$` media share is not (Task 1).
+25. **Review ends with Discard, a new Add, Start, or closing the tab** (Task 4); switching screens
+    keeps it.
 
 ## Global Constraints
 
@@ -144,7 +160,8 @@ before this plan goes to Dan for approval.
       reads); `HOUSEKEEPING` (casefolded: `@eadir`, `#recycle`, `$recycle.bin`, `system volume
       information`, `lost+found`); `CREDENTIALS` (below your home: `.ssh`, `.aws`, `.gnupg`,
       `.config/gh`, `.azure`, `.kube`, `.docker`, `.password-store`, `Library`, `AppData`);
-      `MAX_ENTRIES = 5000`; `MAX_PATH = 4096`
+      `PROFILE_FOLDERS = frozenset({"library", "appdata"})` (hidden in any `Users/<name>/` below
+      a root too, round 1e); `MAX_ENTRIES = 5000`; `MAX_PATH = 4096`
     - `class BrowseError(Exception)`: a reason fit to show, never naming a path (spec §6.8)
     - `@dataclass(frozen=True) class Entry: name: str; path: str;
       kind: Literal["folder", "video", "subtitle"]` (`name` is shown as plain text; `path` is
@@ -171,11 +188,17 @@ before this plan goes to Dan for approval.
       given; a folder's own videos, not its subfolders', in episode order; a folder past
       `MAX_ENTRIES` refused whole)
     - `roots`, `listing`, `accept` and `expand` block on the disk (a sleeping network share
-      takes seconds), so Task 2's server runs them off the event loop. It shows a `BrowseError`
-      as a notice, renders `Entry.name` as plain text, and passes back only what the person
-      typed or an `Entry.path` from an earlier listing, never a path read from a file (§6.5).
+      takes seconds), so Task 2's server runs them off the event loop. Given no `roots`,
+      `listing`, `accept` and `expand` look only at the root a path can be in (your home, the
+      one volume its path names, or its drive), never every mounted volume (round 1e). Task 2
+      shows a `BrowseError` as a notice, renders `Entry.name` as plain text, and passes back
+      only what the person typed or an `Entry.path` from an earlier listing, never a path read
+      from a file (§6.5).
   - Decided here (the safe answer): links, junctions and other name-surrogate reparse points
     are never listed and never followed; a path through one is refused, whatever it points to.
+    And (round 1e, proposed beside Decision 3): a user's `Library` and `AppData` are hidden in
+    every `Users/<name>/` the browser reaches, not only in your home, and a disk's admin share
+    (`C$`, `ADMIN$`, `IPC$`) is refused (round 1f).
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: Write the failing tests.** Append to `tests/test_naming.py`, after two blank
@@ -777,7 +800,8 @@ def _walk(text: str, roots: Sequence[Entry], home: Path) -> tuple[Path, tuple[st
   `…never_a_device` cases fail); in `_flagged_hidden`, drop
   `getattr(st, "st_flags", 0) & stat.UF_HIDDEN or ` (on macOS,
   `FAILED …test_a_folder_the_system_marks_hidden_is_hidden`). `make check`. Expected:
-  `751 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
+  `1073 passed, 2 skipped, 36 deselected` twice, `Test Files  19 passed (19)` and
+  `Tests  88 passed (88)`, `All checks passed!` and `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -943,8 +967,9 @@ def expand(paths: Sequence[str], *, roots: Sequence[Entry] | None = None,
   (`42 passed`), then the guard check, then `make check`. **Guard check:** in `accept`, replace
   the `if stat.S_ISDIR(st.st_mode) or (…):` condition with `if True:`; two
   `test_adding_anything_but_a_visible_video_or_folder_is_refused` cases (the text file and the
-  subtitle) fail; restore it. `make check`. Expected: `759 passed, 2 skipped, 4 deselected`
-  twice, `All checks passed!` and `no leaks found`.
+  subtitle) fail; restore it. `make check`. Expected:
+  `1081 passed, 2 skipped, 36 deselected` twice, `Test Files  19 passed (19)` and
+  `Tests  88 passed (88)`, `All checks passed!` and `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -1717,8 +1742,9 @@ def _walk(text: str, roots: Sequence[Entry], home: Path
   with `"folder")]` (`FAILED …test_a_home_at_the_root_of_the_disk_is_not_a_root`); in `_walk`,
   replace `if _is_link_entry(last):` with `if False:` (both link tests fail). The short-name
   test is the guard for walking the disk's names on Windows; it runs only there (Task 10's and
-  the existing Windows CI job). `make check`. Expected: `772 passed, 5 skipped, 4 deselected`
-  twice, `All checks passed!` and `no leaks found`.
+  the existing Windows CI job). `make check`. Expected:
+  `1094 passed, 5 skipped, 36 deselected` twice, `Test Files  19 passed (19)` and
+  `Tests  88 passed (88)`, `All checks passed!` and `no leaks found`.
 - [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -1768,26 +1794,930 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/security.py src/vid2sub/web/browse.py tests/test_browse.py`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  **Round 1d** adds Review Focus 1's listing half (a season on a NAS share that sleeps or drops
+  off the network while it's listed): the test pins what `listing` already does, so it passes at
+  once; its guard check shows it would catch the error escaping.
+
+- [ ] **Step 16: Write the test.** In `tests/test_browse.py`, replace
+
+```python
+import os
+import stat
+```
+
+  with
+
+```python
+import errno
+import os
+import stat
+```
+
+  and append, after two blank lines:
+
+```python
+# Review Focus 1: a network share that stops answering while it's listed (spec §6.5)
+
+
+def test_a_share_that_drops_mid_listing_says_so_and_lists_nothing_it_had_read(places,
+                                                                              monkeypatch):
+    home, _, roots = places
+    season = home / "Movies" / "Show"
+    for n in range(1, 4):
+        touch(season / f"Show S01E0{n}.mkv")
+    real = os.scandir
+
+    class Dropping:
+        """The folder's first entry, then the share stops answering, as a NAS that sleeps or
+        drops off the network mid-listing does."""
+
+        def __init__(self, entries):
+            self.entries = entries
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.entries.close()
+
+        def __iter__(self):
+            yield next(self.entries)
+            raise OSError(errno.ETIMEDOUT, os.strerror(errno.ETIMEDOUT))
+
+    def scandir(path):
+        found = real(path)
+        return Dropping(found) if os.fspath(path) == str(season) else found
+
+    monkeypatch.setattr(browse.os, "scandir", scandir)
+    with pytest.raises(BrowseError, match="couldn't read this folder") as err:
+        browse.listing(str(season), roots=roots, home=home)
+    assert "Show" not in str(err.value) and str(home) not in str(err.value)
+```
+
+- [ ] **Step 17: Run it; it passes, pinning what the code does.** `uv run pytest
+  tests/test_browse.py -q`. Expected: `56 passed, 3 skipped`. **Guard check:** in `listing`,
+  replace the `except OSError as err:` just above `folders.sort(key=lambda e:
+  natural_key(e.name))` with `except ZeroDivisionError as err:`; `uv run pytest
+  tests/test_browse.py -q -k drops_mid_listing` fails with
+  `E       TimeoutError: [Errno 60] Operation timed out` (Linux: `[Errno 110] Connection timed
+  out`); restore it.
+- [ ] **Step 18: Run the checks; they pass.** `make check`. Expected: `1095 passed, 5 skipped,
+  36 deselected` twice, `Test Files  19 passed (19)` and `Tests  88 passed (88)`,
+  `All checks passed!` and `no leaks found`.
+- [ ] **Step 19: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+test(web): 🤖 a share that stops answering mid-listing says so, and the browser lists nothing it had read
+
+Review Focus 1's listing half (Phase 3 plan): a season on a NAS share
+that sleeps or drops off the network while it's listed. The new test
+lets os.scandir return the folder's first entry, then fail as a share
+that stopped answering does (ETIMEDOUT); listing raises BrowseError
+("couldn't read this folder (Operation timed out)"), naming no path,
+and returns no partial listing, so the screen (Task 2) has nothing
+stale to show.
+
+It pins behaviour the code already has: listing's `except OSError`
+turns the error into a reason fit to show. With that clause made to
+catch nothing, the test fails with: TimeoutError: [Errno 60] Operation
+timed out.
+
+Docs read: Python's os.scandir (an iterator; errors may be raised while
+iterating, not only when it's opened) and os.strerror.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 1
+Co-Authored-By: <the model's own line>
+```
+
+  `git add tests/test_browse.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+
+  **Round 1e** is the fix round from the independent Tier 1 security review that ran over Steps
+  1–19 when this listing was rebuilt on Phase 2's finished code (one subagent, `AGENTS.md`'s
+  checklist). It found one Critical: `Library` and `AppData` were hidden only under your home's
+  own spelling, and Linux can't read Windows' hidden attribute, so a Windows disk under WSL's
+  `/mnt/c` listed `Users/<name>/AppData` down to `Credentials`. One Important: with no roots
+  given, every call scanned and stat'ed every mounted volume, so one dead mount held up all
+  browsing. Five Minor: a folder's own Windows device names, an incomplete and mutable reserved
+  list, a linked root that `accept` took, names that aren't valid Unicode, and the check against
+  use, which was already on the phase-end list. Steps 20–24 fix the first six.
+
+- [ ] **Step 20: Write the failing tests.** Append to `tests/test_browse.py`, after two blank
+  lines:
+
+```python
+# The Tier 1 security review of the rebuild: profiles on other roots, hidden shares, names a
+# disk returns that Windows or Unicode would read otherwise, roots, and only the root needed
+
+
+@pytest.mark.parametrize("profile", ["Users/someone/AppData/Local/Temp",
+                                     "Users/someone/Library/Keychains", "users/SOMEONE/appdata"])
+def test_a_users_library_and_appdata_stay_hidden_on_every_root_not_only_in_home(places,
+                                                                               profile):
+    home, volume, roots = places
+    for folder in ("Users/someone/AppData/Local/Temp", "Users/someone/Library/Keychains",
+                   "Users/someone/Videos"):
+        (volume / folder).mkdir(parents=True)
+    touch(volume / "Users/someone/AppData/Local/Temp/clip.mkv")
+    assert names(browse.listing(str(volume / "Users" / "someone"), roots=roots,
+                                home=home)) == ["Videos"]
+    with pytest.raises(BrowseError, match="credentials"):
+        browse.listing(str(volume / profile), roots=roots, home=home)
+    with pytest.raises(BrowseError, match="credentials"):
+        browse.expand([str(volume / "Users/someone/AppData/Local/Temp")], roots=roots, home=home)
+
+
+@pytest.mark.parametrize("typed", [r"\\localhost\C$\Users\someone", r"\\nas\ADMIN$\x",
+                                   "\\\\nas\\IPC$\\"])
+def test_a_hidden_windows_share_is_refused(typed):
+    with pytest.raises(BrowseError, match="hidden shares"):
+        browse.qualified(typed, windows=True)
+
+
+@pytest.mark.parametrize("typed", [r"C:\Videos\COM¹.mkv", r"C:\Videos\CONIN$",
+                                   r"C:\Videos\lpt³ .txt"])
+def test_every_device_name_windows_reserves_is_refused(typed):
+    with pytest.raises(BrowseError, match="device names"):
+        browse.qualified(typed, windows=True)
+
+
+@windows_only
+def test_a_name_in_a_folder_that_windows_would_read_otherwise_is_not_listed(places):
+    home, _, roots = places
+    movies = home / "Movies"
+    touch(movies / "Show S01E01.mkv")
+    for name in ("nul.mkv", "CON.mp4"):  # made through \\?\, as WSL or an NFS share can
+        with open("\\\\?\\" + str(movies / name), "wb"):
+            pass
+    os.mkdir("\\\\?\\" + str(movies / "Extras."))
+    assert names(browse.listing(str(movies), roots=roots, home=home)) == ["Show S01E01.mkv"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="a Linux disk holds names that aren't UTF-8")
+def test_a_name_that_isnt_valid_unicode_is_not_listed(places):
+    home, _, roots = places
+    movies = home / "Movies"
+    touch(movies / "Show S01E01.mkv")
+    with open(os.fsencode(movies) + b"/Show S01E02 \xff.mkv", "wb"):
+        pass
+    assert names(browse.listing(str(movies), roots=roots, home=home)) == ["Show S01E01.mkv"]
+
+
+@needs_symlinks
+def test_a_root_that_is_a_link_is_neither_listed_nor_added(tmp_path):
+    real = tmp_path / "real"
+    touch(real / "Film.mkv")
+    home = tmp_path / "linkhome"
+    home.symlink_to(real)
+    roots = (Entry("Home", str(home), "folder"),)
+    with pytest.raises(BrowseError):
+        browse.listing("~", roots=roots, home=home)
+    with pytest.raises(BrowseError):
+        browse.expand(["~"], roots=roots, home=home)
+
+
+def test_with_no_roots_given_a_path_in_home_touches_no_volume(places, monkeypatch):
+    home, _, _ = places
+    touch(home / "Movies" / "Film.mkv")
+    scanned: list[str] = []
+    real = os.scandir
+
+    def scandir(path):
+        scanned.append(os.fspath(path))
+        return real(path)
+
+    monkeypatch.setattr(browse.os, "scandir", scandir)
+    assert names(browse.listing(str(home / "Movies"), home=home)) == ["Film.mkv"]
+    assert browse.expand(["~/Movies"], home=home) == [str(home / "Movies" / "Film.mkv")]
+    assert scanned and all(p.startswith(str(home)) for p in scanned)  # no /Volumes, no /mnt
+
+
+@needs_symlinks
+def test_with_no_roots_given_a_path_on_a_volume_looks_at_that_volume_alone(tmp_path,
+                                                                           monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    volumes = tmp_path / "Volumes"
+    touch(volumes / "Media" / "TV" / "Show S01E01.mkv")
+    (volumes / "Asleep").mkdir()  # a mount that would hang if anything looked at it
+    (volumes / "Boot").symlink_to(home)
+    monkeypatch.setattr(browse, "_volume_parents", lambda home: [volumes])
+    looked: list[str] = []
+    real = browse._visible_folder
+    monkeypatch.setattr(browse, "_visible_folder", lambda e: looked.append(e.name) or real(e))
+    assert names(browse.listing(str(volumes / "Media" / "TV"), home=home)) == ["Show S01E01.mkv"]
+    assert "Asleep" not in looked
+    for outside in (volumes, volumes / "Boot"):  # the volumes' folder, and a link, are no root
+        with pytest.raises(BrowseError, match="home folder"):
+            browse.listing(str(outside), home=home)
+```
+
+- [ ] **Step 21: Run them; watch them fail.** `uv run pytest tests/test_browse.py -q`. Expected:
+  the volume's `Users/someone` listed as `['AppData', 'Library', 'Videos']`,
+  `E       Failed: DID NOT RAISE BrowseError` seven times (the profiles typed, the hidden shares,
+  `COM¹`, `CONIN$`, `lpt³`, the linked root added), `has no attribute '_volume_parents'`, the
+  listing of home seen scanning `/Volumes`, `/media` and `/mnt`, and `12 failed, 56 passed,
+  5 skipped` (the Windows-only and Linux-only tests skip on macOS).
+- [ ] **Step 22: Write the code.** In `src/vid2sub/security.py`, replace
+
+```python
+RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+             *(f"LPT{i}" for i in range(1, 10))}
+```
+
+  with
+
+```python
+# Windows' device names, even with an extension: Python 3.13's ntpath._reserved_names.
+RESERVED_NAMES = frozenset({"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+                            *(f"{port}{n}" for port in ("COM", "LPT")
+                              for n in (*"123456789", "¹", "²", "³"))})
+```
+
+  Then replace `src/vid2sub/web/browse.py` with:
+
+```python
+"""The in-app file browser: your home folder and mounted volumes, folders, videos and subtitles
+(spec §6.5, S38).
+
+The engine is a local server that lists directories, so what it lists is a security boundary
+(spec §6). It lists only your home folder and mounted volumes (what's in `/Volumes` on a Mac, the
+drive letters on Windows, what's in `/media`, `/run/media/<you>` and `/mnt` on Linux), shows only
+folders, videos and subtitle files, and hides dotfiles, the folders that hold credentials
+(`.ssh`, `.aws`, `.gnupg`, `.config/gh` …, and `Library` and `AppData` in your home), Synology's
+and Windows' housekeeping folders, and any folder the system marks hidden; a hidden folder typed
+in full is refused too. A path must be fully qualified (spec §6.5): the server's own folder means
+nothing to the person typing; `~` stands for your home, as the editor's open allows. Every check
+runs on the names the disk returns, walked down from the root one folder at a time, never on the
+names as typed, so a Windows short name (`SSH~1`), a trailing dot or a stream (`name:stream`), a
+second drive inside a path, a device name (`CON`) or the other Unicode form can't reach a folder
+the browser wouldn't show; a path comes back spelled as on the disk. A Windows network path
+(`\\\\server\\share`) is its own root: the caller passes only what the person typed or a path
+from an earlier listing, never one read from a file, since a UNC path read from a file's contents
+leaks the NTLM hash (§6.5). Links (symlinks, Windows junctions and other name-surrogate reparse
+points) are never listed and never followed, so no link can lead outside your folders, into a
+hidden one, or to a share nobody typed (decided in the Phase 3 plan, Task 1); that is why the boot
+volume's `/Volumes` entry, a link to `/`, is not a root, nor is a home that is a disk's root.
+`Library` and `AppData` stay hidden in every user's profile the browser can reach (`Users/<name>/`
+on a Windows disk, a Mac's backup or clone, `/mnt/c` under WSL), not only in your home, since an
+OS flag that hides them may be off or, on Linux, unreadable; a share whose name ends in `$` (`C$`,
+`ADMIN$`) is a hidden one and refused; on Windows, a name in a folder that Windows would read as a
+device or a stream isn't listed; and a name that isn't valid Unicode isn't listed (the security
+review). On Linux, Windows' hidden attribute can't be read, so `ProgramData` and the like show on
+a mounted Windows disk. A season's files sort by `SxxEyy`, others by natural name order (§10).
+What the Add screen adds, browsed or typed, goes through the same checks, and a folder adds its
+videos in episode order (§19.2). Reasons name no path (§6.8). Everything here blocks on the
+disk, and a sleeping network share can take seconds, so the server calls it off the event loop.
+Given no roots, `listing`, `accept` and `expand` look only at the root a path can be in (your
+home, or the one volume it names), never every mounted volume, so a sleeping or dead mount
+elsewhere holds nothing up.
+"""
+
+from __future__ import annotations
+
+import os
+import stat
+import sys
+import unicodedata
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
+from typing import Literal
+
+from vid2sub.pipeline import MEDIA_SUFFIXES
+from vid2sub.security import RESERVED_NAMES
+from vid2sub.subs.naming import episode_key, natural_key
+
+SUBTITLE_SUFFIXES = frozenset({".srt", ".ass", ".ssa", ".vtt"})  # what `vid2sub import` reads
+HOUSEKEEPING = frozenset({"@eadir", "#recycle", "$recycle.bin", "system volume information",
+                          "lost+found"})  # casefolded: Synology, Windows and ext4 folders
+CREDENTIALS = (".ssh", ".aws", ".gnupg", ".config/gh", ".azure", ".kube", ".docker",
+               ".password-store", "Library", "AppData")  # in your home
+PROFILE_FOLDERS = frozenset({"library", "appdata"})  # casefolded: in any Users/<name>/ too
+MAX_ENTRIES = 5000
+MAX_PATH = 4096
+_HIDDEN_ATTRIBUTES = stat.FILE_ATTRIBUTE_HIDDEN | stat.FILE_ATTRIBUTE_SYSTEM
+_NAME_SURROGATE = 0x20000000  # a reparse tag's bit for links: symlinks, junctions, WSL links
+_FOLD = sys.platform in ("darwin", "win32")  # case-insensitive by default
+Kind = Literal["folder", "video", "subtitle"]
+
+
+class BrowseError(Exception):
+    """A path the browser won't list or add; the reason names no path (spec §6.8)."""
+
+
+@dataclass(frozen=True)
+class Entry:
+    name: str  # the bare name, shown as text
+    path: str  # the full path: what the screen sends back to list or add
+    kind: Kind
+
+
+@dataclass(frozen=True)
+class Listing:
+    path: str
+    parent: str | None  # None at a root, or at the top of a network share
+    entries: tuple[Entry, ...]  # folders first, then videos and subtitles by SxxEyy
+    truncated: bool = False  # more than MAX_ENTRIES: the rest aren't shown
+
+
+def roots(*, home: Path | None = None,
+          volumes: Sequence[Path] | None = None) -> tuple[Entry, ...]:
+    """Your home first, then each mounted volume: each folder in `volumes` (by default
+    `/Volumes`, `/media`, `/media/<you>`, `/run/media/<you>` and `/mnt`), or on Windows each
+    drive letter. A link, a hidden folder or a file there is not a volume."""
+    home = home or Path.home()
+    found = [Entry("Home", str(home), "folder")] if len(home.parts) > 1 else []
+    if volumes is None and os.name == "nt":
+        found += [Entry(d.rstrip("\\"), d, "folder") for d in os.listdrives()]
+        return tuple(found)
+    if volumes is None:
+        volumes = _volume_parents(home)
+    seen = {str(home)}
+    for parent in volumes:
+        try:
+            with os.scandir(parent) as it:
+                mounts = sorted((e for e in it if _visible_folder(e)),
+                                key=lambda e: natural_key(e.name))
+        except OSError:
+            continue
+        for e in mounts:
+            if e.path not in seen and e.path not in {str(v) for v in volumes}:
+                seen.add(e.path)
+                found.append(Entry(e.name, e.path, "folder"))
+    return tuple(found)
+
+
+def _volume_parents(home: Path) -> list[Path]:
+    """Where mounted volumes are: `/Volumes` (a Mac), `/media`, `/media/<you>`,
+    `/run/media/<you>` and `/mnt` (Linux)."""
+    return [Path("/Volumes"), Path("/media"), Path("/media") / home.name,
+            Path("/run/media") / home.name, Path("/mnt")]
+
+
+def _roots_near(text: str, home: Path) -> tuple[Entry, ...]:
+    """The roots `text` can be in, found without scanning every mounted volume (the security
+    review): your home, and the one volume its path names, checked as `roots` checks a volume,
+    or on Windows its drive. A path that isn't qualified gets your home alone, and `place`
+    refuses it with its reason."""
+    found = [Entry("Home", str(home), "folder")] if len(home.parts) > 1 else []
+    windows = os.name == "nt"
+    try:
+        path = qualified(_tilde(text, home, windows=windows), windows=windows)
+    except BrowseError:
+        return tuple(found)
+    if windows:
+        if len(path.drive) == 2:  # a drive letter; a typed share is its own root
+            drive = path.drive.upper()
+            found.append(Entry(drive, drive + "\\", "folder"))
+        return tuple(found)
+    parents = _volume_parents(home)
+    for parent in parents:
+        below = _below(path, PurePosixPath(parent))
+        if not below or parent / below[0] in parents or str(parent / below[0]) == str(home):
+            continue
+        try:
+            mount = _entry(parent, below[0])  # one scan of the parent: no other mount is touched
+        except BrowseError:
+            continue
+        if _visible_folder(mount):
+            found.append(Entry(mount.name, mount.path, "folder"))
+    return tuple(found)
+
+
+def qualified(text: str, *, windows: bool) -> PurePath:
+    """The path as the person gave it, refused unless fully qualified: from `/`, from a drive
+    (`C:\\`), or a network share (`\\\\server\\share`), never a device path, never with `..`."""
+    if not text or len(text) > MAX_PATH or "\x00" in text:
+        raise BrowseError("give the folder's full path")
+    path: PurePath = PureWindowsPath(text) if windows else PurePosixPath(text)
+    if windows:
+        if path.drive.startswith(("\\\\?\\", "\\\\.\\")):
+            raise BrowseError("vid2sub doesn't open device paths")
+        if not (path.drive and path.root):
+            raise BrowseError("give the full path, from the drive (C:\\…) or the share "
+                              "(\\\\server\\share\\…)")
+        if path.drive.startswith("\\\\") and path.drive.endswith("$"):
+            raise BrowseError("vid2sub doesn't open hidden shares (C$, ADMIN$ …)")
+        for part in path.parts[1:]:
+            refused = _windows_refusal(part)
+            if refused:
+                raise BrowseError(refused)
+    elif not path.root:
+        raise BrowseError("give the full path, starting with /")
+    if ".." in path.parts:
+        raise BrowseError("give the path without ..")
+    return path
+
+
+def place(text: str, *, roots: Sequence[Entry], home: str | PurePath,
+          windows: bool) -> tuple[PurePath, str, tuple[str, ...]]:
+    """Where a path is: the path, the root it's in (a network share the person typed is its own
+    root), and its parts below that root. Refuses a path in no root, and one below a hidden
+    folder or a folder that holds credentials. Pure: it touches no disk."""
+    flavour = PureWindowsPath if windows else PurePosixPath
+    home_path = flavour(home)
+    path = qualified(_tilde(text, home, windows=windows), windows=windows)
+    best: tuple[str, tuple[str, ...]] | None = None
+    for root in roots:
+        below = _below(path, flavour(root.path))
+        if below is not None and (best is None or len(below) < len(best[1])):
+            best = (root.path, below)
+    if best is None:
+        if not (windows and path.drive.startswith("\\\\")):
+            raise BrowseError("vid2sub browses your home folder, your drives and network "
+                              "shares only")
+        best = (path.anchor, path.parts[1:])
+    for part in best[1]:
+        if _hidden_name(part):
+            raise BrowseError("vid2sub doesn't show hidden folders")
+    in_home = _below(path, home_path)
+    if (in_home is not None and _holds_credentials(in_home)) or _in_a_profile(best[1]):
+        raise BrowseError("vid2sub doesn't show the folders that hold credentials")
+    return path, best[0], best[1]
+
+
+def listing(path: str, *, roots: Sequence[Entry] | None = None,
+            home: Path | None = None) -> Listing:
+    """One folder's folders, videos and subtitle files, never a link or anything hidden."""
+    home = home or Path.home()
+    folder, below, last = _walk(path, _roots_near(path, home) if roots is None else roots, home)
+    if not (last.is_dir(follow_symlinks=False) if last is not None
+            else stat.S_ISDIR(_lstat(folder).st_mode)):
+        raise BrowseError("there's no folder there")
+    in_home = _below(PurePath(folder), PurePath(home))
+    folders: list[Entry] = []
+    files: list[Entry] = []
+    try:
+        with os.scandir(folder) as it:
+            for e in it:  # a link is neither a folder nor a file when it isn't followed
+                if not _listable(e.name):
+                    continue
+                if _visible_folder(e):
+                    if not ((in_home is not None and _holds_credentials((*in_home, e.name)))
+                            or _in_a_profile((*below, e.name))):
+                        folders.append(Entry(e.name, e.path, "folder"))
+                elif (not _hidden_name(e.name) and e.is_file(follow_symlinks=False)
+                      and not _is_link_entry(e)):
+                    kind = _file_kind(e.name)
+                    if kind is not None:
+                        files.append(Entry(e.name, e.path, kind))
+    except OSError as err:
+        raise _refusal(err) from None
+    folders.sort(key=lambda e: natural_key(e.name))
+    files.sort(key=lambda e: episode_key(e.name))
+    entries = folders + files
+    return Listing(str(folder), None if not below else str(folder.parent),
+                   tuple(entries[:MAX_ENTRIES]), len(entries) > MAX_ENTRIES)
+
+
+def accept(path: str, *, roots: Sequence[Entry] | None = None,
+           home: Path | None = None) -> Path:
+    """A video or a folder the person typed or picked, to add: checked as `listing` checks a
+    folder, so whatever the browser wouldn't show can't be added by typing it."""
+    home = home or Path.home()
+    target, _, last = _walk(path, _roots_near(path, home) if roots is None else roots, home)
+    if last is None:  # a root: a folder, as `listing` checks it, never a link
+        if stat.S_ISDIR(_lstat(target).st_mode):
+            return target
+    elif last.is_dir(follow_symlinks=False) or (
+            last.is_file(follow_symlinks=False) and _file_kind(last.name) == "video"):
+        return target
+    raise BrowseError("that isn't a video or a folder vid2sub can add")
+
+
+def expand(paths: Sequence[str], *, roots: Sequence[Entry] | None = None,
+           home: Path | None = None) -> list[str]:
+    """What Add adds, each once, in the order given: a video as it is, and a folder's videos
+    (not its subfolders') in episode order, never a link or a hidden file (spec §19.2)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for text in paths:
+        target = accept(text, roots=roots, home=home)
+        if stat.S_ISDIR(_lstat(target).st_mode):
+            found = listing(str(target), roots=roots, home=home)
+            if found.truncated:
+                raise BrowseError("that folder has too many files to add at once: add its "
+                                  "seasons one at a time")
+            items = [e.path for e in found.entries if e.kind == "video"]
+        else:
+            items = [str(target)]
+        for item in items:
+            if os.path.normcase(item) not in seen:
+                seen.add(os.path.normcase(item))
+                out.append(item)
+    return out
+
+
+def _key(name: str, *, fold: bool) -> str:
+    """A name as a case-insensitive disk compares it: either Unicode form, any case."""
+    return unicodedata.normalize("NFC", name).casefold() if fold else name
+
+
+def _below(path: PurePath, root: PurePath) -> tuple[str, ...] | None:
+    """The parts of `path` below `root`, or None when it isn't inside it."""
+    fold = _FOLD or isinstance(path, PureWindowsPath)
+    n = len(root.parts)
+    if len(path.parts) < n or ([_key(p, fold=fold) for p in path.parts[:n]]
+                               != [_key(p, fold=fold) for p in root.parts]):
+        return None
+    return path.parts[n:]
+
+
+def _tilde(text: str, home: str | PurePath, *, windows: bool) -> str:
+    """`~` and `~/…` as your home, as the editor's open allows."""
+    if text == "~" or text.startswith(("~/", "~\\")):
+        return str(PureWindowsPath(home) if windows else PurePosixPath(home)) + text[1:]
+    return text
+
+
+def _windows_refusal(name: str) -> str | None:
+    """Why Windows would read a name as something other than a folder or a file of that name:
+    a stream (`name:stream`), a trailing dot or space it drops, or a device (`CON`, `NUL.mkv`,
+    `COM¹`), as Python 3.13's `ntpath.isreserved` decides; None for a plain name."""
+    if ":" in name or name.endswith((".", " ")) and name not in (".", ".."):
+        return "that isn't a name Windows gives a folder or a file"
+    if name.split(".")[0].rstrip(" ").upper() in RESERVED_NAMES:
+        return "vid2sub doesn't open device names"
+    return None
+
+
+def _listable(name: str) -> bool:
+    """A name the browser can show and send back: valid Unicode (a disk can hold names that
+    aren't), and on Windows one that names what it says (`_windows_refusal`)."""
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return os.name != "nt" or _windows_refusal(name) is None
+
+
+def _in_a_profile(below_root: Sequence[str]) -> bool:
+    """A user's `Library` or `AppData` anywhere below a root (`Users/<name>/AppData` on a
+    Windows disk, a Mac's backup, WSL's `/mnt/c`), where no hidden flag may be there to read."""
+    parts = [p.casefold() for p in below_root]
+    return any(parts[i] == "users" and parts[i + 2] in PROFILE_FOLDERS
+               for i in range(len(parts) - 2))
+
+
+def _hidden_name(name: str) -> bool:
+    return name.startswith(".") or name.casefold() in HOUSEKEEPING
+
+
+def _holds_credentials(below_home: Sequence[str]) -> bool:
+    parts = [p.casefold() for p in below_home]
+    return any(parts[:len(c)] == c for c in (
+        [p.casefold() for p in folder.split("/")] for folder in CREDENTIALS))
+
+
+def _flagged_hidden(st: os.stat_result) -> bool:
+    """A folder the system hides: macOS' hidden flag (`~/Library`), Windows' hidden or system
+    attribute."""
+    return bool(getattr(st, "st_flags", 0) & stat.UF_HIDDEN
+                or getattr(st, "st_file_attributes", 0) & _HIDDEN_ATTRIBUTES)
+
+
+def _is_link(st: os.stat_result) -> bool:
+    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_reparse_tag", 0) & _NAME_SURROGATE)
+
+
+def _is_link_entry(e: os.DirEntry) -> bool:
+    """A symlink, a junction, or on Windows any other link-like reparse point (a WSL link);
+    Windows' entries carry their reparse tag without a system call."""
+    return e.is_symlink() or e.is_junction() or (
+        os.name == "nt" and _is_link(e.stat(follow_symlinks=False)))
+
+
+def _visible_folder(e: os.DirEntry) -> bool:
+    try:
+        return (not _hidden_name(e.name) and e.is_dir(follow_symlinks=False)
+                and not _is_link_entry(e) and not _flagged_hidden(e.stat(follow_symlinks=False)))
+    except OSError:
+        return False
+
+
+def _file_kind(name: str) -> Kind | None:
+    suffix = os.path.splitext(name)[1].lower()
+    if suffix in MEDIA_SUFFIXES:
+        return "video"
+    if suffix in SUBTITLE_SUFFIXES:
+        return "subtitle"
+    return None
+
+
+def _refusal(err: OSError) -> BrowseError:
+    """A disk error as a reason fit to show: never `err.filename`, a full path (spec §6.8)."""
+    if isinstance(err, PermissionError):
+        return BrowseError("vid2sub isn't allowed to read this folder")
+    if isinstance(err, (FileNotFoundError, NotADirectoryError)):
+        return BrowseError("there's no folder there")
+    return BrowseError("couldn't read this folder" + (f" ({err.strerror})" if err.strerror
+                                                      else ""))
+
+
+def _lstat(path: Path) -> os.stat_result:
+    try:
+        return os.lstat(path)
+    except OSError as err:
+        raise _refusal(err) from None
+
+
+def _entry(folder: Path, part: str) -> os.DirEntry:
+    """The entry in `folder` the disk names `part`: the same name, else on a case-insensitive
+    disk the same name in another case or Unicode form. An alias the disk would also open (a
+    Windows short name) isn't an entry's name, so it isn't found."""
+    fold = _FOLD
+    near = None
+    try:
+        with os.scandir(folder) as it:
+            for e in it:
+                if e.name == part:
+                    return e
+                if near is None and fold and _key(e.name, fold=True) == _key(part, fold=True):
+                    near = e
+    except OSError as err:
+        raise _refusal(err) from None
+    if near is None:
+        raise BrowseError("there's no folder there")
+    return near
+
+
+def _walk(text: str, roots: Sequence[Entry], home: Path
+          ) -> tuple[Path, tuple[str, ...], os.DirEntry | None]:
+    """The path spelled as on the disk, its names below its root, and the last one's entry
+    (None at a root), found down from the root one name at a time without following anything:
+    a hidden or credential folder, a link or a folder the system hides is refused by the name
+    the disk returns."""
+    _, root, below = place(text, roots=roots, home=home, windows=os.name == "nt")
+    here, names, last = Path(root), [], None
+    for part in below:
+        last = _entry(here, part)
+        here = here / last.name
+        names.append(last.name)
+        if _hidden_name(last.name):
+            raise BrowseError("vid2sub doesn't show hidden folders")
+        in_home = _below(PurePath(here), PurePath(home))
+        if (in_home is not None and _holds_credentials(in_home)) or _in_a_profile(names):
+            raise BrowseError("vid2sub doesn't show the folders that hold credentials")
+        try:
+            if _is_link_entry(last):
+                raise BrowseError("vid2sub doesn't follow links: browse to the folder it "
+                                  "points to")
+            if last.is_dir(follow_symlinks=False) and _flagged_hidden(
+                    last.stat(follow_symlinks=False)):
+                raise BrowseError("vid2sub doesn't show hidden folders")
+        except OSError as err:
+            raise _refusal(err) from None
+    return here, tuple(names), last
+```
+
+- [ ] **Step 23: Run the checks; they pass.** `uv run pytest tests/test_browse.py
+  tests/test_security.py -q` first (`89 passed, 6 skipped`), then the guard checks, then
+  `make check`. **Guard checks**, each reverted and restored, each with
+  `uv run pytest tests/test_browse.py -q`: make `_in_a_profile` return `False` (the three
+  profile cases fail); replace `if path.drive.startswith("\\\\") and path.drive.endswith("$"):`
+  with `if False:` (the three hidden-share cases fail); in `accept`, replace the root's
+  `if stat.S_ISDIR(_lstat(target).st_mode):` / `return target` with a bare `return target`
+  (`FAILED …test_a_root_that_is_a_link_is_neither_listed_nor_added`); in `listing`, replace
+  `_roots_near(path, home) if roots is None` with
+  `_roots_near.__globals__["roots"](home=home) if roots is None` (every volume scanned: both
+  `…with_no_roots_given…` tests fail); in `_roots_near`, replace
+  `if not below or parent / below[0] in parents or str(parent / below[0]) == str(home):` /
+  `continue` with a bare `continue` (`FAILED …looks_at_that_volume_alone`); in
+  `security.py`, replace `for n in (*"123456789", "¹", "²", "³"))})` with
+  `for n in "123456789")})` (the `COM¹` and `lpt³` cases fail). The Windows-only test (names
+  made through `\\?\`) and the Linux-only one (a name with the byte `0xff`) run on CI only.
+  `make check`. Expected: `1107 passed, 7 skipped, 36 deselected` twice,
+  `Test Files  19 passed (19)` and `Tests  88 passed (88)`, `All checks passed!` and
+  `no leaks found`.
+- [ ] **Step 24: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(web): 🤖 the browser hides every user's Library and AppData, refuses hidden shares, and looks only at the root a path is in
+
+The Tier 1 security review of the rebuild (one independent reviewer,
+AGENTS.md's checklist) found one Critical, one Important and five Minor.
+
+Critical 1: Library and AppData were hidden only under your home's own
+spelling, and Linux can't read Windows' hidden attribute, so a Windows
+disk under WSL's /mnt/c, a dual-boot disk under /media or a Mac's
+backup under /Volumes listed Users/<name>/AppData and Library, down to
+Credentials and Keychains, and Add took a video from AppData's Temp.
+Now a user's Library or AppData below any root is hidden in listings
+and refused when typed or walked (PROFILE_FOLDERS, _in_a_profile), and
+a share whose name ends in $ (C$, ADMIN$, IPC$) is refused as hidden.
+A volume's own top-level Library still shows.
+
+Important 2: with no roots given, listing, accept and expand scanned
+every mounted volume, and stat'ed each, on every call, so one sleeping
+or dead mount held up a listing of ~/Movies. Now they look only at the
+root a path can be in (_roots_near): your home, the one volume the
+path names (one scan of /Volumes or /mnt, one stat of that mount), or
+on Windows its drive.
+
+Minor 3: on Windows a folder's own entries that Windows reads as a
+device or a stream (nul.mkv, CON.mp4, a trailing dot) are no longer
+listed, by the rule qualified applies to a typed name (one helper).
+Minor 4: security.RESERVED_NAMES is now Python 3.13's
+ntpath._reserved_names, frozen (CONIN$, CONOUT$, COM¹²³, LPT¹²³ added),
+which safe_component shares. Minor 5: accept refuses a root that is a
+link, as listing does. Minor 6: a name that isn't valid Unicode (Linux
+bytes, an unpaired surrogate) isn't listed, so a listing always encodes.
+Minor 7 (a folder swapped for a link between the check and the job) is
+already on the phase-end list; recorded there too: safe_component
+doesn't strip a space before its reserved-name lookup ("CON .x"), which
+predates this task.
+
+The new tests failed first with (12 failed): the volume's
+Users/someone listing showing ['AppData', 'Library', 'Videos'],
+Failed: DID NOT RAISE BrowseError (the profiles typed, the hidden
+shares, COM¹, CONIN$, lpt³, the linked root added), and the volume
+scan seen in a listing of home. Guard checks, each reverted and
+restored: without _in_a_profile, without the hidden-share refusal,
+without the root check in accept, with listing scanning every volume
+again, with _roots_near finding no volume, and with the old reserved
+names, their tests fail. The Windows-only test (names made through
+\\?\) and the Linux-only one (a name with the byte 0xff) run on CI.
+
+Docs read: Python 3.14's ntpath.isreserved and _reserved_names (3.13+;
+CI's 3.12 lacks them, hence vid2sub's own copy), os.scandir and
+DirEntry (names decoded with surrogateescape on POSIX), pathlib's
+PureWindowsPath.drive for UNC paths; Microsoft's "Naming Files, Paths,
+and Namespaces" as ntpath cites it.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 1
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/browse.py src/vid2sub/security.py tests/test_browse.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+  **Round 1f** holds the one re-review's fixes (`AGENTS.md`'s cap for Tier 1: one-line fixes
+  made directly, the rest to the phase-end list). Refusing every `$` share refused a person's
+  own hidden media share too, so only a disk's admin shares are refused, read as Windows reads
+  the name (without trailing dots); and the Windows-only test removes the names it makes.
+
+- [ ] **Step 25: Change the tests.** In `tests/test_browse.py`, replace `import errno` with
+  `import contextlib` / `import errno` (two lines); replace
+
+```python
+@pytest.mark.parametrize("typed", [r"\\localhost\C$\Users\someone", r"\\nas\ADMIN$\x",
+                                   "\\\\nas\\IPC$\\"])
+def test_a_hidden_windows_share_is_refused(typed):
+    with pytest.raises(BrowseError, match="hidden shares"):
+        browse.qualified(typed, windows=True)
+```
+
+  with
+
+```python
+@pytest.mark.parametrize("typed", [r"\\localhost\C$\Users\someone", r"\\nas\ADMIN$\x",
+                                   "\\\\nas\\IPC$\\", r"\\localhost\c$.\Users"])
+def test_a_disks_admin_share_is_refused_and_a_hidden_media_share_is_not(typed):
+    with pytest.raises(BrowseError, match="admin shares"):
+        browse.qualified(typed, windows=True)
+    assert str(browse.qualified(r"\\nas\media$\TV", windows=True)) == r"\\nas\media$\TV"
+```
+
+  and replace
+
+```python
+    for name in ("nul.mkv", "CON.mp4"):  # made through \\?\, as WSL or an NFS share can
+        with open("\\\\?\\" + str(movies / name), "wb"):
+            pass
+    os.mkdir("\\\\?\\" + str(movies / "Extras."))
+    assert names(browse.listing(str(movies), roots=roots, home=home)) == ["Show S01E01.mkv"]
+```
+
+  with
+
+```python
+    odd = ["\\\\?\\" + str(movies / name) for name in ("nul.mkv", "CON.mp4", "Extras.")]
+    try:
+        for made in odd[:2]:  # made through \\?\, as WSL or an NFS share can
+            with open(made, "wb"):
+                pass
+        os.mkdir(odd[2])
+        assert names(browse.listing(str(movies), roots=roots, home=home)) == ["Show S01E01.mkv"]
+    finally:  # only a \\?\ path removes them, so pytest's own clean-up can't
+        for made in odd[:2]:
+            with contextlib.suppress(OSError):
+                os.remove(made)
+        with contextlib.suppress(OSError):
+            os.rmdir(odd[2])
+```
+
+- [ ] **Step 26: Run them; watch them fail.** `uv run pytest tests/test_browse.py -q`.
+  Expected: `E       AssertionError: Regex pattern did not match.` three times (the reason still
+  says "hidden shares"), `E       Failed: DID NOT RAISE BrowseError` (`\\localhost\c$.\Users`),
+  and `4 failed, 65 passed, 5 skipped`.
+- [ ] **Step 27: Write the code.** In `src/vid2sub/web/browse.py`, below `import os`, add
+  `import re`; in the module docstring, replace
+
+```python
+OS flag that hides them may be off or, on Linux, unreadable; a share whose name ends in `$` (`C$`,
+`ADMIN$`) is a hidden one and refused; on Windows, a name in a folder that Windows would read as a
+device or a stream isn't listed; and a name that isn't valid Unicode isn't listed (the security
+review). On Linux, Windows' hidden attribute can't be read, so `ProgramData` and the like show on
+a mounted Windows disk. A season's files sort by `SxxEyy`, others by natural name order (§10).
+```
+
+  with
+
+```python
+OS flag that hides them may be off or, on Linux, unreadable; a disk's admin share (`C$`, `ADMIN$`,
+`IPC$`), another way to the whole disk, is refused; on Windows, a name in a folder that Windows
+would read as a device or a stream isn't listed; and a name that isn't valid Unicode isn't listed
+(the security review). On Linux, Windows' hidden attribute can't be read, so `ProgramData` and
+the like show on a mounted Windows disk. A season's files sort by `SxxEyy`, others by natural
+name order (§10).
+```
+
+  and in `qualified`, replace
+
+```python
+        if path.drive.startswith("\\\\") and path.drive.endswith("$"):
+            raise BrowseError("vid2sub doesn't open hidden shares (C$, ADMIN$ …)")
+```
+
+  with
+
+```python
+        share = path.drive.rsplit("\\", 1)[-1].rstrip(". ").upper()  # Windows drops the dots
+        if path.drive.startswith("\\\\") and re.fullmatch(r"([A-Z]|ADMIN|IPC)\$", share):
+            raise BrowseError("vid2sub doesn't open a disk's admin shares (C$, ADMIN$, IPC$)")
+```
+
+- [ ] **Step 28: Run the checks; they pass.** `uv run pytest tests/test_browse.py -q` first
+  (`69 passed, 5 skipped`), then the guard check, then `make check`. **Guard check:** replace
+  `.rstrip(". ").upper()  # Windows drops the dots` with `.upper()` (the `c$.` case fails);
+  restore it. `make check`. Expected: `1108 passed, 7 skipped, 36 deselected` twice,
+  `Test Files  19 passed (19)` and `Tests  88 passed (88)`, `All checks passed!` and
+  `no leaks found`.
+- [ ] **Step 29: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(web): 🤖 only a disk's admin shares are refused, its trailing dots dropped, and the Windows test cleans up
+
+The one re-review of round 1e (AGENTS.md's cap for Tier 1) found the
+fixes held, with Minor points left. Two are fixed here, as the cap
+allows. Refusing every share whose name ends in $ also refused a
+person's own hidden media share (\\nas\media$), narrowing spec §6.5's
+"UNC paths when typed"; now only a disk's admin shares are refused
+(a drive letter's, ADMIN$, IPC$), which are the other way to the whole
+disk, and the share's name is read as Windows reads it, without its
+trailing dots and spaces (\\localhost\c$.\ is C$). The Windows-only test
+removes the names it makes through \\?\, which nothing else can.
+
+Recorded for the phase end instead: a root that is itself a Users or a
+profile share (a mount of //pc/Users) still lists AppData; a volume's
+name or a walked name that isn't valid Unicode can still reach a path.
+
+The changed test failed first with: Regex pattern did not match
+(the old "hidden shares" reason) and DID NOT RAISE BrowseError
+(\\localhost\c$.\Users). Guard check, reverted and restored: reading the
+share's name with its dots, the c$. case fails.
+
+Docs read: Microsoft's "Naming Files, Paths, and Namespaces" (trailing
+dots and spaces dropped), as Python's ntpath cites it; pathlib's
+PureWindowsPath.drive for a UNC path (\\server\share).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 1
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/browse.py tests/test_browse.py`, `git commit -F .git/COMMIT_MSG`,
+  then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 30: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist: secrets (none read: only names, types
-  and flags); permissions (read-only: what is listed, and that nothing is opened or written);
-  network exposure (no link is followed, so none leads to an SMB share; a UNC path only as
-  typed or browsed); failing closed (every `OSError` a `BrowseError`; an entry that can't be
-  read is hidden); injection (`..`, NUL, device paths and names, a drive inside a path, case
-  and Unicode folding, a lone surrogate, very long input); logging (nothing logs; every reason
-  is a fixed string with at most `strerror`)). Worth the reviewers' time: Windows (8.3 names,
-  junctions, mapped and network drives), which only CI's Windows job runs. The forward review
-  over Tasks 2, 10 and 11 and Phase 4: Task 2's Add screen calls `roots`, `listing` and `expand`
-  off the event loop, renders `Entry.name` as text, passes back only typed text or an
-  `Entry.path` and runs Review on `expand`'s paths; Task 10's Windows job runs this task's
-  Windows-only tests; Task 11 documents what the browser shows and hides; Phase 4's Pages
-  editor can sort a picked folder with `naming.episode_key` (pure). The docs this task made
-  untrue: spec §6.5 doesn't yet say links are never followed: add "Links are never listed or
-  followed, and every check runs on the names the disk returns (Phase 3 plan, Task 1)." after
-  its in-app file browser bullet. Then the close, its own commit, holding this plan with this
-  task's boxes ticked and **Now** set to `Task 2: The Add screen, open.`, and the spec's S38 row
-  with "Phase and task" set to `Phase 3, Tasks 1–2`; S38 stays `planned` (its Add half is Task
-  2's). The message, in `.git/CLOSE_MSG`:
+  and flags; no credential folder listed under any root, a user's `Library` and `AppData` on
+  another disk included); permissions (read-only: what is listed, and that nothing is opened
+  or written); network exposure (no link is followed, so none leads to an SMB share; a UNC
+  path only as typed or browsed, never a disk's admin share; only the volume a path names is
+  touched, so a dead mount elsewhere holds nothing up); failing closed (every `OSError` a
+  `BrowseError`; an entry that can't be read is hidden; a root that is a link is refused);
+  injection (`..`, NUL, device paths and every name Windows reserves, typed or on the disk, a
+  drive inside a path, case and Unicode folding, a lone surrogate typed or a name that isn't
+  Unicode on the disk, very long input); logging (nothing logs; every reason is a fixed string
+  with at most `strerror`)). Rounds 1c, 1e and 1f are earlier reviews' fixes; this review is
+  the implementer's own. Worth the reviewers' time: Windows (8.3 names, junctions, mapped and
+  network drives, `\\?\` names in a folder), which only CI's Windows job runs. The forward
+  review over Tasks 2, 10 and 11 and Phase 4: Task 2's runtime passes its own `browse_roots`
+  (None outside the demo, so `listing` and `expand` look only at the root a path is in) and
+  lists the places with `roots()`, off the event loop; it renders `Entry.name` as text, passes
+  back only typed text or an `Entry.path`, and runs Add on `expand`'s paths; Task 10's Windows
+  job runs this task's Windows-only tests, and its Linux job the undecodable-name one; Task 11
+  documents what the browser shows and hides; Phase 4's Pages editor can sort a picked folder
+  with `naming.episode_key` (pure). The docs this task made untrue: spec §6.5 doesn't yet say
+  links are never followed: add "Links are never listed or followed, and every check runs on
+  the names the disk returns; a user's `Library` and `AppData` stay hidden on every disk
+  (Phase 3 plan, Task 1)." after its in-app file browser bullet. Its four Minor findings are on
+  the Phase-end list already, as planning rows. Then the close, its own commit, holding this plan
+  with this task's boxes ticked and **Now** set to `Task 2: The Add screen, open.`, and the spec's
+  S38 row with "Phase and task" set to `Phase 3, Tasks 1–2`; S38 stays `planned` (its Add half is
+  Task 2's). The message, in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 1: The in-app file browser
@@ -1813,13 +2743,1719 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 2 · **Scenarios:** S38, S39
 
-**Interfaces:**
-- Consumes: Task 1's `web.browse` (`roots`, `listing`, `expand`, `BrowseError`), called off the
-  event loop, a `BrowseError` shown as a notice; `Entry.name` rendered as plain text; only text
-  the person typed or an `Entry.path` from an earlier listing is sent back, never a path read from
-  a file; `expand`'s output goes to Task 3's `review.prepare(…, keep_video=)`.
+**Files:**
+- Create: `frontend/src/components/AddPage.tsx`, `frontend/src/lib/browse.ts`,
+  `tests/e2e/fake_youtube.py`
+- Modify: `src/vid2sub/jobs.py` (`submit(…, runner=)`), `src/vid2sub/web/episode.py`
+  (`AddError`), `src/vid2sub/web/runtime.py` (the browser's places, `roots`, `listing`, `expand`,
+  `add`, `job_guard`), `src/vid2sub/web/views.py` (`browse_view`, `places_view`,
+  `browse_failed`; a YouTube job's name), `src/vid2sub/web/server.py` (`browse` and `add`),
+  `src/vid2sub/web/demo.py` (its one place and its guard), `frontend/src/types.ts`,
+  `frontend/src/App.tsx`, `tests/e2e/conftest.py` (`command=`)
+- Test: `tests/test_jobs.py`, `tests/test_web_add.py`, `frontend/src/lib/browse.test.ts`,
+  `tests/e2e/test_add.py`
 
-<!-- steps: written in the next pass -->
+**Interfaces:**
+- Consumes: Task 1's `web.browse` (`roots`, `listing`, `expand`, `Entry`, `Listing`,
+  `BrowseError`); M1's `media.youtube` (`is_url`, `video_id`, `canonical_url`, `NotYouTube`,
+  and `download(…, runner=)`, the seam the browser test fakes yt-dlp through); Phase 2 Task 19's
+  `runtime.job_runner(ctx, session)`, `Runtime.job_context` and `Runtime.session`, and its
+  `Queue.on_change` listeners, which already refresh every tab's `jobs` output.
+- Produces:
+  - `jobs.Queue.submit(self, inputs: Sequence[str], *, runner: Runner | None = None)
+    -> list[str]`: a job submitted with `runner` is run by it, else by the queue's own; the
+    runner is kept while the job waits or runs, and dropped once it ends or is cancelled. (Moved
+    here from Task 3, whose Start uses it too: Add's YouTube link that keeps its video needs a
+    runner of its own.)
+  - `web.episode.AddError(Exception)`: a folder the browser won't list, or something Add won't
+    take; fit to show, naming no path. Pure, so the server catches it in Pages too.
+  - `web.runtime.Runtime`, new fields `browse_home: Path | None = None` (the browser's home;
+    None is yours), `browse_roots: tuple[Entry, ...] | None = None` (None: `browse.roots`'s
+    home and mounted volumes) and `job_guard: Callable[[Runner], Runner] | None = None` (wraps a
+    job's own runner as the queue's own is wrapped: the demo's `only_inside`), and methods, each
+    blocking on the disk, so called through `runtime.blocking`:
+    - `roots() -> tuple[Entry, ...]` (the places: `browse_roots`, else `browse.roots`);
+      `listing(path: str) -> Listing` (`browse.listing` with `roots=browse_roots`, so outside
+      the demo it looks only at the root the path is in; `AddError` for a `BrowseError`);
+    - `expand(paths: Sequence[str], links: Sequence[str]) -> list[str]`: `browse.expand(paths)`,
+      then each link as `youtube.canonical_url(video_id(link))`, each once (`AddError` for the
+      first that can't be added);
+    - `add(inputs: Sequence[str], *, keep_video: bool) -> list[str]`: queues them, with the
+      queue's own runner, or with `keep_video` a runner of their own (`job_runner` on the job
+      context with `keep_video=True`, through `job_guard`). Task 4 replaces this hand-off with
+      Review.
+  - `web.views`: `browse_view(listing) -> {"path", "parent", "entries": [{"name", "path",
+    "kind"}], "truncated", "error": None}`, `places_view(roots)` (the same, `path` and `parent`
+    None) and `browse_failed(reason)` (`path` and `parent` None, `entries` [], `error` the
+    reason). `jobs_view` names a YouTube job `YouTube video <id>`, never by its title, and its
+    `can_open` is false (the editor opens a file by its path, which the job doesn't report).
+  - The server (local only: `capabilities.generate`; Pages ignores both inputs):
+    - input `browse`: `{"path": str | null, "n": int}` (null: the places) → message
+      `browse_result`: `{"n": int | null, "path": str | null, "parent": str | null,
+      "entries": [{"name": str, "path": str, "kind": "folder" | "video" | "subtitle"}],
+      "truncated": bool, "error": str | null}`. One listing runs at a time per tab, in a task of
+      its own through `runtime.blocking`; a newer request waits in its place, and an older
+      waiting one is dropped, unanswered.
+    - input `add`: `{"paths": [str], "links": [str], "keep_video": bool, "n": int}` (at most
+      `MAX_JOBS` paths and `MAX_LINKS = 20` links, each one line of at most `MAX_PATH`
+      characters) → message `add_result`: `{"n": int | null, "added": int, "error": str |
+      null}`, after `rt.expand` (off the loop) and `rt.add`. Errors: `ADD_WHAT`, `NO_VIDEOS`,
+      `TOO_MANY` (more than `MAX_JOBS` videos), `STOPPING`, or the runtime's `AddError`; none
+      echoes what was sent.
+  - The page: an **Add** screen beside Editor and Jobs (`nav-add`), shown only where
+    `capabilities.generate` is true. `AddPage({browse: BrowseState, onBrowse(path: string |
+    null), onAdd(request: AddRequest), adding: boolean, error: string | null})`;
+    `lib/browse.ts`: `BrowseState`, `NOT_ASKED`, `asked(state, n, path)`, `answered(state,
+    result)` (only the last request's answer; a failure shows no entries), `AddRequest`,
+    `addRequest(picked, typed, link, keepVideo)` and `canAdd(request)`. Test ids:
+    `add-page`, `browse-places`, `browse-up`, `browse-path`, `browse-pick-here`,
+    `browse-waiting`, `browse-error`, `browse-list`, `browse-entry` (`data-kind`),
+    `browse-pick`, `browse-open`, `browse-name`, `add-paths`, `add-link`, `add-keep-video`,
+    `add-start`, `add-picked`, `add-error`. A finished Add opens the Jobs page.
+  - `tests/e2e/conftest.py`: `start_server(…, command=None)` and `launch(…, command=None)`
+    run vid2sub through a launcher instead of `python -m vid2sub`; `tests/e2e/fake_youtube.py
+    CLIP serve …` is one, answering yt-dlp with CLIP.
+  - Decided here (proposed): **the demo's file browser has one place, the demo's own folder,**
+    which is also its home, rather than Add being hidden there. It needs no new capability
+    (Decision 23), and the demo shows Add working; every job's runner in the demo, a YouTube
+    link's own included, runs only its clip.
+  - What Task 4 calls: the `add` input's hand-off (`rt.add`) becomes `review.prepare` and
+    `sample`, and a finished Add opens Review instead of Jobs.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing test.** Append to `tests/test_jobs.py`, after two blank lines:
+
+```python
+# Phase 3, Task 2: a job may bring its own runner (Add's link that keeps its video; Review's Start)
+
+
+def test_a_job_may_bring_its_own_runner_and_the_rest_use_the_queues(runner):
+    ran = []
+
+    def own(source, event, cancelled):
+        ran.append(source)
+        return InputResult(input=source, status="done")
+
+    q = jobs.Queue(runner)
+    (mine,) = q.submit(["a.mkv"], runner=own)
+    (theirs,) = q.submit(["b.mkv"])
+    until(lambda: state(q, mine) == "done" and state(q, theirs) == "running")
+    runner.gate("b.mkv").set()
+    until(lambda: state(q, theirs) == "done")
+    q.close()
+    assert ran == ["a.mkv"] and runner.started == ["b.mkv"]
+    assert q._runners == {}  # nothing kept once a job has run
+```
+
+- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_jobs.py -q`. Expected:
+  `E       TypeError: Queue.submit() got an unexpected keyword argument 'runner'` and
+  `1 failed, 13 passed`.
+- [ ] **Step 3: Write the code.** Replace `src/vid2sub/jobs.py` with:
+
+```python
+"""The job queue: one worker thread runs submitted inputs one at a time (spec §17.1, S36).
+
+Jobs live in the engine's memory, owned by the engine rather than a browser tab, so closing a tab
+cancels nothing and reopening shows the progress; when the engine exits the list is gone, and
+finished results are already on disk (Dan, 2026-10-14). One worker runs one job at a time,
+because the Spark's whisper serves one request at a time anyway. Cancel takes a queued job out of
+the queue, or asks the running one to stop at its next check, between chunks or translation
+batches (`pipeline.Cancelled`; the Phase 2 plan's Decision 7), and says it is `stopping` until
+then, so every tab can tell. Listeners are called after every
+change of state, stage or progress, on the thread that made it (the worker, or the caller of
+`submit`, `cancel` or `close`); one that raises is logged and the queue carries on, and one
+can stop listening (a tab that closed). A job may bring its own runner (Add's YouTube link that
+keeps its video, Review's Start with each file's own options: the Phase 3 plan, Tasks 2 and 3);
+others use the queue's. The log names jobs by id and errors by kind, never an input, a title or a
+path (spec §6.8).
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import logging
+import secrets
+import threading
+from collections import deque
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from vid2sub.pipeline import Cancelled, Event, InputResult
+
+log = logging.getLogger(__name__)
+
+JobState = Literal["queued", "running", "done", "failed", "cancelled"]
+Runner = Callable[[str, Event, Callable[[], bool]], InputResult]
+_IMPLIED_STAGE = {"chunk": "transcribe", "batch": "translate"}
+
+
+@dataclass(frozen=True)
+class JobView:
+    id: str
+    input: str
+    state: JobState
+    stage: str | None = None
+    progress: tuple[int, int] | None = None  # (index, of): a chunk or a translation batch
+    result: InputResult | None = None
+    hint: str | None = None
+    stopping: bool = False  # the running job was asked to stop: before its next chunk or batch
+
+
+class Queue:
+    def __init__(self, runner: Runner):
+        self._runner = runner
+        self._runners: dict[str, Runner] = {}  # a job's own runner, while it waits or runs
+        self._lock = threading.Condition()
+        self._jobs: dict[str, JobView] = {}  # in the order they were submitted
+        self._waiting: deque[str] = deque()
+        self._running: str | None = None
+        self._stop = threading.Event()  # set: the running job should stop
+        self._listeners: list[Callable[[], None]] = []
+        self._closed = False
+        self._worker = threading.Thread(target=self._work, name="vid2sub-jobs", daemon=True)
+        self._worker.start()
+
+    def submit(self, inputs: Sequence[str], *, runner: Runner | None = None) -> list[str]:
+        """Queues each input, run by `runner` when given, else by the queue's own."""
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("the job queue is closed")
+            ids = []
+            for source in inputs:
+                job_id = self._new_id()
+                self._jobs[job_id] = JobView(job_id, source, "queued")
+                if runner is not None:
+                    self._runners[job_id] = runner
+                self._waiting.append(job_id)
+                ids.append(job_id)
+            self._lock.notify()
+        self._changed()
+        return ids
+
+    def cancel(self, job_id: str) -> bool:
+        """True if the job was queued (now cancelled) or running (now asked to stop)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.state not in ("queued", "running"):
+                return False
+            if job.state == "running":  # it stops at its next check; every tab can say so
+                self._stop.set()
+                self._set(job_id, stopping=True)
+            else:
+                self._waiting.remove(job_id)
+                self._runners.pop(job_id, None)
+                self._set(job_id, state="cancelled")
+        self._changed()
+        return True
+
+    def jobs(self) -> list[JobView]:
+        with self._lock:
+            return list(self._jobs.values())
+
+    def on_change(self, fn: Callable[[], None]) -> Callable[[], None]:
+        """Calls `fn` after every change; returns what stops it (a tab that closed)."""
+        with self._lock:
+            self._listeners.append(fn)
+
+        def stop() -> None:
+            with self._lock:
+                if fn in self._listeners:
+                    self._listeners.remove(fn)
+
+        return stop
+
+    def close(self, timeout: float = 5.0) -> None:
+        """Cancels every queued job and the running one, then waits up to `timeout` seconds
+        for the worker to stop."""
+        with self._lock:
+            self._closed = True
+            while self._waiting:
+                job_id = self._waiting.popleft()
+                self._runners.pop(job_id, None)
+                self._set(job_id, state="cancelled")
+            if self._running is not None:
+                self._stop.set()
+            self._lock.notify()
+        self._changed()
+        self._worker.join(timeout)
+
+    def _new_id(self) -> str:
+        while True:
+            job_id = "j" + secrets.token_hex(4)
+            if job_id not in self._jobs:
+                return job_id
+
+    def _set(self, job_id: str, **changes: Any) -> None:
+        """Called with the lock held."""
+        self._jobs[job_id] = dataclasses.replace(self._jobs[job_id], **changes)
+
+    def _changed(self) -> None:
+        with self._lock:
+            listeners = list(self._listeners)
+        for fn in listeners:
+            try:
+                fn()
+            except Exception as err:  # noqa: BLE001 - a listener's bug never stops the queue
+                log.error("a job listener raised %s", type(err).__name__)
+
+    def _work(self) -> None:
+        while True:
+            with self._lock:
+                while not self._waiting and not self._closed:
+                    self._lock.wait()
+                if not self._waiting:
+                    return
+                job_id = self._waiting.popleft()
+                self._running = job_id
+                self._stop.clear()
+                self._set(job_id, state="running")
+                source = self._jobs[job_id].input
+                runner = self._runners.get(job_id, self._runner)
+            self._changed()
+            final = self._run(job_id, source, runner)
+            with self._lock:
+                self._set(job_id, stopping=False, **final)
+                self._runners.pop(job_id, None)
+                self._running = None
+            self._changed()
+
+    def _run(self, job_id: str, source: str, runner: Runner) -> dict[str, Any]:
+        def event(kind: str, fields: dict[str, Any]) -> None:
+            if kind == "stage":
+                changes = {"stage": fields.get("stage"), "progress": None}
+            elif kind in _IMPLIED_STAGE:
+                changes = {"stage": _IMPLIED_STAGE[kind],
+                           "progress": (fields.get("index"), fields.get("of"))}
+            else:
+                return
+            with self._lock:
+                self._set(job_id, **changes)
+            self._changed()
+
+        try:
+            result = runner(source, event, self._stop.is_set)
+        except Cancelled:
+            log.info("job %s cancelled", job_id)
+            return {"state": "cancelled"}
+        except Exception as err:  # noqa: BLE001 - a bug fails one job, not the queue (§17.3)
+            log.error("job %s failed: %s", job_id, type(err).__name__)
+            return {"state": "failed", "hint": None}
+        if result.status == "failed":
+            log.info("job %s failed: %s", job_id, result.kind or "failed")
+        state = "failed" if result.status == "failed" else "done"
+        return {"state": state, "result": result, "hint": result.hint or None}
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_jobs.py -q` five times
+  (`14 passed` each: the queue tests use threads), then the guard checks, then `make check`.
+  **Guard checks**, each reverted and restored, each with `uv run pytest tests/test_jobs.py -q
+  -k own_runner`: in `_work`, replace `runner = self._runners.get(job_id, self._runner)` with
+  `runner = self._runner` (`FAILED …test_a_job_may_bring_its_own_runner_and_the_rest_use_the_queues`);
+  delete the `self._runners.pop(job_id, None)` just above `self._running = None` in `_work`
+  (the same test fails: the runner is kept after its job ran). `make check`. Expected:
+  `1109 passed, 7 skipped, 36 deselected` twice, `Test Files  19 passed (19)` and
+  `Tests  88 passed (88)`, `All checks passed!` and `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(jobs): 🤖 a job may bring its own runner, which the queue keeps only while the job waits or runs
+
+jobs.Queue.submit(inputs, runner=) queues each input to be run by
+`runner`, else by the queue's own, as before. Add needs it now (Phase 3
+Task 2: a YouTube link with keep video runs with keep_video set, while
+everything else runs as the queue's own runner runs it), and Review's
+Start later (Task 3: each file with its own options). The runner is
+dropped once its job ends, is cancelled while queued, or the queue
+closes; Phase 2's callers and its stopping flag are unchanged.
+
+The new test failed first with: TypeError: Queue.submit() got an
+unexpected keyword argument 'runner'. Guard checks, each reverted and
+restored: running every job with the queue's own runner, and keeping a
+runner after its job ran, each make it fail. The queue tests passed five
+runs in a row.
+
+Docs read: none beyond the code (Phase 2's jobs.Queue, with Task 19's
+stopping and stoppable listeners).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 2
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/jobs.py tests/test_jobs.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 6: Write the failing tests,** `tests/test_web_add.py`:
+
+```python
+"""The Add screen's server (spec §19.2, §6.5, §8.1; S38, S39; Review Focus 1): the file browser's
+places and folders, off the event loop, so a sleeping share keeps only its own tab waiting and a
+listing that fails shows nothing stale; Add takes picked and typed paths through the browser's
+checks and YouTube links as their canonical URLs, and queues them, a link keeping its whole video
+when asked; the demo browses only its own folder and runs only its clip; Pages has no Add."""
+
+import dataclasses
+import json
+import threading
+import time
+
+import pytest
+from starlette.testclient import TestClient
+from test_web_server import (  # noqa: F401 - fresh_reactive_lock is autouse
+    BASE,
+    JSON,
+    PAGE,
+    PORT,
+    TOKEN,
+    Tab,
+    fresh_reactive_lock,
+    tab,
+)
+from test_web_settings import Browser
+
+from vid2sub import pipeline
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.jobs import JobView
+from vid2sub.media.tools import Tools
+from vid2sub.pipeline import InputResult
+from vid2sub.web import browse, demo, runtime, server, views
+from vid2sub.web.app import create_app
+from vid2sub.web.browse import BrowseError, Entry
+from vid2sub.web.episode import AddError
+
+LINK = "https://youtu.be/dQw4w9WgXcQ?t=42"
+CANONICAL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+
+def touch(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"x")
+    return path
+
+
+@pytest.fixture
+def places(tmp_path):
+    """A home with a season and a film in it, and a mounted volume."""
+    home, volume = tmp_path / "home", tmp_path / "Volumes" / "Media"
+    season = home / "TV" / "Show"
+    for name in ("Show S01E02.mkv", "Show S01E01.mkv", "Show S01E01.en.srt", ".Show S01E03.mkv",
+                 "notes.txt"):
+        touch(season / name)
+    (season / "Extras").mkdir()
+    touch(home / "Film.mp4")
+    (home / ".ssh").mkdir()
+    volume.mkdir(parents=True)
+    return home, volume, season
+
+
+@pytest.fixture
+def ran(monkeypatch):
+    """What each job ran: its source and whether it keeps the video (pipeline.run_one faked)."""
+    seen: list[tuple[str, bool]] = []
+
+    def run_one(source, ctx):
+        seen.append((source, ctx.options.keep_video))
+        return InputResult(input=source, status="done")
+
+    monkeypatch.setattr(pipeline, "run_one", run_one)
+    return seen
+
+
+@pytest.fixture
+def rt(tmp_path, places, ran):
+    home, volume, _ = places
+    made = runtime.build(Config(), tools=Tools(None, None, None), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=0))
+    made = dataclasses.replace(made, browse_home=home, browse_roots=(
+        Entry("Home", str(home), "folder"), Entry("Media", str(volume), "folder")))
+    runtime.configure(made)
+    yield made
+    runtime.configure(None)
+    made.queue.close()
+
+
+def client_for(rt):
+    c = TestClient(create_app(rt, token=TOKEN, port=PORT, shiny_app=server.app), base_url=BASE)
+    c.__enter__()
+    assert c.post("/auth", content=json.dumps({"token": TOKEN}),
+                  headers={**JSON, **PAGE}).status_code == 204
+    return c
+
+
+@pytest.fixture
+def client(rt):
+    c = client_for(rt)
+    yield c
+    c.__exit__(None, None, None)
+
+
+def said(t: Tab, kind: str) -> list[dict]:
+    """The tab's `kind` messages, in the order they came."""
+    return [m["custom"]["shinyReactMessage"]["data"] for m in t.messages
+            if m.get("custom", {}).get("shinyReactMessage", {}).get("id") == kind]
+
+
+def answer(t: Tab, kind: str, n: int) -> dict:
+    return t.until(lambda t: next((d for d in said(t, kind) if d["n"] == n), None))
+
+
+# ---- browsing ----------------------------------------------------------------------------------
+
+
+def test_browse_starts_at_the_places_and_lists_only_folders_videos_and_subtitles(client, places):
+    home, volume, season = places
+    with tab(client, set()) as t:
+        t.set(browse={"path": None, "n": 1})
+        assert answer(t, "browse_result", 1) == {
+            "n": 1, "path": None, "parent": None, "truncated": False, "error": None,
+            "entries": [{"name": "Home", "path": str(home), "kind": "folder"},
+                        {"name": "Media", "path": str(volume), "kind": "folder"}]}
+        t.set(browse={"path": str(season), "n": 2})
+        found = answer(t, "browse_result", 2)
+    assert (found["path"], found["parent"], found["error"]) == (str(season), str(home / "TV"),
+                                                                None)
+    assert [(e["name"], e["kind"]) for e in found["entries"]] == [
+        ("Extras", "folder"), ("Show S01E01.en.srt", "subtitle"), ("Show S01E01.mkv", "video"),
+        ("Show S01E02.mkv", "video")]
+
+
+def test_a_folder_the_browser_wont_list_says_why_and_names_nothing(client, places):
+    home, _, _ = places
+    results = []
+    with tab(client, set()) as t:  # one at a time: a request sent while one runs may be dropped
+        for n, path in enumerate([str(home / ".ssh"), "relative/secret-folder", "/" + "a" * 5000,
+                                  7, str(home.parent / "elsewhere-secret")], 1):
+            t.set(browse={"path": path, "n": n})
+            results.append(answer(t, "browse_result", n))
+    assert all(r["entries"] == [] and r["error"] for r in results)
+    assert "secret" not in json.dumps(results) and str(home) not in json.dumps(results)
+
+
+def test_a_sleeping_share_keeps_only_its_tab_waiting_and_a_listing_that_fails_shows_nothing(
+        client, places, monkeypatch):
+    home, _, season = places
+    asleep, woke = threading.Event(), threading.Event()
+    real = browse.listing
+    behind: list[bool] = []  # for each of this tab's later listings: did it wait for the share?
+
+    def listing(path, **kwargs):
+        if path.endswith("NAS"):
+            asleep.set()
+            assert woke.wait(20)
+            raise BrowseError("couldn't read this folder (Operation timed out)")
+        if path in (str(home), str(season)):
+            behind.append(woke.is_set())
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(browse, "listing", listing)
+    with tab(client, set()) as a, tab(client, set()) as b:
+        a.set(browse={"path": str(home / "NAS"), "n": 1})
+        assert asleep.wait(10)
+        b.set(browse={"path": str(home / "TV"), "n": 1})  # another tab, answered meanwhile
+        assert answer(b, "browse_result", 1)["path"] == str(home / "TV")
+        a.set(browse={"path": str(home), "n": 2})  # these wait behind the share: one at a time
+        a.set(browse={"path": str(season), "n": 3})
+        time.sleep(0.5)  # time for them to reach the server; the right code runs neither yet
+        assert said(a, "browse_result") == []
+        woke.set()
+        failed = answer(a, "browse_result", 1)
+        latest = answer(a, "browse_result", 3)
+    assert failed == {"n": 1, "path": None, "parent": None, "entries": [], "truncated": False,
+                      "error": "couldn't read this folder (Operation timed out)"}
+    assert latest["path"] == str(season) and said(a, "browse_result")[-1] is latest
+    assert behind and all(behind)  # none ran beside the sleeping one; n 2 may have been dropped
+
+
+# ---- adding ------------------------------------------------------------------------------------
+
+
+def test_add_queues_each_video_once_in_episode_order_and_a_link_as_its_canonical_url(
+        client, rt, places, ran):
+    home, _, season = places
+    with tab(client, {"jobs"}) as t:
+        t.set(add={"n": 1, "paths": [str(season), str(home / "Film.mp4"),
+                                     str(season / "Show S01E01.mkv")],
+                   "links": [LINK], "keep_video": False})
+        assert answer(t, "add_result", 1) == {"n": 1, "added": 4, "error": None}
+        t.until(lambda t: len(ran) == 4)
+        t.set(add={"n": 2, "paths": [], "links": [LINK], "keep_video": True})
+        assert answer(t, "add_result", 2) == {"n": 2, "added": 1, "error": None}
+        t.until(lambda t: len(ran) == 5)
+    assert ran == [(str(season / "Show S01E01.mkv"), False),
+                   (str(season / "Show S01E02.mkv"), False), (str(home / "Film.mp4"), False),
+                   (CANONICAL, False), (CANONICAL, True)]
+    assert [j.input for j in rt.queue.jobs()] == [s for s, _ in ran]
+
+
+@pytest.mark.parametrize("request_", [
+    {"paths": ["relative/secret.mkv"], "links": [], "keep_video": False},
+    {"paths": ["~/.ssh/secret.mkv"], "links": [], "keep_video": False},
+    {"paths": ["~/TV/Show/notes.txt"], "links": [], "keep_video": False},
+    {"paths": [], "links": ["https://vimeo.com/secret"], "keep_video": False},
+    {"paths": [], "links": ["https://youtube.com/watch?v=secret"], "keep_video": False},
+    {"paths": ["~/TV/Show/Extras"], "links": [], "keep_video": False},
+    {"paths": [], "links": [], "keep_video": False},
+    {"paths": "~/TV/Show", "links": [], "keep_video": False},
+    {"paths": ["~/TV/Show"], "links": [], "keep_video": "yes"},
+    {"paths": ["~/TV/Show\n/secret"], "links": [], "keep_video": False},
+])
+def test_anything_add_cannot_take_is_refused_whole_naming_nothing(client, rt, request_):
+    with tab(client, set()) as t:
+        t.set(add={"n": 1, **request_})
+        result = answer(t, "add_result", 1)
+    assert result["added"] == 0 and result["error"]
+    assert "secret" not in result["error"] and rt.queue.jobs() == []
+
+
+def test_the_pages_editor_has_no_add(rt):
+    pages = dataclasses.replace(rt, backend=Browser(rt.backend))
+    runtime.configure(pages)
+    c = client_for(pages)
+    try:
+        with tab(c, set()) as t:
+            t.set(browse={"path": None, "n": 1})
+            t.set(add={"n": 2, "paths": [str(rt.browse_home)], "links": [], "keep_video": False})
+            t.set(open={"path": "/nowhere/x.mkv", "n": 3})  # something it does answer
+            t.until(lambda t: t.notices())
+            assert said(t, "browse_result") == [] and said(t, "add_result") == []
+    finally:
+        c.__exit__(None, None, None)
+    assert rt.queue.jobs() == []
+
+
+def test_a_youtube_job_is_named_by_its_video_and_never_opens_by_its_link():
+    done = InputResult(input=CANONICAL, status="done", title="A talk",
+                       written=["A talk [dQw4w9WgXcQ].en.srt"])
+    (job,) = views.jobs_view([JobView("j00000001", CANONICAL, "done", "write", None, done)])["jobs"]
+    assert (job["name"], job["path"], job["can_open"]) == ("YouTube video dQw4w9WgXcQ",
+                                                           CANONICAL, False)
+    assert job["written"] == ["A talk [dQw4w9WgXcQ].en.srt"]
+
+
+# ---- the runtime -------------------------------------------------------------------------------
+
+
+def test_the_runtime_turns_the_browsers_refusals_into_add_errors(rt, places):
+    home, _, season = places
+    with pytest.raises(AddError, match="hidden"):
+        rt.listing(str(home / ".ssh"))
+    with pytest.raises(AddError, match="isn't a video"):
+        rt.expand([str(season / "notes.txt")], [])
+    with pytest.raises(AddError, match="one YouTube video"):
+        rt.expand([], ["https://www.youtube.com/watch?v=short"])
+    assert rt.expand([str(season / "Show S01E01.mkv")], [LINK, CANONICAL]) == [
+        str(season / "Show S01E01.mkv"), CANONICAL]
+
+
+@pytest.mark.media
+def test_the_demo_browses_only_its_own_folder_and_a_link_it_adds_is_refused(tmp_path):
+    tools = Tools.find()
+    copy = demo.prepare(tools)
+    rt = demo.runtime_for(copy, tools)
+    try:
+        assert rt.roots() == (Entry("Demo", str(copy), "folder"),)
+        assert [e.name for e in rt.listing(str(copy)).entries if e.kind == "video"] == ["jfk.mp4"]
+        with pytest.raises(AddError):
+            rt.listing(str(tmp_path))  # anywhere else, home included, is no place of the demo's
+        assert rt.expand(["~"], []) == [str(copy / demo.VIDEO)]
+        rt.add([CANONICAL], keep_video=True)  # a runner of its own, which the guard wraps
+        deadline = time.monotonic() + 30
+        while (refused := rt.queue.jobs()[0]).state not in ("done", "failed"):
+            assert time.monotonic() < deadline, "timed out waiting"
+            time.sleep(0.01)
+    finally:
+        rt.queue.close()
+    assert refused.state == "failed" and refused.result.reason == demo.DEMO_ONLY
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_web_add.py -q`. Expected:
+  `E   ImportError: cannot import name 'AddError' from 'vid2sub.web.episode'
+  (…/src/vid2sub/web/episode.py)` and `1 error`.
+- [ ] **Step 8: Write the code.** In `src/vid2sub/web/episode.py`, above `@dataclass(frozen=True)`
+  / `class SaveResult:`, add:
+
+```python
+class AddError(Exception):
+    """A folder the file browser won't list, or something Add won't take: the reason is fit to
+    show and names no path (spec §6.5, §6.8). The local runtime makes it from the browser's own
+    `BrowseError` and a link that names no YouTube video, which the server can't import in
+    Pages (Phase 3 Task 2)."""
+
+
+```
+
+  In `src/vid2sub/web/runtime.py`, in the module docstring, replace
+
+```python
+(§8.9). Nothing here presets `allow_cloud` (§7.2): a job never uses a cloud model in Phase 2.
+
+The server runs in Pages too (spec §3.3, §21), so this module imports nothing the Pages bundle
+lacks at its top: `build()` imports the local parts (the backend, the queue, ffmpeg's tools, the
+cache, the network client) when it runs, and the server reaches local-only work through the
+`Runtime` (`reachable`, `media_for`, `retranslate`, `endpoint_models`). Every call that blocks goes through
+```
+
+  with
+
+```python
+(§8.9). Nothing here presets `allow_cloud` (§7.2): a job never uses a cloud model in Phase 2.
+The Add screen's file browser (Phase 3 Task 2, spec §6.5) lists your home and mounted volumes
+through `roots`, `listing` and `expand`, which turn the browser's refusals into the pure
+`AddError`; the demo's runtime gives it only the demo's folder (`browse_roots`, `browse_home`),
+and its `job_guard` wraps every job's runner, so a job that brings its own runner (a YouTube link
+that keeps its video) still runs only the demo's clip.
+
+The server runs in Pages too (spec §3.3, §21), so this module imports nothing the Pages bundle
+lacks at its top: `build()` imports the local parts (the backend, the queue, ffmpeg's tools, the
+cache, the network client) when it runs, and the server reaches local-only work through the
+`Runtime` (`reachable`, `media_for`, `retranslate`, `endpoint_models`, `roots`, `listing`,
+`expand`, `add`). Every call that blocks goes through
+```
+
+  Below `from dataclasses import dataclass, field`, add `from pathlib import Path`; below
+  `    from vid2sub.web.backend import LocalBackend` (in the `TYPE_CHECKING` block), add
+  `    from vid2sub.web.browse import Entry, Listing`; below
+  `    job_context: RunContext | None = None  # what each job's run_one runs on (job_runner)`, add:
+
+```python
+    browse_home: Path | None = None  # the file browser's home: None is yours (spec §6.5)
+    browse_roots: tuple[Entry, ...] | None = None  # None: your home and mounted volumes
+    job_guard: Callable[[Runner], Runner] | None = None  # wraps a job's own runner (the demo's)
+```
+
+  and above `    def media_for(self, ep: Episode, *, audio_only: bool = False) -> Media:`, add:
+
+```python
+    def roots(self) -> tuple[Entry, ...]:
+        """The file browser's places (spec §6.5): your home and each mounted volume, or only the
+        demo's folder in the demo. Blocks on the disk (a sleeping share): call it through
+        `blocking`."""
+        from vid2sub.web import browse
+
+        if self.browse_roots is not None:
+            return self.browse_roots
+        return browse.roots(home=self.browse_home)
+
+    def listing(self, path: str) -> Listing:
+        """One folder's folders, videos and subtitle files (`browse.listing`), or `AddError`,
+        whose reason names no path, for a folder the browser won't list. Outside the demo the
+        browser finds the one root the path is in, so a dead mount elsewhere holds nothing up.
+        Blocks on the disk: call it through `blocking`."""
+        from vid2sub.web import browse
+        from vid2sub.web.episode import AddError
+
+        try:
+            return browse.listing(path, roots=self.browse_roots, home=self.browse_home)
+        except browse.BrowseError as err:
+            raise AddError(str(err)) from None
+
+    def expand(self, paths: Sequence[str], links: Sequence[str]) -> list[str]:
+        """What Add takes (spec §19.2): each path the person typed or picked, through
+        `browse.expand` (a video once, a folder's own videos in episode order, nothing the
+        browser wouldn't show), then each YouTube link as its canonical URL, which names the
+        one video and nothing else (§6.7). `AddError`, naming nothing, for the first that can't
+        be added. Blocks on the disk: call it through `blocking`."""
+        from vid2sub.media import youtube
+        from vid2sub.web import browse
+        from vid2sub.web.episode import AddError
+
+        try:
+            found = browse.expand(paths, roots=self.browse_roots, home=self.browse_home)
+        except browse.BrowseError as err:
+            raise AddError(str(err)) from None
+        for link in links:
+            try:
+                url = youtube.canonical_url(youtube.video_id(link))
+            except youtube.NotYouTube as err:
+                raise AddError(str(err)) from None
+            if url not in found:
+                found.append(url)
+        return found
+
+    def add(self, inputs: Sequence[str], *, keep_video: bool) -> list[str]:
+        """Queues what Add took, each as `vid2sub run` would run it, with the session's targets
+        and formats as it starts (`job_runner`); a YouTube link keeps its whole video when
+        **keep video** is ticked (spec §8.1), through a runner of its own, which `job_guard`
+        wraps as the queue's own is wrapped (the demo's: only its clip). The job ids;
+        RuntimeError once the queue is closed."""
+        runner = None
+        if keep_video and self.job_context is not None:
+            ctx = self.job_context
+            runner = job_runner(dataclasses.replace(
+                ctx, options=dataclasses.replace(ctx.options, keep_video=True)), self.session)
+            if self.job_guard is not None:
+                runner = self.job_guard(runner)
+        return self.queue.submit(inputs, runner=runner)
+
+```
+
+  In `src/vid2sub/web/views.py`, in the module docstring, replace
+  `a cloud endpoint is never contacted (as `vid2sub doctor` decides). The server runs in Pages too`
+  with
+
+```python
+a cloud endpoint is never contacted (as `vid2sub doctor` decides). The Add screen's file browser
+shows a folder's entries by bare name and full path (Phase 3 Task 2, §6.5). The server runs in
+Pages too
+```
+
+  Below `    from vid2sub.jobs import JobView` (in the `TYPE_CHECKING` block), add
+  `    from vid2sub.web.browse import Entry, Listing`. In `jobs_view`, replace
+
+```python
+    notes; `stopping` while a cancelled job finishes its chunk (Decision 7). A job opens in the
+    editor once it is done and its subtitles are there."""
+    out = []
+    for j in jobs:
+        r = j.result
+        finished = r is not None and r.status in ("done", "skipped")
+        out.append({"id": j.id, "name": PurePath(j.input).name or j.input, "path": j.input,
+```
+
+  with
+
+```python
+    notes; `stopping` while a cancelled job finishes its chunk (Decision 7). A job opens in the
+    editor once it is done and its subtitles are there. A YouTube link (Phase 3's Add) is named
+    by its video's id, never a title (§6.8), and doesn't open by its link."""
+    from vid2sub.media import youtube  # here: the Pages editor has no jobs, and no yt-dlp
+
+    out = []
+    for j in jobs:
+        r = j.result
+        finished = r is not None and r.status in ("done", "skipped")
+        link = youtube.is_url(j.input)
+        out.append({"id": j.id, "name": _link_name(j.input) if link else
+                    PurePath(j.input).name or j.input, "path": j.input,
+```
+
+  replace `                    "can_open": j.state == "done" and finished})` with
+  `                    "can_open": j.state == "done" and finished and not link})`, and above
+  `def capabilities_view(caps: Capabilities) -> dict[str, Any]:`, add:
+
+```python
+def _link_name(url: str) -> str:
+    from vid2sub.media import youtube
+
+    try:
+        return f"YouTube video {youtube.video_id(url)}"
+    except youtube.NotYouTube:
+        return "YouTube link"
+
+
+def browse_view(listing: Listing) -> dict[str, Any]:
+    """A folder in the Add screen's file browser (spec §6.5, S38): each entry's bare name, which
+    the page shows as plain text, its kind, and its full path, which is all the page sends back
+    to list or add (§6.5: a path from a listing, or one the person typed); in `browse.listing`'s
+    order, folders first, then videos and subtitles by `SxxEyy`. `path` is spelled as on the
+    disk; `parent` is None at a root or a share's top, where Up goes back to the places."""
+    return {"path": listing.path, "parent": listing.parent,
+            "entries": [{"name": e.name, "path": e.path, "kind": e.kind}
+                        for e in listing.entries],
+            "truncated": listing.truncated, "error": None}
+
+
+def places_view(roots: Sequence[Entry]) -> dict[str, Any]:
+    """The file browser's places, where it starts: your home, then each mounted volume (`path`
+    None)."""
+    return {"path": None, "parent": None,
+            "entries": [{"name": e.name, "path": e.path, "kind": e.kind} for e in roots],
+            "truncated": False, "error": None}
+
+
+def browse_failed(reason: str) -> dict[str, Any]:
+    """A folder that couldn't be listed: its reason, which names no path (§6.8), and no
+    entries, so the page shows nothing stale (Review Focus 1)."""
+    return {"path": None, "parent": None, "entries": [], "truncated": False, "error": reason}
+
+
+```
+
+  In `src/vid2sub/web/server.py`, in the module docstring, below
+  `listeners on the worker thread, so each tab's hands the change to its own loop.`, add (after
+  a blank line):
+
+```python
+The Add screen (§19.2, §6.5; S38, S39; Phase 3 Task 2), the local engine's alone: `browse` asks
+for the file browser's places or one folder, answered by the `browse_result` message, and `add`
+takes the entries picked, the paths typed and a YouTube link with **keep video**, which the
+runtime checks as the browser checks a folder and queues (`add_result`). Both wait on the disk, a
+sleeping network share for seconds, so each runs in a task of the tab's own through
+`runtime.blocking`; a tab lists one folder at a time, and only the newest request waits behind it
+(Review Focus 1).
+```
+
+  Replace
+  `from vid2sub.web.episode import Episode, OpenError, RetranslateError, SaveError, SaveResult`
+  with
+
+```python
+from vid2sub.web.episode import (
+    AddError,
+    Episode,
+    OpenError,
+    RetranslateError,
+    SaveError,
+    SaveResult,
+)
+```
+
+  below `STOPPING = "vid2sub is stopping: nothing was queued"`, add:
+
+```python
+MAX_LINKS = 20  # YouTube links one Add may take
+TYPE_A_FOLDER = "type the folder's full path"
+ADD_WHAT = ("pick or type the videos and folders to add, or paste a YouTube link: nothing was "
+            "added")
+NO_VIDEOS = "there are no videos there: nothing was added"
+TOO_MANY = f"that's more than {MAX_JOBS} videos: add fewer at once"
+```
+
+  above `def _cue_ids(ids: object) -> bool:`, add:
+
+```python
+def _typed(values: object, most: int) -> bool:
+    """A list of at most `most` texts, each one line of 1 to MAX_PATH characters: what Add
+    takes, before the runtime checks each as the file browser does."""
+    return (isinstance(values, list) and len(values) <= most
+            and all(isinstance(v, str) and 0 < len(v) <= MAX_PATH
+                    and not any(ch in v for ch in "\r\n\0") for v in values))
+
+
+```
+
+  and in `server`, above `    @reactive_output` / `    def episode():`, add:
+
+```python
+    # Add (spec §19.2, §6.5; S38, S39), the local engine's alone: Pages has no file browser.
+    # Browsing and adding wait on the disk, a sleeping network share for seconds, so each runs in
+    # a task of this tab's own, through `runtime.blocking`, holding no reactive lock: the page
+    # says it's waiting, and other tabs, and this one's other work, carry on (Review Focus 1). One
+    # listing runs at a time per tab; a newer request waits in its place and older waiting ones
+    # are dropped, since the page shows only the folder it asked for last, so a sleeping share
+    # never holds more than one of the blocking pool's threads per tab. Only what the person
+    # typed, or a path from a listing this engine sent, comes back (§6.5); the runtime checks
+    # each as the browser does, and its reasons name no path (§6.8).
+    browsing: dict[str, Any] = {"task": None, "next": None}
+    adding: set[asyncio.Task] = set()
+
+    @reactive.effect
+    @reactive.event(input.browse)
+    def _browse() -> None:
+        request = as_json(input.browse())
+        if not local or not isinstance(request, dict):
+            return
+        browsing["next"] = request
+        if browsing["task"] is None or browsing["task"].done():
+            browsing["task"] = asyncio.create_task(browse_latest())
+
+    async def browse_latest() -> None:
+        while browsing["next"] is not None:
+            request, browsing["next"] = browsing["next"], None
+            try:
+                await browse_one(request)
+            except Exception as err:  # noqa: BLE001 - one listing failing must not stop the next
+                log.error("a listing failed: %s", type(err).__name__)
+
+    async def browse_one(request: dict) -> None:
+        path, n = request.get("path"), request.get("n")
+        n = n if type(n) is int else None
+        if path is not None and not (isinstance(path, str) and 0 < len(path) <= MAX_PATH):
+            view = views.browse_failed(TYPE_A_FOLDER)  # never echoes what was sent
+        else:
+            try:
+                view = (views.places_view(await runtime.blocking(rt.roots)) if path is None
+                        else views.browse_view(await runtime.blocking(rt.listing, path)))
+            except AddError as err:
+                view = views.browse_failed(str(err))
+        await shinyreact.send_message(session, "browse_result", {"n": n, **view})
+
+    @reactive.effect
+    @reactive.event(input.add)
+    def _add() -> None:
+        request = as_json(input.add())
+        if not local or not isinstance(request, dict):
+            return
+        task = asyncio.create_task(add_one(request))
+        adding.add(task)  # kept until it ends: the loop holds only a weak reference
+        task.add_done_callback(adding.discard)
+
+    async def add_one(request: dict) -> None:
+        try:
+            await add_from(request)
+        except Exception as err:  # noqa: BLE001 - one Add failing must not stop the session
+            log.error("an add failed: %s", type(err).__name__)
+
+    async def add_from(request: dict) -> None:
+        n = request.get("n")
+        n = n if type(n) is int else None
+        paths, links, keep = request.get("paths"), request.get("links"), request.get("keep_video")
+        added, error = 0, None
+        if not (_typed(paths, MAX_JOBS) and _typed(links, MAX_LINKS) and isinstance(keep, bool)
+                and (paths or links)):
+            error = ADD_WHAT  # never echoes what was sent
+        else:
+            try:
+                inputs = await runtime.blocking(rt.expand, paths, links)
+            except AddError as err:
+                error = str(err)
+            else:
+                if not inputs:
+                    error = NO_VIDEOS
+                elif len(inputs) > MAX_JOBS:
+                    error = TOO_MANY
+                else:
+                    try:
+                        added = len(rt.add(inputs, keep_video=keep))
+                    except RuntimeError:  # closed: the engine is stopping
+                        error = STOPPING
+        await shinyreact.send_message(session, "add_result",
+                                      {"n": n, "added": added, "error": error})
+
+```
+
+  In `src/vid2sub/web/demo.py`, in the module docstring, replace
+  `episodes in its copy, and its runtime reads no vid2sub.toml and no key from the environment.`
+  with
+
+```python
+episodes in its copy, and its runtime reads no vid2sub.toml and no key from the environment. Its
+Add screen's file browser has one place, the demo's own folder, which is also its home, so
+nothing of yours is listed, and every job's runner, a YouTube link's own included, runs only the
+demo's clip (the Phase 3 plan, Task 2).
+```
+
+  below `from dataclasses import replace`, add `from functools import partial`; below
+  `from vid2sub.web.backend import Episode, LocalBackend, OpenError`, add
+  `from vid2sub.web.browse import Entry`; in `runtime_for`'s docstring, replace
+  `    writes, it writes in the demo's folder."""` with
+  `    writes, it writes in the demo's folder. Add browses only the copy (Phase 3 Task 2)."""`;
+  and replace `    return replace(built, backend=backend)` with:
+
+```python
+    return replace(built, backend=backend, browse_home=copy,
+                   browse_roots=(Entry("Demo", str(copy), "folder"),),
+                   job_guard=partial(only_inside, copy))
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_web_add.py
+  tests/test_pages_imports.py -q` first (`23 passed`; three times: the browsing test uses
+  threads), then the guard checks, then `make check`. **Guard checks**, each reverted and
+  restored: in `runtime_for`, replace `job_guard=partial(only_inside, copy))` with
+  `job_guard=None)` (`uv run pytest tests/test_web_add.py -q -k demo`: the link's job fails
+  with "deno isn't installed…" instead of the demo's refusal); delete
+  `browse_roots=(Entry("Demo", str(copy), "folder"),),` (the same test fails: the demo lists
+  your home and volumes); in `_browse`, replace
+  `if browsing["task"] is None or browsing["task"].done():` with `if True:`
+  (`uv run pytest tests/test_web_add.py -q -k sleeping`: a listing runs beside the sleeping
+  one). `make check`. Expected: `1127 passed, 7 skipped, 36 deselected` twice,
+  `Test Files  19 passed (19)` and `Tests  88 passed (88)`, `All checks passed!` and
+  `no leaks found`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 Add browses the places and a folder off the event loop, and queues what is picked, typed or linked
+
+The server's half of the Add screen (spec §19.2, §6.5, §8.1; S38, S39).
+`browse` asks for the places (your home and mounted volumes) or one
+folder, answered by the `browse_result` message: entries by bare name,
+kind and full path, in browse.listing's order. `add` takes picked and
+typed paths, through browse.expand's checks, and YouTube links, as their
+canonical URLs, and queues them; a link with keep video runs with a
+runner of its own (keep_video set), which the runtime's job_guard wraps.
+Both run in a task of the tab's own through runtime.blocking, so a
+sleeping NAS share keeps only that tab waiting (Review Focus 1); a tab
+lists one folder at a time and only its newest request waits behind
+it, so a sleeping share holds at most one of the blocking pool's
+threads per tab. A listing that fails sends its reason and no entries.
+The runtime turns BrowseError and NotYouTube into the pure
+web.episode.AddError, which the server catches without importing them
+(Pages). The Jobs page names a YouTube job by its video's id, never its
+title, and doesn't offer to open it by its link.
+
+The demo's browser has one place, its own folder, which is also its
+home (proposed as a Decision: smaller than hiding Add, and no new
+capability, Decision 23), and its job_guard is only_inside, so a link's
+own runner runs only the demo's clip too.
+
+The new tests failed first with: ImportError: cannot import name
+'AddError' from 'vid2sub.web.episode'. Guard checks, each reverted and
+restored: without the demo's guard the link's job fails for want of
+deno instead of the demo's refusal; without the demo's one place its
+browser lists your home; a listing per request instead of one at a time
+runs beside the sleeping one.
+
+Docs read: shiny 1.8.0's source (reactive.event fires per changed
+value; an input's JSON arrays arrive as tuples, hence as_json),
+shinyreact 0.1.0's send_message (module-resolved id, a
+shinyReactMessage), Python's asyncio.create_task (keep a reference to
+the task) and asyncio.to_thread; yt-dlp 2026.8.19's YoutubeDL
+(bv*+ba/b is its default "bestvideo*+bestaudio/best").
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 2
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/episode.py src/vid2sub/web/runtime.py src/vid2sub/web/views.py
+  src/vid2sub/web/server.py src/vid2sub/web/demo.py tests/test_web_add.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 11: Write the failing tests.** `frontend/src/lib/browse.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { BrowseResult } from "@/types";
+
+import { NOT_ASKED, addRequest, answered, asked, canAdd } from "./browse";
+
+const SEASON: BrowseResult = {
+  n: 2, path: "/Volumes/NAS/TV/Show", parent: "/Volumes/NAS/TV", truncated: false, error: null,
+  entries: [{ name: "Show S01E01.mkv", path: "/Volumes/NAS/TV/Show/Show S01E01.mkv", kind: "video" }],
+};
+
+describe("the file browser waits for the folder it asked for last (Review Focus 1)", () => {
+  it("says it's waiting until that folder comes, and drops an answer to an older request", () => {
+    let state = asked(NOT_ASKED, 1, null);
+    state = asked(state, 2, "/Volumes/NAS/TV/Show");
+    expect(state.waiting).toBe(true);
+    expect(answered(state, { ...SEASON, n: 1, path: null })).toBe(state);
+    state = answered(state, SEASON);
+    expect(state.waiting).toBe(false);
+    expect(state.shown).toEqual(SEASON);
+  });
+
+  it("shows a listing that failed as its reason alone, never the folder shown before it", () => {
+    let state = answered(asked(NOT_ASKED, 2, "/Volumes/NAS/TV/Show"), SEASON);
+    state = asked(state, 3, "/Volumes/NAS/TV/Other");
+    expect(state.waiting).toBe(true);
+    state = answered(state, { ...SEASON, n: 3, entries: SEASON.entries, error: "couldn't read this folder (Operation timed out)" });
+    expect(state.shown?.entries).toEqual([]);
+    expect(state.shown?.error).toBe("couldn't read this folder (Operation timed out)");
+  });
+});
+
+describe("what Add sends (spec §19.2, §6.5)", () => {
+  it("is the picked paths, then each typed path once, and the YouTube link", () => {
+    expect(addRequest(["/TV/Show"], "  /TV/Show\n\n/films/Film.mp4 \n", " https://youtu.be/dQw4w9WgXcQ ", true)).toEqual({
+      paths: ["/TV/Show", "/films/Film.mp4"], links: ["https://youtu.be/dQw4w9WgXcQ"], keep_video: true,
+    });
+    expect(canAdd(addRequest([], " \n", "", false))).toBe(false);
+    expect(canAdd(addRequest([], "", "https://youtu.be/dQw4w9WgXcQ", false))).toBe(true);
+  });
+});
+```
+
+  Then the browser tests. In `tests/e2e/conftest.py`, in the module docstring, replace
+  `` `start_server(..., toml=...)` serves a vid2sub.toml instead of the demo. `` with
+
+```python
+`start_server(..., toml=...)` serves a vid2sub.toml instead of the demo, and `command=` runs
+vid2sub through a launcher (`fake_youtube.py`, which fakes yt-dlp) instead of `python -m vid2sub`.
+```
+
+  replace
+
+```python
+def start_server(tmp: Path, *args: str, port: int = 0, toml: str | None = None) -> Server:
+    """`vid2sub serve --no-browser --demo` on `port` (0: any free one), up and answering; with
+    `toml`, that vid2sub.toml instead of the demo."""
+```
+
+  with
+
+```python
+def start_server(tmp: Path, *args: str, port: int = 0, toml: str | None = None,
+                 command: list[str] | None = None) -> Server:
+    """`vid2sub serve --no-browser --demo` on `port` (0: any free one), up and answering; with
+    `toml`, that vid2sub.toml instead of the demo; with `command`, run by it, not
+    `python -m vid2sub`."""
+```
+
+  replace
+
+```python
+            [sys.executable, "-m", "vid2sub", "serve", "--no-browser", "--port", str(port),
+             *which, *args],
+```
+
+  with
+
+```python
+            [*(command or [sys.executable, "-m", "vid2sub"]), "serve", "--no-browser",
+             "--port", str(port), *which, *args],
+```
+
+  and in `launch`, replace
+
+```python
+    """Starts another server, `launch(tmp, *args, port=0, toml=None)`, stopped at the end."""
+    started: list[Server] = []
+
+    def run(tmp: Path, *args: str, port: int = 0, toml: str | None = None) -> Server:
+        started.append(start_server(tmp, *args, port=port, toml=toml))
+```
+
+  with
+
+```python
+    """Starts another server, `launch(tmp, *args, port=0, toml=None, command=None)`, stopped at
+    the end."""
+    started: list[Server] = []
+
+    def run(tmp: Path, *args: str, port: int = 0, toml: str | None = None,
+            command: list[str] | None = None) -> Server:
+        started.append(start_server(tmp, *args, port=port, toml=toml, command=command))
+```
+
+  `tests/e2e/fake_youtube.py`:
+
+```python
+"""`vid2sub serve` with yt-dlp answered by a local fake, so a browser test adds a YouTube link
+without reaching YouTube (spec §8.1, §6.7; S39; tests never touch the network).
+
+M1's seam, as tests/test_youtube.py uses it: `youtube.download(…, runner=)` runs yt-dlp through
+`runner`. Here `download` is wrapped so the real one runs, its safe naming and its move into the
+YouTube folder included, with a runner that writes CLIP (a video with picture and sound) as the
+download when yt-dlp is asked for video and audio (`-f bv*+ba/b`, **keep video**), else that
+clip's sound alone; and it says which format it was asked for in ASKED, a file beside CLIP. deno,
+which yt-dlp needs for YouTube, is never run, so a machine without it passes too.
+
+    python tests/e2e/fake_youtube.py CLIP serve --no-browser --port 0 --config vid2sub.toml
+"""
+
+import dataclasses
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from vid2sub.cli import main
+from vid2sub.media import youtube
+
+VIDEO_AND_AUDIO = "bv*+ba/b"
+TITLE = "A talk at a college"
+
+
+def fake_yt_dlp(clip: Path):
+    def run(args, *, cwd, timeout, **_):
+        asked = args[args.index("-f") + 1]
+        clip.with_name("ASKED").write_text(asked, encoding="utf-8")
+        vid = youtube.video_id(args[-1])
+        if asked == VIDEO_AND_AUDIO:
+            out = cwd / f"{vid}.mkv"
+            shutil.copyfile(clip, out)
+        else:
+            out = cwd / f"{vid}.m4a"
+            subprocess.run([shutil.which("ffmpeg"), "-nostdin", "-v", "error", "-y", "-i",
+                            str(clip), "-vn", "-c:a", "copy", str(out)], check=True)
+        line = json.dumps({"id": vid, "title": TITLE, "upload_date": "19620912",
+                           "filepath": str(out)})
+        return subprocess.CompletedProcess(args, 0, stdout=line.encode() + b"\n", stderr=b"")
+
+    return run
+
+
+def wrap(clip: Path):
+    real = youtube.download
+
+    def download(url, *, out_dir, scratch, keep_video, tools, runner=None, timeout=3600):
+        tools = dataclasses.replace(tools, deno=tools.deno or "/deno/is/never/run")
+        return real(url, out_dir=out_dir, scratch=scratch, keep_video=keep_video, tools=tools,
+                    runner=fake_yt_dlp(clip), timeout=timeout)
+
+    return download
+
+
+if __name__ == "__main__":
+    youtube.download = wrap(Path(sys.argv[1]))
+    sys.exit(main(sys.argv[2:]))
+```
+
+  `tests/e2e/test_add.py`:
+
+```python
+"""The Add screen in Chromium (spec §19.2, §6.5, §8.1; S38, S39): the file browser starts at the
+places, opens a folder with its folders first and its episodes in `SxxEyy` order, shows only
+folders, videos and subtitles, and adds what is picked; a YouTube link with **keep video** ticked
+lands whole in the YouTube folder. Against `vid2sub serve --demo`, whose browser has only the
+demo's folder, and against a vid2sub.toml served with yt-dlp faked (`fake_youtube.py`, M1's
+`download(…, runner=)` seam) and a fake whisper.cpp server, so nothing reaches YouTube or a model.
+Run with `make e2e`."""
+
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+from fakes import FakeServer
+from helpers import SPEECH, make_clip
+from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
+
+HERE = Path(__file__).parent
+WORDS = {"language": "english", "language_probabilities": {"en": 0.99},
+         "segments": [{"text": " We meet at a college.", "start": 0.0, "end": 2.0,
+                       "words": [{"word": " We", "start": 0.0, "end": 0.5, "probability": 0.9},
+                                 {"word": " meet", "start": 0.5, "end": 1.0,
+                                  "probability": 0.9},
+                                 {"word": " at", "start": 1.0, "end": 1.2, "probability": 0.9},
+                                 {"word": " a", "start": 1.2, "end": 1.4, "probability": 0.9},
+                                 {"word": " college.", "start": 1.4, "end": 2.0,
+                                  "probability": 0.9}]}]}
+
+
+def open_add(page):
+    page.get_by_test_id("nav-add").click()
+    expect(page.get_by_test_id("add-page")).to_be_visible()
+
+
+def test_the_demo_browses_its_own_folder_in_episode_order_and_adds_its_clip(page, server):
+    copy = next(server.tmp.glob("vid2sub-demo-*/demo"))
+    for name in ("Show S01E10.mkv", "Show S01E02.mkv", ".hidden.mkv", "notes.txt"):
+        (copy / name).write_bytes(b"x")
+    (copy / "Extras").mkdir()
+    open_add(page)
+    entries = page.get_by_test_id("browse-entry")
+    expect(entries).to_have_count(1)  # the places: the demo's own folder, nothing of yours
+    expect(entries.first).to_contain_text("Demo")
+    entries.first.get_by_test_id("browse-open").click()
+    expect(page.get_by_test_id("browse-path")).to_have_text(str(copy))
+    expect(entries).to_have_text([
+        "Extrasfolder", "Show S01E02.mkvvideo", "Show S01E10.mkvvideo", "jfk.en.srtsubtitles",
+        "jfk.ja.srtsubtitles", "jfk.mp4video"])
+    page.get_by_label("Pick jfk.mp4").check()
+    expect(page.get_by_test_id("add-picked")).to_have_text("1 picked")
+    page.get_by_test_id("add-start").click()
+    expect(page.get_by_test_id("jobs-page")).to_be_visible()
+    job = page.get_by_test_id("job")
+    expect(job).to_have_count(1)
+    expect(job.first).to_have_attribute("data-state", "done", timeout=30_000)
+    page.get_by_test_id("nav-add").click()
+    page.get_by_test_id("add-paths").fill("/somewhere/else.mkv")
+    page.get_by_test_id("add-start").click()
+    expect(page.get_by_test_id("add-error")).to_have_text(
+        "vid2sub browses your home folder, your drives and network shares only")
+
+
+TOML = """
+[defaults]
+youtube_dir = {youtube}
+targets = ["en"]
+
+[endpoints.spark]
+base_url = "{url}"
+
+[models.spark-turbo]
+catalog = "whisper-large-v3-turbo"
+endpoint = "spark"
+model = "turbo"
+parser = "whisper.cpp"
+local = true
+"""
+
+
+def test_a_youtube_link_with_keep_video_ticked_lands_whole_in_the_youtube_folder(
+        launch, open_page, tmp_path):
+    (tmp_path / "clips").mkdir()
+    clip = make_clip(tmp_path / "clips", "talk.mkv", seconds=14, speech=SPEECH,
+                     audio_langs=("eng",))
+    youtube = tmp_path / "YouTube"
+
+    def whisper(req):
+        if req.path.endswith("/models"):
+            return 200, {"object": "list", "data": [{"id": "turbo", "object": "model"}]}, {}
+        return 200, WORDS, {}
+
+    with FakeServer(responder=whisper) as spark:
+        server = launch(tmp_path / "server",
+                        toml=TOML.format(youtube=json.dumps(str(youtube)), url=spark.url),
+                        command=[sys.executable, str(HERE / "fake_youtube.py"), str(clip)])
+        watched = open_page(server)
+        page = watched.page
+        open_add(page)
+        page.get_by_test_id("add-link").fill("https://youtu.be/dQw4w9WgXcQ?si=shared")
+        page.get_by_test_id("add-keep-video").check()
+        page.get_by_test_id("add-start").click()
+        job = page.get_by_test_id("job")
+        expect(job).to_have_count(1)
+        expect(job.first).to_contain_text("YouTube video dQw4w9WgXcQ")
+        expect(job.first).to_have_attribute("data-state", "done", timeout=60_000)
+    landed = youtube / "A talk at a college [dQw4w9WgXcQ].mkv"
+    assert clip.with_name("ASKED").read_text(encoding="utf-8") == "bv*+ba/b"
+    streams = json.loads(subprocess.run(
+        [shutil.which("ffprobe"), "-v", "error", "-show_streams", "-of", "json", str(landed)],
+        check=True, capture_output=True).stdout)["streams"]
+    assert {s["codec_type"] for s in streams} == {"video", "audio"}  # the whole video
+    assert landed.with_name("A talk at a college [dQw4w9WgXcQ].en.srt").is_file()
+    assert watched.errors == [] and watched.violations() == []
+```
+
+- [ ] **Step 12: Run them; watch them fail.** `make test-js`. Expected: its typecheck stops at
+  `src/lib/browse.test.ts(3,15): error TS2305: Module '"@/types"' has no exported member
+  'BrowseResult'.` and `src/lib/browse.test.ts(5,64): error TS2307: Cannot find module
+  './browse' or its corresponding type declarations.` Then `make e2e` (it builds the frontend
+  first). Expected: both new tests fail with
+  `E           playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.`,
+  `waiting for get_by_test_id("nav-add")`, and `2 failed, 31 passed, 1139 deselected`.
+- [ ] **Step 13: Write the code.** In `frontend/src/types.ts`, above
+  `/** The \`endpoint_test_result\` message: what an endpoint's /v1/models said, or why it failed. */`,
+  add:
+
+```ts
+/** An entry in the Add screen's file browser (views.browse_view; spec §6.5, S38): `name` is shown
+ * as plain text; `path` is what the page sends back to list or add, and nothing else is. */
+export type BrowseEntry = { name: string; path: string; kind: "folder" | "video" | "subtitle" };
+
+/** The `browse_result` message: the folder request `n` asked for (`path` null: the places), with
+ * `parent` null at a root, or why it couldn't be listed (`error`), with no entries. */
+export type BrowseResult = {
+  n: number | null;
+  path: string | null;
+  parent: string | null;
+  entries: BrowseEntry[];
+  truncated: boolean;
+  error: string | null;
+};
+
+/** The `add_result` message: how many jobs request `n` queued, or why nothing was added. */
+export type AddResultMessage = { n: number | null; added: number; error: string | null };
+
+```
+
+  `frontend/src/lib/browse.ts`:
+
+```ts
+// The Add screen's file browser and its request (spec §19.2, §6.5; S38, S39): which folder the
+// page asked for last, whether it is still waiting for it (a network share can take seconds to
+// wake: Review Focus 1), and what it shows. Only the answer to the last request is shown, so a
+// slow folder never replaces the one the person moved on to, and a listing that failed shows its
+// reason and no entries, never the folder shown before it. What Add sends back is only what the
+// person typed or a path from a listing the engine sent (§6.5).
+
+import { typedPaths } from "@/lib/jobs";
+import type { BrowseResult } from "@/types";
+
+export type BrowseState = {
+  asked: number | null; // the request whose answer is wanted
+  path: string | null; // the folder asked for (null: the places)
+  waiting: boolean;
+  shown: BrowseResult | null;
+};
+
+export const NOT_ASKED: BrowseState = { asked: null, path: null, waiting: false, shown: null };
+
+/** The page asked for `path` (null: the places) as request `n`. */
+export function asked(state: BrowseState, n: number, path: string | null): BrowseState {
+  return { ...state, asked: n, path, waiting: true };
+}
+
+/** The engine answered: shown only when it answers the last request; a failure shows nothing
+ * stale. */
+export function answered(state: BrowseState, result: BrowseResult): BrowseState {
+  if (result.n !== state.asked) return state;
+  const shown = result.error ? { ...result, entries: [], truncated: false } : result;
+  return { ...state, waiting: false, shown };
+}
+
+export type AddRequest = { paths: string[]; links: string[]; keep_video: boolean };
+
+/** What Add sends: the picked entries' paths, then each typed path, and the YouTube link. */
+export function addRequest(picked: readonly string[], typed: string, link: string, keepVideo: boolean): AddRequest {
+  const paths = [...picked, ...typedPaths(typed).filter((p) => !picked.includes(p))];
+  const url = link.trim();
+  return { paths, links: url ? [url] : [], keep_video: keepVideo };
+}
+
+/** Whether there is anything to add. */
+export function canAdd(request: AddRequest): boolean {
+  return request.paths.length > 0 || request.links.length > 0;
+}
+```
+
+  `frontend/src/components/AddPage.tsx`:
+
+```tsx
+import { type FormEvent, useEffect, useState } from "react";
+
+import { type AddRequest, type BrowseState, addRequest, canAdd } from "@/lib/browse";
+
+const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+const field = "rounded-md border border-input bg-background px-2 py-1 font-mono text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring";
+
+/** The Add screen (spec §19.2, §6.5; S38, S39), the local engine's alone: pick videos and
+ * folders in the in-app file browser, type full paths, or paste a YouTube link, with **keep
+ * video** to keep the whole video rather than its audio (§8.1). The browser starts at the places
+ * (your home folder and mounted volumes) and shows only folders, videos and subtitle files,
+ * folders first and a season's episodes in `SxxEyy` order; while a folder is on its way it says
+ * it's waiting (a sleeping network share can take seconds), and a folder that couldn't be read
+ * shows why and nothing else (Review Focus 1). A folder adds its own videos, not its
+ * subfolders'. Names and reasons are plain text (§6.3); only a path from a listing, or one the
+ * person typed, is sent back (§6.5). Every control is a native button, checkbox or field, so it
+ * all works from the keyboard. */
+export function AddPage({ browse, onBrowse, onAdd, adding, error }: {
+  browse: BrowseState;
+  onBrowse: (path: string | null) => void;
+  onAdd: (request: AddRequest) => void;
+  adding: boolean;
+  error: string | null;
+}) {
+  const [picked, setPicked] = useState<string[]>([]);
+  const [typed, setTyped] = useState("");
+  const [link, setLink] = useState("");
+  const [keepVideo, setKeepVideo] = useState(false);
+  useEffect(() => {
+    if (browse.asked === null) onBrowse(null); // the places, the first time Add is shown
+  }, [browse.asked, onBrowse]);
+  const shown = browse.waiting ? null : browse.shown;
+  const here = shown && !shown.error ? shown.path : null; // the folder shown, as the disk spells it
+  const request = addRequest(picked, typed, link, keepVideo);
+  const toggle = (path: string) => setPicked((p) => (p.includes(path) ? p.filter((x) => x !== path) : [...p, path]));
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (canAdd(request) && !adding) onAdd(request);
+  };
+  return (
+    <form className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4" onSubmit={submit} data-testid="add-page">
+      <section aria-labelledby="browse-heading" className="flex flex-col gap-2">
+        <h2 id="browse-heading" className="text-sm font-bold">Browse</h2>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <button type="button" className={button} onClick={() => onBrowse(null)} data-testid="browse-places">Places</button>
+          <button type="button" className={button} onClick={() => onBrowse(browse.shown?.parent ?? null)} disabled={browse.path === null} data-testid="browse-up">Up</button>
+          <span className="font-mono break-all" data-testid="browse-path">{here ?? browse.path ?? "Your home folder and drives"}</span>
+          {here && (
+            <label className="ml-auto flex items-center gap-1">
+              <input type="checkbox" checked={picked.includes(here)} onChange={() => toggle(here)} data-testid="browse-pick-here" />
+              Add this folder's videos
+            </label>
+          )}
+        </div>
+        {browse.waiting && (
+          <p role="status" className="text-muted-foreground" data-testid="browse-waiting">Waiting for the folder… a network share can take a few seconds to wake.</p>
+        )}
+        {shown?.error && <p role="alert" className="text-destructive" data-testid="browse-error">{shown.error}</p>}
+        {shown && !shown.error && (shown.entries.length === 0 ? (
+          <p className="text-muted-foreground">No folders, videos or subtitles here.</p>
+        ) : (
+          <ul aria-label="In this folder" className="flex flex-col rounded-md border border-border bg-card text-sm" data-testid="browse-list">
+            {shown.entries.map((e) => (
+              <li key={e.path} className="flex items-center gap-2 border-b border-border px-2 py-1 last:border-b-0" data-testid="browse-entry" data-kind={e.kind}>
+                {e.kind === "subtitle" ? (
+                  <span className="w-4" aria-hidden="true" />
+                ) : (
+                  <input type="checkbox" aria-label={`Pick ${e.name}`} checked={picked.includes(e.path)} onChange={() => toggle(e.path)} data-testid="browse-pick" />
+                )}
+                {e.kind === "folder" ? (
+                  <button type="button" className="break-all text-left font-bold underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring" onClick={() => onBrowse(e.path)} data-testid="browse-open">{e.name}</button>
+                ) : (
+                  <span className={`break-all ${e.kind === "subtitle" ? "text-muted-foreground" : ""}`} data-testid="browse-name">{e.name}</span>
+                )}
+                <span className="ml-auto text-muted-foreground">{e.kind === "folder" ? "folder" : e.kind === "video" ? "video" : "subtitles"}</span>
+              </li>
+            ))}
+          </ul>
+        ))}
+        {shown?.truncated && <p className="text-muted-foreground">This folder has more entries than vid2sub shows: only the first are listed.</p>}
+      </section>
+      <section className="flex flex-col gap-2">
+        <label htmlFor="add-paths" className="text-sm font-bold">Or type full paths, one a line</label>
+        <textarea id="add-paths" rows={3} className={field} value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="/full/path/to/a season folder" spellCheck={false} data-testid="add-paths" />
+      </section>
+      <section className="flex flex-col gap-2">
+        <label htmlFor="add-link" className="text-sm font-bold">Or a YouTube link</label>
+        <input id="add-link" type="text" inputMode="url" className={field} value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://www.youtube.com/watch?v=…" spellCheck={false} autoComplete="off" data-testid="add-link" />
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={keepVideo} onChange={(e) => setKeepVideo(e.target.checked)} data-testid="add-keep-video" />
+          Keep the video, not only its audio
+        </label>
+      </section>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <button type="submit" className="rounded-md bg-primary px-3 py-1 font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50" disabled={!canAdd(request) || adding} data-testid="add-start">
+          {adding ? "Adding…" : "Add"}
+        </button>
+        <span className="text-muted-foreground" data-testid="add-picked">{picked.length === 1 ? "1 picked" : `${picked.length} picked`}</span>
+        {picked.length > 0 && <button type="button" className={button} onClick={() => setPicked([])}>Clear</button>}
+        <span className="text-muted-foreground">They run one at a time, with the session's targets and formats (Settings).</span>
+      </div>
+      {error && <p role="alert" className="text-destructive" data-testid="add-error">{error}</p>}
+    </form>
+  );
+}
+```
+
+  In `frontend/src/App.tsx`, above
+  `import { Editor, type Requests, type Saving } from "@/components/Editor";`, add
+  `import { AddPage } from "@/components/AddPage";`; above
+  `import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";`, add
+  `import { type AddRequest, type BrowseState, NOT_ASKED, answered, asked } from "@/lib/browse";`;
+  in the `import type { … } from "@/types";` line, add `AddResultMessage, BrowseResult, ` before
+  `Busy`; below `type Ask = { episode: string; n: number };`, add (after a blank line)
+  `const SCREENS = { editor: "Editor", add: "Add", jobs: "Jobs" } as const;`; below the
+  `setJobCancel` line, add:
+
+```tsx
+  const setBrowse = useSetShinyInput<{ path: string | null; n: number } | null>("browse", null, { priority: "event", debounceMs: 0 });
+  const setAdd = useSetShinyInput<(AddRequest & { n: number }) | null>("add", null, { priority: "event", debounceMs: 0 });
+```
+
+  replace
+
+```tsx
+  // The Jobs page (spec §19.2, S36), where the engine makes subtitles (`generate`; Pages hides
+  // it, §21). The editor stays mounted while it shows, so the player keeps its place.
+  const [screen, setScreen] = useState<"editor" | "jobs">("editor");
+```
+
+  with
+
+```tsx
+  // The Add screen and the Jobs page (spec §19.2; S36, S38, S39), where the engine makes subtitles
+  // (`generate`; Pages hides both, §21). The editor stays mounted while they show, so the player
+  // keeps its place.
+  const [screen, setScreen] = useState<"editor" | "add" | "jobs">("editor");
+```
+
+  below `onOpenJob` (after its closing `};`), add, after a blank line:
+
+```tsx
+  // Add (Phase 3): the file browser shows the answer to the folder it asked for last, and says
+  // it's waiting until then (a sleeping network share, Review Focus 1); a finished Add opens the
+  // Jobs page, and one that took nothing says why on the Add screen.
+  const [browse, setBrowseState] = useState<BrowseState>(NOT_ASKED);
+  useShinyMessageHandler("browse_result", (r: BrowseResult) => setBrowseState((s) => answered(s, r)));
+  const onBrowse = useCallback((path: string | null) => {
+    const n = ++sent.current;
+    setBrowseState((s) => asked(s, n, path));
+    pace(() => setBrowse({ path, n }));
+  }, [pace, setBrowse]);
+  const [adding, setAdding] = useState<number | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
+  useShinyMessageHandler("add_result", (r: AddResultMessage) => {
+    if (r?.n !== adding) return;
+    setAdding(null);
+    setAddError(r.error);
+    if (!r.error) setScreen("jobs");
+  });
+  const onAdd = (request: AddRequest) => {
+    const n = ++sent.current;
+    setAdding(n);
+    setAddError(null);
+    pace(() => setAdd({ ...request, n }));
+  };
+```
+
+  replace `{(["editor", "jobs"] as const).map((s) => (` with
+  `{(["editor", "add", "jobs"] as const).map((s) => (`, and
+  `{s === "editor" ? "Editor" : "Jobs"}` with `{SCREENS[s]}`; above
+  `{generate && screen === "jobs" && (`, add:
+
+```tsx
+      {generate && screen === "add" && (
+        <section aria-label="Add" className="min-h-0 flex-1">
+          <AddPage browse={browse} onBrowse={onBrowse} onAdd={onAdd} adding={adding !== null} error={addError} />
+        </section>
+      )}
+```
+
+  and replace `hidden={generate && screen === "jobs"}` with `hidden={generate && screen !== "editor"}`.
+- [ ] **Step 14: Run the checks; they pass.** `make test-js` first (`Test Files  20 passed
+  (20)`, `Tests  91 passed (91)`), then `make check`, then `make e2e`. Expected: `make check`:
+  `1127 passed, 7 skipped, 38 deselected` twice, `Test Files  20 passed (20)` and
+  `Tests  91 passed (91)`, `All checks passed!` and `no leaks found`; `make e2e`:
+  `33 passed, 1139 deselected`. **Guard check:** in `lib/browse.ts`'s `answered`, delete
+  `if (result.n !== state.asked) return state;` (`make test-js`: the older answer replaces the
+  folder asked for last: `Tests  1 failed | 90 passed (91)`); restore it.
+- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(ui): 🤖 the Add screen browses home and the volumes, says when a share is waking, and adds a link with its video
+
+The page's half of Add (spec §19.2, §6.5, §8.1; S38, S39). An Add screen
+beside Editor and Jobs, where generate is true: Browse starts at the
+places, opens a folder (folders first, then its videos and subtitle
+files in SxxEyy order, as the engine sends them), goes Up to the parent
+or the places, and picks videos and folders with checkboxes, the
+folder shown included; full paths can be typed, one a line, and a
+YouTube link pasted with "Keep the video, not only its audio". While a
+folder is on its way the page says it's waiting (a network share can
+take seconds to wake); only the answer to the request sent last is
+shown, and one that failed shows its reason and no entries, never the
+folder before it (Review Focus 1). A finished Add opens the Jobs page;
+one that took nothing says why. Every control is a native button,
+checkbox or field, so it works from the keyboard; names and reasons are
+plain text (§6.3), and only a listing's paths or typed text go back.
+
+The browser tests: the demo browses only its own folder (its one place),
+in episode order, hides dotfiles, its sidecar and anything that isn't a
+video or a subtitle, adds its clip, which runs to done, and refuses a
+typed path anywhere else. S39 runs vid2sub through
+tests/e2e/fake_youtube.py, which answers yt-dlp through M1's
+download(…, runner=) seam with a local clip, and a fake whisper.cpp
+server: the link with keep video ticked asks yt-dlp for bv*+ba/b, and
+"A talk at a college [dQw4w9WgXcQ].mkv" lands in the YouTube folder
+with its picture and sound, its .en.srt beside it. Nothing reaches
+YouTube or a model. conftest's start_server and launch take command=.
+
+The new tests failed first with: error TS2307: Cannot find module
+'./browse' (make test-js's typecheck), and in Chromium, Locator.click:
+Timeout 30000ms exceeded, waiting for get_by_test_id("nav-add"). Guard check, reverted and
+restored: with `answered` taking any answer, the browse test fails.
+
+Docs read: React 19.2.8's types (useCallback, useEffect); MDN on ARIA
+live regions (role="status" is polite, role="alert" assertive) and on
+inputmode; Playwright 1.64.1's Python API (get_by_label, Locator.check,
+to_have_text with a list of texts); shinyreact 0.1.0's
+useShinyMessageHandler (a message with no handler is dropped, so both
+handlers live in App).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 2
+Co-Authored-By: <the model's own line>
+```
+
+  `git add frontend/src/types.ts frontend/src/lib/browse.ts frontend/src/lib/browse.test.ts
+  frontend/src/components/AddPage.tsx frontend/src/App.tsx tests/e2e/conftest.py
+  tests/e2e/fake_youtube.py tests/e2e/test_add.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that only a listing's paths and typed
+  text reach `rt.expand` (§6.5) and every refusal names nothing (§6.8); that a sleeping share
+  holds at most one blocking thread per tab and never the reactive lock; that the demo lists
+  nothing outside its folder and runs nothing but its clip, a link's own runner included. The
+  forward review over Tasks 3, 4, 6 and 11: Task 3's `start` submits with `runner=` (built here,
+  so Task 3 no longer adds it) and wraps each row's runner in the runtime's `job_guard`; Task
+  4 replaces `add`'s hand-off (`rt.add`) with `prepare` and `sample`, and a finished Add opens
+  Review; Task 6's Jobs page names a YouTube job by its video; Task 11 documents the Add screen
+  and the demo's one place. The docs this task made untrue: none expected (grep `README.md`
+  and `docs/` for "Add" and "Browse"; the README's screens list gains Add in Task 11). Then the
+  close, its own commit, holding this plan with this task's boxes ticked and **Now** set to
+  `Task 3: Sampling and suggestions for Review, open.`, and the spec's rows S38 (`Phase 3,
+  Tasks 1–2`, proof `tests/test_browse.py`; Playwright) and S39 (`Phase 3, Task 2`, proof
+  `tests/e2e/test_add.py`) set to `built`. The message, in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 2: The Add screen
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: none
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 2
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -1829,9 +4465,8 @@ Co-Authored-By: <the model's own line>
 
 **Files:**
 - Create: `src/vid2sub/review.py`
-- Modify: `src/vid2sub/jobs.py` (`submit(…, runner=)`: a job's own runner, for Start),
-  `src/vid2sub/pipeline.py` (`RunContext.engine` checks the cloud on every call)
-- Test: `tests/test_review.py`, `tests/test_jobs.py`
+- Modify: `src/vid2sub/pipeline.py` (`RunContext.engine` checks the cloud on every call)
+- Test: `tests/test_review.py`
 
 **Interfaces:**
 - Consumes: `detect.candidates`, `detect.choose_detector` (always `allow_cloud=False`),
@@ -1840,13 +4475,11 @@ Co-Authored-By: <the model's own line>
   `pick_track`, `Probe`; `media.decode.decode_to_wav`, `read_wav`, `encode_flac`, `to_float`,
   `SAMPLES_PER_MS`; `media.vad.speech_regions`; `media.youtube.is_url`, `video_id`,
   `NotYouTube`; `subs.naming.target_track`, `track`; `subs.langs.LANGS`;
-  `engines.clients.check_allowed`; Phase 2 Task 4's `jobs.Queue` and `Runner`. What `prepare`
-  takes is Task 1's `browse.expand` output (full paths) or YouTube links.
+  `engines.clients.check_allowed`; Phase 2 Task 4's `jobs.Queue` and `Runner`, with Task 2's
+  `Queue.submit(…, runner=)`; Phase 2 Task 18's `web.settings.Session` defaults, which Task 4
+  passes as `targets` and `formats`. What `prepare` takes is Task 1's `browse.expand` output
+  (full paths) or YouTube links, through Task 2's `Runtime.expand`.
 - Produces:
-  - `jobs.Queue.submit(self, inputs: Sequence[str], *, runner: Runner | None = None)
-    -> list[str]`: a job submitted with `runner` is run by it, else by the queue's own; the
-    runner is kept while the job waits or runs. Phase 2 Task 19's runner and every existing
-    call are unchanged.
   - `pipeline.RunContext.engine(name)` runs `clients.check_allowed` on every call, so an engine
     made for a run that allowed the cloud is refused to a copy of the context whose run
     doesn't (spec §7.2): per-job options share one engine cache.
@@ -1877,9 +4510,12 @@ Co-Authored-By: <the model's own line>
     - `model_choices(config: Config, candidates: Sequence[Candidate],
       task: Literal["transcribe", "translate"]) -> tuple[ModelChoice, ...]` (Task 8's Models
       page can show the same)
-    - `prepare(inputs: Sequence[str], ctx: RunContext, *, keep_video: bool = False) -> Review`:
-      blocks (ffprobe per file, each local server's model list); `allow_cloud` is always False
-      and has no parameter
+    - `prepare(inputs: Sequence[str], ctx: RunContext, *, keep_video: bool = False,
+      targets: Sequence[str] | None = None, formats: Sequence[str] | None = None) -> Review`:
+      blocks (ffprobe per file, each local server's model list); each row starts with `targets`
+      and `formats` (the session's defaults; `vid2sub.toml`'s when None); the candidates are
+      `ctx.candidates` when the context brings them (the demo's canned context), else
+      `detect.candidates`; `allow_cloud` is always False and has no parameter
     - `sample(review: Review, ctx: RunContext, *, on_row: Callable[[Row], None] | None = None,
       cancelled: Callable[[], bool] = <never>) -> Review`: blocks for seconds per sampled file;
       `on_row` runs on the calling thread after each change (`sampling`, then `ready`), and
@@ -1896,9 +4532,11 @@ Co-Authored-By: <the model's own line>
     - `runner_for(ctx: RunContext, options: RunOptions) -> jobs.Runner` (`run_one` on
       `dataclasses.replace(ctx, options=…, events=…, cancelled=…)`, sharing the context's
       engines and finished chunks, spec §8.9)
-    - `start(review, queue: jobs.Queue, ctx: RunContext) -> list[str]` (every row that can
-      run, in order, each with its own runner; nothing queued while `problems` isn't empty; a
-      failed row left out; the job ids)
+    - `start(review, queue: jobs.Queue, ctx: RunContext, *, guard: Callable[[jobs.Runner],
+      jobs.Runner] | None = None) -> list[str]` (every row that can run, in order, each with
+      its own runner, wrapped by `guard` when given (the runtime's `job_guard`); nothing queued
+      while `problems` isn't empty; a failed row left out; the job ids). A row's targets and
+      formats win over the session's: its runner is `runner_for`'s, never `job_runner`'s
   - What Task 4 calls: `prepare` then `sample`, both off the event loop, with `on_row` hopping
     to the session's loop (it runs on the sampling thread, as Task 4's listeners do) and a
     `cancelled` that turns true when the person leaves Review or adds again; `choose`,
@@ -1908,7 +4546,10 @@ Co-Authored-By: <the model's own line>
     context, and its runner runs only the demo's own clip; Pages offers no Review). The view of
     a row is Task 4's (never `path`; `detection.votes`, `detection.confidence`, `warning`,
     `hint`, `inherited`, `ask_zh_yue`); the box is drawn from `Review.allow_cloud` and never
-    from settings.
+    from settings. `vid2sub.review` imports the pipeline, so it isn't in the Pages bundle: Task
+    4's server reaches all of it through the runtime, which seeds `prepare` with the session's
+    defaults and passes `guard=job_guard` to `start`.
+
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: Write the failing test,** `tests/test_review.py`:
@@ -1919,6 +4560,7 @@ Co-Authored-By: <the model's own line>
 import shutil
 import threading
 from dataclasses import replace
+from queue import SimpleQueue
 
 import pytest
 from fakes import FakeEngine
@@ -2011,6 +4653,15 @@ def test_a_link_waits_for_its_run_and_every_model_says_whether_it_can_run_now(ca
         ("openai-whisper", True, "", True)]
     assert rv.transcribers[0].title == "Whisper large-v3-turbo"
     assert [c.name for c in rv.translators] == ["spark-gemma", "openai-gpt"]
+
+
+def test_rows_start_with_the_sessions_targets_and_formats_and_a_context_may_bring_its_models(
+        monkeypatch):
+    monkeypatch.setattr(detecting, "candidates", lambda *a, **k: pytest.fail("asked again"))
+    ctx = make_ctx()
+    ctx.candidates = list(CANDIDATES)  # the demo's canned context brings its own
+    (link,) = review.prepare([LINK], ctx, targets=["ja", "zh-Hant"], formats=["srt", "ass"]).rows
+    assert (link.targets, link.formats) == (("ja", "zh-Hant"), ("srt", "ass"))
 
 
 def test_a_link_that_names_no_youtube_video_fails_its_row(candidates):
@@ -2262,6 +4913,63 @@ def test_run_options_carry_each_rows_choices_on_top_of_the_base():
                                     ["srt", "ass"], 1, False, 60, True)
     with pytest.raises(ReviewError, match="pick the language"):
         review.run_options(reviewed(file_row(1)), "r1", RunOptions())
+
+
+# Review Focus 2: a row the person changes while sampling runs on (spec §10.5)
+
+
+@pytest.mark.media
+def test_a_row_changed_while_sampling_runs_on_keeps_the_persons_choice(season, candidates):
+    ctx = make_ctx(FakeEngine(detect={"ja": 0.9}))
+    shown = review.prepare(season, ctx)  # what the screen holds, changed only by its loop
+    arrived: SimpleQueue[Row] = SimpleQueue()
+    changed = threading.Event()
+
+    def on_row(r: Row) -> None:  # the sampling thread: the row is handed to the screen's loop
+        arrived.put(r)
+        if (r.id, r.state) == ("r2", "sampling"):
+            assert changed.wait(10)  # r2 samples on while the person changes r1
+
+    sampler = threading.Thread(target=review.sample, args=(shown, ctx),
+                               kwargs={"on_row": on_row})
+    sampler.start()
+    while row(shown, "r1").state != "ready":
+        shown = review.with_row(shown, arrived.get(timeout=10))
+    shown = review.choose(shown, "r1", language="ko", transcribe="openai-whisper")
+    changed.set()
+    sampler.join(30)
+    while not arrived.empty():
+        shown = review.with_row(shown, arrived.get())
+    assert (row(shown, "r1").language, row(shown, "r1").transcribe) == ("ko", "openai-whisper")
+    assert [(r.id, r.state, r.language, r.inherited) for r in shown.rows[1:]] == [
+        ("r2", "ready", "ja", False), ("r3", "ready", "ja", True), ("r4", "ready", "ja", False)]
+
+
+# Review Focus 4: windows that land on music or silence (spec §10.2–10.3)
+
+
+@pytest.mark.media
+def test_a_file_with_no_speech_asks_the_detector_nothing_and_leaves_the_language_open(
+        tmp_path, candidates):
+    engine = FakeEngine(detect={"ja": 0.9})
+    ctx = make_ctx(engine)
+    tone = make_clip(tmp_path, "Theme S01E01.mkv", seconds=14)  # a sine tone: no speech in it
+    rv = review.sample(review.prepare([str(tone)], ctx), ctx)
+    assert engine.calls == []  # no window, so no vote
+    assert row(rv, "r1").language is None
+    assert row(rv, "r1").warning == "no language could be detected"
+    assert review.problems(rv) == {"r1": "pick the language"}
+
+
+@pytest.mark.media
+def test_windows_that_hear_no_speech_dont_vote_and_one_vote_left_says_it_is_unsure(
+        season, candidates):
+    ctx = make_ctx(FakeEngine(detect=[{}, {}, {"ja": 0.9}]))
+    rv = review.sample(review.prepare(season[:1], ctx), ctx)
+    found = row(rv, "r1").detection
+    assert (found.votes, found.confidence, found.uncertain) == ((None, None, "ja"), 0.3, True)
+    assert row(rv, "r1").warning.startswith("only 30% sure it's ja")
+    assert review.problems(rv) == {}  # an uncertain detection can still Start (Decision 5)
 ```
 
 - [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_review.py -q`. Expected:
@@ -2272,17 +4980,19 @@ def test_run_options_carry_each_rows_choices_on_top_of_the_base():
 ```python
 """The Review screen's backend: what was added, sampled and suggested (spec §10, §19.2, S40).
 
-Adding files probes each in seconds (§10.1). The first two files of each folder are then sampled
-in the background: decoded, their speech found, and three ~20 s windows of it language-identified
-by the best detector on this machine or your own servers (§10.2–10.3, `detect.detect`); the votes
-give a language, a confidence and a "mixed" flag. Whisper often labels Cantonese `zh`, so when
-Whisper says `zh` the row asks "Mandarin or Cantonese?". The catalog's route then suggests a
-transcription and a translation model (§10.4, §11.2) as M1's pipeline picks them: a model whose
-server isn't answering is never passed over for the next one (§17.4), so it is suggested anyway,
-greyed with its reason, and the queue waits for it when the job runs. Suggestions are local only:
-**Allow cloud models for this run** starts unticked every time and nothing in `vid2sub.toml` or
-the environment can tick it (§7.2), sampling sends no audio to a cloud detector, and a cloud model
-is only ever the person's own pick, which Start refuses until the box is ticked. The rest of a
+Adding files probes each in seconds (§10.1), and each row starts with the session's targets and
+formats, which the settings drawer changes (§5.4). The first two files of each folder are then
+sampled in the background: decoded, their speech found, and three ~20 s windows of it
+language-identified by the best detector on this machine or your own servers (§10.2–10.3,
+`detect.detect`); the votes give a language, a confidence and a "mixed" flag; a file with no speech
+gives no window and no vote, and the row leaves the language to the person. Whisper often labels
+Cantonese `zh`, so when Whisper says `zh` the row asks "Mandarin or Cantonese?". The catalog's route
+then suggests a transcription and a translation model (§10.4, §11.2) as M1's pipeline picks them: a
+model whose server isn't answering is never passed over for the next one (§17.4), so it is suggested
+anyway, greyed with its reason, and the queue waits for it when the job runs. Suggestions are local
+only: **Allow cloud models for this run** starts unticked every time and nothing in `vid2sub.toml`
+or the environment can tick it (§7.2), sampling sends no audio to a cloud detector, and a cloud
+model is only ever the person's own pick, which Start refuses until the box is ticked. The rest of a
 folder inherits its sampled files' choices when they agree (§10.5), as M1's runs inherit two
 confident votes; when they don't, the person picks. A YouTube link isn't sampled: its language and
 models are decided when it runs, as `vid2sub run` decides them. Each change makes a new `Review`
@@ -2395,13 +5105,20 @@ def model_choices(config: Config, candidates: Sequence[Candidate],
     return tuple(out)
 
 
-def prepare(inputs: Sequence[str], ctx: RunContext, *, keep_video: bool = False) -> Review:
+def prepare(inputs: Sequence[str], ctx: RunContext, *, keep_video: bool = False,
+            targets: Sequence[str] | None = None,
+            formats: Sequence[str] | None = None) -> Review:
     """One row per input: each file probed, each link ready to run. `inputs` are what the Add
-    screen took (`browse.expand`'s paths) or YouTube links. Blocks: ffprobe, and the model list
+    screen took (`browse.expand`'s paths) or YouTube links. Each row starts with `targets` and
+    `formats`, the session's defaults that the settings drawer changes (§5.4), else
+    `vid2sub.toml`'s. The models are the context's own candidates where it has them (the demo's
+    canned ones), else each configured model checked now. Blocks: ffprobe, and the model list
     of each local server."""
-    cands = tuple(detecting.candidates(ctx.config, ctx.keys))
-    targets = tuple(naming.target_track(t) for t in ctx.config.defaults.targets)
-    formats = tuple(ctx.config.defaults.formats)
+    cands = tuple(ctx.candidates if ctx.candidates is not None
+                  else detecting.candidates(ctx.config, ctx.keys))
+    targets = tuple(naming.target_track(t)
+                    for t in (ctx.config.defaults.targets if targets is None else targets))
+    formats = tuple(ctx.config.defaults.formats if formats is None else formats)
     rows = []
     for n, source in enumerate(inputs, 1):
         base = Row(f"r{n}", source, "", "", targets=targets, formats=formats)
@@ -2714,9 +5431,10 @@ def _problem(review: Review, row: Row) -> str:
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_review.py -q` first
-  (`35 passed`), then the guard checks, then `make check`. **Guard checks** (spec §7.2, §17.4),
-  each reverted and restored, each with `uv run pytest tests/test_review.py -q`: in
-  `run_options`, drop `allow_cloud=review.allow_cloud` (the base's cloud leaks through:
+  (`39 passed`; three times: the Review Focus 2 test samples on a thread), then the guard
+  checks, then `make check`. **Guard checks** (spec §7.2, §17.4), each reverted and restored,
+  each with `uv run pytest tests/test_review.py -q`: in `run_options`, drop
+  `allow_cloud=review.allow_cloud` (the base's cloud leaks through:
   `FAILED …test_allow_cloud_starts_unticked_every_time_and_nothing_can_preset_it` and
   `…test_suggestions_are_local_and_a_cloud_pick_waits_for_the_box`); in `_sampled`, choose the
   detector with `allow_cloud=True` (`FAILED
@@ -2724,17 +5442,28 @@ def _problem(review: Review, row: Row) -> str:
   suggest over `cands` instead of `hoped` (the Mac's Qwen replaces the Spark that's down:
   `FAILED …test_a_model_whose_server_is_down_is_still_suggested_and_marked_never_passed_over`);
   in `_route`, suggest with `allow_cloud=True` (`FAILED
-  …test_suggestions_are_local_and_a_cloud_pick_waits_for_the_box`). `make check`. Expected:
-  `807 passed, 5 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
+  …test_suggestions_are_local_and_a_cloud_pick_waits_for_the_box`); in `prepare`, take the
+  candidates from `detecting.candidates(ctx.config, ctx.keys)` alone, and separately start
+  every row with `ctx.config.defaults.targets` (each:
+  `FAILED …test_rows_start_with_the_sessions_targets_and_formats_and_a_context_may_bring_its_models`).
+  The Review Focus 2 and 4 tests pin what the code already does: sampling only ever sends a
+  row that wasn't ready, which the person can't change, so their choice stands as later rows
+  merge; a file with no speech gives no window and no vote; windows that hear nothing vote
+  `None`, so one vote left is "only 30% sure". `make check`. Expected: `1166 passed, 7 skipped,
+  38 deselected` twice, `Test Files  20 passed (20)` and `Tests  91 passed (91)`,
+  `All checks passed!` and `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(review): 🤖 Review samples the first two files of each folder, suggests local models, and the rest inherit
 
-vid2sub.review (spec §10, §19.2, S40): prepare(inputs, ctx) gives one row
-per input, each file probed (a link is ready at once, decided when it
-runs) and the model pickers with whether each model can run now and why
-not. sample(review, ctx, on_row=…) decodes the first two waiting files
+vid2sub.review (spec §10, §19.2, S40): prepare(inputs, ctx, targets=,
+formats=) gives one row per input, each file probed (a link is ready at
+once, decided when it runs), each starting with the session's targets and
+formats (the settings drawer's, §5.4; vid2sub.toml's when none are
+given), and the model pickers with whether each model can run now and
+why not; a context that brings its own candidates (the demo's canned
+models) isn't asked again. sample(review, ctx, on_row=…) decodes the first two waiting files
 of each folder, finds their speech and identifies three windows with the
 best local detector (detect.detect), then lets the rest of the folder
 inherit when the sampled files agree; on_row runs on the calling thread
@@ -2748,16 +5477,27 @@ run_options takes the cloud from the review's box alone, never from the
 server's options. choose and apply_to_all check every value from the
 browser and echo none; problems says what stops Start.
 
+Review Focus 2 and 4's halves here pin what the code already does: a
+row the person changes while sampling runs on keeps their choice as the
+later rows arrive and merge (sampling only ever sends a row that wasn't
+ready, which the person can't change); a file with no speech gives no
+window, asks the detector nothing and leaves the language to the person;
+windows that hear nothing don't vote, so one vote left reads "only 30%
+sure", uncertain but startable (Decision 5).
+
 The new tests failed first with: ImportError: cannot import name
 'review' from 'vid2sub'. Guard checks, each reverted and restored:
 run_options taking the cloud from the base options, a detector chosen
 with the cloud allowed, a route over the real candidates (passing over
-the server that's down), and suggestions allowed the cloud each make
-their tests fail.
+the server that's down), suggestions allowed the cloud, prepare asking
+for candidates a context brought, and rows starting with vid2sub.toml's
+targets whatever the session's are, each make their tests fail.
 
 Docs read: none beyond the code (detect.detect, choose_detector and
 candidates; catalog.suggest; pipeline._candidates_that_work's rule of
-waiting for the route's pick; media.decode, vad and probe).
+waiting for the route's pick; media.decode, vad and probe; Phase 2's
+web.settings.Session and runtime.job_runner, whose session defaults
+Review's rows now start from).
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 3
 Co-Authored-By: <the model's own line>
@@ -2766,32 +5506,11 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/review.py tests/test_review.py`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 6: Write the failing tests.** Append to `tests/test_jobs.py`, after two blank
-  lines:
-
-```python
-# Phase 3, Task 3: Review's Start queues each file with its own options (S40)
-
-
-def test_a_job_may_bring_its_own_runner(runner):
-    ran = []
-
-    def own(source, event, cancelled):
-        ran.append(source)
-        return InputResult(input=source, status="done")
-
-    q = jobs.Queue(runner)
-    (job,) = q.submit(["a.mkv"], runner=own)
-    until(lambda: state(q, job) == "done")
-    q.close()
-    assert ran == ["a.mkv"] and runner.started == []
-```
-
-  In `tests/test_review.py`, add `import time` below `import threading`; replace
-  `from vid2sub import review` with `from vid2sub import jobs, review`, and
-  `from vid2sub.pipeline import RunContext, RunOptions` with
-  `from vid2sub.pipeline import InputResult, RunContext, RunOptions`; then append, after two
-  blank lines:
+- [ ] **Step 6: Write the failing tests.** In `tests/test_review.py`, add `import time` below
+  `import threading`; replace `from vid2sub import review` with
+  `from vid2sub import jobs, review`, and `from vid2sub.pipeline import RunContext, RunOptions`
+  with `from vid2sub.pipeline import InputResult, RunContext, RunOptions`; then append, after
+  two blank lines:
 
 ```python
 # Start (spec §10.6, §7.2)
@@ -2809,16 +5528,17 @@ def test_start_queues_each_row_with_its_own_options_on_the_shared_context(monkey
     seen = []
 
     def run_one(source, ctx):
-        seen.append((source, ctx.options.source_lang, ctx.options.model,
-                     ctx.options.allow_cloud, ctx.chunk_cache is base.chunk_cache,
-                     ctx.engines is base.engines))
+        seen.append((source, ctx.options.source_lang, ctx.options.model, ctx.options.targets,
+                     ctx.options.formats, ctx.options.allow_cloud,
+                     ctx.chunk_cache is base.chunk_cache, ctx.engines is base.engines))
         return InputResult(input=source, status="done")
 
     monkeypatch.setattr(review, "run_one", run_one)
-    base = make_ctx()
+    base = make_ctx(targets=["ko"], formats=["ass"])  # as the session's would be: the row wins
     rv = reviewed(file_row(1, language="ja", transcribe="spark-turbo", translate="spark-gemma"),
                   file_row(2, language="ko", transcribe="openai-whisper",
-                           translate="spark-gemma"),
+                           translate="spark-gemma", targets=("en", "ja"),
+                           formats=("srt", "ass")),
                   file_row(3, state="failed", error="this file has no audio track"),
                   allow_cloud=True)
     default = []
@@ -2827,8 +5547,29 @@ def test_start_queues_each_row_with_its_own_options_on_the_shared_context(monkey
     until(lambda: all(j.state == "done" for j in queue.jobs()))
     queue.close()
     assert len(ids) == 2 and default == []
-    assert seen == [("/films/Show/Show S01E01.mkv", "ja", "spark-turbo", True, True, True),
-                    ("/films/Show/Show S01E02.mkv", "ko", "openai-whisper", True, True, True)]
+    assert seen == [
+        ("/films/Show/Show S01E01.mkv", "ja", "spark-turbo", ["en"], ["srt"], True, True, True),
+        ("/films/Show/Show S01E02.mkv", "ko", "openai-whisper", ["en", "ja"], ["srt", "ass"],
+         True, True, True)]
+
+
+def test_start_runs_each_row_through_the_runtimes_guard(monkeypatch):
+    monkeypatch.setattr(review, "run_one", lambda source, ctx: InputResult(input=source,
+                                                                           status="done"))
+    guarded = []
+
+    def guard(runner):
+        def refuse(source, events, cancelled):  # as the demo's only_inside refuses
+            guarded.append(source)
+            return InputResult(input=source, status="failed", reason="the demo runs only its clip")
+        return refuse
+
+    rv = reviewed(file_row(1, language="ja", transcribe="spark-turbo", translate="spark-gemma"))
+    queue = jobs.Queue(lambda source, event, cancelled: InputResult(input=source, status="done"))
+    review.start(rv, queue, make_ctx(), guard=guard)
+    until(lambda: queue.jobs()[0].state == "failed")
+    queue.close()
+    assert guarded == ["/films/Show/Show S01E01.mkv"]
 
 
 def test_start_queues_nothing_while_any_row_has_a_problem():
@@ -2852,100 +5593,15 @@ def test_an_engine_made_for_a_run_that_allowed_the_cloud_is_refused_to_one_that_
     assert err.value.kind == "cloud_not_allowed"
 ```
 
-- [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_review.py
-  tests/test_jobs.py -q -k "start or engine_made or own_runner"`. Expected:
-  `E       TypeError: Queue.submit() got an unexpected keyword argument 'runner'`,
-  `E       AttributeError: <module 'vid2sub.review' …> has no attribute 'run_one'`,
+- [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_review.py -q -k
+  "start or engine_made"`. Expected:
+  `E       AttributeError: <module 'vid2sub.review' …> has no attribute 'run_one'` (twice),
   `E           AttributeError: module 'vid2sub.review' has no attribute 'start'`,
   `E       Failed: DID NOT RAISE EngineError` (the cached cloud engine), and
-  `4 failed, 2 passed, 44 deselected`.
-- [ ] **Step 8: Write the code.** In `src/vid2sub/jobs.py`, in the module docstring, replace
-
-```python
-`submit`, `cancel` or `close`); one that raises is logged and the queue carries on. The log names
-jobs by id and errors by kind, never an input, a title or a path (spec §6.8).
-```
-
-  with
-
-```python
-`submit`, `cancel` or `close`); one that raises is logged and the queue carries on. A job may bring
-its own runner (Review's Start: each file with its own options, Phase 3 plan Task 3); others use
-the queue's. The log names jobs by id and errors by kind, never an input, a title or a path (spec
-§6.8).
-```
-
-  Below `self._runner = runner` in `__init__`, add
-  `self._runners: dict[str, Runner] = {}  # a job's own runner, while it waits or runs`.
-  Replace `submit` with:
-
-```python
-    def submit(self, inputs: Sequence[str], *, runner: Runner | None = None) -> list[str]:
-        """Queues each input, run by `runner` when given, else by the queue's own."""
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("the job queue is closed")
-            ids = []
-            for source in inputs:
-                job_id = self._new_id()
-                self._jobs[job_id] = JobView(job_id, source, "queued")
-                if runner is not None:
-                    self._runners[job_id] = runner
-                self._waiting.append(job_id)
-                ids.append(job_id)
-            self._lock.notify()
-        self._changed()
-        return ids
-```
-
-  In `cancel`, below `self._waiting.remove(job_id)`, add `self._runners.pop(job_id, None)`. In
-  `close`, replace
-
-```python
-            while self._waiting:
-                self._set(self._waiting.popleft(), state="cancelled")
-```
-
-  with
-
-```python
-            while self._waiting:
-                job_id = self._waiting.popleft()
-                self._runners.pop(job_id, None)
-                self._set(job_id, state="cancelled")
-```
-
-  In `_work`, replace
-
-```python
-                source = self._jobs[job_id].input
-            self._changed()
-            final = self._run(job_id, source)
-            with self._lock:
-                self._set(job_id, **final)
-                self._running = None
-```
-
-  with
-
-```python
-                source = self._jobs[job_id].input
-                runner = self._runners.get(job_id, self._runner)
-            self._changed()
-            final = self._run(job_id, source, runner)
-            with self._lock:
-                self._set(job_id, **final)
-                self._runners.pop(job_id, None)
-                self._running = None
-```
-
-  and in `_run`, replace `def _run(self, job_id: str, source: str) -> dict[str, Any]:` with
-  `def _run(self, job_id: str, source: str, runner: Runner) -> dict[str, Any]:` and
-  `result = self._runner(source, event, self._stop.is_set)` with
-  `result = runner(source, event, self._stop.is_set)`.
-
-  In `src/vid2sub/pipeline.py`, replace `from vid2sub.engines.clients import KeyRing, RunPolicy`
-  with `from vid2sub.engines.clients import KeyRing, RunPolicy, check_allowed`, and in
+  `4 failed, 2 passed, 37 deselected`.
+- [ ] **Step 8: Write the code.** In `src/vid2sub/pipeline.py`, replace
+  `from vid2sub.engines.clients import KeyRing, RunPolicy` with
+  `from vid2sub.engines.clients import KeyRing, RunPolicy, check_allowed`, and in
   `class RunContext`, replace
 
 ```python
@@ -2996,10 +5652,12 @@ def runner_for(ctx: RunContext, options: RunOptions) -> jobs.Runner:
     return run
 
 
-def start(review: Review, queue: jobs.Queue, ctx: RunContext) -> list[str]:
+def start(review: Review, queue: jobs.Queue, ctx: RunContext, *,
+          guard: Callable[[jobs.Runner], jobs.Runner] | None = None) -> list[str]:
     """Start (§10.6): every row that can run, queued in order, each with its own options on top
-    of `ctx.options`; a failed row is left out. Nothing is queued while any row has a problem.
-    Returns the job ids."""
+    of `ctx.options` (the row's targets and formats, not the session's as a job of the queue's
+    own would take them); a failed row is left out. Nothing is queued while any row has a
+    problem. `guard` wraps each row's runner (the demo's: only its clip). Returns the job ids."""
     found = problems(review)
     if found:
         n = len(found)
@@ -3008,35 +5666,40 @@ def start(review: Review, queue: jobs.Queue, ctx: RunContext) -> list[str]:
     ids = []
     for row in review.rows:
         if row.state != "failed":
-            ids += queue.submit([row.path], runner=runner_for(
-                ctx, run_options(review, row.id, ctx.options)))
+            runner = runner_for(ctx, run_options(review, row.id, ctx.options))
+            ids += queue.submit([row.path], runner=guard(runner) if guard else runner)
     return ids
 
 
 ```
 
 - [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_review.py
-  tests/test_jobs.py -q` first (`50 passed`; run it ten times: the queue tests use threads),
+  tests/test_jobs.py -q` first (`57 passed`; run it five times: the queue tests use threads),
   then the guard checks, then `make check`. **Guard checks**, each reverted and restored, each
   with `uv run pytest tests/test_review.py -q`: in `RunContext.engine`, replace the two lines
   `if entry is not None:` / `check_allowed(…)` with `pass` (`FAILED
   …test_an_engine_made_for_a_run_that_allowed_the_cloud_is_refused_to_one_that_doesnt`); in
   `start`, replace `if found:` with `if False:` (`FAILED
   …test_start_queues_nothing_while_any_row_has_a_problem`: the first row is queued before the
-  second is refused). `make check`. Expected: `811 passed, 5 skipped, 4 deselected` twice,
-  `All checks passed!` and `no leaks found`.
+  second is refused); in `start`, submit `runner=runner` instead of
+  `runner=guard(runner) if guard else runner` (`FAILED
+  …test_start_runs_each_row_through_the_runtimes_guard`). `make check`. Expected:
+  `1170 passed, 7 skipped, 38 deselected` twice, `Test Files  20 passed (20)` and
+  `Tests  91 passed (91)`, `All checks passed!` and `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(review): 🤖 Start queues each file with its own options, and a cloud engine is refused to a run that didn't allow it
 
-review.start(review, queue, ctx) queues every row that can run, in order,
-each with run_options on top of the server's options, through
+review.start(review, queue, ctx, guard=) queues every row that can run,
+in order, each with run_options on top of the server's options, through
 review.runner_for(ctx, options): run_one on a copy of the server's
-RunContext that shares its engines and finished chunks (spec §8.9).
-Nothing is queued while any row has a problem; a failed row is left out.
-jobs.Queue.submit takes `runner=` for a job's own runner (the queue's
-own otherwise), kept while the job waits or runs.
+RunContext that shares its engines and finished chunks (spec §8.9),
+submitted with Queue.submit(…, runner=) (Task 2's). The row's targets
+and formats win: a runner of its own never takes the session's as the
+queue's own runner does. `guard` wraps each row's runner (the runtime's
+job_guard: the demo's only_inside). Nothing is queued while any row has
+a problem; a failed row is left out.
 
 Per-job options meant one context's engine cache now serves runs that
 differ in Allow cloud, and make_client checks the cloud only when an
@@ -3044,39 +5707,38 @@ engine is made: a cloud engine made for a run that ticked the box would
 serve a later one that didn't (spec §7.2). RunContext.engine now runs
 clients.check_allowed on every call.
 
-The new tests failed first with: TypeError: Queue.submit() got an
-unexpected keyword argument 'runner', AttributeError: module
+The new tests failed first with: AttributeError: module
 'vid2sub.review' has no attribute 'start', and Failed: DID NOT RAISE
 EngineError (the cached cloud engine). Guard checks, each reverted and
-restored: without the check in RunContext.engine, and with start
-ignoring the problems, their tests fail.
+restored: without the check in RunContext.engine, with start ignoring
+the problems, and with start skipping the guard, their tests fail.
 
-Docs read: none beyond the code (jobs.Queue, pipeline.RunContext and
-clients.check_allowed and transcription_client, where the cloud check
-ran only at construction).
+Docs read: none beyond the code (jobs.Queue with Task 2's runner=,
+pipeline.RunContext and clients.check_allowed and transcription_client,
+where the cloud check ran only at construction; Phase 2's
+runtime.job_runner, whose session defaults a row's own runner skips).
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 3
 Co-Authored-By: <the model's own line>
 ```
 
-  `git add src/vid2sub/jobs.py src/vid2sub/pipeline.py src/vid2sub/review.py tests/test_jobs.py
-  tests/test_review.py`, `git commit -F .git/COMMIT_MSG`, then
-  `git log -1 --format='%(trailers)'` shows `Plan:`.
+  `git add src/vid2sub/pipeline.py src/vid2sub/review.py tests/test_review.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
 - [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that no path from sampling reaches a
   cloud model (detection, suggestion, `run_options`, and the engine cache now checked per run);
   that a model whose server is down is suggested, never passed over (§17.4); that `on_row`
   never replaces a row the person could already change. The forward review over Tasks 4, 5, 6
-  and 8: Task 4 calls everything listed under *What Task 4 calls*, renders rows through its own
-  view (never `Row.path`), and draws **Allow cloud** from `Review.allow_cloud`, never a setting;
-  Task 5's pause and resume keep each job's own runner (`Queue._runners`); Task 6's Jobs page
-  shows jobs Review queued like any other; Task 8 may show `model_choices`. The docs this task
-  made untrue: none expected (grep `docs/` and `README.md` for "Review" and "allow cloud").
-  Then the close, its own commit, holding this plan with this task's boxes ticked and **Now**
-  set to `Task 4: The Review screen, open.`, and the spec's S40 row with "Phase and task" set to
-  `Phase 3, Tasks 3–4`; S40 stays `planned` (its Playwright half is Task 4's). The message, in
-  `.git/CLOSE_MSG`:
+  and 8: Task 4 calls everything listed under *What Task 4 calls*, through the runtime,
+  renders rows through its own view (never `Row.path`), and draws **Allow cloud** from
+  `Review.allow_cloud`, never a setting; Task 5's pause and resume keep each job's own runner
+  (`Queue._runners`, Task 2's); Task 6's Jobs page shows jobs Review queued like any other;
+  Task 8 may show `model_choices`. The docs this task made untrue: none expected (grep `docs/`
+  and `README.md` for "Review" and "allow cloud"). Then the close, its own commit, holding this
+  plan with this task's boxes ticked and **Now** set to `Task 4: The Review screen, open.`, and
+  the spec's S40 row with "Phase and task" set to `Phase 3, Tasks 3–4`; S40 stays `planned`
+  (its Playwright half is Task 4's). The message, in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 3: Sampling and suggestions for Review
@@ -3102,17 +5764,1963 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 2 · **Scenarios:** S40
 
-**Interfaces:**
-- Consumes: Task 3's `vid2sub.review`. `prepare` then `sample` run off the event loop; `on_row`
-  runs on the sampling thread, so the server hops to the session's loop and merges with
-  `with_row`; `cancelled` turns true when the person leaves Review. `choose`, `apply_to_all`,
-  `set_allow_cloud` and `problems` are pure and run on the loop. Start calls
-  `review.start(review, queue, runtime.job_context)`, the `RunContext` Phase 2 Task 19's
-  `runtime.job_runner` wraps. The view never includes `Row.path`; the Allow cloud box is drawn
-  only from `Review.allow_cloud`. Add and Review show only where `capabilities.generate` is true
-  (Phase 2 Decision 23).
+**Files:**
+- Create: `frontend/src/components/ReviewPage.tsx`, `frontend/src/lib/review.ts`
+- Modify: `src/vid2sub/web/episode.py` (`ReviewRefused`), `src/vid2sub/web/runtime.py` (Review's
+  methods; Task 2's `add` goes), `src/vid2sub/web/views.py` (`review_view`),
+  `src/vid2sub/web/server.py` (`Reviewer`; Add hands to Review; Review's inputs, output and
+  message), `src/vid2sub/web/demo.py` (`CANNED_MODELS`), `frontend/src/types.ts`,
+  `frontend/src/App.tsx`, `frontend/src/components/AddPage.tsx` (its note)
+- Test: `tests/test_web_review.py`, `tests/test_web_add.py`, `frontend/src/lib/review.test.ts`,
+  `tests/e2e/test_review.py`, `tests/e2e/test_add.py`
 
-<!-- steps: written in the next pass -->
+**Interfaces:**
+- Consumes: Task 3's `vid2sub.review`, reached only through the runtime, since it imports the
+  pipeline and isn't in the Pages bundle. `prepare` then `sample` run off the event loop; `on_row`
+  runs on the sampling thread, so the server hops to the session's loop and merges with
+  `with_row`; `cancelled` turns true when the person discards the review, adds again, starts it
+  or closes the tab. `choose`, `apply_to_all`, `set_allow_cloud` and `problems` are pure and run
+  on the loop. Start calls `review.start(review, queue, runtime.job_context,
+  guard=runtime.job_guard)`. Task 2's `add` input, whose hand-off becomes Review. Add and Review
+  show only where `capabilities.generate` is true (Phase 2 Decision 23).
+- Produces:
+  - `web.episode.ReviewRefused(Exception)`: a choice or a Start refused; fit to show, echoing
+    nothing. Pure.
+  - `web.runtime.Runtime` methods (Task 2's `add` is gone): `prepare(inputs, *, keep_video)
+    -> Review` (rows start with the session's targets and formats; blocks: call through
+    `blocking`); `sample(rv, *, on_row, cancelled) -> Review | None` (None once cancelled;
+    blocks); `with_row(rv, row)`, `choose(rv, row_id, changes: dict)`, `apply_to_all(rv, row_id,
+    field)`, `allow_cloud(rv, allowed)`, `problems(rv)` (pure; `ReviewRefused` from the first
+    three refusing); `start_review(rv) -> list[str]` (`ReviewRefused` while a row has a problem;
+    RuntimeError once the queue is closed).
+  - `web.views.review_view(review, problems) -> dict`: `{"rows": [{"id", "name", "folder" (the
+    bare folder name), "link", "state", "sampled", "inherited", "duration_ms", "audio":
+    [{"index", "label"}], "audio_index", "detection": {"language", "confidence", "votes",
+    "mixed"} | null, "language", "ask_zh_yue", "transcribe", "translate", "targets",
+    "formats", "script", "keep_video", "warning", "error", "hint", "problem"}],
+    "transcribers": [{"name", "title", "good_for", "available", "reason", "cloud"}],
+    "translators": [...], "languages": [{"code", "name"}], "targets": [{"key", "label"}],
+    "allow_cloud": bool, "can_start": bool}`; never a path.
+  - The server (local only), one `Reviewer` per tab:
+    - `add` (Task 2's) now begins a review of what it took and answers `add_result` with
+      `added` the number of inputs; nothing is queued until Start.
+    - output `review`: null, `{"preparing": true}` while Add's files are read, or
+      `review_view`'s.
+    - inputs `review_choose`: `{"row": str, "changes": {field: value}, "n": int}`;
+      `review_apply`: `{"row": str, "field": str, "n": int}`; `review_cloud`: `{"allowed":
+      bool, "n": int}`; `review_start`: `{"n": int}`; `review_discard`: `{"n": int}`. A refused
+      one sends a `notice`, echoing nothing (`PICK_A_CHOICE` for a malformed request).
+    - message `review_started`: `{"n": int | null, "jobs": int}`, after which `review` is null.
+  - The page: a **Review** screen (`nav-review`); a finished Add opens it, and
+    `review_started` opens Jobs. `ReviewPage({review: ReviewView | null, preparing: boolean,
+    onChoose(row, changes), onApply(row, field), onCloud(allowed), onStart(), onDiscard()})`;
+    `lib/review.ts`: `duration`, `heard`, `choiceLabel`, `toggled`, `Changes`, `withPending` (a
+    choice shows at once until the engine's review comes back) and `isReview`. Test ids:
+    `review-page`, `review-preparing`, `review-cloud`, `review-waiting`, `review-discard`,
+    `review-start`, `review-rows`, `review-row` (`data-state`, `data-row`), `review-name`,
+    `review-inherited`, `review-heard`, `review-error`, `review-audio`, `review-language`,
+    `review-transcribe`, `review-translate`, `review-script`, `review-target-<key>`,
+    `review-ass`, `review-all-<field>`, `review-warning`, `review-hint`, `review-problem`.
+  - Decided here (proposed): **the demo's Review suggests its canned models,** under the catalog
+    entries they stand in for (Whisper large-v3-turbo and Gemma 4, `demo.CANNED_MODELS`), so it
+    samples and suggests without asking a server; its picker titles name those entries.
+  - Decided here: leaving Review means Discard (or a newer Add, Start or closing the tab);
+    switching screens keeps the review and its sampling.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing tests,** `tests/test_web_review.py`:
+
+```python
+"""The Review screen's server (spec §10, §19.2, §7.2; S40; Review Focus 2): Add opens a review
+whose rows fill in as the first two files of each folder are sampled off the event loop, named
+by their files, never their paths; a row the person changed keeps their choice when later rows
+arrive; Discard or a newer Add stops the sampling, and its late rows land nowhere; **Allow cloud
+models for this run** starts unticked in every review; Start queues each row with its own options
+and opens the Jobs page; Pages has no Review."""
+
+import dataclasses
+import json
+import shutil
+import threading
+import time
+
+import pytest
+from fakes import FakeEngine
+from helpers import SPEECH, make_clip
+from starlette.testclient import TestClient
+from test_web_server import (  # noqa: F401 - fresh_reactive_lock is autouse
+    BASE,
+    JSON,
+    PAGE,
+    PORT,
+    TOKEN,
+    Tab,
+    fresh_reactive_lock,
+    tab,
+)
+from test_web_settings import Browser
+
+from vid2sub import review as reviewing
+from vid2sub.cache import Cache
+from vid2sub.catalog import Candidate
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.pipeline import InputResult, RunContext, RunOptions
+from vid2sub.web import runtime, server
+from vid2sub.web.app import create_app
+from vid2sub.web.browse import Entry
+from vid2sub.web.settings import Defaults, Session
+
+LINK = "https://youtu.be/dQw4w9WgXcQ"
+OTHER = "https://youtu.be/-abcdefghij"
+CONFIG = Config.model_validate({
+    "endpoints": {"spark": {"base_url": "http://127.0.0.1:9/v1"},
+                  "openai": {"base_url": "https://api.openai.com/v1",
+                             "key_env": "OPENAI_TEST_KEY"}},
+    "models": {
+        "spark-turbo": {"catalog": "whisper-large-v3-turbo", "endpoint": "spark",
+                        "model": "turbo", "parser": "whisper.cpp", "local": True},
+        "spark-gemma": {"catalog": "gemma-4-26b-a4b", "endpoint": "spark", "model": "gemma",
+                        "task": "translate", "local": True},
+        "openai-whisper": {"catalog": "openai-whisper-1", "endpoint": "openai",
+                           "model": "whisper-1", "parser": "openai"},
+    },
+})
+CANDIDATES = [Candidate("spark-turbo", "whisper-large-v3-turbo", "endpoint", True),
+              Candidate("spark-gemma", "gemma-4-26b-a4b", "endpoint", True),
+              Candidate("openai-whisper", "openai-whisper-1", "endpoint", True, cloud=True)]
+
+
+class Held(FakeEngine):
+    """Hears Japanese; the first window of the file `hold` (counted from 1) waits for `go`."""
+
+    def __init__(self, hold: int | None = None):
+        super().__init__(detect={"ja": 0.9})
+        self.hold, self.go, self.held = hold, threading.Event(), threading.Event()
+
+    def detect_language(self, chunk):
+        if self.hold is not None and len(self.calls) == 3 * (self.hold - 1):
+            self.held.set()
+            assert self.go.wait(20)
+        return super().detect_language(chunk)
+
+
+@pytest.fixture
+def engine():
+    return Held()
+
+
+@pytest.fixture
+def rt(tmp_path, engine):
+    home = tmp_path / "home"
+    home.mkdir()
+    ctx = RunContext(config=CONFIG, tools=Tools.find(), keys=KeyRing(environ={}),
+                     options=RunOptions(), engines={"spark-turbo": engine},
+                     candidates=list(CANDIDATES))
+    made = runtime.build(CONFIG, tools=Tools.find(), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=0),
+                         session=Session(Defaults(("en",), ("srt",))), job_context=ctx)
+    made = dataclasses.replace(made, browse_home=home,
+                               browse_roots=(Entry("Home", str(home), "folder"),))
+    runtime.configure(made)
+    yield made
+    engine.go.set()
+    runtime.configure(None)
+    made.queue.close()
+
+
+def client_for(rt):
+    c = TestClient(create_app(rt, token=TOKEN, port=PORT, shiny_app=server.app), base_url=BASE)
+    c.__enter__()
+    assert c.post("/auth", content=json.dumps({"token": TOKEN}),
+                  headers={**JSON, **PAGE}).status_code == 204
+    return c
+
+
+@pytest.fixture
+def client(rt):
+    c = client_for(rt)
+    yield c
+    c.__exit__(None, None, None)
+
+
+@pytest.fixture
+def season(rt):
+    """Three episodes of one show, in the browser's home."""
+    folder = rt.browse_home / "Show"
+    folder.mkdir()
+    clip = make_clip(folder, "clip.mkv", seconds=14, speech=SPEECH)
+    for n in (1, 2, 3):
+        shutil.copy(clip, folder / f"Show S01E0{n}.mkv")
+    clip.unlink()
+    return folder
+
+
+def said(t: Tab, kind: str) -> list[dict]:
+    return [m["custom"]["shinyReactMessage"]["data"] for m in t.messages
+            if m.get("custom", {}).get("shinyReactMessage", {}).get("id") == kind]
+
+
+def shown(t: Tab) -> dict | None:
+    """The review shown now: None, {"preparing": True}, or the review's view."""
+    return t.value("review") if t.has("review") else None
+
+
+def rows(t: Tab) -> list[dict]:
+    view = shown(t)
+    return view["rows"] if view and "rows" in view else []
+
+
+def ready(t: Tab, n: int):
+    """The review's view once `n` rows are there and none is waiting or being sampled."""
+    found = rows(t)
+    return (len(found) == n and all(r["state"] in ("ready", "failed") for r in found)
+            and shown(t))
+
+
+def add(t: Tab, n: int, *, paths=(), links=(), keep_video=False) -> None:
+    t.set(add={"n": n, "paths": list(paths), "links": list(links), "keep_video": keep_video})
+    t.until(lambda t: any(d["n"] == n for d in said(t, "add_result")))
+
+
+# ---- sampling ----------------------------------------------------------------------------------
+
+
+@pytest.mark.media
+def test_add_opens_a_review_that_fills_in_as_files_are_sampled_and_names_no_path(client, rt,
+                                                                                 season):
+    with tab(client, {"review"}) as t:
+        add(t, 1, paths=[str(season)])
+        view = t.until(lambda t: ready(t, 3))
+    assert [(r["id"], r["name"], r["sampled"], r["inherited"], r["language"], r["transcribe"],
+             r["translate"], r["targets"]) for r in view["rows"]] == [
+        ("r1", "Show S01E01.mkv", True, False, "ja", "spark-turbo", "spark-gemma", ["en"]),
+        ("r2", "Show S01E02.mkv", True, False, "ja", "spark-turbo", "spark-gemma", ["en"]),
+        ("r3", "Show S01E03.mkv", False, True, "ja", "spark-turbo", "spark-gemma", ["en"])]
+    first = view["rows"][0]
+    assert first["detection"] == {"language": "ja", "confidence": 0.9,
+                                  "votes": ["ja", "ja", "ja"], "mixed": False}
+    assert first["audio"] == [{"index": 0, "label": "1: Japanese, aac, mono"}]
+    assert first["folder"] == "Show" and 13_000 < first["duration_ms"] < 15_000
+    assert [c["name"] for c in view["transcribers"]] == ["spark-turbo", "openai-whisper"]
+    assert view["transcribers"][1]["cloud"] is True and view["allow_cloud"] is False
+    assert view["can_start"] is True and all(r["problem"] is None for r in view["rows"])
+    assert str(rt.browse_home) not in json.dumps(view)  # names, never paths (§6.8)
+
+
+@pytest.mark.media
+def test_a_row_changed_while_sampling_runs_on_keeps_the_persons_choice(client, rt, season,
+                                                                       engine):
+    engine.hold = 2  # the second file's sample waits until the person has changed the first
+    with tab(client, {"review"}) as t:
+        add(t, 1, paths=[str(season)])
+        assert engine.held.wait(30)
+        t.until(lambda t: rows(t) and rows(t)[0]["state"] == "ready")
+        t.set(review_choose={"n": 2, "row": "r1",
+                             "changes": {"language": "ko", "targets": ["en", "ja"]}})
+        t.until(lambda t: rows(t)[0]["language"] == "ko")
+        engine.go.set()
+        view = t.until(lambda t: ready(t, 3))
+    first, second, third = view["rows"]
+    assert (first["language"], first["targets"]) == ("ko", ["en", "ja"])  # the person's
+    assert (second["language"], third["language"], third["inherited"]) == ("ja", "ja", True)
+
+
+@pytest.mark.media
+def test_discard_or_a_new_add_stops_the_sampling_and_its_late_rows_land_nowhere(client, rt,
+                                                                                season, engine):
+    engine.hold = 1  # the first file's sample waits
+    with tab(client, {"review"}) as t:
+        add(t, 1, paths=[str(season)])
+        assert engine.held.wait(30)
+        t.set(review_discard={"n": 2})
+        t.until(lambda t: t.has("review") and shown(t) is None)
+        add(t, 3, links=[LINK])  # a new review, while the old sampling is still running
+        t.until(lambda t: [r["name"] for r in rows(t)] == ["YouTube video dQw4w9WgXcQ"])
+        engine.go.set()  # the old sample finishes now: its rows must not land in the new review
+        t.until(lambda t: len(engine.calls) >= 3)
+        time.sleep(0.5)  # time for its rows to hop to the loop, were they going to land
+        assert [r["name"] for r in rows(t)] == ["YouTube video dQw4w9WgXcQ"]
+    assert len(engine.calls) == 3  # stopped before its next file: one file's three windows
+
+
+# ---- the person's choices and Start ------------------------------------------------------------
+
+
+def test_allow_cloud_starts_unticked_in_every_review_and_only_its_box_ticks_it(client, rt):
+    with tab(client, {"review"}) as t:
+        add(t, 1, links=[LINK])
+        t.until(lambda t: rows(t))
+        assert shown(t)["allow_cloud"] is False
+        t.set(review_cloud={"n": 2, "allowed": True})
+        t.until(lambda t: shown(t)["allow_cloud"] is True)
+        add(t, 3, links=[OTHER])  # the next review starts unticked, whatever the last one had
+        t.until(lambda t: [r["name"] for r in rows(t)] == ["YouTube video -abcdefghij"])
+        assert shown(t)["allow_cloud"] is False
+        t.set(review_cloud={"n": 4, "allowed": "yes"})
+        t.until(lambda t: t.notices())
+        assert shown(t)["allow_cloud"] is False
+
+
+def test_start_queues_each_row_with_its_own_options_and_opens_the_jobs_page(client, rt,
+                                                                           monkeypatch):
+    ran: list[tuple] = []
+
+    def run_one(source, ctx):
+        o = ctx.options
+        ran.append((source, o.targets, o.formats, o.keep_video, o.allow_cloud))
+        return InputResult(input=source, status="done")
+
+    monkeypatch.setattr(reviewing, "run_one", run_one)
+    rt.session.set_defaults(Defaults(("ko",), ("srt",)))  # the drawer's, as Add happens
+    with tab(client, {"review"}) as t:
+        add(t, 1, links=[LINK, OTHER], keep_video=True)
+        t.until(lambda t: len(rows(t)) == 2)
+        assert [r["targets"] for r in rows(t)] == [["ko"], ["ko"]]  # the session's, not toml's
+        t.set(review_choose={"n": 2, "row": "r1",
+                             "changes": {"targets": ["en", "ja"], "formats": ["srt", "ass"]}})
+        t.until(lambda t: rows(t)[0]["targets"] == ["en", "ja"])
+        t.set(review_apply={"n": 3, "row": "r1", "field": "targets"})
+        t.until(lambda t: rows(t)[1]["targets"] == ["en", "ja"])
+        rt.session.set_defaults(Defaults(("zh-Hant",), ("srt",)))  # changed again: rows win
+        t.set(review_start={"n": 4})
+        t.until(lambda t: said(t, "review_started"))
+        assert said(t, "review_started") == [{"n": 4, "jobs": 2}]
+        t.until(lambda t: t.has("review") and shown(t) is None)  # the review is done
+    assert [j.input for j in rt.queue.jobs()] == ["https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                                                  "https://www.youtube.com/watch?v=-abcdefghij"]
+    deadline = time.monotonic() + 10
+    while len(ran) < 2:
+        assert time.monotonic() < deadline, "timed out waiting"
+        time.sleep(0.01)
+    assert ran == [
+        ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", ["en", "ja"], ["srt", "ass"], True, False),
+        ("https://www.youtube.com/watch?v=-abcdefghij", ["en", "ja"], ["srt"], True, False)]
+
+
+def test_a_choice_that_cant_be_made_says_so_and_echoes_nothing(client, rt):
+    with tab(client, {"review"}) as t:
+        add(t, 1, links=[LINK])
+        t.until(lambda t: rows(t))
+        for n, request in enumerate([
+                {"row": "r1", "changes": {"language": "xx-secret"}},
+                {"row": "r9-secret", "changes": {"language": "ja"}},
+                {"row": "r1", "changes": {"glossary-secret": "x"}},
+                {"row": "r1", "changes": "secret"}], 2):
+            t.set(review_choose={"n": n, **request})
+        t.set(review_apply={"n": 6, "row": "r1", "field": "secret"})
+        t.until(lambda t: len(t.notices()) == 5)
+        assert "secret" not in json.dumps(t.notices())
+        assert rows(t)[0]["language"] is None
+
+
+def test_the_pages_editor_has_no_review(rt):
+    pages = dataclasses.replace(rt, backend=Browser(rt.backend))
+    runtime.configure(pages)
+    c = client_for(pages)
+    try:
+        with tab(c, {"review"}) as t:
+            t.until(lambda t: t.has("review"))
+            t.set(add={"n": 1, "paths": [], "links": [LINK], "keep_video": False})
+            t.set(review_start={"n": 2})
+            t.set(open={"path": "/nowhere/x.mkv", "n": 3})  # something it does answer
+            t.until(lambda t: t.notices())
+            assert shown(t) is None and said(t, "add_result") == []
+    finally:
+        c.__exit__(None, None, None)
+    assert rt.queue.jobs() == []
+```
+
+  In `tests/test_web_add.py`, in the module docstring, replace
+  `checks and YouTube links as their canonical URLs, and queues them, a link keeping its whole video`
+  / `when asked; the demo browses only its own folder and runs only its clip; Pages has no Add."""`
+  with
+
+```python
+checks and YouTube links as their canonical URLs, and hands them to Review (Task 4), a link
+keeping its whole video when asked; the demo browses only its own folder and runs only its clip;
+Pages has no Add."""
+```
+
+  replace the whole of
+  `test_add_queues_each_video_once_in_episode_order_and_a_link_as_its_canonical_url` with:
+
+```python
+def reviewed(t: Tab) -> list[dict] | None:
+    """The review's rows, once a review (not its "preparing" placeholder) is shown."""
+    shown = t.value("review") if t.has("review") else None
+    return shown["rows"] if shown and "rows" in shown else None
+
+
+def test_add_reviews_each_video_once_in_episode_order_and_a_link_as_its_canonical_url(
+        client, rt, places, ran):
+    home, _, season = places
+    with tab(client, {"review"}) as t:
+        t.set(add={"n": 1, "paths": [str(season), str(home / "Film.mp4"),
+                                     str(season / "Show S01E01.mkv")],
+                   "links": [LINK], "keep_video": False})
+        assert answer(t, "add_result", 1) == {"n": 1, "added": 4, "error": None}
+        rows = t.until(lambda t: (r := reviewed(t)) and len(r) == 4 and r)
+        assert [(r["name"], r["link"], r["keep_video"]) for r in rows] == [
+            ("Show S01E01.mkv", False, False), ("Show S01E02.mkv", False, False),
+            ("Film.mp4", False, False), ("YouTube video dQw4w9WgXcQ", True, False)]
+        t.set(add={"n": 2, "paths": [], "links": [LINK], "keep_video": True})
+        assert answer(t, "add_result", 2) == {"n": 2, "added": 1, "error": None}
+        rows = t.until(lambda t: (r := reviewed(t)) and len(r) == 1 and r)
+        assert (rows[0]["name"], rows[0]["keep_video"]) == ("YouTube video dQw4w9WgXcQ", True)
+        assert str(home) not in json.dumps(t.value("review"))  # names, never paths (§6.8)
+    assert ran == [] and rt.queue.jobs() == []  # nothing runs until Review's Start
+
+
+```
+
+  and in the demo's test, rename
+  `test_the_demo_browses_only_its_own_folder_and_a_link_it_adds_is_refused` to
+  `test_the_demo_browses_only_its_own_folder_and_a_link_it_starts_is_refused` and replace
+  `        rt.add([CANONICAL], keep_video=True)  # a runner of its own, which the guard wraps` with
+  `        rt.start_review(rt.prepare([CANONICAL], keep_video=True))  # its own runner, guarded`.
+- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_review.py
+  tests/test_web_add.py -q`. Expected: `E       AssertionError: timed out; the tab saw […]` (no
+  `review` output yet), the demo's test failing on `start_review`, and `9 failed, 16 passed`.
+- [ ] **Step 3: Write the code.** In `src/vid2sub/web/episode.py`, above
+  `@dataclass(frozen=True)` / `class SaveResult:`, add:
+
+```python
+class ReviewRefused(Exception):
+    """A choice, "apply to all" or a Start on the Review screen that can't be made: the reason is
+    fit to show and echoes nothing (spec §6.8). The local runtime makes it from the core's
+    `review.ReviewError`, which the server can't import in Pages (Phase 3 Task 4)."""
+
+
+```
+
+  In `src/vid2sub/web/runtime.py`, in the module docstring, replace the paragraph from
+  `The Add screen's file browser (Phase 3 Task 2, spec §6.5) lists your home and mounted volumes`
+  to `that keeps its video) still runs only the demo's clip.` with:
+
+```python
+The Add screen's file browser (Phase 3 Task 2, spec §6.5) lists your home and mounted volumes
+through `roots`, `listing` and `expand`, which turn the browser's refusals into the pure
+`AddError`; the demo's runtime gives it only the demo's folder (`browse_roots`, `browse_home`).
+Review (Phase 3 Task 4, §10) runs on the job context through `prepare`, `sample`, `with_row`,
+`choose`, `apply_to_all`, `allow_cloud`, `problems` and `start_review`, which turn the core's
+refusals into the pure `ReviewRefused`: its rows start with the session's targets and formats,
+each row's job brings its own runner with the row's options, and `job_guard` wraps it, so in the
+demo a job still runs only the demo's clip.
+```
+
+  and replace
+  `` `Runtime` (`reachable`, `media_for`, `retranslate`, `endpoint_models`, `roots`, `listing`, ``
+  / `` `expand`, `add`). Every call that blocks goes through `` with
+  `` `Runtime` (`reachable`, `media_for`, `retranslate`, `endpoint_models`, the browser's and ``
+  / `` Review's). Every call that blocks goes through ``. Replace
+  `from typing import TYPE_CHECKING` with `from typing import TYPE_CHECKING, Any`; below
+  `    from vid2sub.pipeline import Event, InputResult, RunContext` (in the `TYPE_CHECKING`
+  block), add `    from vid2sub.review import Review, Row`; and replace the whole `add` method
+  (from `    def add(self, inputs: Sequence[str], *, keep_video: bool) -> list[str]:` to the line
+  above `    def media_for`) with:
+
+```python
+    def prepare(self, inputs: Sequence[str], *, keep_video: bool) -> Review:
+        """Review's rows for what Add took (`review.prepare` on the job context), each starting
+        with the session's targets and formats as they are now (§5.4); `allow_cloud` starts
+        unticked (§7.2). Blocks on ffprobe and each local server's model list: call it through
+        `blocking`."""
+        from vid2sub import review
+
+        defaults = self.session.defaults()
+        return review.prepare(inputs, self.job_context, keep_video=keep_video,
+                              targets=defaults.targets, formats=defaults.formats)
+
+    def sample(self, rv: Review, *, on_row: Callable[[Row], None],
+               cancelled: Callable[[], bool]) -> Review | None:
+        """`review.sample` on the job context, or None once `cancelled()` (the person added
+        again, discarded the review or closed the tab). Blocks for seconds per file: call it
+        through `blocking`; `on_row` runs on that thread."""
+        from vid2sub import review
+        from vid2sub.pipeline import Cancelled
+
+        try:
+            return review.sample(rv, self.job_context, on_row=on_row, cancelled=cancelled)
+        except Cancelled:
+            return None
+
+    def with_row(self, rv: Review, row: Row) -> Review:
+        """A sampled row merged into the review (`review.with_row`). Pure and fast."""
+        from vid2sub import review
+
+        return review.with_row(rv, row)
+
+    def choose(self, rv: Review, row_id: str, changes: dict[str, Any]) -> Review:
+        """The person's choices for one row (`review.choose`); `ReviewRefused` for one that
+        can't be made. Pure and fast: called on the event loop."""
+        from vid2sub import review
+        from vid2sub.web.episode import ReviewRefused
+
+        try:
+            return review.choose(rv, row_id, **changes)
+        except review.ReviewError as err:
+            raise ReviewRefused(str(err)) from None
+
+    def apply_to_all(self, rv: Review, row_id: str, field: str) -> Review:
+        """One row's choice copied to every ready row ("apply to all", §10.5)."""
+        from vid2sub import review
+        from vid2sub.web.episode import ReviewRefused
+
+        try:
+            return review.apply_to_all(rv, row_id, field)
+        except review.ReviewError as err:
+            raise ReviewRefused(str(err)) from None
+
+    def allow_cloud(self, rv: Review, allowed: bool) -> Review:
+        """The **Allow cloud models for this run** box: its only setter (§7.2)."""
+        from vid2sub import review
+
+        return review.set_allow_cloud(rv, allowed)
+
+    def problems(self, rv: Review) -> dict[str, str]:
+        """What stops Start, by row id; empty when it can go."""
+        from vid2sub import review
+
+        return review.problems(rv)
+
+    def start_review(self, rv: Review) -> list[str]:
+        """Start (§10.6): each row that can run, queued with its own options on the job
+        context, its runner wrapped by `job_guard` (the demo's: only its clip), so the row's
+        targets and formats win over the session's. `ReviewRefused` while a row has a problem;
+        RuntimeError once the queue is closed."""
+        from vid2sub import review
+        from vid2sub.web.episode import ReviewRefused
+
+        try:
+            return review.start(rv, self.queue, self.job_context, guard=self.job_guard)
+        except review.ReviewError as err:
+            raise ReviewRefused(str(err)) from None
+
+```
+
+  In `src/vid2sub/web/views.py`, in the module docstring, replace
+  `shows a folder's entries by bare name and full path (Phase 3 Task 2, §6.5). The server runs in`
+  / `Pages too` with
+
+```python
+shows a folder's entries by bare name and full path (Phase 3 Task 2, §6.5); the Review screen
+shows each row by bare name, never its path (Task 4, §10). The server runs in Pages too
+```
+
+  below `    from vid2sub.jobs import JobView` (in the `TYPE_CHECKING` block), add
+  `    from vid2sub.media.probe import AudioTrack` and
+  `    from vid2sub.review import ModelChoice, Review`; and above
+  `def capabilities_view(caps: Capabilities) -> dict[str, Any]:`, add:
+
+```python
+def review_view(review: Review, problems: Mapping[str, str]) -> dict[str, Any]:
+    """The Review screen (spec §10, §19.2, S40): one row per file, in the order added, by its
+    bare name (a link by its video's id), never its path (§6.8); its duration, its audio tracks
+    (language, codec, channels) and the one the job will use (§8.4); the detected language with
+    its confidence and votes, or "Mandarin or Cantonese?"; the transcription and translation
+    models, targets, formats and Chinese script chosen; whether it was sampled or inherited; its
+    warning, error and fix; and what stops it starting (`problems`). The pickers list every
+    configured model with the catalog's one-liner, greyed with the reason where it can't run now
+    (§10.4); the languages are those vid2sub transcribes, and the targets those it writes.
+    **Allow cloud models for this run** is the review's own box, `allow_cloud`, which starts
+    unticked in every review (§7.2); nothing else sets it."""
+    rows = []
+    for r in review.rows:
+        found = r.detection
+        rows.append({
+            "id": r.id, "name": r.name, "folder": PurePath(r.folder).name if r.folder else "",
+            "link": r.link, "state": r.state, "sampled": r.sampled, "inherited": r.inherited,
+            "duration_ms": r.duration_ms,
+            "audio": [{"index": t.index, "label": _audio_label(t)}
+                      for t in (r.probe.audio if r.probe else ())],
+            "audio_index": r.audio_index,
+            "detection": None if found is None else {
+                "language": found.language, "confidence": found.confidence,
+                "votes": list(found.votes), "mixed": found.mixed},
+            "language": r.language, "ask_zh_yue": r.ask_zh_yue, "transcribe": r.transcribe,
+            "translate": r.translate, "targets": list(r.targets), "formats": list(r.formats),
+            "script": r.script, "keep_video": r.keep_video, "warning": r.warning or None,
+            "error": r.error or None, "hint": r.hint or None,
+            "problem": problems.get(r.id)})
+    return {
+        "rows": rows,
+        "transcribers": [_choice(c) for c in review.transcribers],
+        "translators": [_choice(c) for c in review.translators],
+        "languages": [{"code": code, "name": lang.name} for code, lang in langs.LANGS.items()],
+        "targets": [{"key": key, "label": track_label(key)} for key in naming.TRACKS],
+        "allow_cloud": review.allow_cloud,
+        "can_start": not problems and any(r.state != "failed" for r in review.rows),
+    }
+
+
+def _choice(c: ModelChoice) -> dict[str, Any]:
+    return {"name": c.name, "title": c.title, "good_for": c.good_for, "available": c.available,
+            "reason": c.reason or None, "cloud": c.cloud}
+
+
+def _audio_label(t: AudioTrack) -> str:
+    """An audio track as the Review screen lists it (§8.4): its language, codec and channels."""
+    known = t.language if t.language not in (None, "und") else None  # "und": undetermined
+    name = langs.LANGS[known].name if known in langs.LANGS else (known or "no language tag")
+    channels = {1: "mono", 2: "stereo"}.get(t.channels or 0,
+                                            f"{t.channels} channels" if t.channels else "")
+    return ", ".join(p for p in (f"{t.index + 1}: {name}", t.codec, channels) if p)
+
+
+```
+
+  In `src/vid2sub/web/server.py`, in the module docstring, replace
+
+```python
+runtime checks as the browser checks a folder and queues (`add_result`). Both wait on the disk, a
+sleeping network share for seconds, so each runs in a task of the tab's own through
+`runtime.blocking`; a tab lists one folder at a time, and only the newest request waits behind it
+(Review Focus 1).
+```
+
+  with
+
+```python
+runtime checks as the browser checks a folder (`add_result`) and Review takes. Both wait on the
+disk, a sleeping network share for seconds, so each runs in a task of the tab's own through
+`runtime.blocking`; a tab lists one folder at a time, and only the newest request waits behind it
+(Review Focus 1).
+
+Review (§10, §19.2; S40; Phase 3 Task 4) is one per tab, a `Reviewer`: Add's videos probed and
+their first two per folder sampled off the event loop, each sampled row hopping back to the loop
+from the sampling thread and merged, so the `review` output fills in as it goes; the person's
+choices (`review_choose`, `review_apply`, `review_cloud`), pure and fast, in their inputs' own
+effects; `review_start`, which queues each row with its own options and tells the page
+(`review_started`); and `review_discard`. A newer Add, Discard, Start or the tab closing stops
+the sampling before its next file, and drops what it still sends. **Allow cloud models for this
+run** is the review's own, unticked in every new review (§7.2). The view never holds a path.
+```
+
+  in the `from vid2sub.web.episode import (…)` block, add `    ReviewRefused,` below
+  `    RetranslateError,`; below
+  `TOO_MANY = f"that's more than {MAX_JOBS} videos: add fewer at once"`, add
+  `PICK_A_CHOICE = "pick a file and a choice for it"`; above
+  `def _full_paths(paths: object) -> bool:`, add:
+
+```python
+class Reviewer:
+    """One tab's Review (spec §10, §19.2; S40): the rows Add made, sampled in the background,
+    and the person's choices. The review is a frozen value changed only on this loop: by the
+    sampling's rows, which hop here from the thread they're made on, and by the person's choices,
+    which are pure and fast, so they run in the input's own effect. Sampling only ever sends a
+    row that isn't ready, which the person can't change, so a choice they made stands when later
+    rows arrive (Review Focus 2). A newer Add, Discard, Start or the tab closing ends the review:
+    its sampling stops before its next file, and anything it sends after that is dropped, so an
+    old review's rows (named `r1`, `r2`… as every review's are) never land in a new one."""
+
+    def __init__(self, rt: runtime.Runtime, session: Session):
+        self.rt = rt
+        self.session = session
+        self.review: Any = None  # the truth, a `review.Review`; changed only on this loop
+        self.shown: reactive.Value[Any] = reactive.value(None)
+        self.preparing: reactive.Value[bool] = reactive.value(False)
+        self._current: object | None = None  # the review the running sampling belongs to
+        self._tasks: set[asyncio.Task] = set()
+
+    def begin(self, inputs: list[str], *, keep_video: bool) -> None:
+        """A new review of what Add took; the one before it ends. Called on this loop."""
+        self.end()
+        token = self._current = object()
+        task = asyncio.create_task(self._run(token, inputs, keep_video))
+        self._tasks.add(task)  # kept until it ends: the loop holds only a weak reference
+        task.add_done_callback(self._tasks.discard)
+
+    def end(self) -> None:
+        """Discard, Start or the tab closed: sampling stops before its next file, and what it
+        sends from now on is dropped."""
+        self._current = None
+        self.review = None
+
+    async def _run(self, token: object, inputs: list[str], keep_video: bool) -> None:
+        try:
+            await self._show(None, preparing=True)
+            rv = await runtime.blocking(self.rt.prepare, inputs, keep_video=keep_video)
+            if self._current is not token:
+                return
+            await self._show(rv)
+            loop = asyncio.get_running_loop()
+
+            def on_row(row: Any) -> None:  # on the sampling thread
+                asyncio.run_coroutine_threadsafe(self._arrived(token, row), loop)
+
+            await runtime.blocking(self.rt.sample, rv, on_row=on_row,
+                                   cancelled=lambda: self._current is not token)
+        except Exception as err:  # noqa: BLE001 - a review failing must not stop the session
+            log.error("a review failed: %s", type(err).__name__)  # the type only (§6.8)
+            if self._current is token:
+                self.end()
+                await self._show(None)
+                await notice(self.session, "error", "something went wrong (review); see the log")
+
+    async def _arrived(self, token: object, row: Any) -> None:
+        """A sampled row, merged on this loop while its review is still the one shown."""
+        if self._current is token and self.review is not None:
+            await self._show(self.rt.with_row(self.review, row))
+
+    async def change(self, kind: str, request: object) -> None:
+        """A choice, "apply to all" or the Allow cloud box, on the review shown; in the input's
+        effect, so the page's changes land in the order it sent them."""
+        if self.review is None or not isinstance(request, dict):
+            return
+        try:
+            if kind == "choose":
+                row, changes = request.get("row"), request.get("changes")
+                if not (isinstance(row, str) and isinstance(changes, dict)):
+                    raise ReviewRefused(PICK_A_CHOICE)
+                rv = self.rt.choose(self.review, row, changes)
+            elif kind == "apply":
+                row, field = request.get("row"), request.get("field")
+                if not (isinstance(row, str) and isinstance(field, str)):
+                    raise ReviewRefused(PICK_A_CHOICE)
+                rv = self.rt.apply_to_all(self.review, row, field)
+            else:
+                allowed = request.get("allowed")
+                if not isinstance(allowed, bool):
+                    raise ReviewRefused(PICK_A_CHOICE)
+                rv = self.rt.allow_cloud(self.review, allowed)
+        except ReviewRefused as err:  # fit to show, and echoes nothing; the page's controls
+            await notice(self.session, "error", str(err))  # show the review's own choices
+            return
+        self.review = rv
+        self.shown.set(rv)
+
+    async def start(self, request: object) -> None:
+        """Start: every row that can run queued, each with its own options; then the review is
+        done and the page opens the Jobs page (`review_started`)."""
+        if self.review is None:
+            return
+        n = request.get("n") if isinstance(request, dict) else None
+        try:
+            ids = self.rt.start_review(self.review)
+        except ReviewRefused as err:
+            await notice(self.session, "error", str(err))
+            return
+        except RuntimeError:  # closed: the engine is stopping
+            await notice(self.session, "error", STOPPING)
+            return
+        self.discard()
+        await shinyreact.send_message(self.session, "review_started",
+                                      {"n": n if type(n) is int else None, "jobs": len(ids)})
+
+    def discard(self) -> None:
+        """Discard: the review ends and the screen empties."""
+        self.end()
+        self.preparing.set(False)
+        self.shown.set(None)
+
+    async def _show(self, rv: Any, *, preparing: bool = False) -> None:
+        """Shows `rv` from a task or a hop from a thread: under Shiny's lock, then flushed."""
+        self.review = rv
+        async with reactive.lock():
+            self.preparing.set(preparing)
+            self.shown.set(rv)
+            await reactive.flush()
+
+
+```
+
+  and in `server`, replace
+
+```python
+                else:
+                    try:
+                        added = len(rt.add(inputs, keep_video=keep))
+                    except RuntimeError:  # closed: the engine is stopping
+                        error = STOPPING
+        await shinyreact.send_message(session, "add_result",
+                                      {"n": n, "added": added, "error": error})
+```
+
+  with:
+
+```python
+                else:
+                    reviewer.begin(inputs, keep_video=keep)  # Review comes next (Task 4)
+                    added = len(inputs)
+        await shinyreact.send_message(session, "add_result",
+                                      {"n": n, "added": added, "error": error})
+
+    # Review (spec §10, §19.2; S40), the local engine's alone, one per tab: what Add took,
+    # sampled in the background, the person's choices, and Start, which queues each row with its
+    # own options. The choices are pure and fast, so each runs in its input's own effect.
+    reviewer = Reviewer(rt, session)
+    session.on_ended(reviewer.end)
+
+    @reactive_output
+    def review():
+        rv = reviewer.shown()
+        if rv is None:
+            return {"preparing": True} if reviewer.preparing() else None
+        return views.review_view(rv, rt.problems(rv))
+
+    @reactive.effect
+    @reactive.event(input.review_choose)
+    async def _review_choose() -> None:
+        if local:
+            await reviewer.change("choose", as_json(input.review_choose()))
+
+    @reactive.effect
+    @reactive.event(input.review_apply)
+    async def _review_apply() -> None:
+        if local:
+            await reviewer.change("apply", as_json(input.review_apply()))
+
+    @reactive.effect
+    @reactive.event(input.review_cloud)
+    async def _review_cloud() -> None:
+        if local:
+            await reviewer.change("cloud", as_json(input.review_cloud()))
+
+    @reactive.effect
+    @reactive.event(input.review_start)
+    async def _review_start() -> None:
+        if local:
+            await reviewer.start(as_json(input.review_start()))
+
+    @reactive.effect
+    @reactive.event(input.review_discard)
+    def _review_discard() -> None:
+        if local:
+            reviewer.discard()
+
+```
+
+  In `src/vid2sub/web/demo.py`, in the module docstring, replace
+  `demo's clip (the Phase 3 plan, Task 2).` with
+
+```python
+demo's clip (the Phase 3 plan, Task 2). Its Review samples with the canned engine and suggests
+the canned models, which stand in for Whisper large-v3-turbo and Gemma 4 (`CANNED_MODELS`, Task
+4), so nothing is asked of a server.
+```
+
+  below `from vid2sub.cache import Cache`, add `from vid2sub.catalog import Candidate`; above
+  `DEMO_ONLY = "the demo runs only its own clip"`, add:
+
+```python
+# What the demo's Review can suggest: the canned models, under the catalog entries they stand in
+# for, so detection picks the canned engine and the route suggests it (Phase 3 Task 4).
+CANNED_MODELS = (Candidate("canned", "whisper-large-v3-turbo", "endpoint", True),
+                 Candidate(CANNED_JA, "gemma-4-26b-a4b", "endpoint", True))
+```
+
+  and in `runtime_for`, replace `                      ask_for=lambda *args, **kwargs: canned_ask)`
+  with `                      ask_for=lambda *args, **kwargs: canned_ask,` /
+  `                      candidates=list(CANNED_MODELS))`.
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_review.py
+  tests/test_web_add.py -q` first (`25 passed`; five times, once under `TZ=UTC`: sampling runs
+  on threads), then the guard checks, then `make check`. **Guard checks**, each reverted and
+  restored, each with `uv run pytest tests/test_web_review.py -q` unless named: in
+  `Reviewer._arrived`, replace `if self._current is token and self.review is not None:` with
+  `if self.review is not None:` (an old review's row lands in the new one:
+  `FAILED …test_discard_or_a_new_add_stops_the_sampling_and_its_late_rows_land_nowhere`); in
+  `Reviewer._run`, sample with `cancelled=lambda: False` (the same test: the sampling goes on to
+  the next file); in `Runtime.prepare`, drop `targets=defaults.targets, formats=defaults.formats`
+  (`FAILED …test_start_queues_each_row_with_its_own_options_and_opens_the_jobs_page`: rows start
+  with vid2sub.toml's targets); in `Runtime.start_review`, drop `guard=self.job_guard`
+  (`uv run pytest tests/test_web_add.py -q -k demo`: the demo's link reaches yt-dlp, "deno isn't
+  installed…"). `make check`. Expected: `1177 passed, 7 skipped, 38 deselected` twice,
+  `Test Files  20 passed (20)` and `Tests  91 passed (91)`, `All checks passed!` and
+  `no leaks found`. (`make e2e` waits for round 4b: Task 2's browser tests now meet Review.)
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 Add opens a review that fills in as files are sampled, keeps the person's choices, and Start queues each row
+
+The server's half of Review (spec §10, §19.2, §7.2; S40). Add no longer
+queues: it hands what it took to a Reviewer, one per tab, which probes
+the files and samples the first two of each folder off the event loop
+(runtime.prepare and sample, review.prepare and sample on the job
+context), each sampled row hopping back to the loop from the sampling
+thread and merged, so the `review` output fills in as it goes; a
+{"preparing": true} placeholder shows meanwhile. Rows start with the
+session's targets and formats. The person's choices (review_choose,
+review_apply, review_cloud) are pure and fast, so they run in their
+inputs' own effects, in order; a refused one says why and echoes
+nothing. review_start queues every row with its own options (the row's
+targets and formats win over the session's), each runner through the
+runtime's job_guard, empties the review and sends review_started;
+review_discard empties it. A newer Add, Discard, Start or the tab
+closing stops the sampling before its next file and drops what it still
+sends, so an old review's r1 never lands in a new one. Allow cloud is
+the review's own and starts unticked in every review; nothing else
+ticks it (§7.2). The view (views.review_view) names files and folders
+by their bare names, never a path (§6.8). The core's refusals reach the
+server as the pure ReviewRefused, since vid2sub.review isn't in the
+Pages bundle; Pages has no Review.
+
+The demo's job context brings its canned models as candidates, under
+the catalog entries they stand in for (Whisper large-v3-turbo and
+Gemma 4), so its Review samples with the canned engine and suggests
+them, asking no server (proposed as a Decision).
+
+Task 2's Add tests now expect a review instead of jobs, and the demo's
+guarded link goes through Review's Start.
+
+The new tests failed first with: AssertionError: timed out (no review
+output), seven times, and Task 2's two changed tests likewise. Guard
+checks, each reverted and restored: merging a row whatever review it
+came from, or sampling with no cancel, lets an old review's row land in
+a new one; prepare without the session's targets starts rows with
+vid2sub.toml's; start without the job guard lets the demo's link reach
+yt-dlp.
+
+Docs read: shiny 1.8.0's source (an effect may set a reactive value; a
+value set from a task needs reactive.lock and a flush, as Phase 2's
+Editor does), Python's asyncio.run_coroutine_threadsafe; shinyreact
+0.1.0's send_message.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 4
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/demo.py src/vid2sub/web/episode.py src/vid2sub/web/runtime.py
+  src/vid2sub/web/server.py src/vid2sub/web/views.py tests/test_web_add.py
+  tests/test_web_review.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 6: Write the failing tests.** `frontend/src/lib/review.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { ReviewRow } from "@/types";
+
+import { choiceLabel, duration, heard, isReview, toggled, withPending } from "./review";
+
+const LANGS = [{ code: "ja", name: "Japanese" }, { code: "zh", name: "Mandarin" }, { code: "yue", name: "Cantonese" }];
+const ROW: ReviewRow = {
+  id: "r1", name: "Show S01E01.mkv", folder: "Show", link: false, state: "ready", sampled: true, inherited: false,
+  duration_ms: 1_440_000, audio: [], audio_index: 0, detection: { language: "ja", confidence: 0.9, votes: ["ja", "ja", "ja"], mixed: false },
+  language: "ja", ask_zh_yue: false, transcribe: "spark-turbo", translate: "spark-gemma", targets: ["en"], formats: ["srt"],
+  script: null, keep_video: false, warning: null, error: null, hint: null, problem: null,
+};
+
+describe("a Review row in words (spec §10, §19.2)", () => {
+  it("says how long a file is", () => {
+    expect(duration(1_440_000)).toBe("24:00");
+    expect(duration(3_723_400)).toBe("1:02:03");
+    expect(duration(null)).toBe("");
+  });
+
+  it("says what its samples heard and how sure, or what it waits for", () => {
+    expect(heard(ROW, LANGS)).toBe("Japanese, 90% sure");
+    expect(heard({ ...ROW, detection: { ...ROW.detection!, mixed: true, votes: ["ja", null, "zh"] } }, LANGS)).toBe("Japanese, 90% sure; the samples disagree (ja, ?, zh)");
+    expect(heard({ ...ROW, ask_zh_yue: true, language: null }, LANGS)).toBe("Mandarin or Cantonese?");
+    expect(heard({ ...ROW, state: "sampling" }, LANGS)).toBe("sampling…");
+    expect(heard({ ...ROW, detection: null, inherited: true }, LANGS)).toBe("Japanese, like the files sampled in this folder");
+    expect(heard({ ...ROW, detection: { language: null, confidence: 0, votes: [], mixed: false }, language: null }, LANGS)).toBe("no speech heard");
+    expect(heard({ ...ROW, link: true }, LANGS)).toBe("decided when it runs");
+  });
+
+  it("names a model with its title, greyed with why it can't run but still there", () => {
+    expect(choiceLabel({ name: "spark-turbo", title: "Whisper large-v3-turbo", good_for: "", available: true, reason: null, cloud: false })).toBe("spark-turbo: Whisper large-v3-turbo");
+    expect(choiceLabel({ name: "openai-whisper", title: "OpenAI whisper-1", good_for: "", available: false, reason: "OPENAI_API_KEY isn't set", cloud: true })).toBe("openai-whisper: OpenAI whisper-1 (cloud), can't run now");
+  });
+
+  it("ticks and unticks targets in the targets' order, down to none", () => {
+    const order = ["en", "ja", "zh-Hant"];
+    expect(toggled(["en"], "zh-Hant", true, order)).toEqual(["en", "zh-Hant"]);
+    expect(toggled(["en"], "en", false, order)).toEqual([]);
+  });
+
+  it("shows a choice on its way to the engine, the audio track by its index", () => {
+    expect(withPending(ROW, { language: "ko", audio_track: 1 })).toEqual({ ...ROW, language: "ko", audio_index: 1 });
+    expect(withPending(ROW, undefined)).toBe(ROW);
+  });
+
+  it("tells a review from its placeholder", () => {
+    expect(isReview({ preparing: true })).toBe(false);
+    expect(isReview(null)).toBe(false);
+  });
+});
+```
+
+  `tests/e2e/test_review.py`:
+
+```python
+"""The Review screen in Chromium (spec §10, §19.2, §7.2; S40): a season added through the file
+browser opens Review, where the first two files of the folder are sampled and the third inherits,
+each row says what was heard and how sure and suggests models, "Apply to all" copies one row's
+choice to the rest, Start runs them all, and **Allow cloud models for this run** starts unticked
+in every review. Against `vid2sub serve --demo`, whose canned engine samples and transcribes and
+whose canned translation makes the Japanese, on copies of its own clip. Run with `make e2e`."""
+
+import shutil
+
+import pytest
+from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
+
+
+def add_folder(page, copy, folder: str) -> None:
+    page.get_by_test_id("nav-add").click()
+    page.get_by_test_id("browse-places").click()  # the browser shows the folder seen last
+    page.get_by_test_id("browse-entry").first.get_by_test_id("browse-open").click()
+    expect(page.get_by_test_id("browse-path")).to_have_text(str(copy))
+    page.get_by_test_id("browse-list").get_by_text(folder, exact=True).click()
+    page.get_by_test_id("browse-pick-here").check()
+    page.get_by_test_id("add-start").click()
+    expect(page.get_by_test_id("review-page")).to_be_visible()
+
+
+def test_a_season_is_sampled_suggested_applied_to_all_and_started(page, server):
+    copy = next(server.tmp.glob("vid2sub-demo-*/demo"))
+    season = copy / "Season"
+    season.mkdir()
+    for n in (1, 2, 3):
+        shutil.copy(copy / "jfk.mp4", season / f"Talk S01E0{n}.mp4")
+    add_folder(page, copy, "Season")
+    rows = page.get_by_test_id("review-row")
+    expect(rows).to_have_count(3)
+    for k in range(3):
+        expect(rows.nth(k)).to_have_attribute("data-state", "ready", timeout=60_000)
+    expect(rows.get_by_test_id("review-name")).to_have_text(
+        ["Talk S01E01.mp4", "Talk S01E02.mp4", "Talk S01E03.mp4"])
+    expect(rows.get_by_test_id("review-heard")).to_have_text(
+        ["English, 100% sure", "English, 100% sure",
+         "English, like the files sampled in this folder"])
+    expect(rows.nth(2).get_by_test_id("review-inherited")).to_be_visible()
+    for k in range(3):
+        expect(rows.nth(k).get_by_test_id("review-transcribe")).to_have_value("canned")
+        expect(rows.nth(k).get_by_test_id("review-translate")).to_have_value("canned-ja")
+    expect(page.get_by_test_id("review-cloud")).not_to_be_checked()
+    first = rows.first
+    first.get_by_test_id("review-ass").check()
+    expect(first.get_by_test_id("review-ass")).to_be_checked()
+    first.get_by_test_id("review-all-formats").click()
+    for k in range(3):
+        expect(rows.nth(k).get_by_test_id("review-ass")).to_be_checked()
+    page.get_by_test_id("review-start").click()
+    expect(page.get_by_test_id("jobs-page")).to_be_visible()
+    jobs = page.get_by_test_id("job")
+    expect(jobs).to_have_count(3)
+    for k in range(3):
+        expect(jobs.nth(k)).to_have_attribute("data-state", "done", timeout=60_000)
+    expect(jobs.first.get_by_test_id("job-line")).to_contain_text("Talk S01E01.ja.ass")
+    assert (season / "Talk S01E03.ja.ass").is_file() and (season / "Talk S01E03.ja.srt").is_file()
+
+
+def test_allow_cloud_starts_unticked_in_every_review(page, server):
+    copy = next(server.tmp.glob("vid2sub-demo-*/demo"))
+    (copy / "Again").mkdir()
+    shutil.copy(copy / "jfk.mp4", copy / "Again" / "Talk.mp4")
+    add_folder(page, copy, "Again")
+    cloud = page.get_by_test_id("review-cloud")
+    expect(cloud).not_to_be_checked()
+    cloud.check()
+    expect(cloud).to_be_checked()  # the engine's review says so, not only the page
+    page.get_by_test_id("review-discard").click()
+    expect(page.get_by_text("Nothing to review: add videos first.")).to_be_visible()
+    add_folder(page, copy, "Again")
+    expect(page.get_by_test_id("review-row")).to_have_count(1)
+    expect(page.get_by_test_id("review-cloud")).not_to_be_checked()
+```
+
+  Replace `tests/e2e/test_add.py` with (Add now opens Review, whose Start opens Jobs):
+
+```python
+"""The Add screen in Chromium (spec §19.2, §6.5, §8.1; S38, S39): the file browser starts at the
+places, opens a folder with its folders first and its episodes in `SxxEyy` order, shows only
+folders, videos and subtitles, and adds what is picked, which Review then starts (Task 4); a
+YouTube link with **keep video** ticked lands whole in the YouTube folder. Against `vid2sub serve --demo`, whose browser has only the
+demo's folder, and against a vid2sub.toml served with yt-dlp faked (`fake_youtube.py`, M1's
+`download(…, runner=)` seam) and a fake whisper.cpp server, so nothing reaches YouTube or a model.
+Run with `make e2e`."""
+
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+from fakes import FakeServer
+from helpers import SPEECH, make_clip
+from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
+
+HERE = Path(__file__).parent
+WORDS = {"language": "english", "language_probabilities": {"en": 0.99},
+         "segments": [{"text": " We meet at a college.", "start": 0.0, "end": 2.0,
+                       "words": [{"word": " We", "start": 0.0, "end": 0.5, "probability": 0.9},
+                                 {"word": " meet", "start": 0.5, "end": 1.0,
+                                  "probability": 0.9},
+                                 {"word": " at", "start": 1.0, "end": 1.2, "probability": 0.9},
+                                 {"word": " a", "start": 1.2, "end": 1.4, "probability": 0.9},
+                                 {"word": " college.", "start": 1.4, "end": 2.0,
+                                  "probability": 0.9}]}]}
+
+
+def open_add(page):
+    page.get_by_test_id("nav-add").click()
+    expect(page.get_by_test_id("add-page")).to_be_visible()
+
+
+def start_review(page, rows: int) -> None:
+    """Review opens once Add is done; Start, once every row is ready, opens the Jobs page."""
+    expect(page.get_by_test_id("review-page")).to_be_visible()
+    expect(page.get_by_test_id("review-row")).to_have_count(rows, timeout=30_000)
+    expect(page.get_by_test_id("review-start")).to_be_enabled(timeout=30_000)
+    page.get_by_test_id("review-start").click()
+    expect(page.get_by_test_id("jobs-page")).to_be_visible()
+
+
+def test_the_demo_browses_its_own_folder_in_episode_order_and_adds_its_clip(page, server):
+    copy = next(server.tmp.glob("vid2sub-demo-*/demo"))
+    for name in ("Show S01E10.mkv", "Show S01E02.mkv", ".hidden.mkv", "notes.txt"):
+        (copy / name).write_bytes(b"x")
+    (copy / "Extras").mkdir()
+    open_add(page)
+    entries = page.get_by_test_id("browse-entry")
+    expect(entries).to_have_count(1)  # the places: the demo's own folder, nothing of yours
+    expect(entries.first).to_contain_text("Demo")
+    entries.first.get_by_test_id("browse-open").click()
+    expect(page.get_by_test_id("browse-path")).to_have_text(str(copy))
+    expect(entries).to_have_text([
+        "Extrasfolder", "Show S01E02.mkvvideo", "Show S01E10.mkvvideo", "jfk.en.srtsubtitles",
+        "jfk.ja.srtsubtitles", "jfk.mp4video"])
+    page.get_by_label("Pick jfk.mp4").check()
+    expect(page.get_by_test_id("add-picked")).to_have_text("1 picked")
+    page.get_by_test_id("add-start").click()
+    start_review(page, 1)
+    job = page.get_by_test_id("job")
+    expect(job).to_have_count(1)
+    expect(job.first).to_have_attribute("data-state", "done", timeout=30_000)
+    page.get_by_test_id("nav-add").click()
+    page.get_by_test_id("add-paths").fill("/somewhere/else.mkv")
+    page.get_by_test_id("add-start").click()
+    expect(page.get_by_test_id("add-error")).to_have_text(
+        "vid2sub browses your home folder, your drives and network shares only")
+
+
+TOML = """
+[defaults]
+youtube_dir = {youtube}
+targets = ["en"]
+
+[endpoints.spark]
+base_url = "{url}"
+
+[models.spark-turbo]
+catalog = "whisper-large-v3-turbo"
+endpoint = "spark"
+model = "turbo"
+parser = "whisper.cpp"
+local = true
+"""
+
+
+def test_a_youtube_link_with_keep_video_ticked_lands_whole_in_the_youtube_folder(
+        launch, open_page, tmp_path):
+    (tmp_path / "clips").mkdir()
+    clip = make_clip(tmp_path / "clips", "talk.mkv", seconds=14, speech=SPEECH,
+                     audio_langs=("eng",))
+    youtube = tmp_path / "YouTube"
+
+    def whisper(req):
+        if req.path.endswith("/models"):
+            return 200, {"object": "list", "data": [{"id": "turbo", "object": "model"}]}, {}
+        return 200, WORDS, {}
+
+    with FakeServer(responder=whisper) as spark:
+        server = launch(tmp_path / "server",
+                        toml=TOML.format(youtube=json.dumps(str(youtube)), url=spark.url),
+                        command=[sys.executable, str(HERE / "fake_youtube.py"), str(clip)])
+        watched = open_page(server)
+        page = watched.page
+        open_add(page)
+        page.get_by_test_id("add-link").fill("https://youtu.be/dQw4w9WgXcQ?si=shared")
+        page.get_by_test_id("add-keep-video").check()
+        page.get_by_test_id("add-start").click()
+        start_review(page, 1)
+        expect(page.get_by_test_id("job")).to_have_count(1)
+        job = page.get_by_test_id("job")
+        expect(job).to_have_count(1)
+        expect(job.first).to_contain_text("YouTube video dQw4w9WgXcQ")
+        expect(job.first).to_have_attribute("data-state", "done", timeout=60_000)
+    landed = youtube / "A talk at a college [dQw4w9WgXcQ].mkv"
+    assert clip.with_name("ASKED").read_text(encoding="utf-8") == "bv*+ba/b"
+    streams = json.loads(subprocess.run(
+        [shutil.which("ffprobe"), "-v", "error", "-show_streams", "-of", "json", str(landed)],
+        check=True, capture_output=True).stdout)["streams"]
+    assert {s["codec_type"] for s in streams} == {"video", "audio"}  # the whole video
+    assert landed.with_name("A talk at a college [dQw4w9WgXcQ].en.srt").is_file()
+    assert watched.errors == [] and watched.violations() == []
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `make test-js`. Expected: its typecheck stops at
+  `src/lib/review.test.ts(3,15): error TS2305: Module '"@/types"' has no exported member
+  'ReviewRow'.` and `src/lib/review.test.ts(5,78): error TS2307: Cannot find module './review'
+  or its corresponding type declarations.` Then `make build` and `uv run pytest -m e2e
+  tests/e2e/test_review.py tests/e2e/test_add.py -q`. Expected:
+  `E       AssertionError: Locator expected to be visible`, `waiting for
+  get_by_test_id("review-page")`, four times, and `4 failed`.
+- [ ] **Step 8: Write the code.** In `frontend/src/types.ts`, above
+  `/** The \`endpoint_test_result\` message: what an endpoint's /v1/models said, or why it failed. */`,
+  add:
+
+```ts
+/** A model a Review picker offers (review.model_choices; spec §10.4): its name in vid2sub.toml,
+ * the catalog's title and one-liner, and why it can't run now, greyed but still pickable. */
+export type ModelChoice = { name: string; title: string; good_for: string; available: boolean; reason: string | null; cloud: boolean };
+
+/** One Review row (views.review_view; spec §10, §19.2): a file by its bare name, never its path. */
+export type ReviewRow = {
+  id: string;
+  name: string;
+  folder: string;
+  link: boolean;
+  state: "waiting" | "sampling" | "ready" | "failed";
+  sampled: boolean;
+  inherited: boolean;
+  duration_ms: number | null;
+  audio: { index: number; label: string }[];
+  audio_index: number | null;
+  detection: { language: string | null; confidence: number; votes: (string | null)[]; mixed: boolean } | null;
+  language: string | null;
+  ask_zh_yue: boolean;
+  transcribe: string | null;
+  translate: string | null;
+  targets: string[];
+  formats: ("srt" | "ass")[];
+  script: "hant" | "hans" | null;
+  keep_video: boolean;
+  warning: string | null;
+  error: string | null;
+  hint: string | null;
+  problem: string | null; // what stops Start, for this row
+};
+
+/** The `review` output: the review, `{preparing: true}` while Add's files are read, or null. */
+export type ReviewView = {
+  rows: ReviewRow[];
+  transcribers: ModelChoice[];
+  translators: ModelChoice[];
+  languages: { code: string; name: string }[];
+  targets: { key: string; label: string }[];
+  allow_cloud: boolean; // the review's own box: unticked in every new review (spec §7.2)
+  can_start: boolean;
+};
+export type ReviewOutput = ReviewView | { preparing: true } | null;
+
+/** The `review_started` message: Start queued `jobs` jobs for request `n`. */
+export type ReviewStartedMessage = { n: number | null; jobs: number };
+
+```
+
+  `frontend/src/lib/review.ts`:
+
+```ts
+// The Review screen's words (spec §10, §19.2; S40): a file's length, what was heard in its samples
+// and how sure, a model as a picker shows it (greyed with why it can't run now, never passed
+// over: §17.4), a row's targets ticked or unticked, and a row as the page shows it while a choice
+// is on its way to the engine. A row is named by its file, never its path.
+
+import type { ModelChoice, ReviewOutput, ReviewRow, ReviewView } from "@/types";
+
+/** 23:45, or 1:02:03 for an hour or more. */
+export function duration(ms: number | null): string {
+  if (ms === null) return "";
+  const s = Math.round(ms / 1000);
+  const two = (n: number) => String(n).padStart(2, "0");
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${two(Math.floor((s % 3600) / 60))}:${two(s % 60)}` : `${Math.floor(s / 60)}:${two(s % 60)}`;
+}
+
+/** What the samples heard: "Japanese, 90% sure", "Mandarin or Cantonese?", or why not. */
+export function heard(row: ReviewRow, languages: ReviewView["languages"]): string {
+  const name = (code: string | null) => languages.find((l) => l.code === code)?.name ?? code ?? "?";
+  if (row.link) return "decided when it runs";
+  if (row.state === "waiting") return "waiting to be sampled";
+  if (row.state === "sampling") return "sampling…";
+  if (row.ask_zh_yue) return "Mandarin or Cantonese?";
+  const d = row.detection;
+  if (row.inherited) return `${name(row.language)}, like the files sampled in this folder`;
+  if (!d) return row.language ? name(row.language) : "not detected";
+  if (!d.language) return "no speech heard";
+  const sure = `${name(d.language)}, ${Math.round(d.confidence * 100)}% sure`;
+  return d.mixed ? `${sure}; the samples disagree (${d.votes.map((v) => v ?? "?").join(", ")})` : sure;
+}
+
+/** A model as its picker lists it. */
+export function choiceLabel(c: ModelChoice): string {
+  const cloud = c.cloud ? " (cloud)" : "";
+  return c.available ? `${c.name}: ${c.title}${cloud}` : `${c.name}: ${c.title}${cloud}, can't run now`;
+}
+
+/** The targets with `key` ticked or unticked, in `order`; none means captions only. */
+export function toggled(targets: readonly string[], key: string, on: boolean, order: readonly string[]): string[] {
+  const next = new Set(targets);
+  if (on) next.add(key);
+  else next.delete(key);
+  return order.filter((k) => next.has(k));
+}
+
+/** A choice as `review_choose` sends it: a row's fields, the audio track as its index. */
+export type Changes = Record<string, string | number | string[] | null>;
+
+/** The row as the page shows it until the engine's review comes back with the choice applied, so
+ * a control doesn't spring back to the old value meanwhile; the engine's answer replaces it. */
+export function withPending(row: ReviewRow, changes: Changes | undefined): ReviewRow {
+  if (!changes) return row;
+  const { audio_track, ...rest } = changes;
+  return { ...row, ...rest, ...(audio_track !== undefined ? { audio_index: audio_track as number } : {}) } as ReviewRow;
+}
+
+export function isReview(out: ReviewOutput | undefined): out is ReviewView {
+  return Boolean(out && "rows" in out);
+}
+```
+
+  `frontend/src/components/ReviewPage.tsx`:
+
+```tsx
+import { type ReactNode, useEffect, useState } from "react";
+
+import { type Changes, choiceLabel, duration, heard, toggled, withPending } from "@/lib/review";
+import type { ModelChoice, ReviewRow, ReviewView } from "@/types";
+
+const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+const select = "rounded-md border border-input bg-background px-1 py-0.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+const toAll = "text-xs underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50";
+
+export type { Changes };
+
+/** The Review screen (spec §10, §19.2; S40): one row per file Add took, by its bare name, with
+ * its length, its audio track, what its samples heard and how sure ("Mandarin or Cantonese?" when
+ * Whisper heard `zh`), the transcription and translation models (each with the catalog's title,
+ * greyed with why it can't run now), its targets, its formats and, for Mandarin, its script.
+ * Rows fill in as the first two files of each folder are sampled; the rest inherit and say so.
+ * Each choice has "Apply to all". **Allow cloud models for this run** is drawn only from the
+ * review, which starts it unticked every time (§7.2); a choice shows at once, and the engine's
+ * review replaces it when it comes back. Start queues every row that can run and
+ * opens the Jobs page; a row that can't says why, and Start waits. Names, warnings and reasons
+ * are plain text (§6.3); every control is native, so it all works from the keyboard. */
+export function ReviewPage({ review, preparing, onChoose, onApply, onCloud, onStart, onDiscard }: {
+  review: ReviewView | null;
+  preparing: boolean;
+  onChoose: (row: string, changes: Changes) => void;
+  onApply: (row: string, field: string) => void;
+  onCloud: (allowed: boolean) => void;
+  onStart: () => void;
+  onDiscard: () => void;
+}) {
+  const [pending, setPending] = useState<{ cloud?: boolean; rows: Record<string, Changes> }>({ rows: {} });
+  useEffect(() => setPending({ rows: {} }), [review]); // the engine's answer replaces what was shown
+  if (!review) {
+    return (
+      <div className="p-4 text-muted-foreground" data-testid="review-page">
+        {preparing ? <p role="status" data-testid="review-preparing">Reading the files…</p> : <p>Nothing to review: add videos first.</p>}
+      </div>
+    );
+  }
+  const stopping = review.rows.filter((r) => r.problem).length;
+  const choose = (row: string, changes: Changes) => {
+    setPending((p) => ({ ...p, rows: { ...p.rows, [row]: { ...p.rows[row], ...changes } } }));
+    onChoose(row, changes);
+  };
+  const cloud = (allowed: boolean) => {
+    setPending((p) => ({ ...p, cloud: allowed }));
+    onCloud(allowed);
+  };
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-4" data-testid="review-page">
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={pending.cloud ?? review.allow_cloud} onChange={(e) => cloud(e.target.checked)} data-testid="review-cloud" />
+          Allow cloud models for this run
+        </label>
+        <span className="ml-auto flex items-center gap-2">
+          {stopping > 0 && <span className="text-muted-foreground" data-testid="review-waiting">{stopping === 1 ? "1 file needs a choice" : `${stopping} files need a choice`}</span>}
+          <button type="button" className={button} onClick={onDiscard} data-testid="review-discard">Discard</button>
+          <button type="button" className="rounded-md bg-primary px-3 py-1 font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50" onClick={onStart} disabled={!review.can_start} data-testid="review-start">Start</button>
+        </span>
+      </div>
+      <ol aria-label="Files to review" className="flex flex-col gap-2" data-testid="review-rows">
+        {review.rows.map((row) => <RowCard key={row.id} row={withPending(row, pending.rows[row.id])} review={review} onChoose={choose} onApply={onApply} />)}
+      </ol>
+    </div>
+  );
+}
+
+function RowCard({ row, review, onChoose, onApply }: {
+  row: ReviewRow;
+  review: ReviewView;
+  onChoose: (row: string, changes: Changes) => void;
+  onApply: (row: string, field: string) => void;
+}) {
+  const ready = row.state === "ready";
+  const choose = (changes: Changes) => onChoose(row.id, changes);
+  const all = (field: string, label: string) => (
+    <button type="button" className={toAll} onClick={() => onApply(row.id, field)} disabled={!ready} aria-label={`Apply ${label} to all files`} data-testid={`review-all-${field}`}>Apply to all</button>
+  );
+  const id = (field: string) => `review-${row.id}-${field}`;
+  return (
+    <li className="flex flex-col gap-2 rounded-md border border-border bg-card p-2 text-sm" data-testid="review-row" data-state={row.state} data-row={row.id}>
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="font-bold break-all" data-testid="review-name">{row.name}</span>
+        {row.folder && <span className="text-muted-foreground">in {row.folder}</span>}
+        {row.duration_ms !== null && <span className="text-muted-foreground">{duration(row.duration_ms)}</span>}
+        {row.sampled && <span className="rounded bg-muted px-1 text-xs">sampled</span>}
+        {row.inherited && <span className="rounded bg-muted px-1 text-xs" data-testid="review-inherited">inherited</span>}
+        <span className="text-muted-foreground" data-testid="review-heard">{heard(row, review.languages)}</span>
+      </div>
+      {row.state === "failed" ? (
+        <p className="text-destructive" data-testid="review-error">can't run: {row.error ?? "it failed"}</p>
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(14rem,1fr))] gap-2">
+          {!row.link && row.audio.length > 1 && (
+            <Field label="Audio track" htmlFor={id("audio")}>
+              <select id={id("audio")} className={select} value={row.audio_index ?? ""} disabled={!ready} onChange={(e) => choose({ audio_track: Number(e.target.value) })} data-testid="review-audio">
+                {row.audio.map((a) => <option key={a.index} value={a.index}>{a.label}</option>)}
+              </select>
+            </Field>
+          )}
+          {!row.link && (
+            <Field label={row.ask_zh_yue ? "Mandarin or Cantonese?" : "Language"} htmlFor={id("language")} extra={all("language", "the language")}>
+              <select id={id("language")} className={select} value={row.language ?? ""} disabled={!ready} onChange={(e) => choose({ language: e.target.value })} data-testid="review-language">
+                <option value="" disabled>Pick one</option>
+                {(row.ask_zh_yue ? review.languages.filter((l) => l.code === "zh" || l.code === "yue") : review.languages).map((l) => <option key={l.code} value={l.code}>{l.name}</option>)}
+              </select>
+            </Field>
+          )}
+          {!row.link && (
+            <Field label="Transcription model" htmlFor={id("transcribe")} extra={all("transcribe", "the transcription model")} note={note(review.transcribers, row.transcribe)}>
+              <Picker id={id("transcribe")} choices={review.transcribers} value={row.transcribe} disabled={!ready} onPick={(name) => choose({ transcribe: name })} testId="review-transcribe" />
+            </Field>
+          )}
+          {!row.link && (
+            <Field label="Translation model" htmlFor={id("translate")} extra={all("translate", "the translation model")} note={note(review.translators, row.translate)}>
+              <Picker id={id("translate")} choices={review.translators} value={row.translate} disabled={!ready} none="None" onPick={(name) => choose({ translate: name })} testId="review-translate" />
+            </Field>
+          )}
+          {!row.link && row.language === "zh" && (
+            <Field label="Chinese script" htmlFor={id("script")} extra={all("script", "the script")}>
+              <select id={id("script")} className={select} value={row.script ?? ""} disabled={!ready} onChange={(e) => choose({ script: e.target.value || null })} data-testid="review-script">
+                <option value="">Simplified (the default)</option>
+                <option value="hant">Traditional</option>
+                <option value="hans">Simplified</option>
+              </select>
+            </Field>
+          )}
+          <fieldset className="flex flex-col gap-1" disabled={!ready}>
+            <legend className="text-xs font-bold">Subtitles in</legend>
+            <span className="flex flex-wrap gap-x-3">
+              {review.targets.map((t) => (
+                <label key={t.key} className="flex items-center gap-1">
+                  <input type="checkbox" checked={row.targets.includes(t.key)} onChange={(e) => choose({ targets: toggled(row.targets, t.key, e.target.checked, review.targets.map((x) => x.key)) })} data-testid={`review-target-${t.key}`} />
+                  {t.label}
+                </label>
+              ))}
+            </span>
+            {all("targets", "the targets")}
+          </fieldset>
+          <fieldset className="flex flex-col gap-1" disabled={!ready}>
+            <legend className="text-xs font-bold">Formats</legend>
+            <span className="flex gap-3">
+              <label className="flex items-center gap-1"><input type="checkbox" checked disabled /> SRT</label>
+              <label className="flex items-center gap-1">
+                <input type="checkbox" checked={row.formats.includes("ass")} onChange={(e) => choose({ formats: e.target.checked ? ["srt", "ass"] : ["srt"] })} data-testid="review-ass" /> ASS too
+              </label>
+            </span>
+            {all("formats", "the formats")}
+          </fieldset>
+        </div>
+      )}
+      {row.link && <p className="text-muted-foreground">{row.keep_video ? "Keeps the whole video." : "Keeps the audio only."} Its language and models are chosen when it runs, as <code>vid2sub run</code> chooses them.</p>}
+      {row.warning && <p className="text-muted-foreground" data-testid="review-warning">{row.warning}</p>}
+      {row.hint && <p data-testid="review-hint">→ {row.hint}</p>}
+      {row.problem && <p className="font-bold text-destructive" data-testid="review-problem">{row.problem}</p>}
+    </li>
+  );
+}
+
+function note(choices: readonly ModelChoice[], value: string | null): string | null {
+  const c = choices.find((x) => x.name === value);
+  if (!c) return null;
+  return c.available ? c.good_for || null : `can't run now: ${c.reason ?? "unknown"}`;
+}
+
+function Field({ label, htmlFor, extra, note: text, children }: {
+  label: string; htmlFor: string; extra?: ReactNode; note?: string | null; children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={htmlFor} className="text-xs font-bold">{label}</label>
+      {children}
+      {text && <span className="text-xs text-muted-foreground">{text}</span>}
+      {extra}
+    </div>
+  );
+}
+
+function Picker({ id, choices, value, disabled, none, onPick, testId }: {
+  id: string; choices: readonly ModelChoice[]; value: string | null; disabled: boolean; none?: string;
+  onPick: (name: string | null) => void; testId: string;
+}) {
+  return (
+    <select id={id} className={select} value={value ?? ""} disabled={disabled} onChange={(e) => onPick(e.target.value || null)} data-testid={testId}>
+      {none ? <option value="">{none}</option> : <option value="" disabled>Pick one</option>}
+      {choices.map((c) => <option key={c.name} value={c.name} className={c.available ? "" : "text-muted-foreground"}>{choiceLabel(c)}</option>)}
+    </select>
+  );
+}
+```
+
+  In `frontend/src/components/AddPage.tsx`, replace
+  `<span className="text-muted-foreground">They run one at a time, with the session's targets and formats (Settings).</span>`
+  with
+  `<span className="text-muted-foreground">Review comes next: what was heard in each file, and the models it suggests.</span>`.
+  Replace `frontend/src/App.tsx` with:
+
+```tsx
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { AddPage } from "@/components/AddPage";
+import { Editor, type Requests, type Saving } from "@/components/Editor";
+import { JobsPage } from "@/components/JobsPage";
+import { ReviewPage } from "@/components/ReviewPage";
+import { resultNotices } from "@/components/SaveBar";
+import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer";
+import { TopBar } from "@/components/TopBar";
+import { type AddRequest, type BrowseState, NOT_ASKED, answered, asked } from "@/lib/browse";
+import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
+import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, dropRetranslation, loadDraft, replayable } from "@/lib/draft";
+import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
+import { retranslateNotice } from "@/lib/retranslate";
+import { type Changes, isReview } from "@/lib/review";
+import { pacer } from "@/lib/sends";
+import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { AddResultMessage, BrowseResult, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, Progress, RetranslateResultMessage, ReviewOutput, ReviewStartedMessage, SaveResultMessage, SettingsView, Status } from "@/types";
+
+type Ask = { episode: string; n: number };
+
+const SCREENS = { editor: "Editor", add: "Add", review: "Review", jobs: "Jobs" } as const;
+type Screen = keyof typeof SCREENS;
+
+type JQueryLike = (target: Document) => {
+  on(event: string, handler: () => void): unknown;
+  off(event: string, handler: () => void): unknown;
+};
+
+export default function App() {
+  const initialized = useShinyInitialized();
+  // Every output is subscribed here, and every message handler lives here: shinyreact 0.1.0
+  // drops a message that has no handler, and an output that unmounts logs "Output <id> not found"
+  // for each later value (recordings' App.tsx). A new output or message gets a line here too.
+  const capabilities = useShinyOutputValue<Capabilities>("capabilities");
+  const status = useShinyOutputValue<Status>("status");
+  const episode = useShinyOutputValue<EpisodeView | null>("episode");
+  const busy = useShinyOutputValue<Busy>("busy");
+  const progress = useShinyOutputValue<Progress>("progress");
+  const settings = useShinyOutputValue<SettingsView | null>("settings");
+  const jobs = useShinyOutputValue<JobsView | null>("jobs");
+  const reviewOut = useShinyOutputValue<ReviewOutput>("review");
+  // Every input is set from here too. Each request carries a count, so the same path asked for
+  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
+  const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
+  const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
+  const setUndo = useSetShinyInput<Ask | null>("undo", null, { priority: "event", debounceMs: 0 });
+  const setRedo = useSetShinyInput<Ask | null>("redo", null, { priority: "event", debounceMs: 0 });
+  const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
+  const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
+  const setRetranslate = useSetShinyInput<(Ask & { track: string; ids: string[] | null; allow_cloud: boolean }) | null>("retranslate", null, { priority: "event", debounceMs: 0 });
+  const setTypedKey = useSetShinyInput<{ endpoint: string; key: string; n: number } | null>("typed_key", null, { priority: "event", debounceMs: 0 });
+  const setEndpointTest = useSetShinyInput<{ endpoint: string; n: number } | null>("endpoint_test", null, { priority: "event", debounceMs: 0 });
+  const setDefaults = useSetShinyInput<(DefaultsChange & { n: number }) | null>("session_defaults", null, { priority: "event", debounceMs: 0 });
+  const setJobsSubmit = useSetShinyInput<{ paths: string[]; n: number } | null>("jobs_submit", null, { priority: "event", debounceMs: 0 });
+  const setJobCancel = useSetShinyInput<{ job: string; n: number } | null>("job_cancel", null, { priority: "event", debounceMs: 0 });
+  const setBrowse = useSetShinyInput<{ path: string | null; n: number } | null>("browse", null, { priority: "event", debounceMs: 0 });
+  const setAdd = useSetShinyInput<(AddRequest & { n: number }) | null>("add", null, { priority: "event", debounceMs: 0 });
+  const setReviewChoose = useSetShinyInput<{ row: string; changes: Changes; n: number } | null>("review_choose", null, { priority: "event", debounceMs: 0 });
+  const setReviewApply = useSetShinyInput<{ row: string; field: string; n: number } | null>("review_apply", null, { priority: "event", debounceMs: 0 });
+  const setReviewCloud = useSetShinyInput<{ allowed: boolean; n: number } | null>("review_cloud", null, { priority: "event", debounceMs: 0 });
+  const setReviewStart = useSetShinyInput<{ n: number } | null>("review_start", null, { priority: "event", debounceMs: 0 });
+  const setReviewDiscard = useSetShinyInput<{ n: number } | null>("review_discard", null, { priority: "event", debounceMs: 0 });
+  const sent = useRef(0);
+  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
+  const pace = useMemo(() => pacer(), []);
+
+  // The crash-recovery draft (spec §14.5, S34): every edit, undo and redo is also written to
+  // localStorage under the heads the episode was opened at, and offered back when it is opened
+  // again. When a Save or a pick moves the heads, the draft goes with them while edits are still
+  // unsaved (a pick keeps the other tracks' edits), and is cleared once everything is saved.
+  const [offer, setOffer] = useState<Draft | null>(null);
+  const drafted = useRef<{ id: string; key: string } | null>(null);
+  useEffect(() => {
+    if (!episode) {
+      drafted.current = null;
+      return;
+    }
+    const key = draftKey(episode.heads);
+    const was = drafted.current;
+    const store = draftStorage();
+    if (was?.id === episode.id && was.key !== key) {
+      const kept = loadDraft(store, was.key);
+      clearDraft(store, was.key);
+      if (kept && episode.dirty) for (const step of kept.steps) addStep(store, key, step, new Date(kept.at));
+    }
+    if (was?.id !== episode.id) setOffer(loadDraft(store, key));
+    drafted.current = { id: episode.id, key };
+  }, [episode]);
+  const record = useCallback((step: DraftStep) => {
+    const at = drafted.current;
+    if (!at) return;
+    if (offer) { // editing again without restoring: the old draft is discarded
+      clearDraft(draftStorage(), at.key);
+      setOffer(null);
+    }
+    addStep(draftStorage(), at.key, step);
+  }, [offer]);
+
+  // A retranslation goes in the draft as a marker only (never replayed: a restored draft asks no
+  // model), dropped when the server says it changed nothing; `asking` remembers which were
+  // "Retranslate stale", for the notice.
+  const asking = useRef(new Map<number, { track: string; stale: boolean }>());
+  const episodeId = episode?.id ?? null;
+  const requests = useMemo<Requests>(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+    const send = <T,>(set: (v: T) => void, value: T | null) => value && pace(() => set(value));
+    return {
+      edit: (op) => { record({ edit: op }); const a = ask(); send(setEdit, a && { ...a, op }); },
+      undo: () => { record({ undo: true }); send(setUndo, ask()); },
+      redo: () => { record({ redo: true }); send(setRedo, ask()); },
+      save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
+      resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
+      retranslate: (track, ids, allowCloud) => {
+        const a = ask();
+        if (!a) return;
+        record({ retranslate: a.n });
+        asking.current.set(a.n, { track, stale: ids === null });
+        send(setRetranslate, { ...a, track, ids, allow_cloud: allowCloud });
+      },
+    };
+  }, [episodeId, pace, record, setEdit, setUndo, setRedo, setSave, setResolve, setRetranslate]);
+  useShinyMessageHandler("retranslate_result", (data: RetranslateResultMessage) => {
+    if (!episode || data.episode !== episode.id || data.n === null) return;
+    const asked = asking.current.get(data.n);
+    asking.current.delete(data.n);
+    if (data.changed === 0 && drafted.current) dropRetranslation(draftStorage(), drafted.current.key, data.n);
+    if (!asked) return;
+    const label = episode.tracks.find((t) => t.key === asked.track)?.label ?? asked.track;
+    const n = retranslateNotice(data.changed, label, asked.stale);
+    if (n) setNotices((shown) => addNotice(shown, n, nextId.current++));
+  });
+
+  const [conflictsFound, setConflictsFound] = useState(0);
+  useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
+    if (!episode || data.episode !== episode.id) return;
+    for (const n of resultNotices(data, episode.tracks)) setNotices((shown) => addNotice(shown, n, nextId.current++));
+    if (data.conflicts.length) setConflictsFound((k) => k + 1);
+  });
+  const offered = offer ? replayable(offer.steps).length : 0; // the steps Restore would send
+  const saving: Saving = {
+    draft: offer && offered ? { at: offer.at, steps: offered } : null,
+    conflictsFound,
+    onRestore: () => {
+      const steps = offer?.steps ?? [];
+      if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
+      setOffer(null);
+      for (const step of replayable(steps)) {
+        if ("edit" in step) requests.edit(step.edit);
+        else if ("undo" in step) requests.undo();
+        else if ("redo" in step) requests.redo();
+      }
+    },
+    onDiscard: () => {
+      if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
+      setOffer(null);
+    },
+  };
+
+  // The settings drawer (spec §19.2, S35). A typed key is sent once, and null straight after, in
+  // a task of its own: Shiny's input map on the server, its copy in the page, and shinyreact's
+  // keep each input's last value, and the null replaces the key in all three (§5.3). It is never
+  // kept anywhere else in the page: not in state, storage, the draft or a notice.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tests, setTests] = useState<Record<string, EndpointTestResult | "testing">>({});
+  useShinyMessageHandler("endpoint_test_result", (r: EndpointTestResult) => {
+    if (typeof r?.endpoint === "string") setTests((t) => ({ ...t, [r.endpoint]: r }));
+  });
+  const onTypedKey = (endpoint: string, key: string) => {
+    const n = ++sent.current;
+    pace(() => setTypedKey({ endpoint, key, n }));
+    pace(() => setTypedKey(null));
+  };
+  const onTest = (endpoint: string) => {
+    setTests((t) => ({ ...t, [endpoint]: "testing" }));
+    const n = ++sent.current;
+    pace(() => setEndpointTest({ endpoint, n }));
+  };
+  const onDefaults = (change: DefaultsChange) => {
+    const n = ++sent.current;
+    pace(() => setDefaults({ ...change, n }));
+  };
+
+  // Add, Review and the Jobs page (spec §19.2; S36, S38–S40), where the engine makes subtitles
+  // (`generate`; Pages hides them, §21). The editor stays mounted while they show, so the player
+  // keeps its place.
+  const [screen, setScreen] = useState<Screen>("editor");
+  const generate = capabilities?.generate ?? false;
+  const onSubmitJobs = (paths: string[]) => {
+    const n = ++sent.current;
+    pace(() => setJobsSubmit({ paths, n }));
+  };
+  const onCancelJob = (job: string) => {
+    const n = ++sent.current;
+    pace(() => setJobCancel({ job, n }));
+  };
+  const onOpenJob = (path: string) => {
+    setOpen({ path, n: ++sent.current });
+    setScreen("editor");
+  };
+
+  // Add (Phase 3): the file browser shows the answer to the folder it asked for last, and says
+  // it's waiting until then (a sleeping network share, Review Focus 1); a finished Add opens
+  // Review, and one that took nothing says why on the Add screen.
+  const [browse, setBrowseState] = useState<BrowseState>(NOT_ASKED);
+  useShinyMessageHandler("browse_result", (r: BrowseResult) => setBrowseState((s) => answered(s, r)));
+  const onBrowse = useCallback((path: string | null) => {
+    const n = ++sent.current;
+    setBrowseState((s) => asked(s, n, path));
+    pace(() => setBrowse({ path, n }));
+  }, [pace, setBrowse]);
+  const [adding, setAdding] = useState<number | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
+  useShinyMessageHandler("add_result", (r: AddResultMessage) => {
+    if (r?.n !== adding) return;
+    setAdding(null);
+    setAddError(r.error);
+    if (!r.error) setScreen("review");
+  });
+  const onAdd = (request: AddRequest) => {
+    const n = ++sent.current;
+    setAdding(n);
+    setAddError(null);
+    pace(() => setAdd({ ...request, n }));
+  };
+
+  // Review (Phase 3, S40): the server's review of what Add took, choices sent one per task in
+  // order; Start opens the Jobs page once the server says it queued them.
+  const reviewing = {
+    onChoose: (row: string, changes: Changes) => { const n = ++sent.current; pace(() => setReviewChoose({ row, changes, n })); },
+    onApply: (row: string, field: string) => { const n = ++sent.current; pace(() => setReviewApply({ row, field, n })); },
+    onCloud: (allowed: boolean) => { const n = ++sent.current; pace(() => setReviewCloud({ allowed, n })); },
+    onStart: () => { const n = ++sent.current; pace(() => setReviewStart({ n })); },
+    onDiscard: () => { const n = ++sent.current; pace(() => setReviewDiscard({ n })); },
+  };
+  useShinyMessageHandler("review_started", (_: ReviewStartedMessage) => setScreen("jobs"));
+
+  // Closing the tab with unsaved edits warns first (S34): listened for only while there are
+  // some, as MDN advises; preventDefault, and returnValue for older browsers.
+  const dirty = episode?.dirty ?? false;
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = true;
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  const [notices, setNotices] = useState<Shown[]>([]);
+  const nextId = useRef(1);
+  useShinyMessageHandler("notice", (data: unknown) => {
+    setNotices((shown) => addNotice(shown, data, nextId.current++));
+  });
+
+  // The websocket closed: ask the engine once why, and say so; never reconnect (Review Focus 5).
+  const [lost, setLost] = useState<Lost | null>(null);
+  const check = useCallback(() => {
+    void whyLost((input, init) => window.fetch(input, init)).then(setLost);
+  }, []);
+  useEffect(() => {
+    // Shiny triggers shiny:disconnected through jQuery, which addEventListener never sees.
+    const $ = (window as unknown as { jQuery?: JQueryLike }).jQuery;
+    if (!$) return;
+    $(document).on("shiny:disconnected", check);
+    return () => void $(document).off("shiny:disconnected", check);
+  }, [check]);
+
+  if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
+  return (
+    <div className="flex h-dvh flex-col" data-testid="app">
+      <TopBar capabilities={capabilities} status={status} onSettings={capabilities?.generate ? () => setSettingsOpen(true) : undefined} />
+      <SettingsDrawer open={settingsOpen && Boolean(settings)} onClose={() => setSettingsOpen(false)} connected={lost === null} settings={settings ?? null}
+        tests={tests} onTest={onTest} onTypedKey={onTypedKey} onDefaults={onDefaults} />
+      {lost && (
+        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
+        <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">
+          <span>{LOST_MESSAGES[lost]}</span>
+          {lost === "stopped" && (
+            <button type="button" className="underline" onClick={check} data-testid="check-again">Check again</button>
+          )}
+          {lost === "dropped" && (
+            <button type="button" className="underline" onClick={() => window.location.reload()}>Reload</button>
+          )}
+        </div>
+      )}
+      {generate && (
+        <nav aria-label="Screens" className="flex gap-1 border-b border-border bg-card px-4 text-sm">
+          {(["editor", "add", "review", "jobs"] as const).map((s) => (
+            <button key={s} type="button" aria-current={screen === s ? "page" : undefined} onClick={() => setScreen(s)}
+              className={`border-b-2 px-2 py-1.5 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring ${screen === s ? "border-(--brand-orange) font-bold" : "border-transparent"}`} data-testid={`nav-${s}`}>
+              {SCREENS[s]}
+            </button>
+          ))}
+        </nav>
+      )}
+      {generate && screen === "add" && (
+        <section aria-label="Add" className="min-h-0 flex-1">
+          <AddPage browse={browse} onBrowse={onBrowse} onAdd={onAdd} adding={adding !== null} error={addError} />
+        </section>
+      )}
+      {generate && screen === "review" && (
+        <section aria-label="Review" className="min-h-0 flex-1">
+          <ReviewPage review={isReview(reviewOut) ? reviewOut : null} preparing={Boolean(reviewOut && "preparing" in reviewOut)} {...reviewing} />
+        </section>
+      )}
+      {generate && screen === "jobs" && (
+        <section aria-label="Jobs" className="min-h-0 flex-1">
+          <JobsPage jobs={jobs?.jobs ?? []} onSubmit={onSubmitJobs} onCancel={onCancelJob} onOpen={onOpenJob} />
+        </section>
+      )}
+      <main className="min-h-0 flex-1" hidden={generate && screen !== "editor"} data-testid="main">
+        <Editor
+          episode={episode ?? null}
+          busy={busy ?? null}
+          progress={progress ?? null}
+          pathInput={capabilities?.path_input ?? false}
+          generate={generate}
+          onOpen={(path) => setOpen({ path, n: ++sent.current })}
+          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+          requests={requests}
+          saving={saving}
+        />
+      </main>
+      <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">
+        <div role="status" aria-live="polite" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "info").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+        <div role="alert" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "error").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: Shown[]) => Shown[]) => void }) {
+  return (
+    <div className={`flex items-start gap-2 rounded-lg border bg-card p-3 text-sm shadow ${notice.kind === "error" ? "border-destructive text-destructive" : "border-border"}`} data-testid="notice">
+      {/* Plain text: a notice can carry a file name or a server's error (spec §6.3). */}
+      <span className="flex-1">{notice.text}</span>
+      <button type="button" aria-label="Dismiss" onClick={() => onDismiss((s) => dismissNotice(s, notice.id))}>×</button>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `make test-js` first (`Test Files  21 passed (21)`,
+  `Tests  97 passed (97)`), then `make check` and `make e2e`. Expected: `make check`:
+  `1177 passed, 7 skipped, 40 deselected` twice, `Test Files  21 passed (21)` and
+  `Tests  97 passed (97)`, `All checks passed!` and `no leaks found`; `make e2e`:
+  `35 passed, 1189 deselected`. The Allow cloud browser test pins what the engine's review does:
+  the page holds no box of its own beyond a choice on its way.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(ui): 🤖 the Review screen shows each file's samples, suggestions and choices, applies one to all, and starts them
+
+The page's half of Review (spec §10, §19.2, §7.2; S40). A Review screen
+beside Editor, Add and Jobs, where generate is true; a finished Add
+opens it, saying "Reading the files…" until the engine's review comes.
+One card per file, by its bare name, with its folder and length, its
+audio track (when it has more than one), what its samples heard and how
+sure ("Mandarin or Cantonese?" when Whisper heard zh; "like the files
+sampled in this folder" when it inherited), the transcription and
+translation models with the catalog's titles (greyed with why one can't
+run now, but still pickable), its targets, SRT and ASS too, and for
+Mandarin its script, each with "Apply to all"; its warning, fix and what
+stops Start. A YouTube row says its language and models are chosen when
+it runs. Allow cloud models for this run is drawn from the engine's
+review, unticked in every new one; Start, enabled only when every row
+can run, opens the Jobs page once the engine says it queued them;
+Discard empties the screen. A choice shows at once and the engine's
+review replaces it when it comes back, so a control doesn't spring back
+meanwhile. Every control is native, so it works from the keyboard;
+every name and reason is plain text. The Add screen now says Review
+comes next.
+
+The browser tests: a season of three copies of the demo's clip, added
+through the browser, is sampled (two) and inherited (one), heard as
+English, 100% sure, suggested the canned models, ASS ticked on one and
+applied to all, and started: three jobs done, each writing its .ja.ass.
+Allow cloud ticked in one review is unticked in the next. Task 2's Add
+tests go through Review's Start.
+
+The new tests failed first with: error TS2307: Cannot find module
+'./review' (make test-js's typecheck), and in Chromium, Locator expected
+to be visible, waiting for get_by_test_id("review-page") (four times).
+The Allow cloud browser test pins what the engine's review already
+does: the page holds no box of its own.
+
+Docs read: React 19.2.8's types (useState, useEffect); MDN on
+<fieldset disabled> (it disables every control inside), <select> and
+<label for>; Playwright 1.64.1's Python API (to_have_value,
+to_be_enabled, to_be_checked; Locator.check fails when the box doesn't
+stay checked, which is why a choice shows at once).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 4
+Co-Authored-By: <the model's own line>
+```
+
+  `git add frontend/src/App.tsx frontend/src/components/AddPage.tsx frontend/src/types.ts
+  frontend/src/components/ReviewPage.tsx frontend/src/lib/review.ts
+  frontend/src/lib/review.test.ts tests/e2e/test_add.py tests/e2e/test_review.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that no path reaches the view (§6.8) and
+  every choice from the page is checked by the core and echoed nowhere; that a late row from an
+  ended review never lands in a new one; that Allow cloud is drawn only from the review, which
+  starts it unticked (§7.2); that the row's targets and formats, not the session's, reach each
+  job. The forward review over Tasks 6, 8, 11 and 12: Task 6's Jobs page shows Review's jobs like
+  any other; Task 8's Models page may reuse `review.model_choices` and `choiceLabel`; Task 11
+  documents Add, Review, Discard and the demo's canned suggestions; Task 12's Step 4 runs this
+  screen. The docs this task made untrue: none expected (grep `README.md` and `docs/` for
+  "Review"). Then the close, its own commit, holding this plan with this task's boxes ticked and
+  **Now** set to `Task 5: The queue pauses and resumes, open.`, and the spec's S40 row set to
+  `built`, its proof `tests/test_review.py`; `tests/test_web_review.py`;
+  `tests/e2e/test_review.py`. The message, in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 4: The Review screen
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: none
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 4
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -3121,7 +7729,8 @@ Co-Authored-By: <the model's own line>
 **Tier:** 2 · **Scenarios:** S41, S42
 
 **Files:**
-- Modify: `src/vid2sub/jobs.py` (the queue's states, Pause and Resume; keeping the machine awake)
+- Modify: `src/vid2sub/jobs.py` (the queue's states, Pause and Resume; keeping the machine awake),
+  `tests/fakes.py` (`FakeServer`'s responder may return None to drop the connection)
 - Test: `tests/test_jobs.py`, `tests/test_awake.py`
 
 **Interfaces:**
@@ -3129,7 +7738,7 @@ Co-Authored-By: <the model's own line>
   `run_one` once a connection error or a Spark refusal outlasts `RunOptions.wait_on_connection_s`),
   `pipeline.Cancelled`, `pipeline.run_one` and `RunContext.chunk_cache` (shared by every
   `dataclasses.replace` copy, so a resumed job's finished chunks are kept, spec §8.9);
-  `awake.keep_awake` (M1); Task 3's `Queue.submit(…, runner=)`; Phase 2 Task 19's
+  `awake.keep_awake` (M1); Task 2's `Queue.submit(…, runner=)`; Phase 2 Task 19's
   `Queue.on_change(fn) -> stop` and `JobView.stopping` (set when Cancel is asked of the running
   job, cleared when it ends). Pause and Resume tell the same listeners; `stopping` is Cancel's
   alone, so Pause leaves it false and a requeued job always has it false.
@@ -3152,6 +7761,8 @@ Co-Authored-By: <the model's own line>
     with the same model. Cancel beats Pause; a job cancelled while it lost its connection stays
     cancelled; `close()` works while paused. Other errors fail only their job, as before.
     Listeners also fire on pause and resume (on the thread that made the change).
+    `JobView.stopping` stays Cancel's alone: Pause never sets it, and a requeued job has it
+    false. `Queue.on_change(fn)` still returns its stop function (Phase 2 Task 19).
   - The machine is kept awake (`awake()` entered on the worker thread) from the first job after
     an idle spell until nothing waits, the queue pauses or it closes; a helper that won't start
     is logged by kind and the queue runs on.
@@ -3174,7 +7785,7 @@ from vid2sub.pipeline import Cancelled, InputResult
 
 ```python
 import pytest
-from fakes import FakeEngine
+from fakes import FakeEngine, FakeServer
 from helpers import SPEECH, make_clip
 
 from vid2sub import jobs
@@ -3352,15 +7963,128 @@ def test_resume_restarts_from_the_failed_chunk_with_the_same_model(tmp_path):
     after = [c[1] for c in engine.calls][len(before):]
     assert after[0] == 1 and 0 not in after and len(after) >= 2
     assert set(ctx.engines) == {"fake"} and view(q, job).result.status == "done"
+
+
+# Review Focus 3: the laptop sleeps, or the tunnel drops, mid-chunk; Pause as a chunk finishes
+
+
+WORDS = {"language": "english", "language_probabilities": {"en": 0.99},
+         "segments": [{"text": " We meet.", "start": 0.0, "end": 1.0,
+                       "words": [{"word": " We", "start": 0.0, "end": 0.5, "probability": 0.9},
+                                 {"word": " meet.", "start": 0.5, "end": 1.0,
+                                  "probability": 0.9}]}]}
+
+
+class Held(FakeEngine):
+    """Short chunks; chunk 1 waits in flight until the test lets it finish."""
+
+    max_chunk_s = 5.0
+
+    def __init__(self):
+        super().__init__()
+        self.in_flight, self.finish = threading.Event(), threading.Event()
+
+    def transcribe(self, chunk, *, language, prompt):
+        if chunk.index == 1:
+            self.in_flight.set()
+            assert self.finish.wait(10)
+        return super().transcribe(chunk, language=language, prompt=prompt)
+
+
+@pytest.mark.media
+def test_pause_pressed_as_a_chunk_finishes_runs_no_chunk_twice_and_loses_none(tmp_path):
+    clip = make_clip(tmp_path, "Show - S01E01.mkv", seconds=14, speech=SPEECH)
+    config = Config(endpoints={"spark": Endpoint(base_url="http://127.0.0.1:9/v1")},
+                    models={"fake": ModelEntry(catalog="whisper-large-v3-turbo", endpoint="spark",
+                                               model="fake", parser="whisper.cpp", local=True)})
+    engine = Held()
+    ctx = RunContext(config=config, tools=Tools.find(), keys=KeyRing(environ={}),
+                     options=RunOptions(source_lang="ja", model="fake", targets=[]),
+                     engines={"fake": engine})
+    q = jobs.Queue(lambda source, events, cancelled: run_one(
+        source, dataclasses.replace(ctx, events=events, cancelled=cancelled)))
+    (job,) = q.submit([str(clip)])
+    assert engine.in_flight.wait(30)
+    assert q.pause() is True  # as chunk 1 is in flight: it finishes, and the job stops after it
+    assert view(q, job).stopping is False  # stopping is Cancel's alone
+    engine.finish.set()
+    until(lambda: state(q, job) == "queued", timeout=30)
+    assert q.status().kind == "paused" and view(q, job).stopping is False  # Cancel's alone
+    stopped = [c[1] for c in engine.calls]
+    assert stopped == [0, 1]
+    q.resume()
+    until(lambda: state(q, job) == "done", timeout=30)
+    q.close()
+    ran = [c[1] for c in engine.calls]
+    assert ran == list(range(len(ran))) and len(ran) > 2  # each chunk once, in order
+
+
+@pytest.mark.media
+def test_a_tunnel_that_drops_mid_chunk_pauses_the_queue_and_resume_sends_that_chunk_again(
+        tmp_path):
+    clip = make_clip(tmp_path, "Show - S01E01.mkv", seconds=14, speech=SPEECH)
+    up = threading.Event()
+
+    def whisper(req):
+        if not up.is_set():
+            return None  # the connection drops with the chunk in flight: no answer at all
+        return 200, WORDS, {}
+
+    with FakeServer(responder=whisper) as spark:
+        config = Config(endpoints={"spark": Endpoint(base_url=spark.url)},
+                        models={"turbo": ModelEntry(catalog="whisper-large-v3-turbo",
+                                                    endpoint="spark", model="turbo",
+                                                    parser="whisper.cpp", local=True)})
+        ctx = RunContext(config=config, tools=Tools.find(), keys=KeyRing(environ={}),
+                         options=RunOptions(source_lang="en", model="turbo", targets=[],
+                                            wait_on_connection_s=0),
+                         sleep=lambda seconds: None)
+        q = jobs.Queue(lambda source, events, cancelled: run_one(
+            source, dataclasses.replace(ctx, events=events, cancelled=cancelled)))
+        (job,) = q.submit([str(clip)])
+        until(lambda: q.status().state == "paused", timeout=30)
+        assert (q.status().kind, view(q, job).state) == ("connection", "queued")  # not failed
+        up.set()  # the tunnel is back
+        q.resume()
+        until(lambda: state(q, job) == "done", timeout=30)
+        q.close()
+        uploads = [r.form()["file"][0] for r in spark.requests if r.path.endswith("/transcriptions")]
+    assert uploads == ["chunk-0000.flac", "chunk-0000.flac"]  # the chunk in flight, sent again
+    assert view(q, job).result.status == "done"
+```
+
+  In `tests/fakes.py`, replace
+
+```python
+                if server.responder is not None:
+                    status, payload, headers = server.responder(req)
+```
+
+  with
+
+```python
+                if server.responder is not None:
+                    answer = server.responder(req)
+                    if answer is None:  # the connection drops mid-request: no answer at all
+                        self.close_connection = True
+                        return
+                    status, payload, headers = answer
+```
+
+  and in `FakeServer`'s docstring, replace
+  `"""Scripted responses `(status, json-or-bytes, headers)`, or a `responder(request)`."""` with
+
+```python
+    """Scripted responses `(status, json-or-bytes, headers)`, or a `responder(request)`, which
+    may return None to drop the connection with no answer (a tunnel that dies mid-request)."""
 ```
 
 - [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_jobs.py -q`. Expected:
-  `E   AttributeError: 'Queue' object has no attribute 'status'` (four times),
-  `E       AttributeError: 'Queue' object has no attribute 'pause'` (three times), two
+  `AttributeError: 'Queue' object has no attribute 'status'` (five times),
+  `E       AttributeError: 'Queue' object has no attribute 'pause'` (four times), two
   `E               AssertionError: timed out waiting` (a lost connection fails the job instead of
-  pausing the queue), and `9 failed, 12 passed`.
-- [ ] **Step 3: Write the code.** Replace `src/vid2sub/jobs.py` (Task 3's, which no other task
-  changes) with:
+  pausing the queue: the dropped tunnel's test among them), and `11 failed, 14 passed`.
+- [ ] **Step 3: Write the code.** Replace `src/vid2sub/jobs.py` with:
 
 ```python
 """The job queue: one worker thread runs submitted inputs one at a time (spec §17.1, S36, S41).
@@ -3370,17 +8094,20 @@ cancels nothing and reopening shows the progress; when the engine exits the list
 finished results are already on disk (Dan, 2026-10-14). One worker runs one job at a time,
 because the Spark's whisper serves one request at a time anyway. Cancel takes a queued job out of
 the queue, or asks the running one to stop at its next check, between chunks or translation
-batches (`pipeline.Cancelled`; the Phase 2 plan's Decision 7). Listeners are called after every
-change of state, stage or progress, and when the queue pauses or resumes, on the thread that made
-it (the worker, or the caller of `submit`, `cancel`, `pause`, `resume` or `close`); one that
-raises is logged and the queue carries on. A job may bring its own runner (Review's Start: each
-file with its own options, Phase 3 plan Task 3); others use the queue's.
+batches (`pipeline.Cancelled`; the Phase 2 plan's Decision 7), and says it is `stopping` until
+then, so every tab can tell. Listeners are called after every change of state, stage or
+progress, and when the queue pauses or resumes, on the thread that made it (the worker, or the
+caller of `submit`, `cancel`, `pause`, `resume` or `close`); one that raises is logged and the
+queue carries on, and one can stop listening (a tab that closed). A job may bring its own runner
+(Add's YouTube link that keeps its video, Review's Start with each file's own options: the Phase
+3 plan, Tasks 2 and 3); others use the queue's.
 
 The queue is running or paused (§17.1). A connection error (refused, reset, the tunnel down, the
 laptop slept) that outlasts the runner's own wait (`pipeline.Paused`) pauses the whole queue with
 its reason and fix, instead of failing every remaining episode in turn (§17.3, council); so does
-the person's Pause, which stops the running job at its next check as Cancel would. Either way the
-job goes back to the head of the queue, keeping its runner, stage and progress, and Resume runs it
+the person's Pause, which stops the running job at its next check as Cancel would but never says
+it is `stopping`, which is Cancel's alone. Either way the job goes back to the head of the queue,
+keeping its runner, stage and progress, and Resume runs it
 again: its runner shares one context's finished chunks (§8.9), so it restarts from the chunk that
 failed, with the same model, never another one or the cloud (§17.4). Any other error fails only its
 job, with the hint that names the fix (§17.3). The log names jobs by id and errors by kind, never
@@ -3417,6 +8144,7 @@ class JobView:
     progress: tuple[int, int] | None = None  # (index, of): a chunk or a translation batch
     result: InputResult | None = None
     hint: str | None = None
+    stopping: bool = False  # Cancel asked the running job to stop: before its next chunk or batch
 
 
 @dataclass(frozen=True)
@@ -3466,13 +8194,14 @@ class Queue:
             job = self._jobs.get(job_id)
             if job is None or job.state not in ("queued", "running"):
                 return False
-            if job.state == "running":
+            if job.state == "running":  # it stops at its next check; every tab can say so
                 self._why = "cancel"
                 self._stop.set()
-                return True
-            self._waiting.remove(job_id)
-            self._runners.pop(job_id, None)
-            self._set(job_id, state="cancelled")
+                self._set(job_id, stopping=True)
+            else:
+                self._waiting.remove(job_id)
+                self._runners.pop(job_id, None)
+                self._set(job_id, state="cancelled")
         self._changed()
         return True
 
@@ -3508,9 +8237,17 @@ class Queue:
         with self._lock:
             return list(self._jobs.values())
 
-    def on_change(self, fn: Callable[[], None]) -> None:
+    def on_change(self, fn: Callable[[], None]) -> Callable[[], None]:
+        """Calls `fn` after every change; returns what stops it (a tab that closed)."""
         with self._lock:
             self._listeners.append(fn)
+
+        def stop() -> None:
+            with self._lock:
+                if fn in self._listeners:
+                    self._listeners.remove(fn)
+
+        return stop
 
     def close(self, timeout: float = 5.0) -> None:
         """Cancels every queued job and the running one, then waits up to `timeout` seconds
@@ -3570,12 +8307,12 @@ class Queue:
             with self._lock:
                 paused = final.pop("pause", None)
                 if final.pop("again", False) and not self._closed:
-                    self._set(job_id, state="queued")
+                    self._set(job_id, state="queued", stopping=False)
                     self._waiting.appendleft(job_id)
                     if paused is not None:
                         self._status = paused
                 else:
-                    self._set(job_id, **(final or {"state": "cancelled"}))
+                    self._set(job_id, stopping=False, **(final or {"state": "cancelled"}))
                     self._runners.pop(job_id, None)
                 self._running = None
             self._changed()
@@ -3622,17 +8359,20 @@ class Queue:
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_jobs.py -q` first
-  (`21 passed`; run it ten times, `for i in 1 2 3 4 5 6 7 8 9 10; do uv run pytest
-  tests/test_jobs.py -q | tail -1; done`, each `21 passed`: these tests use threads), then the
+  (`25 passed`; run it ten times, `for i in 1 2 3 4 5 6 7 8 9 10; do uv run pytest
+  tests/test_jobs.py -q | tail -1; done`, each `25 passed`: these tests use threads), then the
   guard checks, then `make check`. **Guard checks**, each reverted and restored, each with
   `uv run pytest tests/test_jobs.py -q`: in `_work`, replace `self._waiting.appendleft(job_id)`
   with `self._waiting.append(job_id)` (the paused job goes to the back: `FAILED
   …test_a_dropped_connection_pauses_the_whole_queue_and_its_job_waits_first` and `…pause_stops…`);
   in `_run`, replace `except Paused as err:` with `except ZeroDivisionError as err:` (a lost
-  connection fails one job after another: `5 failed`); in `_run`'s `Paused` branch, replace
-  `if why == "cancel":` with `if False:` (`FAILED
-  …test_a_cancelled_job_that_lost_its_connection_is_not_queued_again`). `make check`.
-  Expected: `820 passed, 5 skipped, 4 deselected` twice, `All checks passed!` and
+  connection fails one job after another: `6 failed`, the dropped tunnel's test among them); in
+  `_run`'s `Paused` branch, replace `if why == "cancel":` with `if False:` (`FAILED
+  …test_a_cancelled_job_that_lost_its_connection_is_not_queued_again`); in `pause`, add
+  `self._set(self._running, stopping=True)` below `self._stop.set()` (`FAILED
+  …test_pause_pressed_as_a_chunk_finishes_runs_no_chunk_twice_and_loses_none`: stopping is
+  Cancel's alone). `make check`. Expected: `1188 passed, 7 skipped, 40 deselected` twice,
+  `Test Files  21 passed (21)` and `Tests  97 passed (97)`, `All checks passed!` and
   `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -3650,23 +8390,42 @@ until Queue.resume(). The job's runner shares one RunContext's finished
 chunks (§8.9), so a resumed job asks only from the chunk that failed,
 of the same model (§17.4). Cancel beats Pause; a job cancelled while it
 lost its connection stays cancelled. Queue.status() returns a frozen
-QueueStatus; listeners hear pause and resume. Other errors fail only
-their job, with their hint, and the queue runs on.
+QueueStatus; the listeners Queue.on_change registers (Phase 2 Task 19,
+each stoppable) hear pause and resume. JobView.stopping stays Cancel's
+alone: Pause never sets it, and a requeued job has it false. Other
+errors fail only their job, with their hint, and the queue runs on.
+
+Review Focus 3: a whisper.cpp fake on a real socket drops the connection
+with chunk 0 in flight (no answer at all, as a tunnel that dies or a
+laptop that sleeps does; tests/fakes.FakeServer's responder may now
+return None for that): openai's APIConnectionError reaches the
+pipeline as a connection error, so the queue pauses and the job waits
+as queued rather than failing, and Resume sends that chunk again. Pause
+pressed while chunk 1 is in flight lets it finish and stops the job
+before chunk 2; Resume runs from chunk 2, each chunk once.
 
 The new tests failed first with: AttributeError: 'Queue' object has no
-attribute 'status' (and 'pause'). Guard checks, each reverted and
-restored: a paused job queued at the back, Paused treated as any other
-error, and a cancelled job that lost its connection queued again each
-make their tests fail. The queue tests passed ten runs in a row.
+attribute 'status' (and 'pause'), and two timed out waiting (a lost
+connection failed the job instead of pausing the queue). Guard checks,
+each reverted and restored: a paused job queued at the back, Paused
+treated as any other error (six tests fail, the dropped tunnel's
+included), a cancelled job that lost its connection queued again, and
+Pause marking the job stopping, each make their tests fail. The queue
+tests passed ten runs in a row.
 
 Docs read: none beyond the code (pipeline._retrying's Paused after
-wait_on_connection_s, and run_one's chunk cache key).
+wait_on_connection_s, run_one's chunk cache key; clients.map_error,
+where openai's APIConnectionError, its wrap of httpx's
+RemoteProtocolError, becomes a "connection" EngineError); Python's
+http.server (a handler that returns without writing closes the
+connection when close_connection is set).
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 5
 Co-Authored-By: <the model's own line>
 ```
 
-  `git add src/vid2sub/jobs.py tests/test_jobs.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git add src/vid2sub/jobs.py tests/test_jobs.py tests/fakes.py`, `git commit -F
+  .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
 - [ ] **Step 6: Write the failing test.** Replace `tests/test_awake.py` with (M1's two tests
@@ -3830,17 +8589,20 @@ cancels nothing and reopening shows the progress; when the engine exits the list
 finished results are already on disk (Dan, 2026-10-14). One worker runs one job at a time,
 because the Spark's whisper serves one request at a time anyway. Cancel takes a queued job out of
 the queue, or asks the running one to stop at its next check, between chunks or translation
-batches (`pipeline.Cancelled`; the Phase 2 plan's Decision 7). Listeners are called after every
-change of state, stage or progress, and when the queue pauses or resumes, on the thread that made
-it (the worker, or the caller of `submit`, `cancel`, `pause`, `resume` or `close`); one that
-raises is logged and the queue carries on. A job may bring its own runner (Review's Start: each
-file with its own options, Phase 3 plan Task 3); others use the queue's.
+batches (`pipeline.Cancelled`; the Phase 2 plan's Decision 7), and says it is `stopping` until
+then, so every tab can tell. Listeners are called after every change of state, stage or
+progress, and when the queue pauses or resumes, on the thread that made it (the worker, or the
+caller of `submit`, `cancel`, `pause`, `resume` or `close`); one that raises is logged and the
+queue carries on, and one can stop listening (a tab that closed). A job may bring its own runner
+(Add's YouTube link that keeps its video, Review's Start with each file's own options: the Phase
+3 plan, Tasks 2 and 3); others use the queue's.
 
 The queue is running or paused (§17.1). A connection error (refused, reset, the tunnel down, the
 laptop slept) that outlasts the runner's own wait (`pipeline.Paused`) pauses the whole queue with
 its reason and fix, instead of failing every remaining episode in turn (§17.3, council); so does
-the person's Pause, which stops the running job at its next check as Cancel would. Either way the
-job goes back to the head of the queue, keeping its runner, stage and progress, and Resume runs it
+the person's Pause, which stops the running job at its next check as Cancel would but never says
+it is `stopping`, which is Cancel's alone. Either way the job goes back to the head of the queue,
+keeping its runner, stage and progress, and Resume runs it
 again: its runner shares one context's finished chunks (§8.9), so it restarts from the chunk that
 failed, with the same model, never another one or the cloud (§17.4). Any other error fails only its
 job, with the hint that names the fix (§17.3). While the queue has work and isn't paused, the
@@ -3882,6 +8644,7 @@ class JobView:
     progress: tuple[int, int] | None = None  # (index, of): a chunk or a translation batch
     result: InputResult | None = None
     hint: str | None = None
+    stopping: bool = False  # Cancel asked the running job to stop: before its next chunk or batch
 
 
 @dataclass(frozen=True)
@@ -3933,13 +8696,14 @@ class Queue:
             job = self._jobs.get(job_id)
             if job is None or job.state not in ("queued", "running"):
                 return False
-            if job.state == "running":
+            if job.state == "running":  # it stops at its next check; every tab can say so
                 self._why = "cancel"
                 self._stop.set()
-                return True
-            self._waiting.remove(job_id)
-            self._runners.pop(job_id, None)
-            self._set(job_id, state="cancelled")
+                self._set(job_id, stopping=True)
+            else:
+                self._waiting.remove(job_id)
+                self._runners.pop(job_id, None)
+                self._set(job_id, state="cancelled")
         self._changed()
         return True
 
@@ -3975,9 +8739,17 @@ class Queue:
         with self._lock:
             return list(self._jobs.values())
 
-    def on_change(self, fn: Callable[[], None]) -> None:
+    def on_change(self, fn: Callable[[], None]) -> Callable[[], None]:
+        """Calls `fn` after every change; returns what stops it (a tab that closed)."""
         with self._lock:
             self._listeners.append(fn)
+
+        def stop() -> None:
+            with self._lock:
+                if fn in self._listeners:
+                    self._listeners.remove(fn)
+
+        return stop
 
     def close(self, timeout: float = 5.0) -> None:
         """Cancels every queued job and the running one, then waits up to `timeout` seconds
@@ -4068,12 +8840,12 @@ class Queue:
                 with self._lock:
                     paused = final.pop("pause", None)
                     if final.pop("again", False) and not self._closed:
-                        self._set(job_id, state="queued")
+                        self._set(job_id, state="queued", stopping=False)
                         self._waiting.appendleft(job_id)
                         if paused is not None:
                             self._status = paused
                     else:
-                        self._set(job_id, **(final or {"state": "cancelled"}))
+                        self._set(job_id, stopping=False, **(final or {"state": "cancelled"}))
                         self._runners.pop(job_id, None)
                     self._running = None
                 self._changed()
@@ -4122,14 +8894,15 @@ class Queue:
 ```
 
 - [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_awake.py
-  tests/test_jobs.py -q` first (`27 passed`; ten runs, each `27 passed`), then the guard
+  tests/test_jobs.py -q` first (`31 passed`; ten runs, each `31 passed`), then the guard
   checks, then `make check`. **Guard checks**, each reverted and restored, each with
   `uv run pytest tests/test_awake.py -q`: in `_work`, replace `self._let_sleep()  # outside the
   lock` with `pass  # outside the lock` (the machine is never let sleep while idle: `3 failed`);
   delete the line `self._hold_awake()` (`4 failed`). The real-helper test sees `caffeinate`
   running while a job runs and gone once the queue is idle (macOS; `systemd-inhibit` on Linux
-  where it exists). `make check`. Expected: `824 passed, 5 skipped, 4 deselected` twice,
-  `All checks passed!` and `no leaks found`.
+  where it exists). `make check`. Expected: `1192 passed, 7 skipped, 40 deselected` twice,
+  `Test Files  21 passed (21)` and `Tests  97 passed (97)`, `All checks passed!` and
+  `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -4169,14 +8942,13 @@ Co-Authored-By: <the model's own line>
   submitted with, so never another model or the cloud (§17.4). The forward review over Tasks 6
   and 12: Task 6's Pause and Resume buttons call `pause()` and `resume()`, the paused banner
   reads `status()`, and its tests drive the queue through a runner that raises `Paused`; Phase 2
-  Task 19's server runner keeps `RunOptions.wait_on_connection_s` at M1's 10 minutes, so the
-  banner appears only after that wait (Task 6 decides whether the web app's job context waits
-  less, and may show the `waiting` events the queue ignores); Task 12's exit test drops the
-  tunnel mid-season. The docs this task made untrue: none expected (grep `docs/` for "Resume"
-  and "paused"). Then the close, its own commit, holding this plan with this task's boxes ticked
-  and **Now** set to `Task 6: The Jobs page grows up, open.`, and the spec's rows S41 (with
-  "Phase and task" `Phase 3, Tasks 5–6`) and S42 (`Phase 3, Task 5`) set to `built`. The
-  message, in `.git/CLOSE_MSG`:
+  Task 19's job context keeps `RunOptions.wait_on_connection_s` at M1's 10 minutes, so the
+  banner would appear only after that wait (Task 6 sets the web app's to 30 seconds); Task
+  12's exit test drops the tunnel mid-season. The docs this task made untrue: none expected (grep
+  `docs/` for "Resume" and "paused"). Then the close, its own commit, holding this plan with this
+  task's boxes ticked and **Now** set to `Task 6: The Jobs page grows up, open.`, and the spec's
+  rows S41 (with "Phase and task" `Phase 3, Tasks 5–6`) and S42 (`Phase 3, Task 5`) set to `built`.
+  The message, in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 5: The queue pauses and resumes
@@ -4202,15 +8974,776 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 2 · **Scenarios:** S41
 
+**Files:**
+- Modify: `src/vid2sub/web/runtime.py` (`APP_WAIT_S`), `src/vid2sub/web/views.py` (`jobs_view`'s
+  `queue`), `src/vid2sub/web/server.py` (`queue_pause`, `queue_resume`), `frontend/src/types.ts`,
+  `frontend/src/lib/jobs.ts`, `frontend/src/components/JobsPage.tsx`, `frontend/src/App.tsx`
+- Test: `tests/test_web_jobs.py`, `frontend/src/lib/jobs.test.ts`,
+  `frontend/src/components/JobsPage.test.ts`, `tests/e2e/test_jobs.py`
+
 **Interfaces:**
 - Consumes: Task 5's `Queue.pause() -> bool`, `resume() -> bool` and `status() -> QueueStatus`
-  (`state`, `reason`, `hint`, `kind`). The banner shows `reason` and `hint` when `kind !=
-  "paused"`; a requeued job shows `queued` with the stage and progress it stopped at. To decide
-  here: Phase 2 Task 19's context keeps M1's `wait_on_connection_s = 600`, so a dropped tunnel
-  shows the banner only after ten minutes; the server's context may wait less. `JobView` ignores
-  `waiting` events.
+  (`state`, `reason`, `hint`, `kind`), its listeners (Phase 2 Task 19's `on_change`, which
+  already refresh every tab's `jobs` output), and a requeued job's kept stage and progress.
+  `JobView` ignores `waiting` events, as before.
+- Produces:
+  - `web.runtime.APP_WAIT_S = 30.0`: the job context `runtime.build` makes has
+    `RunOptions(wait_on_connection_s=APP_WAIT_S)`; a caller's own context (the demo's, a test's)
+    is unchanged, and the CLI keeps M1's 600.
+  - `web.views.jobs_view(jobs, status: QueueStatus | None = None)` adds `"queue": {"state":
+    "running" | "paused", "reason": str | null, "hint": str | null, "kind": str | null}` (the
+    running queue's when `status` is None).
+  - The server (local only): the `jobs` output passes `rt.queue.status()`; inputs
+    `queue_pause`: `{"n": int}` and `queue_resume`: `{"n": int}` call `pause()` and `resume()`
+    (a repeat is a no-op: every tab shows the state). Pages ignores both.
+  - The page: `JobsPage({jobs, queue: QueueState, onSubmit, onCancel, onOpen, onPause,
+    onResume})`; `QueueState` in `types.ts`; `lib/jobs.ts`: `jobLine` says a requeued job is
+    `waiting: stopped at <stage> <i>/<n>`, `pausedLine(queue)`, and `announcement(jobs, queue?)`
+    announces the pause first. Test ids: `queue-pause` (while jobs wait or run),
+    `queue-paused` (the banner, `data-kind`), `queue-reason`, `queue-hint` (only when `kind !=
+    "paused"`), `queue-resume`.
+  - Decided here (proposed): **the app's jobs retry a dropped connection for 30 seconds, then
+    pause the queue** with its reason, fix and Resume, where the CLI keeps M1's ten minutes. Spec
+    §17.3: "Connection errors pause the whole queue … with a Resume button, instead of failing
+    every remaining episode in turn"; the app has a person and that button, the CLI's wait is for
+    a terminal nobody watches, and the M3 exit test (Task 12, Step 5) expects the banner within a
+    minute of the tunnel stopping. The cost: an overnight run's short drop pauses until someone
+    presses Resume. The `waiting` events stay unshown: half a minute needs no countdown.
 
-<!-- steps: written in the next pass -->
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing tests.** In `tests/test_web_jobs.py`, below
+  `from vid2sub.config import Config`, add `from vid2sub.engines.base import EngineError`;
+  replace `from vid2sub.jobs import JobView` with `from vid2sub.jobs import JobView, QueueStatus`,
+  and `from vid2sub.pipeline import Cancelled, InputResult` with
+  `from vid2sub.pipeline import Cancelled, InputResult, Paused`; in
+  `test_the_jobs_view_names_each_job_by_its_file_with_its_stage_and_progress`, replace the
+  expected view's last line,
+  `         "written": [], "notes": [], "stopping": False, "can_open": False}]}`, with:
+
+```python
+         "written": [], "notes": [], "stopping": False, "can_open": False}],
+        "queue": {"state": "running", "reason": None, "hint": None, "kind": None}}
+```
+
+  in `test_paths_typed_into_the_box_become_jobs_whose_progress_reaches_every_tab`, replace
+  `        assert a.value("jobs") == {"jobs": []}` with
+  `        assert a.value("jobs")["jobs"] == []`; in `test_the_pages_editor_has_no_jobs`, below
+  `            t.set(job_cancel={"n": 2, "job": "j00000001"})`, add
+  `            t.set(queue_pause={"n": 4})`, and replace its last line,
+  `    assert rt.queue.jobs() == []`, with
+  `    assert rt.queue.jobs() == [] and rt.queue.status().state == "running"`; then append, after
+  two blank lines:
+
+```python
+# ---- Phase 3, Task 6: the queue pauses and resumes from the page (S41, spec §17.3) -------------
+
+DOWN = EngineError("connection", "couldn't reach the server",
+                   hint="is it running? For the Spark: is `make tunnel` running?")
+
+
+def test_the_jobs_view_carries_the_queues_state_and_a_paused_job_where_it_stopped():
+    view = views.jobs_view([JobView("j00000001", "/films/a.mkv", "queued", "transcribe", (7, 11))],
+                           QueueStatus("paused", "couldn't reach the server", DOWN.hint,
+                                       "connection"))
+    assert view["queue"] == {"state": "paused", "reason": "couldn't reach the server",
+                             "hint": DOWN.hint, "kind": "connection"}
+    (job,) = view["jobs"]
+    assert (job["state"], job["stage"], job["progress"], job["stopping"]) == (
+        "queued", "transcribe", [7, 11], False)
+
+
+def queue_of(t: Tab) -> dict | None:
+    return t.value("jobs")["queue"] if t.has("jobs") and t.value("jobs") else None
+
+
+def test_pause_and_resume_reach_the_queue_and_every_tab_hears_them(client, rt, gated):
+    with tab(client, OUTPUTS) as a, tab(client, OUTPUTS) as b:
+        a.until(lambda t: t.has("jobs"))
+        a.set(jobs_submit={"n": 1, "paths": ["/films/a.mkv", "/films/b.mkv"]})
+        b.until(lambda t: listed(t) and listed(t)[0]["state"] == "running")
+        a.set(queue_pause={"n": 2})
+        paused = b.until(lambda t: queue_of(t)["state"] == "paused"
+                         and listed(t)[0]["state"] == "queued" and listed(t))
+        assert queue_of(b) == {"state": "paused", "reason": None, "hint": None, "kind": "paused"}
+        assert (paused[0]["progress"], paused[0]["stopping"]) == ([1, 2], False)  # where it stopped
+        a.set(queue_resume={"n": 3})
+        b.until(lambda t: queue_of(t)["state"] == "running" and listed(t)[0]["state"] == "running")
+        gated.gate("/films/a.mkv").set()
+        gated.gate("/films/b.mkv").set()
+        b.until(lambda t: [j["state"] for j in listed(t)] == ["done", "done"])
+    assert gated.gates.keys() == {"/films/a.mkv", "/films/b.mkv"}
+
+
+def test_a_connection_that_stays_down_pauses_the_queue_with_its_reason_and_fix(tmp_path):
+    tries: list[str] = []
+
+    def dropping(source, events, cancelled):
+        tries.append(source)
+        if len(tries) == 1:
+            events("chunk", {"index": 3, "of": 9})
+            raise Paused(DOWN)
+        return InputResult(input=source, status="done")
+
+    made = runtime.build(Config(), tools=Tools(None, None, None), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=0), runner=dropping)
+    runtime.configure(made)
+    c = client_for(made)
+    try:
+        with tab(c, OUTPUTS) as t:
+            t.until(lambda t: t.has("jobs"))
+            t.set(jobs_submit={"n": 1, "paths": ["/films/a.mkv"]})
+            t.until(lambda t: queue_of(t) and queue_of(t)["state"] == "paused")
+            assert queue_of(t) == {"state": "paused", "reason": "couldn't reach the server",
+                                   "hint": DOWN.hint, "kind": "connection"}
+            assert [(j["state"], j["progress"]) for j in listed(t)] == [("queued", [3, 9])]
+            t.set(queue_resume={"n": 2})
+            t.until(lambda t: listed(t)[0]["state"] == "done")
+    finally:
+        c.__exit__(None, None, None)
+        runtime.configure(None)
+        made.queue.close()
+    assert tries == ["/films/a.mkv", "/films/a.mkv"]
+
+
+def test_the_apps_jobs_retry_a_dropped_connection_for_half_a_minute_then_pause(tmp_path):
+    made = runtime.build(Config(), tools=Tools(None, None, None), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=0))
+    try:
+        assert made.job_context.options.wait_on_connection_s == runtime.APP_WAIT_S == 30.0
+        assert pipeline.RunOptions().wait_on_connection_s == 600.0  # the CLI keeps M1's ten minutes
+    finally:
+        made.queue.close()
+```
+
+- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_jobs.py -q`.
+  Expected: `E       TypeError: jobs_view() takes 1 positional argument but 2 were given`,
+  `E       KeyError: 'queue'` (twice), the job context's wait still `600.0`, and
+  `5 failed, 8 passed`.
+- [ ] **Step 3: Write the code.** In `src/vid2sub/web/runtime.py`, in the module docstring,
+  below `` (§8.9). Nothing here presets `allow_cloud` (§7.2): a job never uses a cloud model in Phase 2. ``,
+  add:
+
+```python
+A dropped connection is retried for `APP_WAIT_S`, then pauses the whole queue with its reason and
+**Resume** (§17.3): the app has a person and a button, where the CLI's ten minutes are for a
+terminal nobody watches (Phase 3 Task 6).
+```
+
+  below `PLAYBACK_TIMEOUT = 3600.0  # seconds: a two-hour episode's audio, read from a slow network share`,
+  add
+  `APP_WAIT_S = 30.0  # seconds a job retries a dropped connection before the queue pauses (§17.3)`;
+  in `build`'s docstring, replace
+
+```python
+    context with M1's options (the route's models, the language detected, no cloud, ten minutes
+    for a dropped connection), unless the caller gives its own; the queue runs `runner`, else
+    `job_runner` on that context."""
+```
+
+  with
+
+```python
+    context with M1's options (the route's models, the language detected, no cloud) but
+    `APP_WAIT_S` for a dropped connection, unless the caller gives its own; the queue runs
+    `runner`, else `job_runner` on that context."""
+```
+
+  and replace
+  `        job_context = RunContext(config=config, tools=tools, keys=keys, options=RunOptions())`
+  with:
+
+```python
+        job_context = RunContext(config=config, tools=tools, keys=keys,
+                                 options=RunOptions(wait_on_connection_s=APP_WAIT_S))
+```
+
+  In `src/vid2sub/web/views.py`, replace `    from vid2sub.jobs import JobView` (in the
+  `TYPE_CHECKING` block) with `    from vid2sub.jobs import JobView, QueueStatus`; replace
+  `def jobs_view(jobs: Sequence[JobView]) -> dict[str, Any]:` with
+  `def jobs_view(jobs: Sequence[JobView], status: QueueStatus | None = None) -> dict[str, Any]:`;
+  in its docstring, replace
+  `    by its video's id, never a title (§6.8), and doesn't open by its link."""` with:
+
+```python
+    by its video's id, never a title (§6.8), and doesn't open by its link. `queue` is the queue's
+    state (§17.1): running, or paused, by the person (`kind` "paused") or by a connection that
+    stayed down, with its reason and fix (§17.3; Phase 3 Task 6); a job a pause sent back is
+    `queued` with the stage and progress it stopped at."""
+```
+
+  and replace its last line, `    return {"jobs": out}`, with:
+
+```python
+    queue = {"state": "running", "reason": None, "hint": None, "kind": None}
+    if status is not None:
+        queue = {"state": status.state, "reason": status.reason, "hint": status.hint,
+                 "kind": status.kind}
+    return {"jobs": out, "queue": queue}
+```
+
+  In `src/vid2sub/web/server.py`, in the module docstring, replace
+
+```python
+asks the running one to stop before its next chunk or batch (Decision 7). The queue tells its
+listeners on the worker thread, so each tab's hands the change to its own loop.
+```
+
+  with
+
+```python
+asks the running one to stop before its next chunk or batch (Decision 7). `queue_pause` and
+`queue_resume` (Phase 3 Task 6) pause the whole queue, the running job stopping at its next
+check, and run it again; the `jobs` output carries the queue's state, and a connection that
+stayed down pauses it too, with the reason and the fix (§17.3). The queue tells its listeners on
+the worker thread, so each tab's hands the change to its own loop.
+```
+
+  replace `        return views.jobs_view(rt.queue.jobs())` with
+  `        return views.jobs_view(rt.queue.jobs(), rt.queue.status())`, and above
+  `    @reactive.effect` / `    @reactive.event(input.job_cancel)`, add:
+
+```python
+    @reactive.effect
+    @reactive.event(input.queue_pause)
+    def _queue_pause() -> None:
+        if local:
+            rt.queue.pause()  # False when already paused: nothing to say, every tab shows it
+
+    @reactive.effect
+    @reactive.event(input.queue_resume)
+    def _queue_resume() -> None:
+        if local:
+            rt.queue.resume()
+
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_jobs.py -q` first
+  (`13 passed`; three times: the queue runs on a thread), then the guard checks, then
+  `make check`. **Guard checks**, each reverted and restored, each with
+  `uv run pytest tests/test_web_jobs.py -q`: in `build`, make the job context with
+  `options=RunOptions()` (`FAILED
+  …test_the_apps_jobs_retry_a_dropped_connection_for_half_a_minute_then_pause`); in
+  `_queue_pause`, replace `rt.queue.pause()` with `pass` (`FAILED
+  …test_pause_and_resume_reach_the_queue_and_every_tab_hears_them`). `make check`. Expected:
+  `1196 passed, 7 skipped, 40 deselected` twice, `Test Files  21 passed (21)` and
+  `Tests  97 passed (97)`, `All checks passed!` and `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the Jobs page's server pauses and resumes the queue, says why it paused, and waits half a minute for a dropped connection
+
+The server's half of the Jobs page growing up (spec §17.1, §17.3; S41).
+The `jobs` output carries the queue's state (views.jobs_view(jobs,
+status): running, or paused by the person, kind "paused", or by a
+connection that stayed down, with its reason and fix); a job a pause
+sent back is queued with the stage and progress it stopped at.
+`queue_pause` and `queue_resume` call Queue.pause and resume; every tab
+hears the change through the queue's listeners. Pages ignores both.
+
+The app's job context retries a dropped connection for APP_WAIT_S, 30
+seconds, then pauses the whole queue with Resume, where the CLI keeps
+M1's ten minutes (--wait-on-connection): spec §17.3 asks a connection
+error to pause the queue with a Resume button, and the app has a person
+and that button, where the CLI's wait is for a terminal nobody watches;
+the M3 exit test (Task 12, Step 5) expects the banner within a minute of
+the tunnel stopping. Proposed as a Decision: an overnight run's short
+drop now pauses until someone presses Resume.
+
+The new tests failed first with: TypeError: jobs_view() takes 1
+positional argument but 2 were given, KeyError: 'queue' (twice), and the
+job context's wait still 600.0. Guard checks, each reverted and
+restored: the job context with M1's options, and queue_pause doing
+nothing, each make their tests fail.
+
+Docs read: none beyond the code (Task 5's Queue.pause, resume and
+status; pipeline._retrying, which raises Paused once its waits pass
+wait_on_connection_s; Phase 2's jobs listeners in server.py).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 6
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/runtime.py src/vid2sub/web/server.py src/vid2sub/web/views.py
+  tests/test_web_jobs.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 6: Write the failing tests.** Replace `frontend/src/lib/jobs.test.ts` with:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { JobItem } from "@/types";
+
+import { announcement, jobLine, pausedLine, typedPaths } from "./jobs";
+
+const JOB: JobItem = { id: "j00000001", name: "a.mkv", path: "/films/a.mkv", state: "queued", stage: null, progress: null, status: null, reason: null, hint: null, written: [], notes: [], stopping: false, can_open: false };
+
+describe("a job in words (spec §19.2: \"transcribing 7/11\")", () => {
+  it("names the stage and the chunk or batch it is on", () => {
+    expect(jobLine(JOB)).toBe("waiting");
+    expect(jobLine({ ...JOB, state: "running" })).toBe("starting");
+    expect(jobLine({ ...JOB, state: "running", stage: "decode" })).toBe("decoding the audio");
+    expect(jobLine({ ...JOB, state: "running", stage: "transcribe", progress: [7, 11] })).toBe("transcribing 7/11");
+    expect(jobLine({ ...JOB, state: "running", stage: "translate", progress: [1, 2] })).toBe("translating 1/2");
+    expect(jobLine({ ...JOB, state: "running", stage: "something-new" })).toBe("something-new");
+    expect(jobLine({ ...JOB, stage: "transcribe", progress: [7, 11] })).toBe("waiting: stopped at transcribing 7/11");
+  });
+
+  it("says what a finished job did, why one failed, and that one was cancelled", () => {
+    expect(jobLine({ ...JOB, state: "done", status: "done", written: ["a.en.srt", "a.ja.srt"] })).toBe("done: wrote a.en.srt, a.ja.srt");
+    expect(jobLine({ ...JOB, state: "done", status: "done" })).toBe("done: the subtitles were up to date");
+    expect(jobLine({ ...JOB, state: "done", status: "uncertain", reason: "ja or zh?" })).toBe("the language is unclear: ja or zh?");
+    expect(jobLine({ ...JOB, state: "failed", status: "failed", reason: "couldn't reach the server" })).toBe("failed: couldn't reach the server");
+    expect(jobLine({ ...JOB, state: "failed" })).toBe("failed: see the log");
+    expect(jobLine({ ...JOB, state: "cancelled" })).toBe("cancelled");
+  });
+});
+
+describe("what the polite live region says (spec §19.3, S37)", () => {
+  it("is the running job, else the one that finished last", () => {
+    const running = { ...JOB, id: "j2", name: "b.mkv", state: "running" as const, stage: "transcribe", progress: [2, 3] as [number, number] };
+    const done = { ...JOB, state: "done" as const, status: "done", written: ["a.en.srt"] };
+    expect(announcement([done, running])).toBe("b.mkv: transcribing 2/3");
+    expect(announcement([done, { ...JOB, id: "j3", name: "c.mkv" }])).toBe("a.mkv: done: wrote a.en.srt");
+    expect(announcement([JOB])).toBe("");
+  });
+
+  it("is the pause, when the queue is paused (S41)", () => {
+    const running = { ...JOB, state: "running" as const, stage: "transcribe", progress: [2, 3] as [number, number] };
+    const down = { state: "paused" as const, reason: "couldn't reach the server", hint: "is `make tunnel` running?", kind: "connection" };
+    expect(announcement([running], down)).toBe("The queue is paused. couldn't reach the server");
+    expect(announcement([running], { state: "paused", reason: null, hint: null, kind: "paused" })).toBe("The queue is paused. nothing starts until you resume");
+    expect(announcement([running], { state: "running", reason: null, hint: null, kind: null })).toBe("a.mkv: transcribing 2/3");
+  });
+});
+
+describe("the paused banner (spec §17.3, S41)", () => {
+  it("says why the queue paused itself, or that the person paused it", () => {
+    expect(pausedLine({ state: "paused", reason: "couldn't reach the server", hint: "is `make tunnel` running?", kind: "connection" })).toBe("Paused: couldn't reach the server");
+    expect(pausedLine({ state: "paused", reason: null, hint: null, kind: "paused" })).toBe("Paused: nothing starts until you resume");
+    expect(pausedLine({ state: "running", reason: null, hint: null, kind: null })).toBe("");
+  });
+});
+
+describe("the paths box", () => {
+  it("takes one path a line, trimmed, blank lines left out", () => {
+    expect(typedPaths("  /films/a.mkv \n\n/films/b c.mkv\r\n")).toEqual(["/films/a.mkv", "/films/b c.mkv"]);
+    expect(typedPaths("   ")).toEqual([]);
+  });
+});
+```
+
+  Replace `frontend/src/components/JobsPage.test.ts` with:
+
+```ts
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import type { JobItem, QueueState } from "@/types";
+
+import { JobsPage } from "./JobsPage";
+
+const JOB: JobItem = { id: "j00000001", name: "<img src=x>.mkv", path: "/films/<img src=x>.mkv", state: "running", stage: "transcribe", progress: [7, 11], status: null, reason: null, hint: null, written: [], notes: [], stopping: false, can_open: false };
+
+const RUNNING: QueueState = { state: "running", reason: null, hint: null, kind: null };
+
+function render(jobs: JobItem[], queue: QueueState = RUNNING): string {
+  const noop = () => undefined;
+  return renderToStaticMarkup(createElement(JobsPage, { jobs, queue, onSubmit: noop, onCancel: noop, onOpen: noop, onPause: noop, onResume: noop }));
+}
+
+describe("the Jobs page (spec §19.2, §19.3; S36)", () => {
+  it("shows a running job's stage and chunk, with a bar and Cancel, and announces it politely", () => {
+    const html = render([JOB]);
+    expect(html).toContain("transcribing 7/11");
+    expect(html).toMatch(/<progress[^>]*value="7"[^>]*max="11"/);
+    expect(html).toContain('data-testid="job-cancel"');
+    expect(html).toMatch(/role="status" aria-live="polite"[^>]*data-testid="jobs-announce">&lt;img src=x&gt;\.mkv: transcribing 7\/11</);
+  });
+
+  it("shows names, reasons and hints as text, never markup", () => {
+    const html = render([{ ...JOB, state: "failed", reason: "<b>down</b>", hint: "is `make tunnel` running?" }]);
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("<b>");
+    expect(html).toContain("failed: &lt;b&gt;down&lt;/b&gt;");
+    expect(html).toContain("→ is `make tunnel` running?");
+  });
+
+  it("offers Open in editor only for a job that is done, and Cancel only while it can stop", () => {
+    const done = render([{ ...JOB, state: "done", status: "done", progress: null, can_open: true }]);
+    expect(done).toContain('data-testid="job-open"');
+    expect(done).not.toContain('data-testid="job-cancel"');
+    expect(render([{ ...JOB, state: "cancelled" }])).not.toContain('data-testid="job-cancel"');
+    expect(render([{ ...JOB, state: "queued", stage: null, progress: null }])).toContain('data-testid="job-cancel"');
+  });
+
+  it("says a cancelled job is stopping, as the engine says, until it stops", () => {
+    const html = render([{ ...JOB, stopping: true }]);
+    expect(html).toMatch(/data-stopping="true"/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-testid="job-cancel">Stopping…</);
+  });
+
+  it("offers Pause while jobs wait or run, and a paused queue's banner says why, with Resume (S41)", () => {
+    expect(render([JOB])).toContain('data-testid="queue-pause"');
+    expect(render([{ ...JOB, state: "done", status: "done" }])).not.toContain('data-testid="queue-pause"');
+    const down = render([{ ...JOB, state: "queued" }], { state: "paused", reason: "couldn't <b>reach</b> the server", hint: "is `make tunnel` running?", kind: "connection" });
+    expect(down).toContain("Paused: couldn&#x27;t &lt;b&gt;reach&lt;/b&gt; the server");
+    expect(down).toContain("→ is `make tunnel` running?");
+    expect(down).toContain('data-testid="queue-resume"');
+    expect(down).not.toContain('data-testid="queue-pause"');
+    expect(down).toContain("waiting: stopped at transcribing 7/11");
+    const mine = render([JOB], { state: "paused", reason: null, hint: null, kind: "paused" });
+    expect(mine).toContain("Paused: nothing starts until you resume");
+    expect(mine).not.toContain('data-testid="queue-hint"');
+    expect(mine).toMatch(/data-testid="jobs-announce">The queue is paused\. nothing starts until you resume</);
+  });
+
+  it("says there are no jobs yet", () => {
+    expect(render([])).toContain("No jobs yet.");
+  });
+});
+```
+
+  In `tests/e2e/test_jobs.py`, replace the module docstring with:
+
+```python
+"""The Jobs page in Chromium (spec §17, §19.2, §19.3; S36, S37, S41; the plan's Decision 7): paths
+typed into a box become jobs; per-stage and per-chunk progress ("transcribing 1/2") is shown and
+announced politely; Cancel takes a queued job out, and stops the running one between chunks,
+after the chunk the server is transcribing; Pause does the same for the whole queue, which waits,
+saying so, until Resume carries on from the next chunk (Phase 3 Task 6); a finished job opens in
+the editor. Against `vid2sub serve --demo` (its canned engine, on its own clip only) and against
+a vid2sub.toml whose transcription endpoint is a fake whisper.cpp server that holds a chunk until
+the test lets it go. Run with `make e2e`."""
+```
+
+  and append, after two blank lines:
+
+```python
+def test_pause_stops_after_the_chunk_in_flight_and_resume_carries_on_from_the_next(
+        launch, open_page, tmp_path):
+    held, go = threading.Event(), threading.Event()
+
+    def whisper(req):
+        if req.path.endswith("/models"):
+            return 200, {"object": "list", "data": [{"id": "qwen", "object": "model"}]}, {}
+        if req.form()["file"][0] == "chunk-0000.flac":
+            held.set()
+            assert go.wait(60)
+        return 200, WORDS, {}
+
+    clip = long_clip(tmp_path / "videos")
+    with FakeServer(responder=whisper) as spark:
+        server = launch(tmp_path / "server", toml=TOML.format(url=spark.url))
+        watched = open_page(server)
+        page = watched.page
+        open_jobs(page)
+        start(page, clip)
+        job = page.get_by_test_id("job")
+        expect(job.get_by_test_id("job-line")).to_have_text("transcribing 1/2", timeout=60_000)
+        assert held.wait(30)
+        page.get_by_test_id("queue-pause").click()
+        banner = page.get_by_test_id("queue-paused")
+        expect(banner).to_have_attribute("data-kind", "paused")
+        expect(page.get_by_test_id("queue-reason")).to_have_text(
+            "Paused: nothing starts until you resume")
+        expect(page.get_by_test_id("jobs-announce")).to_have_text(
+            "The queue is paused. nothing starts until you resume")
+        expect(job).to_have_attribute("data-state", "running")  # chunk 1's answer is awaited
+        go.set()
+        expect(job).to_have_attribute("data-state", "queued", timeout=30_000)
+        expect(job.get_by_test_id("job-line")).to_have_text(  # the chunk it carries on from
+            "waiting: stopped at transcribing 2/2")
+        page.get_by_test_id("queue-resume").click()
+        expect(banner).to_have_count(0)
+        expect(job).to_have_attribute("data-state", "done", timeout=60_000)
+        uploads = [r.form()["file"][0] for r in spark.requests if r.path.endswith("/transcriptions")]
+    chunks = [u for u in uploads if not u.startswith("chunk-9")]  # 9000-9002: detection's
+    assert chunks == ["chunk-0000.flac", "chunk-0001.flac"]  # none twice, none lost
+    assert watched.errors == [] and watched.violations() == []
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `make test-js`. Expected: its typecheck stops at
+  `src/components/JobsPage.test.ts(5,24): error TS2305: Module '"@/types"' has no exported
+  member 'QueueState'.` and `src/lib/jobs.test.ts(5,33): error TS2305: Module '"./jobs"' has no
+  exported member 'pausedLine'.` Then `make build` and `uv run pytest -m e2e
+  tests/e2e/test_jobs.py -q -k pause`. Expected:
+  `E           playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.`,
+  `waiting for get_by_test_id("queue-pause")`, and `1 failed, 2 deselected`.
+- [ ] **Step 8: Write the code.** In `frontend/src/types.ts`, replace
+
+```ts
+/** The `jobs` output, or null where there are no jobs (the Pages editor). */
+export type JobsView = { jobs: JobItem[] };
+```
+
+  with
+
+```ts
+/** The queue's state (views.jobs_view; spec §17.1, §17.3): paused by the person (`kind` "paused")
+ * or by a connection that stayed down, with its reason and fix. */
+export type QueueState = { state: "running" | "paused"; reason: string | null; hint: string | null; kind: string | null };
+
+/** The `jobs` output, or null where there are no jobs (the Pages editor). */
+export type JobsView = { jobs: JobItem[]; queue: QueueState };
+```
+
+  Replace `frontend/src/lib/jobs.ts` with:
+
+```ts
+// The Jobs page's words (spec §17.2, §19.2, §19.3; S36, S41): each job's stage, with the chunk or
+// translation batch it is on ("transcribing 7/11"), where a job a pause sent back stopped, what a
+// finished one did, why one failed (its hint is shown beside it), the paused banner, and the one
+// line the polite live region announces: the pause, else the running job, else the one that
+// finished last. Paths are typed one a line.
+
+import type { JobItem, QueueState } from "@/types";
+
+const STAGES: Record<string, string> = {
+  probe: "reading the video",
+  hash: "checking the video",
+  download: "downloading",
+  detect: "detecting the language",
+  decode: "decoding the audio",
+  speech: "finding speech",
+  transcribe: "transcribing",
+  translate: "translating",
+};
+
+function stageLine(j: JobItem): string {
+  const stage = STAGES[j.stage ?? ""] ?? j.stage ?? "";
+  return j.progress ? `${stage} ${j.progress[0]}/${j.progress[1]}` : stage;
+}
+
+export function jobLine(j: JobItem): string {
+  switch (j.state) {
+    case "queued": return j.stage ? `waiting: stopped at ${stageLine(j)}` : "waiting";
+    case "running": return j.stage ? stageLine(j) : "starting";
+    case "done":
+      if (j.status === "uncertain") return `the language is unclear: ${j.reason ?? ""}`.trim();
+      if (j.status === "skipped") return "skipped: its subtitles are already there";
+      return j.written.length ? `done: wrote ${j.written.join(", ")}` : "done: the subtitles were up to date";
+    case "failed": return `failed: ${j.reason ?? "see the log"}`;
+    case "cancelled": return "cancelled";
+  }
+}
+
+/** The paused banner's words: the person's Pause, or why the queue paused itself (§17.3). */
+export function pausedLine(queue: QueueState): string {
+  if (queue.state !== "paused") return "";
+  return queue.kind === "paused" ? "Paused: nothing starts until you resume" : `Paused: ${queue.reason ?? "the server stopped answering"}`;
+}
+
+export function announcement(jobs: readonly JobItem[], queue?: QueueState): string {
+  if (queue?.state === "paused") return `The queue is paused. ${pausedLine(queue).replace(/^Paused: /, "")}`.trim();
+  const running = jobs.find((j) => j.state === "running");
+  const shown = running ?? [...jobs].reverse().find((j) => j.state !== "queued");
+  return shown ? `${shown.name}: ${jobLine(shown)}` : "";
+}
+
+export function typedPaths(text: string): string[] {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+```
+
+  Replace `frontend/src/components/JobsPage.tsx` with:
+
+```tsx
+import { type FormEvent, useState } from "react";
+
+import { announcement, jobLine, pausedLine, typedPaths } from "@/lib/jobs";
+import type { JobItem, QueueState } from "@/types";
+
+const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+
+/** The minimal Jobs page (spec §19.2, S36): full paths typed into a box, one a line, become jobs
+ * on the engine's queue, which runs one at a time (§17.1). Each job shows its stage and the chunk
+ * or translation batch it is on ("transcribing 7/11"), with a bar for the chunks; the running job,
+ * else the last to finish, is announced in a polite live region (§19.3, S37). Cancel takes a
+ * queued job out, or stops the running one before its next chunk or batch (Decision 7), so it
+ * says "Stopping…" until then, in every tab (the engine's `stopping`). A failed job shows its reason and the fix (§17.3); a finished one
+ * opens in the editor. The jobs are the engine's, so every tab shows them and closing a tab
+ * cancels nothing. Every name and reason is plain text (§6.3). Pause stops the running job at its
+ * next chunk and starts nothing until Resume; a connection that stays down pauses the queue too,
+ * and the banner says why and how to fix it, with Resume (§17.3, S41); a job a pause sent back
+ * waits, saying where it stopped. The live region announces the pause. */
+export function JobsPage({ jobs, queue, onSubmit, onCancel, onOpen, onPause, onResume }: {
+  jobs: readonly JobItem[];
+  queue: QueueState;
+  onSubmit: (paths: string[]) => void;
+  onCancel: (id: string) => void;
+  onOpen: (path: string) => void;
+  onPause: () => void;
+  onResume: () => void;
+}) {
+  const [text, setText] = useState("");
+  const [stopping, setStopping] = useState<ReadonlySet<string>>(new Set());
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const paths = typedPaths(text);
+    if (!paths.length) return;
+    onSubmit(paths);
+    setText("");
+  };
+  const cancel = (id: string) => {
+    setStopping((s) => new Set(s).add(id));
+    onCancel(id);
+  };
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-4" data-testid="jobs-page">
+      <form className="flex flex-col gap-2" onSubmit={submit}>
+        <label htmlFor="jobs-paths" className="text-sm font-bold">Videos to make subtitles for: one full path a line</label>
+        <textarea id="jobs-paths" rows={3} className="rounded-md border border-input bg-background px-2 py-1 font-mono text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" value={text} onChange={(e) => setText(e.target.value)} placeholder="/full/path/to/Show - S01E01.mkv" spellCheck={false} data-testid="jobs-paths" />
+        <div className="flex items-center gap-2 text-sm">
+          <button type="submit" className="rounded-md bg-primary px-3 py-1 font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50" disabled={!typedPaths(text).length} data-testid="jobs-start">Start</button>
+          <span className="text-muted-foreground">They run one at a time, with the session's targets and formats (Settings). Closing this tab cancels nothing.</span>
+        </div>
+      </form>
+      {queue.state === "paused" ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border-l-4 border-(--brand-orange) bg-card p-2 text-sm" data-testid="queue-paused" data-kind={queue.kind ?? undefined}>
+          <span className="font-bold" data-testid="queue-reason">{pausedLine(queue)}</span>
+          {queue.kind !== "paused" && queue.hint && <span data-testid="queue-hint">→ {queue.hint}</span>}
+          <button type="button" className={`${button} ml-auto font-bold`} onClick={onResume} data-testid="queue-resume">Resume</button>
+        </div>
+      ) : (
+        jobs.some((j) => j.state === "queued" || j.state === "running") && (
+          <div className="flex justify-end">
+            <button type="button" className={button} onClick={onPause} data-testid="queue-pause">Pause</button>
+          </div>
+        )
+      )}
+      <p role="status" aria-live="polite" className="sr-only" data-testid="jobs-announce">{announcement(jobs, queue)}</p>
+      {jobs.length === 0 ? (
+        <p className="text-muted-foreground">No jobs yet.</p>
+      ) : (
+        <ol aria-label="Jobs" className="flex flex-col gap-2" data-testid="jobs-list">
+          {jobs.map((j) => {
+            const asked = j.stopping || stopping.has(j.id); // the engine's word, or this tab's click
+            return (
+            <li key={j.id} className="flex flex-col gap-1 rounded-md border border-border bg-card p-2 text-sm" data-testid="job" data-state={j.state} data-stopping={j.stopping || undefined}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-bold break-all">{j.name}</span>
+                <span className={j.state === "failed" ? "text-destructive" : "text-muted-foreground"} data-testid="job-line">{jobLine(j)}</span>
+                <span className="ml-auto flex gap-2">
+                  {(j.state === "queued" || j.state === "running") && (
+                    <button type="button" className={button} onClick={() => cancel(j.id)} disabled={asked} data-testid="job-cancel">
+                      {asked ? "Stopping…" : "Cancel"}
+                    </button>
+                  )}
+                  {j.can_open && <button type="button" className={button} onClick={() => onOpen(j.path)} data-testid="job-open">Open in editor</button>}
+                </span>
+              </div>
+              {j.state === "running" && j.progress && (
+                <progress className="h-1.5 w-full accent-(--brand-orange)" value={j.progress[0]} max={j.progress[1]} aria-label={`${j.name}: ${jobLine(j)}`} />
+              )}
+              {j.hint && <span data-testid="job-hint">→ {j.hint}</span>}
+              {j.notes.map((note, k) => <span key={k} className="text-muted-foreground">{note}</span>)}
+            </li>
+            );
+          })}
+        </ol>
+      )}
+    </div>
+  );
+}
+```
+
+  In `frontend/src/App.tsx`, in the `import type { … } from "@/types";` line, add
+  `QueueState, ` before `ReviewOutput`; below
+  `type Screen = keyof typeof SCREENS;`, add
+  `const RUNNING: QueueState = { state: "running", reason: null, hint: null, kind: null };`;
+  below the `setJobCancel` line, add:
+
+```tsx
+  const setQueuePause = useSetShinyInput<{ n: number } | null>("queue_pause", null, { priority: "event", debounceMs: 0 });
+  const setQueueResume = useSetShinyInput<{ n: number } | null>("queue_resume", null, { priority: "event", debounceMs: 0 });
+```
+
+  and replace
+  `          <JobsPage jobs={jobs?.jobs ?? []} onSubmit={onSubmitJobs} onCancel={onCancelJob} onOpen={onOpenJob} />`
+  with:
+
+```tsx
+          <JobsPage jobs={jobs?.jobs ?? []} queue={jobs?.queue ?? RUNNING} onSubmit={onSubmitJobs} onCancel={onCancelJob} onOpen={onOpenJob}
+            onPause={() => { const n = ++sent.current; pace(() => setQueuePause({ n })); }}
+            onResume={() => { const n = ++sent.current; pace(() => setQueueResume({ n })); }} />
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `make test-js` first (`Test Files  21 passed (21)`,
+  `Tests  100 passed (100)`), then `make check` and `make e2e`. Expected: `make check`:
+  `1196 passed, 7 skipped, 41 deselected` twice, `Test Files  21 passed (21)` and
+  `Tests  100 passed (100)`, `All checks passed!` and `no leaks found`; `make e2e`:
+  `36 passed, 1208 deselected`. (A paused job says the chunk it carries on from: the pipeline
+  reports chunk 2 of 2 just before the check that stops it.)
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(ui): 🤖 the Jobs page pauses and resumes the queue, and its banner says why the queue paused and how to fix it
+
+The page's half (spec §17.3, §19.2, §19.3; S41). While jobs wait or run,
+Pause stops the running job at its next chunk and starts nothing until
+Resume. A paused queue shows a banner, its bar NYC orange: "Paused:
+nothing starts until you resume" for the person's Pause, else the
+reason the queue paused itself ("Paused: couldn't reach the server")
+with its fix ("→ is `make tunnel` running?"), and Resume. A job a pause
+sent back says where it carries on from ("waiting: stopped at
+transcribing 2/2"). The polite live region announces the pause ("The
+queue is paused. …") ahead of any job (§19.3, S37). Names, reasons and
+hints are plain text; Pause and Resume are buttons, so the keyboard
+reaches them.
+
+The browser test: a two-chunk talk on a fake whisper.cpp server that
+holds chunk 0; Pause while it's in flight; the banner and the
+announcement say paused, the job finishes its chunk and waits, Resume
+carries on: the server saw chunk 0 and chunk 1 once each.
+
+The new tests failed first with: error TS2305: Module '"./jobs"' has no
+exported member 'pausedLine' (make test-js's typecheck), and in
+Chromium, Locator.click: Timeout 30000ms exceeded, waiting for
+get_by_test_id("queue-pause").
+
+Docs read: MDN on ARIA live regions (role="status", polite: the pause
+waits for the reader to finish); React 19.2.8's types; Playwright
+1.64.1's Python API (to_have_count(0) for the banner gone).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 6
+Co-Authored-By: <the model's own line>
+```
+
+  `git add frontend/src/App.tsx frontend/src/components/JobsPage.test.ts
+  frontend/src/components/JobsPage.tsx frontend/src/lib/jobs.test.ts frontend/src/lib/jobs.ts
+  frontend/src/types.ts tests/e2e/test_jobs.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that the banner shows a reason and hint
+  only for a pause the queue made itself, as plain text; that every tab sees the same state; that
+  the 30 seconds apply to the app's own job context only. The forward review over Tasks 11 and
+  12: Task 11 documents Pause, Resume, the banner and the half-minute wait; Task 12's Step 5
+  sees the banner about 30 seconds after the tunnel stops. The docs this task made untrue: none
+  expected (grep `README.md` and `docs/` for "Resume" and "paused"). Then the close, its own
+  commit, holding this plan with this task's boxes ticked and **Now** set to `Task 7: The preview
+  copy, open.`, and the spec's S41 row's proof extended with `tests/test_web_jobs.py`;
+  `tests/e2e/test_jobs.py`. The message, in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 6: The Jobs page grows up
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: none
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 6
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -6480,9 +12013,11 @@ Co-Authored-By: <the model's own line>
 **Tier:** 2 · **Scenarios:** S44
 
 **Interfaces:**
-- Consumes: Task 3's `review.model_choices(config, candidates, task)` and Task 9's
-  `faster-whisper` candidate: `in-process`, and without the extra unavailable with "install
-  vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA GPU)".
+- Consumes: Task 3's `review.model_choices(config, candidates, task)` and the frontend's
+  `choiceLabel` (Task 4); the demo's candidates carry catalog ids, so its titles name Whisper
+  turbo and Gemma 4 (Decision 22). Task 9's `faster-whisper` candidate: `in-process`, and
+  without the extra unavailable with "install vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA
+  GPU)".
 
 <!-- steps: written in the next pass -->
 
@@ -6506,7 +12041,8 @@ English's route against Phase 2 Task 20's Qwen3-ASR on the Spark (Steps 21–23)
   network huggingface_hub 2.2 gives up through its own timeouts (10 s, `HF_HUB_ETAG_TIMEOUT`)
   with `LocalEntryNotFoundError`, a `FileNotFoundError`. The engine turns that into an
   `unavailable` error naming the download, its size and `vid2sub doctor`: a `connection` error
-  would make the pipeline wait `wait_on_connection_s` (ten minutes) and then pause the queue.
+  would make the pipeline retry for `wait_on_connection_s` (ten minutes in the CLI, 30 s in the
+  app: Task 6) and then pause the queue.
   A model already downloaded is loaded from its cache folder, so later runs never ask the
   network (`WhisperModel` takes a directory as it is).
 - **The GPU's libraries are looked for before the GPU is chosen,** on Linux too: CTranslate2
@@ -8533,9 +14069,11 @@ faster-whisper there instead of skipping.
 - **The real model stays out** of every job: `VID2SUB_LIVE_WHISPER` is opt-in (Task 12's manual
   run), and no test downloads a model.
 - **Phase 3 Task 1's Windows-only tests** (the junction, the hidden attribute, the 8.3 short
-  name: `skipif(os.name != "nt")`) run in the existing `python` job, whose windows-2022 entries
-  run the whole suite (`uv run --python ${{ matrix.python }} pytest`), and in the new job's
-  Windows entry too. A test pins that the python job keeps doing so.
+  name, `\\?\` names in a folder: `skipif(os.name != "nt")`) run in the existing `python` job,
+  whose windows-2022 entries run the whole suite (`uv run --python ${{ matrix.python }}
+  pytest`), and in the new job's Windows entry too; its Linux-only test (a name that isn't valid
+  Unicode) runs in the python job's Ubuntu entries. A test pins that the python job keeps
+  running the whole suite on Windows.
 - **What only a real run shows:** that the Windows and Linux wheels install from the lock
   (ctranslate2 4.8.3, av 19.0.2, tokenizers 0.23.3, huggingface-hub 2.2.0), that the suite
   passes on both with the extra, and the jobs' time. Here the workflow is proven by
@@ -8884,7 +14422,11 @@ Co-Authored-By: <the model's own line>
 **Interfaces:**
 - Consumes: Task 7's README sentence on **Make preview copy** and its `cache clear` line, already
   written; Task 9's NVIDIA notes, which the README still needs (cuBLAS 12 and cuDNN 9, Decision
-  10: on `PATH` on Windows, through `LD_LIBRARY_PATH` on Linux; §23.5).
+  10: on `PATH` on Windows, through `LD_LIBRARY_PATH` on Linux; §23.5). From Tasks 1–6, the
+  README documents: Add (the browser's places, and what it hides: Decisions 1–3 and 24); Review
+  (Discard, **Apply to all**, and **Allow cloud models for this run** unticked every time);
+  Pause, Resume, the banner and the 30-second wait (Decision 23); the demo's one place and its
+  canned suggestions (Decisions 21 and 22).
 
 <!-- steps: written in the next pass -->
 
@@ -8923,14 +14465,17 @@ vid2sub serve
   volume (the NAS share under `/Volumes`), not one typed into the box. Expected: the browser
   starts at home and the mounted volumes; it shows only folders, videos and subtitles; no dotfile
   or credential folder appears in home; the season's episodes are listed in `SxxEyy` order.
+  Add, and Review opens.
 - [ ] **Step 4: [Dan] Review it (S40):** expected: the first two files are sampled, each row shows
   a detected language with its confidence and a suggested transcription and translation model,
   and the rest of the folder inherits their choices where they agree. Change one row's target and
-  use **Apply to all**. **Allow cloud models for this run** is unticked; leave it so. Start.
+  use **Apply to all**. **Allow cloud models for this run** is unticked; leave it so. Start: the
+  Jobs page lists the season's episodes.
 - [ ] **Step 5: [Dan] Drop the connection once (S41):** while an episode is transcribing on the
   Spark, stop the tunnel to it (local-ai's), wait a minute, then start it again. Turning the Wi-Fi
-  off would also drop the NAS share, which is a different failure. Expected: the whole queue
-  pauses with a banner giving the reason and **Resume**, and no job is marked failed. After
+  off would also drop the NAS share, which is a different failure. Expected: about 30 seconds
+  after the tunnel stops (Decision 23), the whole queue pauses with a banner giving the reason
+  and **Resume**, and no job is marked failed. After
   **Resume**, the job carries on from the chunk that failed (its progress doesn't start again at
   1), and the queue moves on.
 - [ ] **Step 6: [Dan] Leave it running overnight (S42):** before leaving it, run
@@ -9093,4 +14638,10 @@ fi
 | Task 1 (planning review) | Minor | `src/vid2sub/web/browse.py` | A folder swapped for a link between the browser's check and the job opening the file (a shared NAS, a removable drive) is followed; the checks run on what the disk returned at listing time | open |
 | Task 1 (planning review) | Minor | `src/vid2sub/web/browse.py` | `Library` and `AppData` are hidden in home on every OS, which hides more than it needs to on Linux | open |
 | Task 1 (planning review) | Minor | `tests/test_browse.py` | The junction, hidden-attribute and 8.3 short-name tests run only on Windows CI, so a Mac or Linux run can't catch a break there | open |
+| Task 1 (planning) | Minor | `src/vid2sub/security.py` | `safe_component` doesn't strip a space before its reserved-name lookup, so `CON .x [id]` passes where `qualified` refuses it (predates the task); one shared helper | open |
+| Task 1 (planning) | Minor | `src/vid2sub/web/browse.py` | A home that is itself a link can't be browsed or added, since a root that is a link is refused | open |
+| Task 1 (planning) | Minor | `src/vid2sub/web/browse.py` | A root that is itself a `Users` or profile share (`//pc/Users` mounted under `/mnt`, a drive mapped onto a profile) still lists `AppData` where no hidden flag can be read; `_in_a_profile` could also look at the root's own parts | open |
+| Task 1 (planning) | Minor | `src/vid2sub/web/browse.py` | A volume's name, or a typed name the walk finds, that isn't valid Unicode can still reach `Entry.path` or `Listing.path`; one `_listable` check on mount names and in `_walk` | open |
+| Task 2 (planning) | Minor | `src/vid2sub/web/views.py` | A finished YouTube job doesn't open in the editor (`can_open` false), since the job doesn't report the downloaded file's path | open |
+| Task 6 (planning) | Minor | `src/vid2sub/pipeline.py` | Resume re-detects the language (three windows) of a job whose language wasn't chosen, as decode and VAD are redone (Decision 8); Review's jobs have theirs chosen, so only the Jobs page's typed paths pay it | open |
 | Task 7 (planning) | Minor | `src/vid2sub/web/server.py` | Two tabs that ask for one episode's preview copy at once encode it twice (each into its own temporary name; the later rename wins), doubling the wait; a per-video lock in the runtime would share one encode | open |
