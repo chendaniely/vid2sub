@@ -105,6 +105,11 @@ plus:
 
 **Tier:** 1 · **Scenarios:** S52
 
+**Interfaces:**
+- Consumes: the frontend build (Phase 2 Task 12). Hatchling leaves the git-ignored
+  `src/vid2sub/web/www/ui.js` and `ui.css` out of a wheel, so the build needs them listed as
+  `artifacts` in `pyproject.toml`, and `npm ci && npm run build` runs before `uv build`.
+
 <!-- steps: written in the next pass -->
 
 ***

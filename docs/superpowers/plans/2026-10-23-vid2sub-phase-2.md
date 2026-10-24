@@ -43,8 +43,9 @@ ffmpeg ≥6 for the playback audio.
    keeps the whole track from automatic replacement.
 5. **The glossary is written at Save,** never on each keystroke (spec §16).
 6. **The demo folder holds no video:** `vid2sub serve --demo` muxes the public-domain
-   `tests/fixtures/speech/jfk-14s.wav` into a short MP4 in its temporary copy at start-up, beside
-   a committed canned sidecar. Phase 4 replaces it with the non-English clip spec §21 asks for.
+   `tests/fixtures/speech/jfk-14s.wav` into a short MP4 (VP9 and Opus, since Playwright's
+   Chromium plays neither H.264 nor AAC) in its temporary copy at start-up, beside a committed
+   canned sidecar. Phase 4 replaces it with the non-English clip spec §21 asks for.
 7. **Cancel stops between chunks and between translation batches;** a running ffmpeg finishes its
    (short) step first. M1's pipeline has no cancellation, so Task 4 adds a check to `RunContext`.
 8. **Retranslating cues a person names replaces them even where a translation was edited:** the
@@ -58,6 +59,18 @@ ffmpeg ≥6 for the playback audio.
 10. **An outside edit to a file written from an older version diverges** rather than replacing the
     head (spec §14.4), and a Save whose file write fails records the version the file still holds.
     M1's `store` did neither; Task 6 round 6f fixes both (escaped from M1 Task 28).
+11. **HostGuard allows only `127.0.0.1`** for the app (`app.HOSTS`), not `localhost` or `::1`:
+    the browser is sent to `http://127.0.0.1:<port>/auth`, so the cookie exists only there, and
+    a narrower list leaves DNS rebinding less to work with (Task 11).
+12. **`vid2sub serve` prints the sign-in link only to a terminal;** when its output goes
+    anywhere else it prints the path of the 0600 redirect file instead, so the token never
+    reaches a log (spec §6.1, S23; Task 11).
+13. **Modal parts are the browser's own `<dialog>` with `showModal()`,** not Radix's modal
+    Dialog, Sheet or Select, which inject a `<style>` the CSP blocks: the page behind is inert,
+    Esc closes and focus returns (spec §6.3, §19.3). Menus are Radix with `modal={false}`;
+    choices are a native `<select>` (Tasks 12, 16, 18).
+14. **Shiny's busy-indicator script is served as a file,** so `script-src 'self'` stays as spec
+    §6.3 has it and no `style-src` is needed (Task 12, recorded in §29 at its close).
 
 ## Global Constraints
 
@@ -9117,8 +9130,9 @@ Co-Authored-By: <the model's own line>
   `Cross-Origin-Resource-Policy`, `Cross-Origin-Opener-Policy` and `Referrer-Policy` (all
   `same-origin`) everywhere, with `MEDIA_HEADERS` instead of `CSP` for a path starting `/media/`.
   HostGuard's own 400 carries them too. Task 12 may need a `style-src` once a real browser shows
-  what Shiny and shinyreact need (spec §29): that is a one-line change to `CSP` and to
-  `SPEC_CSP` in the test, and a spec change, so Dan's (the fifth stop).
+  what Shiny and shinyreact need: spec §6.3 leaves style rules to that, verified in M2 (§29), so
+  it would be a one-line change to `CSP` and to `SPEC_CSP` in the test, recorded in §29, not a
+  spec change. Any change to `script-src`, or `'unsafe-eval'`, would be Dan's (the fifth stop).
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`, and check Task 5's
   package marker is there: `test -f src/vid2sub/web/__init__.py && echo ok` prints `ok`.
@@ -9601,8 +9615,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 POLICY_VIOLATION = 1008  # RFC 6455 close code
 
-# Spec §6.3, verbatim. One constant, so a directive Shiny turns out to need (spec §29: its styles)
-# is a one-line change, made with the spec and Dan's OK. Never 'unsafe-eval'.
+# Spec §6.3, verbatim. One constant, so a style rule Shiny turns out to need (§6.3 leaves them to
+# §29) is a one-line change; script-src never changes without Dan. Never 'unsafe-eval'.
 CSP = (
     "default-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; "
     "base-uri 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:"
@@ -10626,7 +10640,7 @@ Co-Authored-By: <the model's own line>
   removes its folder at exit, and turns uvicorn's access log off; Task 12's page shows
   `SIGN_IN_AGAIN` instead of reconnecting when the websocket is refused, Review Focus 5: the
   refusal comes before accept, so the browser sees an HTTP 403 (close code 1006), never 1008;
-  Task 13's `page` fixture signs in through `/auth#t=<token>`). The docs this task made untrue:
+  Task 12's `page` fixture signs in through `/auth#t=<token>`). The docs this task made untrue:
   none expected. Then the close, its own commit, holding this plan with this task's boxes ticked
   and **Now** set to `Task 10: Media tokens and \`/media/{token}\`, open.`, and the spec's
   scenario row S24 set to `built`, its Proof reading `tests/test_web_guards.py`,
@@ -11228,19 +11242,1750 @@ Co-Authored-By: <the model's own line>
 **Tier:** 1 · **Scenarios:** S23
 
 **Files:**
-- Create: `src/vid2sub/web/app.py`, `src/vid2sub/web/runtime.py`, `src/vid2sub/commands/serve.py`
-- Modify: `src/vid2sub/cli.py` (register `serve`)
+- Create: `src/vid2sub/web/runtime.py`, `src/vid2sub/web/app.py`, `src/vid2sub/commands/serve.py`
+- Modify: `src/vid2sub/cli.py` (register `serve`), `src/vid2sub/web/__init__.py` (`WWW`, round 11c)
 - Test: `tests/test_web_app.py`, `tests/test_cli_serve.py`
 
 **Interfaces:**
-- Consumes: Tasks 8–10; Task 5's `LocalBackend`; Task 4's `Queue`.
-- Produces: `runtime.Runtime` (dataclass: `backend`, `queue`, `media`, `config`, `keys`);
-  `runtime.configure(rt: Runtime) -> None`; `runtime.current() -> Runtime`;
-  `app.create_app(rt: Runtime, *, token: str, port: int, shiny_app: ASGIApp) -> ASGIApp`;
-  `vid2sub serve [--port N] [--no-browser] [--config PATH]` (refuses with exit 69 and
-  "build the frontend first" when `www/ui.js` is missing)
+- Consumes: Task 8's `guards.HostGuard`, `guards.WriteGuard`; Task 9's `auth.routes`,
+  `auth.TokenGuard`, `auth.new_token`, `auth.auth_url`, `auth.write_redirect`,
+  `auth.SIGN_IN_AGAIN`; Task 10's `media.MediaTokens`, `media.route`; Task 5's `LocalBackend`;
+  Task 4's `jobs.Queue`; Task 3's `cache.from_config`; `commands._common` (`CommandError`,
+  `Output`, `fail`, `load`); `engines.clients.KeyRing`, `quiet_libraries`; `media.tools.Tools`.
+- Produces:
+  - `runtime.Runtime`, a frozen dataclass: `backend: LocalBackend`, `queue: Queue`,
+    `media: MediaTokens`, `config: Config`, `keys: KeyRing`. `runtime.configure(rt: Runtime | None)
+    -> None` (None forgets it, for tests); `runtime.current() -> Runtime` (RuntimeError before
+    `configure`); `runtime.build(config: Config, *, tools: Tools | None = None, keys: KeyRing |
+    None = None, cache: Cache | None = None) -> Runtime` (defaults: `Tools.find()`, `KeyRing()`,
+    `cache.from_config(config)`). The queue's runner, `runtime._no_jobs`, fails every job without
+    running anything: Task 19 gives the queue the pipeline.
+  - `app.create_app(rt: Runtime, *, token: str, port: int, shiny_app: ASGIApp) -> ASGIApp`: a
+    FastAPI app with `/docs`, `/redoc` and `/openapi.json` off; `GET /healthz` answers
+    `{"ok": true}` and nothing more; Task 9's `/auth` routes and Task 10's `/media/{token}` come
+    before `shiny_app`, mounted at "/" last; wrapped as `HostGuard(WriteGuard(TokenGuard(api),
+    HOSTS), HOSTS)` with `app.HOSTS = frozenset({"127.0.0.1"})`; its lifespan closes the job
+    queue at shutdown, off the event loop. A Starlette mount passes no lifespan events on, so
+    shutdown work for the Shiny side goes in this lifespan.
+  - `vid2sub.web.WWW`: `src/vid2sub/web/www/`, the built frontend's folder.
+  - `vid2sub serve [--port N] [--no-browser] [--config PATH]`: exits 69 with "build the frontend
+    first" when `WWW / "ui.js"` is missing (before reading vid2sub.toml or binding), and 69 for a
+    port it can't have; binds 127.0.0.1 only, on `--port`, else `[server] port` (8765), 0 taking
+    any free port; prints the link `auth.auth_url(port, token)` only to a terminal, and otherwise
+    the redirect file's path; opens the browser on the redirect file (`webbrowser`, from a thread)
+    unless `--no-browser` or `[server] open_browser = false`; Ctrl-C exits 0 and SIGTERM 143, and
+    the redirect file's folder is removed on every exit; shutdown waits at most `serve.GRACE` (3)
+    seconds for open responses; uvicorn's access log off, proxy headers not believed.
+  - `serve.bind(port: int) -> socket.socket`; `serve.serve(app: ASGIApp, sock: socket.socket, *,
+    token: str, open_browser: bool, out: Output) -> int`; `serve.uvicorn_config(app) ->
+    uvicorn.Config`; `serve.shiny_app() -> ASGIApp` (imports `vid2sub.web.server.app`, which
+    Task 12 creates: until then `serve` stops at the frontend check).
+- Behaviour later tasks rely on: a harness whose stdout isn't a terminal reads the link from the
+  redirect file whose path `serve` prints on the line after "Open the editor by opening this
+  file in a browser" (Task 12's e2e conftest does).
 
-<!-- steps: written in the next pass -->
+Round 11c is the independent Tier 1 review this listing's build had: its two Important findings
+and the reading for Dan, fixed with tests that failed first. Build it as a round, as written, so
+the commits match the listing.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+
+#### Round 11a: the runtime and the app shell
+
+- [ ] **Step 1: Write the failing test,** `tests/test_web_app.py`:
+
+```python
+"""The app shell: `/healthz`, `/auth` and `/media/` come before the Shiny app mounted at "/", the
+whole engine sits inside HostGuard, WriteGuard and TokenGuard, FastAPI's own pages are off, and
+stopping the engine closes the job queue (spec §19.1, §6.1, §6.2, §17.1; S23, S24, S25)."""
+
+import json
+
+import pytest
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route, WebSocketRoute
+from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+
+from vid2sub import cache as caching
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.jobs import Queue
+from vid2sub.media.tools import Tools
+from vid2sub.web import auth, runtime
+from vid2sub.web.app import create_app
+from vid2sub.web.backend import LocalBackend
+from vid2sub.web.guards import CSP
+from vid2sub.web.media import MediaTokens
+
+PORT = 8765
+TOKEN = "t" * 43  # as long as a real token, and plainly not one (the leak scan agrees)
+BASE = f"http://127.0.0.1:{PORT}"
+# In full: the test client joins a bare path onto ws://testserver, which gets no cookie.
+WS = f"ws://127.0.0.1:{PORT}/websocket/"
+JSON = {"Content-Type": "application/json"}
+PAGE = {"Origin": BASE, "Sec-Fetch-Site": "same-origin"}  # what the engine's own page sends
+
+
+async def _page(request):
+    return PlainTextResponse("shiny")
+
+
+async def _echo(websocket):
+    await websocket.accept()
+    await websocket.send_text("hello")
+    await websocket.close()
+
+
+def _shiny() -> Starlette:
+    """Stands in for the Shiny app: it answers every path, as an app mounted at "/" does."""
+    return Starlette(routes=[WebSocketRoute("/websocket/", _echo), Route("/{rest:path}", _page)])
+
+
+@pytest.fixture
+def rt(tmp_path):
+    made = runtime.build(Config(), tools=Tools(None, None, None), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=0))
+    yield made
+    made.queue.close()
+
+
+@pytest.fixture
+def client(rt):
+    with TestClient(create_app(rt, token=TOKEN, port=PORT, shiny_app=_shiny()),
+                    base_url=BASE) as c:
+        yield c
+
+
+def _sign_in(client):
+    r = client.post("/auth", content=json.dumps({"token": TOKEN}), headers={**JSON, **PAGE})
+    assert r.status_code == 204
+    return r
+
+
+def test_healthz_answers_ok_and_nothing_more_without_the_cookie(client):
+    r = client.get("/healthz")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    assert r.headers["content-security-policy"] == CSP
+
+
+@pytest.mark.parametrize("path", ["/", "/editor", "/media/x", "/docs", "/openapi.json",
+                                  "/healthz/", "/auth/x", "/lib/shiny-1.8.0/shiny.js"])
+def test_every_other_path_needs_the_launch_cookie(client, path):
+    r = client.get(path)
+    assert r.status_code == 401
+    assert r.text == auth.SIGN_IN_AGAIN
+    expected = "sandbox" if path.startswith("/media/") else CSP  # MEDIA_HEADERS there
+    assert r.headers["content-security-policy"] == expected
+
+
+def test_the_websocket_needs_the_launch_cookie(client):
+    with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect(
+            WS, headers={"Origin": BASE}):
+        pass
+    assert refused.value.code == 1008
+
+
+def test_a_signed_in_browser_reaches_the_shiny_app_and_its_websocket(client):
+    _sign_in(client)
+    assert client.get("/").text == "shiny"
+    assert client.get("/editor").text == "shiny"
+    with client.websocket_connect(WS, headers={"Origin": BASE}) as ws:
+        assert ws.receive_text() == "hello"
+
+
+@pytest.mark.parametrize("path", ["/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"])
+def test_fastapis_own_pages_are_off(client, path):
+    # Swagger UI and ReDoc load scripts from a CDN, which the CSP and spec §6.3 forbid.
+    _sign_in(client)
+    assert client.get(path).text == "shiny"
+
+
+def test_the_shells_routes_come_before_the_shiny_app(client, rt, tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"0123456789")
+    token = rt.media.issue(clip, owner="e1")
+    _sign_in(client)
+    r = client.get(f"/media/{token}")
+    assert r.status_code == 200 and r.content == b"0123456789"
+    assert r.headers["content-security-policy"] == "sandbox"
+    assert client.get("/healthz").json() == {"ok": True}
+    assert "<script src=\"/auth.js\"></script>" in client.get("/auth").text
+    assert client.get("/media/unknown").status_code == 404  # the route, not the Shiny app
+
+
+def test_the_guards_wrap_the_whole_engine(client):
+    # HostGuard: a name the engine isn't called by, as DNS rebinding sends it.
+    assert client.get("/healthz", headers={"Host": "evil.example"}).status_code == 400
+    # WriteGuard: a sign-in sent from a page on another local port, and one that isn't JSON.
+    other = client.post("/auth", content=json.dumps({"token": TOKEN}),
+                        headers={**JSON, "Origin": "http://127.0.0.1:9999",
+                                 "Sec-Fetch-Site": "same-site"})
+    assert other.status_code == 403 and "set-cookie" not in other.headers
+    charset = client.post("/auth", content=json.dumps({"token": TOKEN}),
+                          headers={"Content-Type": "application/json; charset=utf-8", **PAGE})
+    assert charset.status_code == 415
+    _sign_in(client)
+    # HostGuard: the cookie doesn't let another origin's page open the websocket.
+    with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect(
+            WS, headers={"Origin": "http://127.0.0.1:9999"}):
+        pass
+    assert refused.value.code == 1008
+
+
+def test_stopping_the_engine_closes_the_job_queue(rt):
+    with TestClient(create_app(rt, token=TOKEN, port=PORT, shiny_app=_shiny()), base_url=BASE):
+        rt.queue.jobs()  # open while the engine runs
+    with pytest.raises(RuntimeError, match="closed"):
+        rt.queue.submit(["/videos/a.mkv"])
+
+
+# ---- the runtime ------------------------------------------------------------------------------
+
+
+def test_current_needs_configure_first():
+    runtime.configure(None)
+    with pytest.raises(RuntimeError, match="configure"):
+        runtime.current()
+
+
+def test_configure_sets_what_current_returns(rt):
+    runtime.configure(rt)
+    try:
+        assert runtime.current() is rt
+    finally:
+        runtime.configure(None)
+
+
+def test_build_puts_one_backend_queue_and_token_store_together(tmp_path):
+    config, keys = Config(), KeyRing(environ={})
+    cache = Cache(tmp_path / "cache", max_bytes=0)
+    rt = runtime.build(config, tools=Tools(None, None, None), keys=keys, cache=cache)
+    try:
+        assert isinstance(rt.backend, LocalBackend)
+        assert (rt.backend.config, rt.backend.keys, rt.backend.cache) == (config, keys, cache)
+        assert isinstance(rt.queue, Queue) and isinstance(rt.media, MediaTokens)
+        assert (rt.config, rt.keys) == (config, keys)
+    finally:
+        rt.queue.close()
+
+
+def test_the_cache_follows_cache_max_gb_from_vid2sub_toml(tmp_path, monkeypatch):
+    monkeypatch.setattr(caching, "default_root", lambda: tmp_path / "cache")
+    config = Config.model_validate({"defaults": {"cache_max_gb": 3}})
+    rt = runtime.build(config, tools=Tools(None, None, None), keys=KeyRing(environ={}))
+    try:
+        assert rt.backend.cache.root == tmp_path / "cache"
+        assert rt.backend.cache.max_bytes == 3 * caching.GB
+    finally:
+        rt.queue.close()
+```
+
+- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_web_app.py -q`. Expected:
+  `E   ImportError: cannot import name 'runtime' from 'vid2sub.web' (…/src/vid2sub/web/__init__.py)`,
+  then `1 error in 0.34s`.
+- [ ] **Step 3: Write the code,** `src/vid2sub/web/runtime.py`:
+
+```python
+"""The engine's running parts, made once per launch by `vid2sub serve` and read by the Shiny
+server (spec §19.1).
+
+As recordings' runtime does: Shiny's app object is made when its module is imported, and its
+server function runs once per browser session, so the server finds the backend, the job queue
+and the media tokens here (`current()`), and `serve` calls `configure()` before it imports the
+Shiny app. There is one of each per launch: the backend holds the open episodes, the queue holds
+the jobs, which belong to the engine rather than a tab (spec §17.1), and the media tokens die
+with the engine (the Phase 2 plan's Decision 1). Until the Jobs page gives the queue the
+pipeline (S36), a job that somehow reaches it fails without running anything.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from vid2sub import cache as caching
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.jobs import Queue
+from vid2sub.media.tools import Tools
+from vid2sub.pipeline import Event, InputResult
+from vid2sub.web.backend import LocalBackend
+from vid2sub.web.media import MediaTokens
+
+
+@dataclass(frozen=True)
+class Runtime:
+    backend: LocalBackend
+    queue: Queue
+    media: MediaTokens
+    config: Config
+    keys: KeyRing
+
+
+_current: Runtime | None = None
+
+
+def configure(rt: Runtime | None) -> None:
+    """Make `rt` the launch's runtime; None forgets it (tests)."""
+    global _current
+    _current = rt
+
+
+def current() -> Runtime:
+    if _current is None:
+        raise RuntimeError("vid2sub.web.runtime.configure() was not called")
+    return _current
+
+
+def build(config: Config, *, tools: Tools | None = None, keys: KeyRing | None = None,
+          cache: Cache | None = None) -> Runtime:
+    """One launch's parts: the tools found on PATH, the keys from the environment, and the cache
+    that `[defaults] cache_max_gb` caps, unless the caller gives its own."""
+    tools = tools if tools is not None else Tools.find()
+    keys = keys if keys is not None else KeyRing()
+    cache = cache if cache is not None else caching.from_config(config)
+    return Runtime(backend=LocalBackend(config, tools, keys, cache), queue=Queue(_no_jobs),
+                   media=MediaTokens(), config=config, keys=keys)
+
+
+def _no_jobs(source: str, events: Event, cancelled: Callable[[], bool]) -> InputResult:
+    raise RuntimeError("this engine has no job runner")
+```
+
+  and `src/vid2sub/web/app.py`:
+
+```python
+"""The app shell: `/auth`, `/healthz` and `/media/{token}`, with the Shiny app mounted at "/"
+last, and the whole engine wrapped in the guards (spec §19.1, §6.1, §6.2).
+
+As recordings' create_app does (packages/ui/src/recordings_ui/app.py at 8deb039): a FastAPI app
+whose own routes win because the Shiny mount comes after them, and guards around everything,
+the Shiny app and its websocket included. vid2sub adds the launch token, so the order is
+`HostGuard(WriteGuard(TokenGuard(api)))`: a wrong name is refused before anything else, every
+response carries the security headers, and only then is the cookie asked for. FastAPI's own
+pages (`/docs`, `/redoc`, `/openapi.json`) are off: they load scripts from a CDN, and the engine
+makes no third-party requests (§6.3). `/healthz` says only `{"ok": true}` (§6.1). The Shiny app
+is passed in, made by its own module once `runtime.configure()` has run. Stopping the engine
+closes the job queue, which cancels what waits and asks the running job to stop (§17.1).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from starlette.types import ASGIApp
+
+from vid2sub.web import auth, media
+from vid2sub.web.guards import LOCAL_HOSTS, HostGuard, WriteGuard
+from vid2sub.web.runtime import Runtime
+
+# The built frontend (`ui.js`, `ui.css` and the fonts), which `vid2sub serve` needs (spec §18).
+WWW = Path(__file__).parent / "www"
+
+
+def create_app(rt: Runtime, *, token: str, port: int, shiny_app: ASGIApp) -> ASGIApp:
+    @asynccontextmanager
+    async def lifespan(_api: FastAPI) -> AsyncIterator[None]:
+        yield
+        await asyncio.to_thread(rt.queue.close)  # bounded (5 s), and off the event loop
+
+    api = FastAPI(title="vid2sub", docs_url=None, redoc_url=None, openapi_url=None,
+                  lifespan=lifespan)
+
+    @api.get("/healthz")
+    def healthz() -> dict:
+        return {"ok": True}
+
+    api.router.routes.extend([*auth.routes(token, port), media.route(rt.media)])
+    api.mount("/", shiny_app)  # last, so the routes above win
+    return HostGuard(WriteGuard(auth.TokenGuard(api, token=token, port=port), LOCAL_HOSTS),
+                     LOCAL_HOSTS)
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_app.py -q`. Expected:
+  `22 passed`. Then `make check`. Expected: the suite's line, twice,
+  `895 passed, 2 skipped, 4 deselected` with nothing failed (873 before this task when this
+  listing was built), `All checks passed!` and `no leaks found`. Line length, which ruff's
+  default rules leave out: `uv run python -c "import sys; [print(f, i) for f in sys.argv[1:] for i, l in enumerate(open(f, encoding='utf-8'), 1) if len(l.rstrip()) > 100]" src/vid2sub/web/runtime.py src/vid2sub/web/app.py
+  tests/test_web_app.py` prints nothing.
+
+- [ ] **Step 5: Each guard fails its tests without its fix.** `git add src/vid2sub/web/runtime.py src/vid2sub/web/app.py tests/test_web_app.py`. Then,
+  for each row, make the change in `src/vid2sub/web/app.py`, run `uv run pytest tests/test_web_app.py -q`, see it fail, and
+  restore with `git checkout -- <the file>`. The last column is what this listing's build saw.
+
+| Guard | Change | To | Failed |
+|---|---|---|---|
+| TokenGuard | `HostGuard(WriteGuard(auth.TokenGuard(api, token=token, port=port), LOCAL_HOSTS), LOCAL_HOSTS)` | `HostGuard(WriteGuard(api, LOCAL_HOSTS), LOCAL_HOSTS)` | 9 |
+| HostGuard | `the same` | `WriteGuard(auth.TokenGuard(api, token=token, port=port), LOCAL_HOSTS)` | 1 |
+| WriteGuard | `the same` | `HostGuard(auth.TokenGuard(api, token=token, port=port), LOCAL_HOSTS)` | 11 |
+| FastAPI's pages off | `docs_url=None, redoc_url=None, openapi_url=None,` | `(removed)` | 4 |
+| routes before the mount | `the `extend` line, then `api.mount(...)`` | ``api.mount(...)` first` | 7 |
+| the queue closed | `await asyncio.to_thread(rt.queue.close)  # …` | `pass` | 1 |
+| /healthz says only ok | `return {"ok": True}` | `return {"ok": True, "port": port}` | 2 |
+
+- [ ] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the app shell serves /auth, /healthz and /media/ ahead of the Shiny app, inside HostGuard, WriteGuard and TokenGuard
+
+src/vid2sub/web/runtime.py holds one launch's parts (spec §19.1): the LocalBackend, the job
+queue, the media tokens, the config and the keys, made by build() and set by configure() before
+the Shiny app is imported, as recordings' runtime is. Until the Jobs page gives the queue the
+pipeline (S36), a job that reaches it fails without running anything. src/vid2sub/web/app.py's
+create_app() follows recordings' create_app (packages/ui/src/recordings_ui/app.py at 8deb039): a
+FastAPI app whose routes (/healthz, Task 9's /auth routes, Task 10's /media/{token}) come before
+the Shiny app mounted at "/", wrapped as HostGuard(WriteGuard(TokenGuard(api))). /healthz says
+only {"ok": true} (spec §6.1); FastAPI's /docs, /redoc and /openapi.json are off, since Swagger UI
+and ReDoc load scripts from a CDN (§6.3); stopping the engine closes the job queue, off the event
+loop (§17.1). app.WWW names the built frontend's folder for serve.
+
+The new test failed first with: ImportError: cannot import name 'runtime' from 'vid2sub.web'.
+Each guard was then reverted in turn and its tests failed: TokenGuard left out (9 failed),
+HostGuard left out (1), WriteGuard left out (11), FastAPI's pages back on (4), the Shiny app
+mounted before the routes (7), the queue left open at shutdown (1), /healthz saying more (2).
+
+Docs read: FastAPI's applications.py docstrings for docs_url, redoc_url, openapi_url (None turns
+each off) and lifespan, and its routes parameter (deprecated in FastAPI, so the Starlette routes
+go on api.router.routes); Starlette's routing page (Mount, the path convertor) and TestClient
+(lifespan runs inside the with block).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 11
+Co-Authored-By: <the model's own line>
+```
+
+  `git commit -F .git/COMMIT_MSG` (the three files are staged from the step before), then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 11b: `vid2sub serve`
+
+- [ ] **Step 7: Write the failing test,** `tests/test_cli_serve.py`. It runs the real CLI in a
+  child process, with a stand-in Shiny app, since `vid2sub.web.server` is Task 12's:
+
+```python
+"""`vid2sub serve` binds 127.0.0.1 only, prints the link that signs a browser in, opens the
+browser on the redirect file rather than the token, and removes that file's folder when it stops;
+the token reaches no log and no command line (spec §6.1, §6.8, §18.1; S23).
+
+The real CLI runs in a child process, as recordings' SIGTERM test runs its server, with a stand-in
+for the Shiny app (the frontend and the Shiny server aren't needed to test the shell). Its
+TMPDIR is the test's own, so the redirect file's folder can be watched. Signals and an executable
+BROWSER script are POSIX: Windows gets its own run in Phase 3.
+"""
+
+import json
+import os
+import re
+import signal
+import socket
+import stat
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlsplit
+
+import pytest
+
+from vid2sub import exitcodes
+from vid2sub.cli import main
+from vid2sub.commands import serve
+from vid2sub.web import auth
+
+POSIX = pytest.mark.skipif(os.name == "nt", reason="POSIX signals and an executable script")
+LINK = re.compile(r"http://127\.0\.0\.1:(\d+)/auth#t=([A-Za-z0-9_-]{43})")
+# The child: the real `vid2sub serve`, with `www/` pointing at a folder holding a ui.js, and a
+# stand-in for the Shiny app.
+CHILD = r"""
+import sys
+from pathlib import Path
+
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+
+from vid2sub.cli import main
+from vid2sub.commands import serve
+
+
+async def page(request):
+    return PlainTextResponse("shiny")
+
+
+serve.WWW = Path(sys.argv[1])
+serve.shiny_app = lambda: Starlette(routes=[Route("/{rest:path}", page)])
+raise SystemExit(main(sys.argv[2:]))
+"""
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@dataclass
+class Serving:
+    proc: subprocess.Popen
+    log: Path
+    tmp: Path  # the child's TMPDIR
+    port: int
+    token: str
+
+    def get(self, path: str, data: bytes | None = None, headers: dict | None = None):
+        request = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=data,
+                                         headers=headers or {})
+        try:
+            with urllib.request.urlopen(request, timeout=10) as r:
+                return r.status, dict(r.headers), r.read()
+        except urllib.error.HTTPError as err:
+            return err.code, dict(err.headers), err.read()
+
+    def stop(self, sig: int = signal.SIGINT) -> int:
+        if os.name == "nt":
+            self.proc.terminate()
+        else:
+            self.proc.send_signal(sig)
+        try:
+            return self.proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            raise
+
+    def folders(self) -> list[Path]:
+        return sorted(self.tmp.glob("vid2sub-*"))
+
+
+@pytest.fixture
+def start(tmp_path):
+    started: list[Serving] = []
+
+    def run(*args: str, toml: str = "", env: dict | None = None) -> Serving:
+        www = tmp_path / "www"
+        www.mkdir(exist_ok=True)
+        (www / "ui.js").write_text("// built\n", encoding="utf-8")
+        scratch = tmp_path / f"tmp{len(started)}"
+        scratch.mkdir()
+        config = tmp_path / f"vid2sub{len(started)}.toml"
+        config.write_text(toml, encoding="utf-8")
+        log = tmp_path / f"serve{len(started)}.log"
+        child_env = {k: v for k, v in os.environ.items() if k != "BROWSER"}
+        child_env.update({"TMPDIR": str(scratch), **(env or {})})
+        with log.open("wb") as out:
+            proc = subprocess.Popen(
+                [sys.executable, "-c", CHILD, str(www), "serve", "--config", str(config), *args],
+                env=child_env, stdout=out, stderr=subprocess.STDOUT)
+        deadline = time.monotonic() + 60
+        while not (found := LINK.search(log.read_text(encoding="utf-8", errors="replace"))):
+            assert proc.poll() is None, log.read_text(encoding="utf-8", errors="replace")
+            assert time.monotonic() < deadline, "no link printed in 60 s"
+            time.sleep(0.1)
+        serving = Serving(proc, log, scratch, int(found.group(1)), found.group(2))
+        started.append(serving)
+        while True:  # the socket listens before the link is printed; wait for the app too
+            try:
+                if serving.get("/healthz")[0] == 200:
+                    break
+            except OSError:
+                pass
+            assert time.monotonic() < deadline, "healthz never answered"
+            time.sleep(0.1)
+        return serving
+
+    yield run
+    for serving in started:
+        if serving.proc.poll() is None:
+            serving.proc.kill()
+            serving.proc.wait()
+
+
+def _browser(tmp_path: Path) -> tuple[Path, Path]:
+    """An executable BROWSER that records the command line it was run with, as `ps` shows it."""
+    script = tmp_path / "browser"
+    record = tmp_path / "browser.json"
+    script.write_text(f"#!{sys.executable}\nimport json, sys\n"
+                      f"open({str(record)!r}, 'w').write(json.dumps(sys.argv))\n",
+                      encoding="utf-8")
+    script.chmod(0o755)
+    return script, record
+
+
+def _sign_in(serving: Serving, token: str) -> tuple[int, dict, bytes]:
+    return serving.get("/auth", json.dumps({"token": token}).encode(),
+                       {"Content-Type": "application/json"})
+
+
+def test_serve_refuses_without_the_built_frontend(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(serve, "WWW", tmp_path / "www")  # no ui.js
+    broken = tmp_path / "vid2sub.toml"
+    broken.write_text("[server\n", encoding="utf-8")  # checked after the frontend
+    assert main(["serve", "--config", str(broken)]) == exitcodes.UNAVAILABLE
+    assert "build the frontend first" in capsys.readouterr().err
+
+
+def test_a_port_in_use_exits_69_and_says_how_to_pick_another(tmp_path, monkeypatch, capsys):
+    (tmp_path / "www").mkdir()
+    (tmp_path / "www" / "ui.js").write_text("// built\n", encoding="utf-8")
+    monkeypatch.setattr(serve, "WWW", tmp_path / "www")
+    config = tmp_path / "vid2sub.toml"
+    config.write_text("", encoding="utf-8")
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        port = taken.getsockname()[1]
+        code = main(["serve", "--port", str(port), "--no-browser", "--config", str(config)])
+    assert code == exitcodes.UNAVAILABLE
+    err = capsys.readouterr().err
+    assert f"port {port}" in err and "--port" in err
+
+
+def test_bind_listens_on_127_0_0_1_only():
+    sock = serve.bind(0)
+    try:
+        assert sock.family == socket.AF_INET
+        assert sock.getsockname()[0] == "127.0.0.1"
+        with socket.create_connection(sock.getsockname(), timeout=5):
+            pass  # listening already: a browser opened now waits rather than being refused
+    finally:
+        sock.close()
+
+
+def test_uvicorn_keeps_no_access_log_and_believes_no_proxy_headers():
+    config = serve.uvicorn_config(lambda scope, receive, send: None)
+    assert config.access_log is False
+    assert config.proxy_headers is False
+    assert config.server_header is False
+
+
+@pytest.mark.parametrize("value", ["-1", "65536", "http", "80.5"])
+def test_port_must_be_a_port_number(value, capsys):
+    with pytest.raises(SystemExit) as exited:
+        main(["serve", "--port", value])
+    assert exited.value.code == exitcodes.USAGE
+    assert "a port is a number from 0 to 65535" in capsys.readouterr().err
+
+
+def test_the_printed_link_signs_a_browser_in_on_the_port_given(start):
+    configured, given = _free_port(), _free_port()
+    serving = start("--port", str(given), "--no-browser", toml=f"[server]\nport = {configured}\n")
+    assert serving.port == given  # --port wins over vid2sub.toml
+    assert serving.get("/healthz")[2] == b'{"ok":true}'
+    assert serving.get("/")[0] == 401
+    assert _sign_in(serving, "t" * 43)[0] == 403
+    status, headers, _ = _sign_in(serving, serving.token)
+    assert status == 204
+    cookie = headers["set-cookie"].split(";")[0]
+    assert cookie.startswith(f"vid2sub-{given}=")
+    status, _, body = serving.get("/", headers={"Cookie": cookie})
+    assert (status, body) == (200, b"shiny")
+    serving.stop()
+
+
+@POSIX
+def test_the_browser_opens_the_redirect_file_and_ctrl_c_removes_its_folder(start, tmp_path):
+    script, record = _browser(tmp_path)
+    port = _free_port()
+    serving = start(toml=f"[server]\nport = {port}\n", env={"BROWSER": str(script)})
+    assert serving.port == port  # [server] port from vid2sub.toml
+    deadline = time.monotonic() + 30
+    while not record.exists():
+        assert time.monotonic() < deadline, "the browser was never opened"
+        time.sleep(0.1)
+    argv = json.loads(record.read_text(encoding="utf-8"))
+    assert serving.token not in " ".join(argv)  # the browser's command line names a file
+    page = Path(urllib.request.url2pathname(urlsplit(argv[1]).path))
+    assert page.name == "open.html" and page.parent.name.startswith("vid2sub-")
+    assert page.parent.parent.resolve() == serving.tmp.resolve()
+    assert stat.S_IMODE(page.stat().st_mode) == 0o600
+    assert stat.S_IMODE(page.parent.stat().st_mode) == 0o700
+    assert auth.auth_url(port, serving.token) in page.read_text(encoding="utf-8")
+    assert serving.stop(signal.SIGINT) == exitcodes.OK
+    assert serving.folders() == []
+
+
+@POSIX
+def test_the_token_reaches_no_log_or_command_line_and_sigterm_removes_the_folder(start):
+    serving = start("--port", "0", "--no-browser")
+    ps = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(serving.proc.pid)],
+                        capture_output=True, text=True, check=True).stdout
+    assert "serve" in ps and serving.token not in ps
+    _sign_in(serving, "t" * 43)
+    status, headers, _ = _sign_in(serving, serving.token)
+    assert status == 204
+    cookie = headers["set-cookie"].split(";")[0]
+    serving.get("/", headers={"Cookie": cookie})
+    serving.get("/media/unknown", headers={"Cookie": cookie})
+    assert len(serving.folders()) == 1
+    assert serving.stop(signal.SIGTERM) == 128 + signal.SIGTERM
+    assert serving.folders() == []
+    lines = serving.log.read_text(encoding="utf-8").splitlines()
+    assert [line for line in lines if serving.token in line] == [
+        f"  {auth.auth_url(serving.port, serving.token)}"]  # printed once, for the terminal
+    assert not [line for line in lines if "GET /" in line or "POST /" in line]  # no access log
+
+
+@POSIX
+@pytest.mark.parametrize(("args", "toml"), [((), "[server]\nopen_browser = false\n"),
+                                            (("--no-browser",), "")])
+def test_open_browser_false_or_no_browser_opens_nothing(start, tmp_path, args, toml):
+    script, record = _browser(tmp_path)
+    serving = start("--port", "0", *args, toml=toml, env={"BROWSER": str(script)})
+    time.sleep(1)  # the browser is opened just after the link is printed, if at all
+    assert not record.exists()
+    assert len(serving.folders()) == 1  # the link still works by hand
+    serving.stop()
+```
+
+- [ ] **Step 8: Run it; watch it fail.** `uv run pytest tests/test_cli_serve.py -q`. Expected:
+  `E   ImportError: cannot import name 'serve' from 'vid2sub.commands'
+  (…/src/vid2sub/commands/__init__.py)`, then `1 error`.
+- [ ] **Step 9: Write the code,** `src/vid2sub/commands/serve.py`:
+
+```python
+"""`vid2sub serve`: start the local web app on 127.0.0.1 and open the browser through the launch
+token's redirect file (spec §18.1, §6.1, §19.1).
+
+The engine binds 127.0.0.1 only (§6.1), on `--port`, else `[server] port` (8765); 0 takes any free
+port. The socket is bound and listening before anything is printed or opened, so the link names
+the real port and a browser that loads it early waits instead of being refused. Each launch makes
+a new token. Its link (`/auth#t=<token>`) is printed to the terminal for opening by hand, and the
+browser, unless `--no-browser` or `[server] open_browser = false`, is opened on a redirect file
+holding it (mode 0600 in a private folder), so `ps` shows only that file's path. A browser that
+doesn't come back doesn't hold up the engine: it is opened from a thread, as Jupyter does. The
+folder goes when the engine stops, on Ctrl-C and SIGTERM too: uvicorn re-raises the signal after
+its own shutdown, and SIGTERM's default action would skip `finally`, so it becomes a normal exit
+with status 143 (recordings' __main__ does the same). uvicorn's access log is off and it trusts
+no proxy headers, since none is in front of it (§6.8, §6.2); the token goes to no log. Without
+the built frontend (`www/ui.js`), serve refuses before it reads or binds anything (§18, §23.5).
+The Shiny app is imported only once `runtime.configure()` has run, as recordings imports it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import atexit
+import os
+import shutil
+import signal
+import socket
+import sys
+import threading
+import webbrowser
+from pathlib import Path
+
+import uvicorn
+from starlette.types import ASGIApp
+
+from vid2sub import exitcodes
+from vid2sub.commands._common import CommandError, Output, fail, load
+from vid2sub.web import auth, runtime
+from vid2sub.web.app import WWW, create_app
+
+HOST = "127.0.0.1"
+
+
+def add_parser(sub) -> None:
+    p = sub.add_parser("serve", help="start the editor in your browser")
+    p.add_argument("--port", type=_port, metavar="N",
+                   help="the port on 127.0.0.1 (default: [server] port in vid2sub.toml, 8765; "
+                        "0 takes any free port)")
+    p.add_argument("--no-browser", action="store_true",
+                   help="print the link to open, but don't open a browser")
+    p.add_argument("--config", metavar="PATH", help="the vid2sub.toml to use")
+    p.set_defaults(handler=run)
+
+
+def _port(value: str) -> int:
+    if not value.isdigit() or int(value) > 65535:
+        raise argparse.ArgumentTypeError("a port is a number from 0 to 65535")
+    return int(value)
+
+
+def shiny_app() -> ASGIApp:
+    """The Shiny app, imported now: its module makes it at import, from `www/`, and its server
+    reads `runtime.current()`."""
+    from vid2sub.web.server import app
+
+    return app
+
+
+def bind(port: int) -> socket.socket:
+    """A socket listening on 127.0.0.1 and `port` (0: any free one); CommandError (69) if the
+    port can't be had."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if os.name != "nt":  # on Windows, SO_REUSEADDR would let another program share the port
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind((HOST, port))
+        sock.listen(128)
+    except OSError as err:
+        sock.close()
+        raise CommandError(exitcodes.UNAVAILABLE,
+                           f"port {port} can't be used on {HOST}"
+                           + (f" ({err.strerror})" if err.strerror else ""),
+                           "is vid2sub already running? Pick another port with --port N, "
+                           "or --port 0 for any free one") from None
+    return sock
+
+
+def run(args: argparse.Namespace) -> int:
+    out = Output(False)
+    try:
+        if not (WWW / "ui.js").is_file():
+            raise CommandError(exitcodes.UNAVAILABLE, "build the frontend first",
+                               "make build (it needs Node 22 or later), then vid2sub serve")
+        config = load(args)
+        sock = bind(config.server.port if args.port is None else args.port)
+    except CommandError as err:
+        return fail(out, err)
+    rt = runtime.build(config)
+    runtime.configure(rt)
+    port = sock.getsockname()[1]
+    token = auth.new_token()
+    app = create_app(rt, token=token, port=port, shiny_app=shiny_app())
+    browser = config.server.open_browser and not args.no_browser
+    return serve(app, sock, token=token, open_browser=browser, out=out)
+
+
+def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
+          out: Output) -> int:
+    """Run `app` on the listening `sock` until Ctrl-C or SIGTERM, with the link printed and, if
+    asked, the browser opened on the redirect file. Blocks; call it from the main thread."""
+    port = sock.getsockname()[1]
+    link = auth.auth_url(port, token)
+    page = auth.write_redirect(link)
+    atexit.register(shutil.rmtree, page.parent, ignore_errors=True)  # if `finally` never runs
+    previous = signal.signal(signal.SIGTERM, _exit_on_sigterm)
+    try:
+        out.say(f"vid2sub is running on {HOST}, port {port}. Open the editor with this link "
+                "(it works until vid2sub stops):")
+        out.say(f"  {link}")
+        out.say("Ctrl-C stops vid2sub.")
+        if open_browser:
+            threading.Thread(target=_open, args=(page, out), name="vid2sub-browser",
+                             daemon=True).start()
+        uvicorn.Server(uvicorn_config(app)).run(sockets=[sock])
+    except KeyboardInterrupt:
+        pass
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        shutil.rmtree(page.parent, ignore_errors=True)
+        sock.close()
+    return exitcodes.OK
+
+
+def uvicorn_config(app: ASGIApp) -> uvicorn.Config:
+    """No access log (§6.8), no proxy headers believed (no proxy is in front of the engine, and
+    X-Forwarded-Proto would change the scheme the guards compare Origin with), no Server header,
+    and only warnings from uvicorn itself: the terminal shows vid2sub's lines."""
+    return uvicorn.Config(app, access_log=False, proxy_headers=False, server_header=False,
+                          log_level="warning", lifespan="on")
+
+
+def _exit_on_sigterm(signum: int, frame: object) -> None:
+    sys.exit(128 + signal.SIGTERM)
+
+
+def _open(page: Path, out: Output) -> None:
+    try:
+        opened = webbrowser.open(page.as_uri())
+    except webbrowser.Error:
+        opened = False
+    if not opened:
+        out.warn("vid2sub couldn't open a browser: open the link above by hand")
+```
+
+  In `src/vid2sub/cli.py`, replace
+
+```python
+COMMAND_MODULES: list[str] = [
+    "run", "detect", "translate", "import_", "write", "models", "doctor", "config", "cache",
+]
+```
+
+  with
+
+```python
+COMMAND_MODULES: list[str] = [
+    "run", "detect", "translate", "import_", "write", "models", "doctor", "config", "cache",
+    "serve",
+]
+```
+
+- [ ] **Step 10: Run the checks; they pass.** `uv run pytest tests/test_cli_serve.py -q`.
+  Expected: `13 passed in 7.74s` or so (each child process starts the CLI). Then `make check`.
+  Expected: `908 passed, 2 skipped, 4 deselected` twice, `All checks passed!`,
+  `no leaks found`; the line-length check on the three files prints nothing.
+
+- [ ] **Step 11: Each guard fails its tests without its fix.** `git add src/vid2sub/commands/serve.py src/vid2sub/cli.py tests/test_cli_serve.py`. Then,
+  for each row, make the change in `src/vid2sub/commands/serve.py`, run `uv run pytest tests/test_cli_serve.py -q`, see it fail, and
+  restore with `git checkout -- <the file>`. The last column is what this listing's build saw.
+
+| Guard | Change | To | Failed |
+|---|---|---|---|
+| 127.0.0.1 only | `sock.bind((HOST, port))` | `sock.bind(("0.0.0.0", port))` | 2 |
+| listening first | `sock.listen(128)` | `(removed)` | 1 |
+| no access log | `access_log=False, proxy_headers=False` | `access_log=True, proxy_headers=False` | 1 |
+| no proxy headers | `access_log=False, proxy_headers=False` | `access_log=False, proxy_headers=True` | 1 |
+| SIGTERM exits normally | `previous = signal.signal(signal.SIGTERM, _exit_on_sigterm)` | `previous = signal.getsignal(signal.SIGTERM)` | 1 |
+| the folder removed | `the `atexit.register(...)` line and the `shutil.rmtree(...)` in `finally`` | `both removed` | 2 |
+| the browser flags | `browser = config.server.open_browser and not args.no_browser` | `browser = True` | 2 |
+| [server] open_browser | `the same` | `browser = not args.no_browser` | 1 |
+| --port | `sock = bind(config.server.port if args.port is None else args.port)` | `sock = bind(config.server.port)` | 5 |
+| [server] port | `the same` | `sock = bind(args.port or 0)` | 1 |
+| the frontend first | `the `if not (WWW / "ui.js").is_file():` check before `config = load(args)`` | `after it` | 1 |
+
+- [ ] **Step 12: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(cli): 🤖 vid2sub serve binds 127.0.0.1 only, prints the sign-in link and opens the browser on a redirect file, never the token
+
+src/vid2sub/commands/serve.py (spec §18.1, §6.1, §19.1). Without the built frontend (www/ui.js) it
+exits 69 with "build the frontend first", before reading vid2sub.toml or binding (§18, §23.5).
+It binds and listens on 127.0.0.1 itself, on --port N, else [server] port (8765), with 0 taking
+any free port, so the printed link names the real port and an early browser waits rather than
+being refused; a port it can't have exits 69 and says how to pick another. Each launch makes a
+token (auth.new_token); the link auth.auth_url(port, token) is printed to the terminal, and,
+unless --no-browser or [server] open_browser = false, webbrowser opens auth.write_redirect's
+file from a thread (as Jupyter does), so the browser's command line and `ps` name only that file.
+Its folder is removed at exit: in `finally`, with atexit as a backstop, and on SIGTERM, which
+becomes sys.exit(143) because uvicorn re-raises the signal after its own shutdown and the default
+action would skip both (as recordings' __main__ does). Ctrl-C exits 0. uvicorn runs on that socket
+with its access log off, proxy headers not believed (nothing is in front of it, and
+X-Forwarded-Proto would change the scheme the guards compare Origin with), no Server header and
+only its warnings (§6.8, §6.2). runtime.configure() runs before the Shiny app is imported, as
+recordings does. cli.py registers the command.
+
+The new test failed first with: ImportError: cannot import name 'serve' from 'vid2sub.commands'.
+It runs the real CLI in a child process with a stand-in Shiny app and its own TMPDIR, as
+recordings' SIGTERM test does, and an executable BROWSER script that records its command line.
+Each guard was then reverted in turn and its tests failed: binding 0.0.0.0 (2 failed), not
+listening before the link is printed (1), the access log on (1), proxy headers believed (1),
+SIGTERM left to its default (1), the folder's removal left out of both `finally` and atexit (2),
+the browser opened whatever the flags (2), [server] open_browser ignored (1), --port ignored (5),
+[server] port ignored (1), the frontend checked after vid2sub.toml (1).
+
+Docs read: uvicorn's server.py (Server.run(sockets=...) serves already-bound sockets without
+logging a start line; capture_signals restores the previous handlers and re-raises the signal)
+and config.py (access_log, proxy_headers with forwarded_allow_ips defaulting to 127.0.0.1,
+server_header, log_level, bind_socket's SO_REUSEADDR); Python's webbrowser (BROWSER is tried
+first; open() returns False when no browser runs), signal (handlers only in the main thread) and
+socket pages.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 11
+Co-Authored-By: <the model's own line>
+```
+
+  `git commit -F .git/COMMIT_MSG` (the three files are staged from the step before), then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 11c: the review's fixes
+
+The listing's Tier 1 reviewer found: shutdown waited for every open response, so a paused
+video's stream kept Ctrl-C and SIGTERM from finishing and a SIGKILL then left the token's file
+behind (Important); `serve` never called `quiet_libraries()`, so `OPENAI_LOG` could put the
+openai logger at DEBUG (Important, spec §6.8); the link was printed to stdout whatever it was,
+so `vid2sub serve > log` put a live token in a file (for Dan: spec §18.1 says only "prints that
+URL for opening by hand"; the brief said the terminal only, which this round does); and Minor
+ones (the guards allowed localhost and ::1; nothing was cleaned up after a failure past `bind`;
+the SIGTERM handler's window; `--port ٣`; every command imported FastAPI; two test flakes).
+
+- [ ] **Step 13: Write the failing tests.** Replace `tests/test_cli_serve.py` with:
+
+```python
+"""`vid2sub serve` binds 127.0.0.1 only, prints the sign-in link to a terminal and only there,
+opens the browser on the redirect file rather than the token, and removes that file's folder
+whenever it stops; the token reaches no log and no command line (spec §6.1, §6.8, §18.1; S23).
+
+The real CLI runs in a child process, as recordings' SIGTERM test runs its server, with a stand-in
+for the Shiny app (the frontend and the Shiny server aren't needed to test the shell). Its
+TMPDIR is the test's own, so the redirect file's folder can be watched. Signals, a terminal and
+an executable BROWSER script are POSIX: Windows gets its own run in Phase 3.
+"""
+
+import json
+import logging
+import os
+import re
+import signal
+import socket
+import stat
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlsplit
+
+import pytest
+
+from vid2sub import exitcodes
+from vid2sub.cli import main
+from vid2sub.commands import serve
+from vid2sub.web import auth
+
+POSIX = pytest.mark.skipif(os.name == "nt", reason="POSIX signals, terminals and scripts")
+LINK = re.compile(r"http://127\.0\.0\.1:(\d+)/auth#t=([A-Za-z0-9_-]{43})")
+PAGE_LINE = re.compile(r"^  (.+open\.html)$", re.MULTILINE)  # the redirect file, when not a tty
+# The child: the real `vid2sub serve`, with `www/` pointing at a folder holding a ui.js, and a
+# stand-in for the Shiny app whose /stream never ends, as a paused video's stream doesn't.
+CHILD = r"""
+import asyncio
+import sys
+from pathlib import Path
+
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse, StreamingResponse
+from starlette.routing import Route
+
+from vid2sub.cli import main
+from vid2sub.commands import serve
+
+
+async def page(request):
+    return PlainTextResponse("shiny")
+
+
+async def forever():
+    while True:
+        yield b"x" * 65536
+        await asyncio.sleep(0.01)
+
+
+async def stream(request):
+    return StreamingResponse(forever(), media_type="application/octet-stream")
+
+
+serve.WWW = Path(sys.argv[1])
+serve.shiny_app = lambda: Starlette(routes=[Route("/stream", stream), Route("/{rest:path}", page)])
+raise SystemExit(main(sys.argv[2:]))
+"""
+
+
+def _free_ports(n: int) -> list[int]:
+    """`n` different free ports: held at once while they are picked, so none comes twice."""
+    socks = [socket.socket() for _ in range(n)]
+    try:
+        for s in socks:
+            s.bind(("127.0.0.1", 0))
+        return [s.getsockname()[1] for s in socks]
+    finally:
+        for s in socks:
+            s.close()
+
+
+@dataclass
+class Serving:
+    proc: subprocess.Popen
+    log: Path
+    tmp: Path  # the child's TMPDIR
+    port: int
+    token: str
+
+    def get(self, path: str, data: bytes | None = None, headers: dict | None = None):
+        request = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=data,
+                                         headers=headers or {})
+        try:
+            with urllib.request.urlopen(request, timeout=10) as r:
+                return r.status, dict(r.headers), r.read()
+        except urllib.error.HTTPError as err:
+            return err.code, dict(err.headers), err.read()
+
+    def stop(self, sig: int = signal.SIGINT) -> int:
+        if os.name == "nt":
+            self.proc.terminate()
+        else:
+            self.proc.send_signal(sig)
+        try:
+            return self.proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            raise
+
+    def folders(self) -> list[Path]:
+        return sorted(self.tmp.glob("vid2sub-*"))
+
+    def text(self) -> str:
+        return self.log.read_text(encoding="utf-8", errors="replace")
+
+
+def _child(tmp_path: Path, n: int, args: tuple[str, ...], toml: str, env: dict | None):
+    www = tmp_path / "www"
+    www.mkdir(exist_ok=True)
+    (www / "ui.js").write_text("// built\n", encoding="utf-8")
+    scratch = tmp_path / f"tmp{n}"
+    scratch.mkdir()
+    config = tmp_path / f"vid2sub{n}.toml"
+    config.write_text(toml, encoding="utf-8")
+    child_env = {k: v for k, v in os.environ.items() if k != "BROWSER"}
+    child_env.update({"TMPDIR": str(scratch), **(env or {})})
+    command = [sys.executable, "-c", CHILD, str(www), "serve", "--config", str(config), *args]
+    return command, child_env, scratch
+
+
+def _wait_for_health(serving: Serving, deadline: float) -> None:
+    while True:  # the socket listens before anything is printed; wait for the app too
+        try:
+            if serving.get("/healthz")[0] == 200:
+                return
+        except OSError:
+            pass
+        assert time.monotonic() < deadline, "healthz never answered"
+        time.sleep(0.1)
+
+
+@pytest.fixture
+def start(tmp_path):
+    """Starts `vid2sub serve` with its output in a file, as a log would be. The link is then not
+    printed, so it is read from the redirect file whose path is."""
+    started: list[Serving] = []
+
+    def run(*args: str, toml: str = "", env: dict | None = None) -> Serving:
+        command, child_env, scratch = _child(tmp_path, len(started), args, toml, env)
+        log = tmp_path / f"serve{len(started)}.log"
+        with log.open("wb") as out:
+            proc = subprocess.Popen(command, env=child_env, stdout=out, stderr=subprocess.STDOUT)
+        deadline = time.monotonic() + 60
+        while not (found := PAGE_LINE.search(log.read_text(encoding="utf-8", errors="replace"))):
+            assert proc.poll() is None, log.read_text(encoding="utf-8", errors="replace")
+            assert time.monotonic() < deadline, "no redirect file named in 60 s"
+            time.sleep(0.1)
+        link = LINK.search(Path(found.group(1)).read_text(encoding="utf-8"))
+        serving = Serving(proc, log, scratch, int(link.group(1)), link.group(2))
+        started.append(serving)
+        _wait_for_health(serving, deadline)
+        return serving
+
+    yield run
+    for serving in started:
+        if serving.proc.poll() is None:
+            serving.proc.kill()
+            serving.proc.wait()
+
+
+def _browser(tmp_path: Path) -> tuple[Path, Path]:
+    """An executable BROWSER that records the command line it was run with, as `ps` shows it.
+    It writes the record whole (a rename), so it is never seen half-written."""
+    script = tmp_path / "browser"
+    record = tmp_path / "browser.json"
+    script.write_text(f"#!{sys.executable}\nimport json, os, sys\n"
+                      f"open({str(record)!r} + '.part', 'w').write(json.dumps(sys.argv))\n"
+                      f"os.replace({str(record)!r} + '.part', {str(record)!r})\n",
+                      encoding="utf-8")
+    script.chmod(0o755)
+    return script, record
+
+
+def _sign_in(serving: Serving, token: str) -> tuple[int, dict, bytes]:
+    return serving.get("/auth", json.dumps({"token": token}).encode(),
+                       {"Content-Type": "application/json"})
+
+
+def _cookie(serving: Serving) -> str:
+    status, headers, _ = _sign_in(serving, serving.token)
+    assert status == 204
+    return headers["set-cookie"].split(";")[0]
+
+
+def test_serve_refuses_without_the_built_frontend(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(serve, "WWW", tmp_path / "www")  # no ui.js
+    broken = tmp_path / "vid2sub.toml"
+    broken.write_text("[server\n", encoding="utf-8")  # checked after the frontend
+    assert main(["serve", "--config", str(broken)]) == exitcodes.UNAVAILABLE
+    assert "build the frontend first" in capsys.readouterr().err
+
+
+def test_a_port_in_use_exits_69_and_says_how_to_pick_another(tmp_path, monkeypatch, capsys):
+    (tmp_path / "www").mkdir()
+    (tmp_path / "www" / "ui.js").write_text("// built\n", encoding="utf-8")
+    monkeypatch.setattr(serve, "WWW", tmp_path / "www")
+    config = tmp_path / "vid2sub.toml"
+    config.write_text("", encoding="utf-8")
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        port = taken.getsockname()[1]
+        code = main(["serve", "--port", str(port), "--no-browser", "--config", str(config)])
+    assert code == exitcodes.UNAVAILABLE
+    err = capsys.readouterr().err
+    assert f"port {port}" in err and "--port" in err
+
+
+def test_serve_keeps_the_model_libraries_loggers_at_warning(tmp_path, monkeypatch):
+    # Spec §6.8: OPENAI_LOG and CHATLAS_LOG are ignored, as every other command ignores them.
+    monkeypatch.setattr(serve, "WWW", tmp_path / "www")  # it stops at the frontend check
+    for name in ("openai", "httpx", "chatlas"):
+        logging.getLogger(name).setLevel(logging.DEBUG)
+    main(["serve"])
+    assert [logging.getLogger(n).level for n in ("openai", "httpx", "chatlas")] == [
+        logging.WARNING] * 3
+
+
+def test_a_failure_after_binding_leaves_nothing_running(tmp_path, monkeypatch):
+    (tmp_path / "www").mkdir()
+    (tmp_path / "www" / "ui.js").write_text("// built\n", encoding="utf-8")
+    monkeypatch.setattr(serve, "WWW", tmp_path / "www")
+
+    def broken():
+        raise RuntimeError("the Shiny app failed to load")
+
+    monkeypatch.setattr(serve, "shiny_app", broken)
+    (port,) = _free_ports(1)
+    with pytest.raises(RuntimeError, match="failed to load"):
+        main(["serve", "--port", str(port), "--no-browser", "--config", str(tmp_path / "x.toml")])
+    with socket.socket() as again:
+        again.bind(("127.0.0.1", port))  # the engine's socket was closed
+    from vid2sub.web import runtime
+
+    with pytest.raises(RuntimeError, match="closed"):
+        runtime.current().queue.submit(["/videos/a.mkv"])  # and its job queue stopped
+    runtime.configure(None)
+
+
+def test_bind_listens_on_127_0_0_1_only():
+    sock = serve.bind(0)
+    try:
+        assert sock.family == socket.AF_INET
+        assert sock.getsockname()[0] == "127.0.0.1"
+        with socket.create_connection(sock.getsockname(), timeout=5):
+            pass  # listening already: a browser opened now waits rather than being refused
+    finally:
+        sock.close()
+
+
+def test_uvicorn_keeps_no_access_log_believes_no_proxy_and_stops_within_seconds():
+    config = serve.uvicorn_config(lambda scope, receive, send: None)
+    assert config.access_log is False
+    assert config.proxy_headers is False
+    assert config.server_header is False
+    assert config.timeout_graceful_shutdown == 3
+
+
+@pytest.mark.parametrize("value", ["-1", "65536", "http", "80.5", "٣"])
+def test_port_must_be_a_port_number(value, capsys):
+    with pytest.raises(SystemExit) as exited:
+        main(["serve", "--port", value])
+    assert exited.value.code == exitcodes.USAGE
+    assert "a port is a number from 0 to 65535" in capsys.readouterr().err
+
+
+def test_the_link_signs_a_browser_in_on_the_port_given(start):
+    configured, given = _free_ports(2)
+    serving = start("--port", str(given), "--no-browser", toml=f"[server]\nport = {configured}\n")
+    assert serving.port == given  # --port wins over vid2sub.toml
+    assert serving.get("/healthz")[2] == b'{"ok":true}'
+    assert serving.get("/")[0] == 401
+    assert _sign_in(serving, "t" * 43)[0] == 403
+    cookie = _cookie(serving)
+    assert cookie.startswith(f"vid2sub-{given}=")
+    status, _, body = serving.get("/", headers={"Cookie": cookie})
+    assert (status, body) == (200, b"shiny")
+    serving.stop()
+
+
+@POSIX
+def test_a_terminal_gets_the_link_itself(tmp_path):
+    import pty
+
+    command, env, scratch = _child(tmp_path, 0, ("--port", "0", "--no-browser"), "", None)
+    leader, follower = pty.openpty()
+    proc = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL, stdout=follower,
+                            stderr=follower)
+    os.close(follower)
+    seen, deadline = b"", time.monotonic() + 60
+    try:
+        while not LINK.search(seen.decode(errors="replace")):
+            assert time.monotonic() < deadline, seen.decode(errors="replace")
+            seen += os.read(leader, 4096)
+        port, token = LINK.search(seen.decode()).groups()
+        assert len(list(scratch.glob("vid2sub-*"))) == 1
+        serving = Serving(proc, tmp_path / "unused.log", scratch, int(port), token)
+        _wait_for_health(serving, deadline)
+        assert _sign_in(serving, token)[0] == 204  # the link printed is the live one
+        assert serving.stop(signal.SIGINT) == exitcodes.OK
+        assert serving.folders() == []
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        os.close(leader)
+
+
+@POSIX
+def test_the_browser_opens_the_redirect_file_and_ctrl_c_removes_its_folder(start, tmp_path):
+    script, record = _browser(tmp_path)
+    (port,) = _free_ports(1)
+    serving = start(toml=f"[server]\nport = {port}\n", env={"BROWSER": str(script)})
+    assert serving.port == port  # [server] port from vid2sub.toml
+    deadline = time.monotonic() + 30
+    while not record.exists():
+        assert time.monotonic() < deadline, "the browser was never opened"
+        time.sleep(0.1)
+    argv = json.loads(record.read_text(encoding="utf-8"))
+    assert serving.token not in " ".join(argv)  # the browser's command line names a file
+    page = Path(urllib.request.url2pathname(urlsplit(argv[1]).path))
+    assert page.name == "open.html" and page.parent.name.startswith("vid2sub-")
+    assert page.parent.parent.resolve() == serving.tmp.resolve()
+    assert stat.S_IMODE(page.stat().st_mode) == 0o600
+    assert stat.S_IMODE(page.parent.stat().st_mode) == 0o700
+    assert auth.auth_url(port, serving.token) in page.read_text(encoding="utf-8")
+    assert serving.stop(signal.SIGINT) == exitcodes.OK
+    assert serving.folders() == []
+
+
+@POSIX
+def test_the_token_reaches_no_log_or_command_line_and_sigterm_removes_the_folder(start):
+    serving = start("--port", "0", "--no-browser")
+    ps = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(serving.proc.pid)],
+                        capture_output=True, text=True, check=True).stdout
+    assert "serve" in ps and serving.token not in ps
+    _sign_in(serving, "t" * 43)
+    cookie = _cookie(serving)
+    serving.get("/", headers={"Cookie": cookie})
+    serving.get("/media/unknown", headers={"Cookie": cookie})
+    assert len(serving.folders()) == 1
+    assert serving.stop(signal.SIGTERM) == 128 + signal.SIGTERM
+    assert serving.folders() == []
+    assert serving.token not in serving.text()  # output to a file names the redirect file
+
+
+@POSIX
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
+def test_a_stalled_response_doesnt_keep_the_engine_from_stopping(start, sig):
+    serving = start("--port", "0", "--no-browser")
+    cookie = _cookie(serving)
+    with socket.create_connection(("127.0.0.1", serving.port), timeout=10) as stalled:
+        stalled.sendall(f"GET /stream HTTP/1.1\r\nHost: 127.0.0.1:{serving.port}\r\n"
+                        f"Cookie: {cookie}\r\n\r\n".encode())
+        stalled.recv(1024)  # streaming; then never read again, as a paused video
+        began = time.monotonic()
+        code = serving.stop(sig)
+    assert time.monotonic() - began < 15
+    assert code == (exitcodes.OK if sig == signal.SIGINT else 128 + signal.SIGTERM)
+    assert serving.folders() == []
+
+
+@POSIX
+@pytest.mark.parametrize(("args", "toml"), [((), "[server]\nopen_browser = false\n"),
+                                            (("--no-browser",), "")])
+def test_open_browser_false_or_no_browser_opens_nothing(start, tmp_path, args, toml):
+    script, record = _browser(tmp_path)
+    serving = start("--port", "0", *args, toml=toml, env={"BROWSER": str(script)})
+    deadline = time.monotonic() + 3  # the browser opens just after the output, if at all
+    while time.monotonic() < deadline:
+        assert not record.exists()
+        time.sleep(0.1)
+    assert len(serving.folders()) == 1  # the redirect file still works by hand
+    serving.stop()
+```
+
+  In `tests/test_web_app.py`, replace
+
+```python
+    # HostGuard: a name the engine isn't called by, as DNS rebinding sends it.
+    assert client.get("/healthz", headers={"Host": "evil.example"}).status_code == 400
+```
+
+  with
+
+```python
+    # HostGuard: a name the engine isn't called by, as DNS rebinding sends it. Only 127.0.0.1,
+    # which the engine binds and its link names, is allowed.
+    assert client.get("/healthz", headers={"Host": "evil.example"}).status_code == 400
+    assert client.get("/healthz", headers={"Host": f"localhost:{PORT}"}).status_code == 400
+```
+
+- [ ] **Step 14: Run them; watch them fail.** `uv run pytest tests/test_cli_serve.py
+  tests/test_web_app.py -q`. Expected, after about 7 minutes (each child-process test waits 60 s
+  for the redirect file's path, which round 11b's `serve` doesn't print):
+  `FAILED tests/test_cli_serve.py::test_serve_keeps_the_model_libraries_loggers_at_warning`,
+  `::test_a_failure_after_binding_leaves_nothing_running`,
+  `::test_uvicorn_keeps_no_access_log_believes_no_proxy_and_stops_within_seconds`,
+  `::test_port_must_be_a_port_number[\u0663]`, `::test_the_link_signs_a_browser_in_on_the_port_given`,
+  `::test_the_browser_opens_the_redirect_file_and_ctrl_c_removes_its_folder`,
+  `::test_the_token_reaches_no_log_or_command_line_and_sigterm_removes_the_folder`,
+  `::test_a_stalled_response_doesnt_keep_the_engine_from_stopping[2]` and `[15]`,
+  `::test_open_browser_false_or_no_browser_opens_nothing` (both),
+  `FAILED tests/test_web_app.py::test_the_guards_wrap_the_whole_engine`, then
+  `12 failed, 29 passed in 422.29s (0:07:02)`.
+- [ ] **Step 15: Write the code.** Replace `src/vid2sub/web/__init__.py` with:
+
+```python
+"""The local web app: the editor's backend, the app shell and its server (spec §19)."""
+
+from pathlib import Path
+
+# The built frontend (`ui.js`, `ui.css`) and its fonts, which `vid2sub serve` needs (spec §18).
+WWW = Path(__file__).parent / "www"
+```
+
+  Replace `src/vid2sub/web/app.py` with (`WWW` moves to the package, and `HOSTS` is 127.0.0.1
+  only):
+
+```python
+"""The app shell: `/auth`, `/healthz` and `/media/{token}`, with the Shiny app mounted at "/"
+last, and the whole engine wrapped in the guards (spec §19.1, §6.1, §6.2).
+
+As recordings' create_app does (packages/ui/src/recordings_ui/app.py at 8deb039): a FastAPI app
+whose own routes win because the Shiny mount comes after them, and guards around everything,
+the Shiny app and its websocket included. vid2sub adds the launch token, so the order is
+`HostGuard(WriteGuard(TokenGuard(api)))`: a wrong name is refused before anything else, every
+response carries the security headers, and only then is the cookie asked for. The one name
+allowed is 127.0.0.1, which the engine binds and its link names; the cookie belongs to that name,
+so a request to localhost could never sign in anyway. FastAPI's own pages (`/docs`, `/redoc`,
+`/openapi.json`) are off: they load scripts from a CDN, and the engine makes no third-party
+requests (§6.3). `/healthz` says only `{"ok": true}` (§6.1). The Shiny app is passed in, made by
+its own module once `runtime.configure()` has run; the mount doesn't pass lifespan events on, so
+anything that must happen at shutdown goes in this app's lifespan. Stopping the engine closes the
+job queue, which cancels what waits and asks the running job to stop (§17.1).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from starlette.types import ASGIApp
+
+from vid2sub.web import auth, media
+from vid2sub.web.guards import HostGuard, WriteGuard
+from vid2sub.web.runtime import Runtime
+
+HOSTS = frozenset({"127.0.0.1"})  # the one name the engine answers to (spec §6.1, §6.2)
+
+
+def create_app(rt: Runtime, *, token: str, port: int, shiny_app: ASGIApp) -> ASGIApp:
+    @asynccontextmanager
+    async def lifespan(_api: FastAPI) -> AsyncIterator[None]:
+        yield
+        await asyncio.to_thread(rt.queue.close)  # bounded (5 s), and off the event loop
+
+    api = FastAPI(title="vid2sub", docs_url=None, redoc_url=None, openapi_url=None,
+                  lifespan=lifespan)
+
+    @api.get("/healthz")
+    def healthz() -> dict:
+        return {"ok": True}
+
+    api.router.routes.extend([*auth.routes(token, port), media.route(rt.media)])
+    api.mount("/", shiny_app)  # last, so the routes above win
+    return HostGuard(WriteGuard(auth.TokenGuard(api, token=token, port=port), HOSTS), HOSTS)
+```
+
+  Replace `src/vid2sub/commands/serve.py` with:
+
+```python
+"""`vid2sub serve`: start the local web app on 127.0.0.1 and open the browser through the launch
+token's redirect file (spec §18.1, §6.1, §19.1).
+
+The engine binds 127.0.0.1 only (§6.1), on `--port`, else `[server] port` (8765); 0 takes any free
+port. The socket is bound and listening before anything is printed or opened, so the link names
+the real port and a browser that loads it early waits instead of being refused. Each launch makes
+a new token. Its link (`/auth#t=<token>`) is printed only to a terminal, for opening by hand: when
+the output goes to a file or a pipe, which may be a log other people can read, the redirect
+file's path is printed instead. The browser, unless `--no-browser` or `[server] open_browser =
+false`, is opened on that redirect file (mode 0600 in a private folder), so `ps` shows only its
+path. A browser that doesn't come back doesn't hold up the engine: it is opened from a thread, as
+Jupyter does. The folder goes when the engine stops, on Ctrl-C and SIGTERM too: uvicorn re-raises
+the signal after its own shutdown, and SIGTERM's default action would skip `finally`, so it
+becomes a normal exit with status 143 (recordings' __main__ does the same; Windows' Ctrl-Break
+likewise). Shutdown waits at most 3 seconds for open responses, since a paused video holds its
+stream open. uvicorn's access log is off and it trusts no proxy headers, since none is in front of
+it; the openai, httpx and chatlas loggers stay at WARNING, as for every command (§6.8, §6.2).
+Without the built frontend (`www/ui.js`), serve refuses before it reads or binds anything (§18,
+§23.5). The web modules are imported only when serve runs, so other commands don't load them, and
+the Shiny app only once `runtime.configure()` has run, as recordings imports it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import atexit
+import os
+import shutil
+import signal
+import socket
+import sys
+import threading
+import webbrowser
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from vid2sub import exitcodes
+from vid2sub.commands._common import CommandError, Output, fail, load
+from vid2sub.web import WWW
+
+if TYPE_CHECKING:
+    import uvicorn
+    from starlette.types import ASGIApp
+
+HOST = "127.0.0.1"
+GRACE = 3  # seconds a shutdown waits for open responses before it cancels them
+
+
+def add_parser(sub) -> None:
+    p = sub.add_parser("serve", help="start the editor in your browser")
+    p.add_argument("--port", type=_port, metavar="N",
+                   help="the port on 127.0.0.1 (default: [server] port in vid2sub.toml, 8765; "
+                        "0 takes any free port)")
+    p.add_argument("--no-browser", action="store_true",
+                   help="print the link to open, but don't open a browser")
+    p.add_argument("--config", metavar="PATH", help="the vid2sub.toml to use")
+    p.set_defaults(handler=run)
+
+
+def _port(value: str) -> int:
+    if not (value.isascii() and value.isdigit()) or int(value) > 65535:
+        raise argparse.ArgumentTypeError("a port is a number from 0 to 65535")
+    return int(value)
+
+
+def shiny_app() -> ASGIApp:
+    """The Shiny app, imported now: its module makes it at import, from `www/`, and its server
+    reads `runtime.current()`."""
+    from vid2sub.web.server import app
+
+    return app
+
+
+def bind(port: int) -> socket.socket:
+    """A socket listening on 127.0.0.1 and `port` (0: any free one); CommandError (69) if the
+    port can't be had."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if os.name != "nt":  # on Windows, SO_REUSEADDR would let another program share the port
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind((HOST, port))
+        sock.listen(128)
+    except OSError as err:
+        sock.close()
+        raise CommandError(exitcodes.UNAVAILABLE,
+                           f"port {port} can't be used on {HOST}"
+                           + (f" ({err.strerror})" if err.strerror else ""),
+                           "is vid2sub already running? Pick another port with --port N, "
+                           "or --port 0 for any free one") from None
+    return sock
+
+
+def run(args: argparse.Namespace) -> int:
+    from vid2sub.engines.clients import quiet_libraries
+    from vid2sub.web import auth, runtime
+    from vid2sub.web.app import create_app
+
+    quiet_libraries()  # OPENAI_LOG and CHATLAS_LOG are ignored (§6.8)
+    out = Output(False)
+    try:
+        if not (WWW / "ui.js").is_file():
+            raise CommandError(exitcodes.UNAVAILABLE, "build the frontend first",
+                               "make build (it needs Node 22 or later), then vid2sub serve")
+        config = load(args)
+        sock = bind(config.server.port if args.port is None else args.port)
+    except CommandError as err:
+        return fail(out, err)
+    rt = None
+    try:
+        rt = runtime.build(config)
+        runtime.configure(rt)
+        token = auth.new_token()
+        app = create_app(rt, token=token, port=sock.getsockname()[1], shiny_app=shiny_app())
+    except BaseException:  # a bug: leave nothing running behind the traceback
+        sock.close()
+        if rt is not None:
+            rt.queue.close()
+        raise
+    browser = config.server.open_browser and not args.no_browser
+    return serve(app, sock, token=token, open_browser=browser, out=out)
+
+
+def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
+          out: Output) -> int:
+    """Run `app` on the listening `sock` until Ctrl-C or SIGTERM, with the link printed and, if
+    asked, the browser opened on the redirect file. Blocks; call it from the main thread."""
+    import uvicorn
+
+    from vid2sub.web import auth
+
+    port = sock.getsockname()[1]
+    previous = {sig: signal.signal(sig, _exit_on_signal) for sig in _EXIT_SIGNALS}
+    page: Path | None = None
+    try:
+        link = auth.auth_url(port, token)
+        page = auth.write_redirect(link)
+        atexit.register(shutil.rmtree, page.parent, ignore_errors=True)  # if `finally` never runs
+        out.say(f"vid2sub is running on {HOST}, port {port}.")
+        if out.tty:
+            out.say("Open the editor with this link (it works until vid2sub stops):")
+            out.say(f"  {link}")
+        else:  # a file or a pipe: the link would put the token where others may read it
+            out.say("Open the editor by opening this file in a browser (it works until vid2sub "
+                    "stops):")
+            out.say(f"  {page}")
+        out.say("Ctrl-C stops vid2sub.")
+        if open_browser:
+            threading.Thread(target=_open, args=(page, out), name="vid2sub-browser",
+                             daemon=True).start()
+        uvicorn.Server(uvicorn_config(app)).run(sockets=[sock])
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if page is not None:
+            shutil.rmtree(page.parent, ignore_errors=True)
+        sock.close()
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    return exitcodes.OK
+
+
+def uvicorn_config(app: ASGIApp) -> uvicorn.Config:
+    """No access log (§6.8), no proxy headers believed (no proxy is in front of the engine, and
+    X-Forwarded-Proto would change the scheme the guards compare Origin with), no Server header,
+    only uvicorn's warnings, and a shutdown that waits GRACE seconds for open responses."""
+    import uvicorn
+
+    return uvicorn.Config(app, access_log=False, proxy_headers=False, server_header=False,
+                          log_level="warning", lifespan="on", timeout_graceful_shutdown=GRACE)
+
+
+# The signals uvicorn re-raises after its shutdown whose default action skips `finally` and
+# atexit: SIGTERM everywhere, Ctrl-Break on Windows. SIGINT raises KeyboardInterrupt already.
+_EXIT_SIGNALS = [signal.SIGTERM] + ([signal.SIGBREAK] if hasattr(signal, "SIGBREAK") else [])
+
+
+def _exit_on_signal(signum: int, frame: object) -> None:
+    sys.exit(128 + signum)
+
+
+def _open(page: Path, out: Output) -> None:
+    try:
+        opened = webbrowser.open(page.as_uri())
+    except webbrowser.Error:
+        opened = False
+    if not opened:
+        out.warn("vid2sub couldn't open a browser: open what it printed above by hand")
+```
+
+- [ ] **Step 16: Run the checks; they pass.** `uv run pytest tests/test_cli_serve.py
+  tests/test_web_app.py -q`. Expected: `41 passed in 21.02s` or so. Then `make check`. Expected:
+  `914 passed, 2 skipped, 4 deselected` twice, `All checks passed!`, `no leaks found`; the
+  line-length check on the changed files prints nothing.
+
+- [ ] **Step 17: Each guard fails its tests without its fix.** `git add src/vid2sub/commands/serve.py src/vid2sub/web/__init__.py src/vid2sub/web/app.py tests/test_cli_serve.py tests/test_web_app.py`. Then,
+  for each row, make the change in `src/vid2sub/commands/serve.py` (the last row: `src/vid2sub/web/app.py`), run `uv run pytest tests/test_cli_serve.py tests/test_web_app.py -q`, see it fail, and
+  restore with `git checkout -- <the file>`. The last column is what this listing's build saw.
+
+| Guard | Change | To | Failed |
+|---|---|---|---|
+| the libraries' loggers | `quiet_libraries()  # OPENAI_LOG and CHATLAS_LOG are ignored (§6.8)` | `pass` | 1 |
+| ASCII digits | `if not (value.isascii() and value.isdigit()) or int(value) > 65535:` | `if not value.isdigit() or int(value) > 65535:` | 1 |
+| shutdown grace | `lifespan="on", timeout_graceful_shutdown=GRACE)` | `lifespan="on")` | 3 |
+| the link to a terminal only | `if out.tty:` | `if True:` | 7 |
+| cleanup after a failure | `the three cleanup lines in `except BaseException:`` | ``raise` alone` | 1 |
+| 127.0.0.1 only (Host) | `HOSTS = frozenset({"127.0.0.1"})` | `HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})` | 1 |
+
+- [ ] **Step 18: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(cli): 🤖 vid2sub serve stops within seconds of Ctrl-C even with a video streaming, prints the token only to a terminal, and answers only to 127.0.0.1
+
+Task 11's Tier 1 review (one independent reviewer, with AGENTS.md's security checklist) found
+two Important bugs and a spec reading for Dan, each reproduced and fixed here:
+- Shutdown waited for every open response, so a paused video's /media/ stream kept Ctrl-C and
+  SIGTERM from ever finishing, and a service manager's SIGKILL then left the redirect file, with
+  the token in it. uvicorn_config sets timeout_graceful_shutdown=3 (serve.GRACE).
+- serve never called clients.quiet_libraries(), so OPENAI_LOG could set the openai logger to
+  DEBUG in the process that retranslates (spec §6.8; every other command calls it).
+- The link was printed to stdout whatever stdout was, so `vid2sub serve > log` put a live token
+  in a file others may read; the brief says the terminal only. It is now printed only to a
+  terminal; to a file or a pipe, the redirect file's path (mode 0600) is printed instead. Spec
+  §18.1 says only "prints that URL for opening by hand", which a terminal still gets: Dan may
+  prefer it printed everywhere.
+And the Minor ones: the guards allow only 127.0.0.1 (app.HOSTS), which the engine binds and its
+link names; a failure after binding closes the socket and the job queue before the traceback;
+the SIGTERM handler is installed before the redirect file is written and put back after it is
+removed, and Windows' Ctrl-Break gets the same exit; --port refuses non-ASCII digits; the web
+modules are imported only when serve runs, so other commands don't load FastAPI (vid2sub.web.WWW
+moves to the package so serve can name it without importing app.py). The tests' BROWSER script
+writes its record whole, two ports picked for one test are always different, and the
+no-browser test watches for 3 s.
+
+The new tests failed first with: 12 failed, 29 passed (the loggers, the cleanup after a failure,
+the shutdown grace, the non-ASCII port, the link written to a file in five child-process tests,
+the stalled stream twice, and localhost's Host).
+Each fix was then reverted in turn and its tests failed: the libraries' loggers left (1 failed),
+non-ASCII digits (1), no shutdown grace (3), the link printed to a file (7), nothing closed after
+a failure (1), localhost allowed (1).
+
+Docs read: uvicorn's config.py (timeout_graceful_shutdown) and server.py (shutdown waits for
+connections, then cancels their tasks after the timeout); Python's pty (openpty) and signal
+(SIGBREAK on Windows) pages.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 11
+Co-Authored-By: <the model's own line>
+```
+
+  `git commit -F .git/COMMIT_MSG` (the five files are staged from the step before), then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 19: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist). Worth the reviewers' time: that the token
+  reaches no log, response, URL path or query, file name or command line (`ps`), and is printed
+  only to a terminal; that nothing binds or answers beyond 127.0.0.1 (the socket, `HOSTS`); that
+  uvicorn's defaults (proxy headers, access log, Server header) can't weaken the guards; that the
+  redirect folder goes on every exit (normal, Ctrl-C, SIGTERM, a failure after `bind`, a stalled
+  stream); that the lifespan closes the queue without blocking the loop; that every guard test
+  fails without its fix. Known and accepted: Windows' signals and terminals aren't tested until
+  Phase 3 (the tests skip there; Ctrl-Break exits like SIGTERM). The forward review over Tasks 12,
+  13, 14, 19, 21, 22 and 23 (Task 12 creates `vid2sub.web.server.app`, which `serve.shiny_app()`
+  imports, and its e2e harness reads the link from the redirect file; Task 13 adds `--demo`;
+  Task 14 closes an episode with `rt.backend.close(ep.id)` and `rt.media.revoke_owner(ep.id)` when
+  a session ends, in the server's `session.on_ended`, since the mount passes no lifespan; Task 19
+  replaces `runtime._no_jobs` with the pipeline's runner; Task 21's CI e2e job runs `make e2e`;
+  Task 22's README says the link is printed only to a terminal; Task 23's Step 2 expects the
+  terminal to print it). The docs this task made untrue: none expected (the README's *Use* block
+  doesn't list `vid2sub serve` yet: a missing doc, for Task 22). Then the close, its own commit,
+  holding this plan with this task's boxes ticked and **Now** set to `Task 12: The frontend
+  scaffold and the shinyreact server, open.`, and the spec's scenario row S23 set to `built`, its
+  Proof reading `tests/test_cli_serve.py`, `tests/test_web_app.py`, `tests/test_web_auth.py`,
+  with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 11: The app shell and `vid2sub serve`
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 1
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+  secrets: fine | a finding | n/a: why
+  permissions: fine | a finding | n/a: why
+  network exposure: fine | a finding | n/a: why
+  failing closed: fine | a finding | n/a: why
+  injection: fine | a finding | n/a: why
+  logging: fine | a finding | n/a: why
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 11
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -11249,20 +12994,2644 @@ Co-Authored-By: <the model's own line>
 **Tier:** 2 · **Scenarios:** S26
 
 **Files:**
-- Create: `frontend/` (package.json, vite.config.js, tsconfig.json, components.json, .nvmrc,
-  scripts/check-node.mjs, src/ui.tsx, src/App.tsx, src/sr.ts, src/index.css, src/theme.css,
-  src/lib/theme.ts, src/lib/utils.ts, src/components/TopBar.tsx, src/components/ThemeSwitch.tsx,
-  src/build.test.ts), `_brand.yml`, `scripts/brand_css.py`, `src/vid2sub/web/server.py`,
-  `src/vid2sub/web/www/fonts/`
-- Modify: `Makefile` (`build`, `test-js`, `skills`, `brand`; `check` runs `test-js`), `.gitignore`
-- Test: `tests/test_web_server.py`, `tests/e2e/test_csp.py`
+- Create: `frontend/` (`package.json`, `package-lock.json`, `vite.config.js`, `tsconfig.json`,
+  `components.json`, `.nvmrc`, `scripts/check-node.mjs`, `src/ui.tsx`, `src/App.tsx`, `src/sr.ts`,
+  `src/types.ts`, `src/index.css`, `src/theme.css`, `src/lib/theme.ts` (+ test),
+  `src/lib/utils.ts`, `src/lib/notices.ts` (+ test), `src/lib/connection.ts` (+ test),
+  `src/components/TopBar.tsx` (+ test), `src/components/ThemeSwitch.tsx`,
+  `src/components/ui/toggle.tsx`, `src/components/ui/toggle-group.tsx`, `src/build.test.ts`),
+  `_brand.yml`, `scripts/brand_css.py`, `src/vid2sub/web/server.py`,
+  `src/vid2sub/web/static/busy/busy-indicators.js`, `src/vid2sub/web/www/fonts/`,
+  `tests/e2e/conftest.py` (moved here from Task 13: the CSP test needs a browser against
+  `vid2sub serve`)
+- Modify: `Makefile` (`setup` runs `npm ci`; `build`, `test-js` (in `check`), `e2e`, `brand`,
+  `skills`), `.gitignore`, `pyproject.toml` (pyyaml in the dev group; the `e2e` marker, moved
+  here from Task 13), `uv.lock`, `src/vid2sub/web/views.py` (`capabilities_view`,
+  `local_endpoints`, `status_view`)
+- Test: `tests/test_web_server.py`, `tests/test_brand.py`, `tests/e2e/test_csp.py`
 
 **Interfaces:**
-- Consumes: Task 11's `runtime.current()`.
-- Produces: outputs `capabilities`, `status`; message `notice` (`{kind: "info" | "error",
-  text}`); `frontend/src/sr.ts` re-exports of shinyreact's hooks.
+- Consumes: Task 11's `runtime.current()`, `app.create_app`, `vid2sub.web.WWW`, and `serve`
+  (which imports `server.app`); Task 5's `Capabilities`; `engines.clients.list_models`,
+  `KeyRing`; `config.is_local`.
+- Produces:
+  - Outputs `capabilities` (`views.capabilities_view(caps) -> dict`: `engine`, `generate`, `save`,
+    `path_input`) and `status` (`views.status_view(config, keys, reachable, *, ffmpeg) -> dict`:
+    `{"endpoints": [{"name", "local", "key": "present" | "missing" | "none", "reachable": bool |
+    None}], "ffmpeg": bool}`, keys by presence only; `reachable` only for local endpoints, checked
+    off the loop now and every `server.STATUS_EVERY` (60) seconds by `server.reachable(config,
+    keys)`; None until checked, and always for cloud ones, never contacted);
+    `views.local_endpoints(config) -> list[str]`.
+  - Message `notice` (`{kind: "info" | "error", text}`): `await server.notice(session, kind,
+    text)`; the frontend shows it as plain text, info in a polite live region and errors in an
+    alert, the newest three (`lib/notices.ts`).
+  - `server.app = ReactApp(server, ui=server.page, static_assets={"/": WWW})`: the page is
+    shinyreact's `page_react` with `server.BUSY_INDICATORS` (see *The CSP* below); `www/` is also
+    served at "/" for the fonts, as ReactApp's own discovery mounts it.
+  - `frontend/src/sr.ts`: re-exports `useShinyInput`, `useShinyOutputValue`,
+    `useShinyOutputStatus`, `useShinyOutputError`, `useShinyInitialized`, `useSetShinyInput`,
+    `useShinyMessageHandler` from `window.shinyreact` (types only from the npm package). Every
+    output is subscribed, and every input and message handler lives, in `App`.
+  - `frontend/src/lib/connection.ts`: on Shiny's `shiny:disconnected` (a jQuery event, which
+    `addEventListener` never sees) the page asks for "/" once with its cookie and says, in an alert
+    with `data-testid="lost"`: on a 401, that vid2sub was restarted, with `auth.SIGN_IN_AGAIN`; on
+    no answer, that it isn't running (with **Check again**, `data-testid="check-again"`); else, to
+    reload. It never reconnects. A refused websocket handshake reaches the browser as an HTTP 403
+    (close code 1006), never 1008 (Review Focus 5).
+  - The e2e fixtures (`tests/e2e/conftest.py`): `server` (a `vid2sub serve --no-browser` on a free
+    port, its URL and launch link), `page` (signed in through `/auth#t=<token>`; the test fails on
+    any console error or CSP violation), `watch` (its `errors`, `requests`, `violations()`,
+    `clear()`), `open_page(server)` and `launch(tmp, *args, port=0)`. Task 13 makes `server` the
+    demo.
+  - `data-testid`s: `app`, `topbar`, `engine`, `status`, `endpoint`, `main`, `notice`,
+    `theme-light`, `theme-system`, `theme-dark`, `lost`, `check-again`.
 
-<!-- steps: written in the next pass -->
+**The CSP (spec §6.3, §29), found in Chromium while this listing was built.** Shiny 1.8.0's page
+has one inline script, its busy indicators (`busy_indicators.use()` in the
+`shiny-busy-indicators` dependency's head), which `script-src 'self'` blocks: one violation per
+page load, costing only the busy pulse (spinners attach to Shiny output elements, which a React
+page has none of). Shiny has no option that leaves it out (`use(spinners=False, pulse=False)`
+writes an inline script too). htmltools keeps the highest version of a dependency per name, so
+`server.py` passes `page_react` a `shiny-busy-indicators` at Shiny's version plus `+vid2sub` (no
+head) and the same two lines as a file: no violation, and the pulse still works. No `style-src` is
+needed: `default-src 'self'` covers stylesheet files, React's `style` props go through the CSSOM,
+and the page has no `<style>` or style attribute. The test of the rendered page is the guard: an
+upgrade that stops the replacement winning fails it.
+
+**For Tasks 15–18: Radix's modal parts inject a `<style>` element** (react-remove-scroll), which
+the CSP blocks. Probed on this scaffold in Chromium (radix-ui 1.8.1): Dialog (modal, the default,
+so shadcn's Dialog and Sheet), DropdownMenu (modal, the default) and Popover with `modal` each log
+one `style-src-elem` violation; Select logs eight (it injects its own scrollbar style too);
+Dialog and DropdownMenu with `modal={false}`, and Popover as it is, log none. So, with no CSP
+change (decided with the coordinator, 2026-10-24):
+- **Modal** (the conflict picker, any confirm, Task 18's settings drawer as a side sheet): the
+  native `<dialog>` with `showModal()`, which puts it in the top layer, makes the rest of the page
+  inert for focus and screen readers, closes on Esc and moves focus in and back, and injects no
+  `<style>`. Scroll lock is the `dialog-open` class on `<html>`, from `index.css`
+  (`html.dialog-open { overflow: hidden; }`): a class, which the CSP allows. Whichever of Task 16
+  or 18 comes first builds `frontend/src/components/ui/dialog.tsx`, probed as this, with zero
+  violations, focus in, Tab kept inside, the backdrop taking the pointer, Esc closing it and focus
+  back on the opener (the `dialog-open` class goes on the `close` event, a task later: assert it
+  with `expect(page.locator("html")).not_to_have_class(re.compile(r"\bdialog-open\b"))`, which
+  retries):
+
+```tsx
+import { type ReactNode, useEffect, useId, useRef } from "react";
+
+import { cn } from "@/lib/utils";
+
+/** A modal dialog, or with `side` a sheet at that edge, on the native <dialog> element.
+ * showModal() puts it in the top layer, makes the rest of the page inert for focus and screen
+ * readers, closes it on Esc and moves focus in and, on close, back to the opener. Radix's modal
+ * parts inject a <style> element, which the CSP blocks (Task 12's probe), so the editor's modal
+ * parts are this one. Scroll lock is the `dialog-open` class on <html>, from index.css: a class,
+ * which the CSP allows, where an inline style isn't. */
+export function Dialog({ open, onClose, title, side, children, className }: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  side?: "left" | "right";
+  children: ReactNode;
+  className?: string;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    if (open && !dialog.open) {
+      dialog.showModal();
+      document.documentElement.classList.add("dialog-open");
+    } else if (!open && dialog.open) {
+      dialog.close();
+    }
+  }, [open]);
+  useEffect(() => () => document.documentElement.classList.remove("dialog-open"), []);
+  return (
+    <dialog
+      ref={ref}
+      aria-labelledby={titleId}
+      data-side={side}
+      onClose={() => {
+        document.documentElement.classList.remove("dialog-open");
+        onClose();
+      }}
+      className={cn(
+        "rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-lg backdrop:bg-black/40",
+        side && "m-0 h-dvh max-h-none w-96 max-w-full rounded-none data-[side=left]:mr-auto data-[side=right]:ml-auto",
+        className,
+      )}
+    >
+      <h2 id={titleId} className="mb-3 font-bold">{title}</h2>
+      {children}
+    </dialog>
+  );
+}
+```
+
+  and an e2e test that opens it from a button and checks, through the `page` fixture (zero console
+  errors and violations), `dialog[open]` matches `:modal`, `document.activeElement` is inside it,
+  six Tabs never leave it, `document.elementFromPoint` over a top-bar button isn't that button,
+  Escape closes it and focus is the opener again, and `html` loses `dialog-open`.
+- **Menus and popovers:** Radix DropdownMenu with `modal={false}`; Popover as it is.
+- **Choices:** a native `<select>`, styled; never Radix or shadcn Select.
+- The `page` fixture's console-error guard stays as it is, so a modal Radix part or a Radix
+  Select fails the task that adds it.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+
+#### Round 12a: the frontend scaffold, the brand and the fonts
+
+- [ ] **Step 1: Write the failing tests.** `frontend/src/lib/theme.test.ts` (recordings', with
+  this repo's storage key):
+
+```ts
+import { describe, expect, it, vi } from "vitest";
+
+import { applyTheme, browserStorage, currentTheme, loadChoice, resolveTheme, saveChoice } from "./theme";
+
+describe("theme", () => {
+  it("follows the OS only in system mode", () => {
+    expect(resolveTheme("system", true)).toBe("dark");
+    expect(resolveTheme("system", false)).toBe("light");
+    expect(resolveTheme("light", true)).toBe("light");
+    expect(resolveTheme("dark", false)).toBe("dark");
+  });
+
+  it("remembers a choice and ignores junk", () => {
+    const store = new Map<string, string>();
+    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    expect(loadChoice(storage)).toBe("system");
+    saveChoice(storage, "dark");
+    expect(loadChoice(storage)).toBe("dark");
+    store.set("vid2sub.theme", "purple");
+    expect(loadChoice(storage)).toBe("system");
+  });
+
+  it("survives storage that throws (private windows, blocked site data)", () => {
+    const broken = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); } };
+    expect(loadChoice(broken)).toBe("system");
+    expect(() => saveChoice(broken, "light")).not.toThrow();
+  });
+
+  it("sets exactly one of the classes dark/light on <html>", () => {
+    const root = document.documentElement;
+    applyTheme(root, "dark");
+    expect(root.classList.contains("dark")).toBe(true);
+    expect(root.classList.contains("light")).toBe(false);
+    applyTheme(root, "light");
+    expect(root.classList.contains("light")).toBe(true);
+    expect(root.classList.contains("dark")).toBe(false);
+  });
+
+  it("browserStorage is localStorage, or null where the browser forbids it", () => {
+    expect(browserStorage()).toBe(window.localStorage);
+    const spy = vi.spyOn(window, "localStorage", "get").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    try {
+      expect(browserStorage()).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("currentTheme", () => {
+  it("reads the resolved theme from the dark class that applyTheme sets", () => {
+    const root = document.createElement("html");
+    applyTheme(root, "dark");
+    expect(currentTheme(root)).toBe("dark");
+    applyTheme(root, "light");
+    expect(currentTheme(root)).toBe("light");
+  });
+});
+```
+
+  `frontend/src/lib/notices.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import { MAX_SHOWN, addNotice, dismissNotice } from "./notices";
+
+describe("notices", () => {
+  it("shows the newest last and keeps at most three", () => {
+    let shown = addNotice([], { kind: "info", text: "one" }, 1);
+    for (const [i, text] of ["two", "three", "four"].entries()) {
+      shown = addNotice(shown, { kind: "info", text }, i + 2);
+    }
+    expect(MAX_SHOWN).toBe(3);
+    expect(shown.map((n) => n.text)).toEqual(["two", "three", "four"]);
+  });
+
+  it("doesn't show the same notice twice in a row", () => {
+    const once = addNotice([], { kind: "error", text: "couldn't save" }, 1);
+    expect(addNotice(once, { kind: "error", text: "couldn't save" }, 2)).toBe(once);
+    expect(addNotice(once, { kind: "info", text: "couldn't save" }, 2)).toHaveLength(2);
+  });
+
+  it("ignores anything that isn't a notice, since it comes over the wire", () => {
+    for (const junk of [null, "text", { kind: "warn", text: "x" }, { kind: "info", text: 3 }]) {
+      expect(addNotice([], junk, 1)).toEqual([]);
+    }
+  });
+
+  it("keeps only the fields it shows", () => {
+    const [n] = addNotice([], { kind: "info", text: "ok", html: "<b>x</b>" }, 7);
+    expect(n).toEqual({ kind: "info", text: "ok", id: 7 });
+  });
+
+  it("dismisses by id", () => {
+    const shown = addNotice(addNotice([], { kind: "info", text: "a" }, 1), { kind: "info", text: "b" }, 2);
+    expect(dismissNotice(shown, 1).map((n) => n.text)).toEqual(["b"]);
+  });
+});
+```
+
+  `frontend/src/components/TopBar.test.ts`:
+
+```ts
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("./ThemeSwitch", () => ({ ThemeSwitch: () => null }));
+
+import type { Status } from "@/types";
+
+import { TopBar, endpointLabel } from "./TopBar";
+
+describe("the top bar (spec §19.2)", () => {
+  it("says which engine this is, from capabilities", () => {
+    const caps = { engine: "local", generate: true, save: "disk", path_input: true } as const;
+    expect(renderToStaticMarkup(createElement(TopBar, { capabilities: caps }))).toContain("Local engine");
+    const browser = { ...caps, engine: "browser", save: "download" } as const;
+    expect(renderToStaticMarkup(createElement(TopBar, { capabilities: browser }))).toContain("Browser editor");
+  });
+
+  it("names each endpoint's reach and key in words", () => {
+    expect(endpointLabel({ name: "spark", local: true, key: "present", reachable: true })).toBe("spark: reachable, key set");
+    expect(endpointLabel({ name: "spark", local: true, key: "missing", reachable: false })).toBe("spark: not reachable, key missing");
+    expect(endpointLabel({ name: "spark", local: true, key: "none", reachable: null })).toBe("spark: checking…");
+    expect(endpointLabel({ name: "openai", local: false, key: "present", reachable: null })).toBe("openai: cloud, key set");
+  });
+
+  it("shows an endpoint's name as text, never as markup", () => {
+    const status: Status = { ffmpeg: true, endpoints: [{ name: "<img src=x onerror=alert(1)>", local: true, key: "none", reachable: true }] };
+    const html = renderToStaticMarkup(createElement(TopBar, { status }));
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+
+  it("says when ffmpeg is missing", () => {
+    expect(renderToStaticMarkup(createElement(TopBar, { status: { ffmpeg: false, endpoints: [] } }))).toContain("ffmpeg missing");
+  });
+});
+```
+
+  `frontend/src/build.test.ts` (recordings', with this repo's paths):
+
+```ts
+// @vitest-environment node
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+import config, { EXTERNAL, GLOBALS } from "../vite.config.js";
+
+describe("the build", () => {
+  it("keeps React and react-dom/client external and bundles the react-dom index", () => {
+    // why: shinyreact's ReactDOM global is react-dom/client only, with no createPortal or
+    // flushSync (recordings' docs/upstream-issues.md). Mapping "react-dom" to it breaks every
+    // portal (the plan's Global Constraints).
+    expect(EXTERNAL).toEqual(["react", "react-dom/client"]);
+    expect(GLOBALS).toEqual({
+      react: "window.shinyreact.React",
+      "react-dom/client": "window.shinyreact.ReactDOM",
+    });
+    type Rollup = { external: unknown; output: { globals: unknown } };
+    const rollup = (config as unknown as { build: { rollupOptions: Rollup } }).build.rollupOptions;
+    expect(rollup.external).toBe(EXTERNAL);
+    expect(rollup.output.globals).toBe(GLOBALS);
+  });
+});
+
+// why: the config test above checks what the build is told; this one checks what it made, as
+// recordings' build.test.ts does. It reads the built www/ui.js (build output, not in git) and
+// shinyreact.js from the project's venv. Where either is missing the checks skip, unless told they
+// must run: CI=true (set by GitHub Actions) fails a missing ui.js, and
+// VID2SUB_REQUIRE_SHINYREACT=1 (make check, and CI's job that has the venv) fails a missing
+// shinyreact.js.
+const here = dirname(fileURLToPath(import.meta.url));
+const built = join(here, "../../src/vid2sub/web/www/ui.js");
+const venvLib = join(here, "../../.venv/lib");
+const mustBuild = Boolean(process.env.CI);
+const mustHaveShinyreact = process.env.VID2SUB_REQUIRE_SHINYREACT === "1";
+
+function shinyreactJs(): string | undefined {
+  if (!existsSync(venvLib)) return undefined;
+  for (const py of readdirSync(venvLib)) {
+    const path = join(venvLib, py, "site-packages/shinyreact/www/shinyreact.js");
+    if (existsSync(path)) return path;
+  }
+  return undefined;
+}
+
+const shinyreact = shinyreactJs();
+
+describe.skipIf(!existsSync(built) && !mustBuild)("the built bundle", () => {
+  const have = existsSync(built);
+  const bundle = have ? readFileSync(built, "utf8") : "";
+
+  it("exists (CI builds before it tests)", () => {
+    expect(have, `${built} is missing: run npm run build first`).toBe(true);
+  });
+
+  it.skipIf(!have)("is called with the one React that shinyreact exposes, and carries no copy of its own", () => {
+    expect(bundle.trimEnd().endsWith("(window.shinyreact.React);")).toBe(true);
+    expect(bundle).not.toMatch(/react\.production/);
+    expect(bundle).not.toMatch(/react-dom-client/);
+    expect(bundle).not.toMatch(/scheduler\.production/);
+    // the react-dom index is bundled on purpose (it has createPortal and flushSync)
+    expect(bundle).toMatch(/react-dom\.production/);
+  });
+
+  it.skipIf(!have || (shinyreact === undefined && !mustHaveShinyreact))(
+    "bundles a react-dom of the same major.minor as the React it runs beside",
+    () => {
+      expect(shinyreact, "shinyreact.js not found in .venv: run uv sync").toBeDefined();
+      // react-dom's own version line follows its useHostTransitionStatus export; React's in
+      // shinyreact.js is the one before `.exports=`.
+      const mine = bundle.match(/useHostTransitionStatus\(\)\},\w+\.version="(\d+\.\d+)\.\d+"/)?.[1];
+      const theirs = readFileSync(shinyreact as string, "utf8").match(/\.version="(\d+\.\d+)\.\d+",\w+\.exports=/)?.[1];
+      expect(mine).toBeDefined();
+      expect(theirs).toBeDefined();
+      expect(mine).toBe(theirs);
+    },
+  );
+});
+```
+
+  and `tests/test_brand.py`:
+
+```python
+"""The theme comes from _brand.yml, its text colours are readable in both modes, and NYC orange is
+never a text colour (spec §19.3). Copied from recordings' packages/core/tests/test_brand.py at
+8deb039, with this repo's paths."""
+
+import importlib.util
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def brand_css():
+    spec = importlib.util.spec_from_file_location("brand_css", REPO / "scripts" / "brand_css.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def contrast(a: str, b: str) -> float:
+    def lum(h):
+        c = [int(h[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+        c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+    hi, lo = sorted([lum(a), lum(b)], reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_theme_css_is_made_from_brand_yml():
+    committed = (REPO / "frontend/src/theme.css").read_text(encoding="utf-8")
+    assert committed == brand_css().render(REPO), "theme.css is stale: run `make brand`"
+
+
+def test_text_colours_meet_wcag_aa_in_both_modes():
+    module = brand_css()
+    for mode in ("light", "dark"):
+        t = module.tokens(REPO, mode)
+        for fg in ("foreground", "muted-foreground", "primary"):
+            for bg in ("background", "card", "muted", "sidebar"):
+                assert contrast(t[fg], t[bg]) >= 4.5, f"{mode}: {fg} on {bg}"
+        assert contrast(t["primary-foreground"], t["primary"]) >= 4.5, f"{mode}: button text"
+
+
+def test_orange_is_never_a_light_mode_text_colour():
+    # why: 3.2:1 on white, so it marks bars and backgrounds only (spec §19.3)
+    assert contrast(brand_css().tokens(REPO, "light")["brand-orange"], "#FFFFFF") < 4.5
+```
+
+- [ ] **Step 2: Write the frontend's configuration and install its packages.** Every package is
+  pinned exactly, as recordings' versions (packages/ui/frontend at 8deb039), less what this
+  scaffold doesn't use yet (cmdk, sonner, @tanstack/react-virtual, axe-core: a later task adds
+  what it needs).
+
+  `frontend/package.json`:
+
+```json
+{
+  "name": "vid2sub-frontend",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "preinstall": "node scripts/check-node.mjs",
+    "prebuild": "node scripts/check-node.mjs",
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@posit-dev/shinyreact": "0.1.1",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "22.20.5",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@vitejs/plugin-react": "4.7.0",
+    "jsdom": "30.1.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "5.4.21",
+    "vitest": "3.2.7"
+  },
+  "dependencies": {
+    "class-variance-authority": "0.7.1",
+    "cn": "0.4.0",
+    "lucide-react": "1.55.0",
+    "radix-ui": "1.8.1",
+    "shadcn": "4.21.4",
+    "tw-animate-css": "1.4.0"
+  }
+}
+```
+
+  `frontend/.nvmrc`:
+
+```text
+22
+```
+
+  `frontend/scripts/check-node.mjs`:
+
+```js
+// Fail fast on a Node older than 22: shinyreact builds and tests its JS with Node 22
+// (pkg-js/.nvmrc), and Vite 5 and Vitest 3 need 18 or later. Newer majors are accepted: CI and
+// .nvmrc pin 22, and a developer's Node may be ahead of it.
+const major = Number(process.versions.node.split(".")[0]);
+if (!(major >= 22)) {
+  console.error(`Node 22 or later is required (found ${process.versions.node}). Run: nvm use`);
+  process.exit(1);
+}
+```
+
+  `frontend/vite.config.js`:
+
+```js
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// As recordings' vite.config.js (packages/ui/frontend at 8deb039). React stays external: `react`
+// and `react-dom/client` come from window.shinyreact, so this bundle (shadcn's components
+// included) shares the React instance that owns the shinyreact hooks; two copies leave the hooks
+// silently empty. The `react-dom` INDEX module is bundled: shinyreact's ReactDOM global is
+// react-dom/client only, without createPortal or flushSync, which Radix imports. That module
+// requires `react`, which stays external, so there is still one React.
+export const EXTERNAL = ["react", "react-dom/client"];
+export const GLOBALS = {
+  react: "window.shinyreact.React",
+  "react-dom/client": "window.shinyreact.ReactDOM",
+};
+
+export default defineConfig({
+  define: { "process.env.NODE_ENV": JSON.stringify("production") },
+  plugins: [react(), tailwindcss()],
+  resolve: { alias: { "@": path.resolve(__dirname, "src") } },
+  build: {
+    // src/vid2sub/web/www/, which src/vid2sub/web/server.py serves (ui.js, ui.css).
+    outDir: path.resolve(__dirname, "../src/vid2sub/web/www"),
+    emptyOutDir: false, // www/ also holds the committed fonts
+    cssCodeSplit: false,
+    lib: {
+      entry: path.resolve(__dirname, "src/ui.tsx"),
+      formats: ["iife"],
+      name: "Vid2subUI",
+      fileName: () => "ui.js",
+    },
+    rollupOptions: {
+      external: EXTERNAL,
+      output: { assetFileNames: "ui.[ext]", globals: GLOBALS },
+    },
+  },
+  test: { environment: "jsdom", include: ["src/**/*.test.ts"] },
+});
+```
+
+  `frontend/tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "allowJs": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["src"]
+}
+```
+
+  `frontend/components.json`:
+
+```json
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "radix-nova",
+  "rsc": false,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/index.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "iconLibrary": "lucide",
+  "rtl": false,
+  "aliases": {
+    "components": "@/components",
+    "utils": "@/lib/utils",
+    "ui": "@/components/ui",
+    "lib": "@/lib",
+    "hooks": "@/hooks"
+  },
+  "menuColor": "default",
+  "menuAccent": "subtle",
+  "registries": {}
+}
+```
+
+
+  Then `cd frontend && npm install --no-audit --no-fund` (Node 22 or later: `nvm use` reads
+  `.nvmrc`). Expected: `added 492 packages`. It writes `frontend/package-lock.json`, which is
+  committed.
+- [ ] **Step 3: Run the tests; watch them fail.** `cd frontend && npx vitest run`. Expected:
+  `FAIL  src/components/TopBar.test.ts`, `Error: Failed to resolve import "./TopBar" from
+  "src/components/TopBar.test.ts". Does the file exist?`, and likewise `./notices` and `./theme`,
+  then `Test Files  3 failed | 1 passed (4)`. And `uv run pytest tests/test_brand.py -q`:
+  `E   FileNotFoundError: [Errno 2] No such file or directory: '…/scripts/brand_css.py'`, then
+  `3 failed`.
+- [ ] **Step 4: Write the code.**
+
+  `frontend/src/sr.ts`:
+
+```ts
+// shinyreact's hooks, read from the window.shinyreact global the server loads (the
+// shinyreact-build-app skill, Step 1), as recordings' sr.ts does. The npm package is imported for
+// its TYPES only: `import type` is erased, so no second copy of React or the hooks can enter the
+// bundle. Every output is subscribed, and every input and message handler lives, in App
+// (shinyreact 0.1.0 drops a message that has no handler, and an unmounted output logs errors).
+import type * as SR from "@posit-dev/shinyreact";
+
+type Hooks = Pick<
+  typeof SR,
+  | "useShinyInput" | "useShinyOutputValue" | "useShinyOutputStatus" | "useShinyOutputError"
+  | "useShinyInitialized" | "useSetShinyInput" | "useShinyMessageHandler"
+>;
+
+const shinyreact = (window as unknown as { shinyreact: Hooks }).shinyreact;
+
+export const {
+  useShinyInput, useShinyOutputValue, useShinyOutputStatus, useShinyOutputError,
+  useShinyInitialized, useSetShinyInput, useShinyMessageHandler,
+} = shinyreact;
+```
+
+  `frontend/src/types.ts`:
+
+```ts
+// The JSON the server sends: src/vid2sub/web/views.py makes each shape (spec §19.1).
+
+/** Which controls exist: the local engine, or (Phase 4) the browser editor (spec §19.1). */
+export type Capabilities = {
+  engine: "local" | "browser";
+  generate: boolean;
+  save: "disk" | "download";
+  path_input: boolean;
+};
+
+/** One endpoint from vid2sub.toml: a key by presence only, never its value (spec §19.2). */
+export type EndpointStatus = {
+  name: string;
+  local: boolean;
+  key: "present" | "missing" | "none";
+  reachable: boolean | null; // null: a cloud endpoint (never contacted), or not checked yet
+};
+
+export type Status = { endpoints: EndpointStatus[]; ffmpeg: boolean };
+
+/** The `notice` message: something to tell the person, as plain text. */
+export type Notice = { kind: "info" | "error"; text: string };
+```
+
+  `frontend/src/ui.tsx`:
+
+```tsx
+import "@/index.css";
+import "@/theme.css";
+
+import App from "@/App";
+import { applyTheme, browserStorage, loadChoice, resolveTheme } from "@/lib/theme";
+
+const { ReactDOM } = (window as unknown as { shinyreact: { ReactDOM: typeof import("react-dom/client") } }).shinyreact;
+
+// Apply the saved theme now, not when ThemeSwitch mounts after Shiny connects, so a saved
+// light or dark choice never flashes the OS theme first (as recordings' ui.tsx does).
+applyTheme(document.documentElement, resolveTheme(loadChoice(browserStorage()), window.matchMedia("(prefers-color-scheme: dark)").matches));
+
+ReactDOM.createRoot(document.body.appendChild(document.createElement("div"))).render(<App />);
+```
+
+  `frontend/src/App.tsx`:
+
+```tsx
+import { useRef, useState } from "react";
+
+import { TopBar } from "@/components/TopBar";
+import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
+import { useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { Capabilities, Status } from "@/types";
+
+export default function App() {
+  const initialized = useShinyInitialized();
+  // Every output is subscribed here, and every message handler lives here: shinyreact 0.1.0
+  // drops a message that has no handler, and an output that unmounts logs "Output <id> not found"
+  // for each later value (recordings' App.tsx). A new output or message gets a line here too.
+  const capabilities = useShinyOutputValue<Capabilities>("capabilities");
+  const status = useShinyOutputValue<Status>("status");
+  const [notices, setNotices] = useState<Shown[]>([]);
+  const nextId = useRef(1);
+  useShinyMessageHandler("notice", (data: unknown) => {
+    setNotices((shown) => addNotice(shown, data, nextId.current++));
+  });
+
+  if (!initialized) return null; // no flash of empty defaults while connecting
+  return (
+    <div className="flex h-dvh flex-col" data-testid="app">
+      <TopBar capabilities={capabilities} status={status} />
+      <main className="flex flex-1 items-center justify-center text-muted-foreground" data-testid="main">
+        <p>The editor opens here.</p>
+      </main>
+      <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">
+        <div role="status" aria-live="polite" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "info").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+        <div role="alert" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "error").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: Shown[]) => Shown[]) => void }) {
+  return (
+    <div className={`flex items-start gap-2 rounded-lg border bg-card p-3 text-sm shadow ${notice.kind === "error" ? "border-destructive text-destructive" : "border-border"}`} data-testid="notice">
+      {/* Plain text: a notice can carry a file name or a server's error (spec §6.3). */}
+      <span className="flex-1">{notice.text}</span>
+      <button type="button" aria-label="Dismiss" onClick={() => onDismiss((s) => dismissNotice(s, notice.id))}>×</button>
+    </div>
+  );
+}
+```
+
+  `frontend/src/index.css`:
+
+```css
+/* shadcn/ui's tokens (radix-nova), as recordings' index.css (8deb039); the colours come from
+   theme.css, made from _brand.yml. The fonts are the engine's own files, never a CDN (spec §6.3,
+   §19.3): /fonts/ is src/vid2sub/web/www/fonts/. */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@font-face { font-family: "Atkinson Hyperlegible"; src: url("/fonts/AtkinsonHyperlegible-Regular.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Atkinson Hyperlegible"; src: url("/fonts/AtkinsonHyperlegible-Italic.woff2") format("woff2"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "Atkinson Hyperlegible"; src: url("/fonts/AtkinsonHyperlegible-Bold.woff2") format("woff2"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Atkinson Hyperlegible"; src: url("/fonts/AtkinsonHyperlegible-BoldItalic.woff2") format("woff2"); font-weight: 700; font-style: italic; font-display: swap; }
+@font-face { font-family: "Atkinson Hyperlegible Mono"; src: url("/fonts/AtkinsonHyperlegibleMono-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Atkinson Hyperlegible Mono"; src: url("/fonts/AtkinsonHyperlegibleMono-Bold.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+
+@theme inline {
+    --font-heading: var(--font-sans);
+    --font-sans: "Atkinson Hyperlegible", system-ui, sans-serif;
+    --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, monospace;
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.145 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.145 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.145 0 0);
+    --primary: oklch(0.205 0 0);
+    --primary-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --muted: oklch(0.97 0 0);
+    --muted-foreground: oklch(0.556 0 0);
+    --accent: oklch(0.97 0 0);
+    --accent-foreground: oklch(0.205 0 0);
+    --destructive: oklch(0.577 0.245 27.325);
+    --border: oklch(0.922 0 0);
+    --input: oklch(0.922 0 0);
+    --ring: oklch(0.708 0 0);
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+    --radius: 0.625rem;
+    --sidebar: oklch(0.985 0 0);
+    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.205 0 0);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.97 0 0);
+    --sidebar-accent-foreground: oklch(0.205 0 0);
+    --sidebar-border: oklch(0.922 0 0);
+    --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.556 0 0);
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+    --sidebar: oklch(0.205 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.488 0.243 264.376);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    }
+  body {
+    @apply bg-background text-foreground;
+    }
+  html {
+    @apply font-sans;
+    }
+}
+```
+
+  `frontend/src/lib/utils.ts`:
+
+```ts
+export { cn } from "cn"
+```
+
+  `frontend/src/lib/theme.ts`:
+
+```ts
+export type ThemeChoice = "light" | "dark" | "system";
+export type Resolved = "light" | "dark";
+
+const KEY = "vid2sub.theme";
+type Storage = { getItem(k: string): string | null; setItem(k: string, v: string): void };
+
+export function resolveTheme(choice: ThemeChoice, prefersDark: boolean): Resolved {
+  return choice === "system" ? (prefersDark ? "dark" : "light") : choice;
+}
+
+export function loadChoice(storage: Storage | null): ThemeChoice {
+  try {
+    const v = storage?.getItem(KEY);
+    return v === "light" || v === "dark" || v === "system" ? v : "system";
+  } catch {
+    return "system"; // storage can throw in private windows; the theme must still work
+  }
+}
+
+export function saveChoice(storage: Storage | null, choice: ThemeChoice): void {
+  try {
+    storage?.setItem(KEY, choice);
+  } catch {
+    /* a per-browser convenience only; nothing else depends on it */
+  }
+}
+
+/** shadcn's convention: the `dark` class on <html>. `light` is set too, so theme.css can tell
+ * "the user chose light" from "nothing chosen yet, follow the OS". */
+export function applyTheme(root: HTMLElement, resolved: Resolved): void {
+  root.classList.toggle("dark", resolved === "dark");
+  root.classList.toggle("light", resolved === "light");
+}
+
+/** localStorage, or null where the browser forbids it (private windows, blocked site data). */
+export function browserStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** The theme applyTheme last set on `root`: the `dark` class, or light. */
+export function currentTheme(root: HTMLElement): Resolved {
+  return root.classList.contains("dark") ? "dark" : "light";
+}
+```
+
+  `frontend/src/lib/notices.ts`:
+
+```ts
+import type { Notice } from "@/types";
+
+/** A notice on screen, with an id to dismiss it by. */
+export type Shown = Notice & { id: number };
+
+export const MAX_SHOWN = 3;
+
+/** The notices after one more arrives: newest last, at most MAX_SHOWN, and a notice that repeats
+ * the newest one isn't shown twice. Anything that isn't a well-formed notice is ignored, since it
+ * comes over the wire. */
+export function addNotice(shown: Shown[], notice: unknown, id: number): Shown[] {
+  if (!isNotice(notice)) return shown;
+  const last = shown[shown.length - 1];
+  if (last && last.kind === notice.kind && last.text === notice.text) return shown;
+  return [...shown, { kind: notice.kind, text: notice.text, id }].slice(-MAX_SHOWN);
+}
+
+export function dismissNotice(shown: Shown[], id: number): Shown[] {
+  return shown.filter((n) => n.id !== id);
+}
+
+function isNotice(value: unknown): value is Notice {
+  if (typeof value !== "object" || value === null) return false;
+  const { kind, text } = value as Record<string, unknown>;
+  return (kind === "info" || kind === "error") && typeof text === "string";
+}
+```
+
+  `frontend/src/components/TopBar.tsx`:
+
+```tsx
+import type { Capabilities, EndpointStatus, Status } from "@/types";
+
+import { ThemeSwitch } from "./ThemeSwitch";
+
+const ENGINE: Record<Capabilities["engine"], string> = {
+  local: "Local engine",
+  browser: "Browser editor",
+};
+
+/** One endpoint in words, not colour alone: reachable or not (cloud ones are never contacted),
+ * and its key by presence only (spec §19.2). */
+export function endpointLabel(e: EndpointStatus): string {
+  const reach = e.reachable === null ? (e.local ? "checking…" : "cloud") : e.reachable ? "reachable" : "not reachable";
+  const key = e.key === "none" ? "" : e.key === "present" ? ", key set" : ", key missing";
+  return `${e.name}: ${reach}${key}`;
+}
+
+/** Which engine this is (from `capabilities`, not a toggle), the engine's status, and the theme
+ * switch (spec §19.2). */
+export function TopBar({ capabilities, status }: { capabilities?: Capabilities; status?: Status }) {
+  return (
+    <header className="flex items-center gap-4 border-b border-border bg-card px-4 py-2" data-testid="topbar">
+      <span className="flex items-center gap-2 font-bold">
+        <i aria-hidden className="inline-block size-2.5 rounded-full bg-(--brand-orange)" />
+        vid2sub
+      </span>
+      {capabilities && <span className="text-sm text-muted-foreground" data-testid="engine">{ENGINE[capabilities.engine]}</span>}
+      {status && (
+        <ul className="flex flex-wrap gap-2 text-sm" aria-label="Engine status" data-testid="status">
+          {!status.ffmpeg && <li className="rounded-full bg-muted px-2 text-destructive">ffmpeg missing</li>}
+          {status.endpoints.map((e) => (
+            <li key={e.name} className="rounded-full bg-muted px-2" data-testid="endpoint">{endpointLabel(e)}</li>
+          ))}
+        </ul>
+      )}
+      <ThemeSwitch />
+    </header>
+  );
+}
+```
+
+  `frontend/src/components/ThemeSwitch.tsx`:
+
+```tsx
+import { Monitor, Moon, Sun } from "lucide-react";
+import { useEffect, useState } from "react";
+
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { applyTheme, browserStorage, loadChoice, resolveTheme, saveChoice, type ThemeChoice } from "@/lib/theme";
+
+export function ThemeSwitch() {
+  const [choice, setChoice] = useState<ThemeChoice>(() => loadChoice(browserStorage()));
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const sync = () => applyTheme(document.documentElement, resolveTheme(choice, media.matches));
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, [choice]);
+
+  return (
+    <ToggleGroup
+      type="single"
+      size="sm"
+      variant="outline"
+      className="ml-auto"
+      value={choice}
+      aria-label="Colour theme"
+      onValueChange={(v) => {
+        if (!v) return; // Radix sends "" when the active item is clicked again
+        setChoice(v as ThemeChoice);
+        saveChoice(browserStorage(), v as ThemeChoice);
+      }}
+    >
+      <ToggleGroupItem value="light" aria-label="Light" data-testid="theme-light"><Sun /></ToggleGroupItem>
+      <ToggleGroupItem value="system" aria-label="System" data-testid="theme-system"><Monitor /></ToggleGroupItem>
+      <ToggleGroupItem value="dark" aria-label="Dark" data-testid="theme-dark"><Moon /></ToggleGroupItem>
+    </ToggleGroup>
+  );
+}
+```
+
+  `frontend/src/components/ui/toggle.tsx`:
+
+```tsx
+"use client"
+
+import * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
+import { cn } from "cn"
+import { Toggle as TogglePrimitive } from "radix-ui"
+
+const toggleVariants = cva(
+  "group/toggle inline-flex items-center justify-center gap-1 rounded-lg text-sm font-medium whitespace-nowrap transition-all outline-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 aria-pressed:bg-muted data-[state=on]:bg-muted dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  {
+    variants: {
+      variant: {
+        default: "bg-transparent",
+        outline: "border border-input bg-transparent hover:bg-muted",
+      },
+      size: {
+        default:
+          "h-8 min-w-8 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+        sm: "h-7 min-w-7 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+        lg: "h-9 min-w-9 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
+  }
+)
+
+function Toggle({
+  className,
+  variant = "default",
+  size = "default",
+  ...props
+}: React.ComponentProps<typeof TogglePrimitive.Root> &
+  VariantProps<typeof toggleVariants>) {
+  return (
+    <TogglePrimitive.Root
+      data-slot="toggle"
+      className={cn(toggleVariants({ variant, size, className }))}
+      {...props}
+    />
+  )
+}
+
+export { Toggle, toggleVariants }
+```
+
+  `frontend/src/components/ui/toggle-group.tsx`:
+
+```tsx
+import * as React from "react"
+import { type VariantProps } from "class-variance-authority"
+import { cn } from "cn"
+import { ToggleGroup as ToggleGroupPrimitive } from "radix-ui"
+
+import { toggleVariants } from "@/components/ui/toggle"
+
+const ToggleGroupContext = React.createContext<
+  VariantProps<typeof toggleVariants> & {
+    spacing?: number
+    orientation?: "horizontal" | "vertical"
+  }
+>({
+  size: "default",
+  variant: "default",
+  spacing: 2,
+  orientation: "horizontal",
+})
+
+function ToggleGroup({
+  className,
+  variant,
+  size,
+  spacing = 2,
+  orientation = "horizontal",
+  children,
+  ...props
+}: React.ComponentProps<typeof ToggleGroupPrimitive.Root> &
+  VariantProps<typeof toggleVariants> & {
+    spacing?: number
+    orientation?: "horizontal" | "vertical"
+  }) {
+  return (
+    <ToggleGroupPrimitive.Root
+      data-slot="toggle-group"
+      data-variant={variant}
+      data-size={size}
+      data-spacing={spacing}
+      data-orientation={orientation}
+      style={{ "--gap": spacing } as React.CSSProperties}
+      className={cn(
+        "group/toggle-group flex w-fit flex-row items-center gap-[--spacing(var(--gap))] rounded-lg data-[size=sm]:rounded-[min(var(--radius-md),10px)] data-vertical:flex-col data-vertical:items-stretch",
+        className
+      )}
+      {...props}
+    >
+      <ToggleGroupContext.Provider
+        value={{ variant, size, spacing, orientation }}
+      >
+        {children}
+      </ToggleGroupContext.Provider>
+    </ToggleGroupPrimitive.Root>
+  )
+}
+
+function ToggleGroupItem({
+  className,
+  children,
+  variant = "default",
+  size = "default",
+  ...props
+}: React.ComponentProps<typeof ToggleGroupPrimitive.Item> &
+  VariantProps<typeof toggleVariants>) {
+  const context = React.useContext(ToggleGroupContext)
+
+  return (
+    <ToggleGroupPrimitive.Item
+      data-slot="toggle-group-item"
+      data-variant={context.variant || variant}
+      data-size={context.size || size}
+      data-spacing={context.spacing}
+      className={cn(
+        "shrink-0 group-data-[spacing=0]/toggle-group:rounded-none group-data-[spacing=0]/toggle-group:px-2 focus:z-10 focus-visible:z-10 group-data-[spacing=0]/toggle-group:has-data-[icon=inline-end]:pr-1.5 group-data-[spacing=0]/toggle-group:has-data-[icon=inline-start]:pl-1.5 group-data-horizontal/toggle-group:data-[spacing=0]:first:rounded-l-lg group-data-vertical/toggle-group:data-[spacing=0]:first:rounded-t-lg group-data-horizontal/toggle-group:data-[spacing=0]:last:rounded-r-lg group-data-vertical/toggle-group:data-[spacing=0]:last:rounded-b-lg group-data-horizontal/toggle-group:data-[spacing=0]:data-[variant=outline]:border-l-0 group-data-vertical/toggle-group:data-[spacing=0]:data-[variant=outline]:border-t-0 group-data-horizontal/toggle-group:data-[spacing=0]:data-[variant=outline]:first:border-l group-data-vertical/toggle-group:data-[spacing=0]:data-[variant=outline]:first:border-t",
+        toggleVariants({
+          variant: context.variant || variant,
+          size: context.size || size,
+        }),
+        className
+      )}
+      {...props}
+    >
+      {children}
+    </ToggleGroupPrimitive.Item>
+  )
+}
+
+export { ToggleGroup, ToggleGroupItem }
+```
+
+  `_brand.yml` (recordings', renamed):
+
+```yaml
+# vid2sub's theme, from recordings' _brand.yml (8deb039): NYC blue is the working colour and NYC
+# orange the accent, on warm neutrals (spec §19.3). Every colour that differs between modes is
+# {light, dark}. scripts/brand_css.py turns this into shadcn/ui's CSS variables.
+meta:
+  name: vid2sub
+color:
+  palette:
+    nyc-blue: "#236192"
+    nyc-blue-light: "#6CA6D9"   # #236192 is only 2.8:1 on the dark base
+    nyc-orange: "#F26522"
+    warm-white: "#F8F6F2"
+    paper: "#FFFDFA"
+    linen: "#EFE8DF"
+    sand: "#E8DDD2"
+    hairline: "#E0D6CB"
+    warm-gray: "#6B6258"
+    near-black: "#1C1A17"
+    green-text: "#3D6123"
+    burgundy: "#9A4665"
+    dark-base: "#171512"
+    dark-surface: "#232019"
+    dark-side: "#1C1A16"
+    dark-hairline: "#2E2B26"
+    stone: "#B8AEA2"
+    green-light: "#9CC27A"
+    rose: "#D27A9A"
+  foreground: { light: near-black, dark: warm-white }
+  background: { light: warm-white, dark: dark-base }
+  primary: { light: nyc-blue, dark: nyc-blue-light }
+  secondary: { light: warm-gray, dark: stone }
+  tertiary: { light: linen, dark: dark-side }
+  success: { light: green-text, dark: green-light }
+  warning: nyc-orange
+  danger: { light: burgundy, dark: rose }
+  light: { light: paper, dark: dark-surface }
+  dark: { light: near-black, dark: warm-white }
+typography:
+  base: Atkinson Hyperlegible
+  monospace: Atkinson Hyperlegible Mono
+```
+
+  `scripts/brand_css.py` (recordings', writing `frontend/src/theme.css`):
+
+```python
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["pyyaml==6.0.3"]
+# ///
+"""Generate frontend/src/theme.css (shadcn/ui's CSS variables) from _brand.yml (spec §19.3).
+
+    make brand        (uv run scripts/brand_css.py)
+
+Copied from recordings' scripts/brand_css.py at 8deb039, with the output path changed.
+_brand.yml uses brand.yml's {light, dark} colour objects; this reads them directly, so the
+R/Python brand_yml packages (which don't read that form) are not involved.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import yaml
+
+REPO = Path(__file__).resolve().parents[1]
+OUT = REPO / "frontend" / "src" / "theme.css"
+
+# Roles brand.yml has no theme key for: a palette name per mode.
+EXTRA = {
+    "chip": {"light": "sand", "dark": "dark-hairline"},
+    "hairline": {"light": "hairline", "dark": "dark-hairline"},
+}
+# shadcn token -> brand.yml theme key, or extra:<role>
+TOKENS = {
+    "background": "background",
+    "foreground": "foreground",
+    "card": "light",
+    "card-foreground": "foreground",
+    "popover": "light",
+    "popover-foreground": "foreground",
+    "primary": "primary",
+    "primary-foreground": "background",
+    "secondary": "extra:chip",
+    "secondary-foreground": "foreground",
+    "muted": "tertiary",
+    "muted-foreground": "secondary",
+    "accent": "extra:chip",
+    "accent-foreground": "foreground",
+    "destructive": "danger",
+    "border": "extra:hairline",
+    "input": "extra:hairline",
+    "ring": "primary",
+    "sidebar": "tertiary",
+    "sidebar-foreground": "foreground",
+    "sidebar-primary": "primary",
+    "sidebar-primary-foreground": "background",
+    "sidebar-accent": "extra:chip",
+    "sidebar-accent-foreground": "foreground",
+    "sidebar-border": "extra:hairline",
+    "sidebar-ring": "primary",
+    "brand-orange": "warning",
+    "brand-success": "success",
+}
+
+
+def _resolve(palette: dict, value, mode: str) -> str:
+    if isinstance(value, dict):
+        value = value[mode]
+    seen = set()
+    while value in palette and value not in seen:  # palette entries may alias each other
+        seen.add(value)
+        value = palette[value]
+    return value
+
+
+def tokens(repo: Path, mode: str) -> dict[str, str]:
+    color = yaml.safe_load((repo / "_brand.yml").read_text(encoding="utf-8"))["color"]
+    out = {}
+    for name, ref in TOKENS.items():
+        value = EXTRA[ref.removeprefix("extra:")][mode] if ref.startswith("extra:") else color[ref]
+        out[name] = _resolve(color["palette"], value, mode)
+    return out
+
+
+def _block(selector: str, values: dict[str, str], scheme: str, indent: str = "") -> str:
+    lines = [
+        f"{indent}{selector} {{",
+        f"{indent}  color-scheme: {scheme};",
+        f"{indent}  --radius: 0.5rem;",
+    ]
+    lines += [f"{indent}  --{k}: {v};" for k, v in values.items()]
+    return "\n".join([*lines, f"{indent}}}"])
+
+
+def render(repo: Path) -> str:
+    light, dark = tokens(repo, "light"), tokens(repo, "dark")
+    return "\n".join(
+        [
+            "/* Generated by scripts/brand_css.py from _brand.yml. Do not edit. */",
+            _block(":root", light, "light"),
+            _block(".dark", dark, "dark"),
+            "/* Before the app picks a mode (class light/dark on <html>), follow the OS. */",
+            "@media (prefers-color-scheme: dark) {",
+            _block(":root:not(.light):not(.dark)", dark, "dark", indent="  "),
+            "}",
+            "",
+        ]
+    )
+
+
+if __name__ == "__main__":
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(render(REPO), encoding="utf-8")
+    print(f"wrote {OUT}", file=sys.stderr)
+```
+
+  Then `uv run scripts/brand_css.py`, which writes `frontend/src/theme.css` (it matches
+  recordings' `packages/ui/frontend/src/theme.css` byte for byte).
+
+  The fonts, recordings' files (SIL Open Font License): `mkdir -p src/vid2sub/web/www/fonts`, then
+  for each file `git -C <recordings> show
+  8deb039:packages/ui/src/recordings_ui/www/fonts/<file> > src/vid2sub/web/www/fonts/<file>`.
+  Their SHA-256 (`shasum -a 256`):
+
+  - `AtkinsonHyperlegible-Bold.woff2`: `943b7aaf5db6e9fc77ad55d62dc788905a1d1b42a49b5d5a28200c1a1e0db852`
+  - `AtkinsonHyperlegible-BoldItalic.woff2`: `70fc038d31c1c1c188cd10387e7746b03e85470b7bf29783ee8d3c895cf104d9`
+  - `AtkinsonHyperlegible-Italic.woff2`: `43dc4dde8cc93427a06b068564428c346539c09742009251577d012a816e49d9`
+  - `AtkinsonHyperlegible-Regular.woff2`: `6d00e3139d1c29dcc16f0b194c8ec39b6a0dca5754e61f1f3e9f148aeb3e66d6`
+  - `AtkinsonHyperlegibleMono-Bold.woff2`: `d5a9e53e9534f79bc34454a1bc30ee69a344355eb0f1ed88002c9c43af80ffe9`
+  - `AtkinsonHyperlegibleMono-Regular.woff2`: `89eda5637b138b054617259cbd88ec85cb01337c8f761ac73dc48edff6c4444f`
+  - `OFL.txt`: `f32d22b3908fcad2c86a74000614ec22e6a7f66ea7e867e616026a27aebdc143`
+
+  In `pyproject.toml`'s dev group, replace
+
+```toml
+    "pytest-playwright==0.10.0",  # the editor's browser tests (spec §22.7), as recordings pins it
+]
+```
+
+  with
+
+```toml
+    "pytest-playwright==0.10.0",  # the editor's browser tests (spec §22.7), as recordings pins it
+    "pyyaml==6.0.3",  # tests/test_brand.py reads _brand.yml, as scripts/brand_css.py does
+]
+```
+
+  then `uv lock` (Expected: `Resolved 107 packages`) and `uv sync --group dev` (`+ pyyaml==6.0.3`).
+
+  In the `Makefile`, replace the first lines,
+
+```make
+.PHONY: setup test test-utc lint leaks check hooks live readme help
+
+setup: ## Install the dev environment
+	uv sync --group dev
+```
+
+  with
+
+```make
+.PHONY: setup build test test-utc test-js lint leaks check hooks live readme brand skills help
+
+FRONTEND := frontend
+# Each recipe line runs in its own shell, so nvm is loaded per line when it is there, and switched
+# to the Node in frontend/.nvmrc (as recordings' Makefile does). Without nvm (CI), whatever Node is
+# on PATH runs, and frontend/scripts/check-node.mjs refuses one older than 22.
+NVM := if [ -s "$$HOME/.nvm/nvm.sh" ]; then . "$$HOME/.nvm/nvm.sh" && nvm use --silent "$$(cat $(CURDIR)/$(FRONTEND)/.nvmrc)"; fi;
+
+setup: ## Install the dev environment, the frontend's packages included
+	uv sync --group dev
+	cd $(FRONTEND) && $(NVM) npm ci
+
+build: ## Build the frontend into src/vid2sub/web/www/ (vid2sub serve needs it)
+	cd $(FRONTEND) && $(NVM) npm run build
+```
+
+  Below `test-utc`'s recipe, replace
+
+```make
+lint: ## Lint with ruff
+```
+
+  with
+
+```make
+test-js: ## Typecheck the frontend and run its Vitest tests
+	cd $(FRONTEND) && $(NVM) npm run typecheck && VID2SUB_REQUIRE_SHINYREACT=1 npm test
+
+lint: ## Lint with ruff
+```
+
+  replace `check`'s line
+
+```make
+check: test test-utc lint leaks ## Everything CI checks: the suite, again under UTC, lint, leaks
+```
+
+  with
+
+```make
+check: test test-utc test-js lint leaks ## Everything CI checks: the suite, again under UTC, the frontend's tests, lint, leaks
+```
+
+  and replace `help`'s first line
+
+```make
+help: ## List the targets
+```
+
+  with
+
+```make
+brand: ## Regenerate frontend/src/theme.css from _brand.yml
+	uv run scripts/brand_css.py
+
+skills: ## Install the shinyreact and shadcn agent skills (local tooling, never committed)
+	uvx library-skills install --claude --yes --skill shinyreact-build-app --skill shinyreact-convert-app
+	$(NVM) npx skills add shadcn/ui --skill shadcn --agent claude-code --yes
+
+help: ## List the targets
+```
+
+  At the end of `.gitignore`, add:
+
+```text
+# The frontend: its packages, and its build output in www/ (make build). The fonts are committed.
+frontend/node_modules/
+src/vid2sub/web/www/ui.js
+src/vid2sub/web/www/ui.css
+# The Python template's lib/ above would hide the frontend's own lib/.
+!frontend/src/lib/
+# Agent skills are local tooling, made again by make skills.
+.claude/skills/
+.agents/
+skills-lock.json
+```
+
+- [ ] **Step 5: Run the checks; they pass.** `make setup` (npm ci under nvm's Node 22), then
+  `make build`. Expected, among its lines: `../src/vid2sub/web/www/ui.css  22.62 kB`,
+  `../src/vid2sub/web/www/ui.js   71.15 kB`, `✓ built in` (Vite also says each `/fonts/…` URL
+  "didn't resolve at build time, it will remain unchanged to be resolved at runtime", which is
+  meant: the engine serves `www/` at "/"). `make test-js`. Expected: `Test Files  4 passed (4)`,
+  `Tests  19 passed (19)`. `make check`. Expected: `917 passed, 2 skipped, 4 deselected` twice,
+  the Vitest lines again, `All checks passed!`, `no leaks found`. `make help` lists `build`,
+  `test-js`, `brand` and `skills`. `git check-ignore -v frontend/src/lib/theme.ts` prints nothing
+  (the template's `lib/` no longer hides it); `src/vid2sub/web/www/ui.js` and
+  `frontend/node_modules` are ignored. `make skills` isn't run here (it fetches agent tooling).
+- [ ] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(frontend): 🤖 the editor's frontend builds into src/vid2sub/web/www/ with React kept external, the brand's theme and fonts served locally
+
+frontend/ is recordings' scaffold (packages/ui/frontend at 8deb039): a Vite 5 library build
+(IIFE) of src/ui.tsx into src/vid2sub/web/www/ui.js and ui.css, with react and react-dom/client
+external as window.shinyreact.React and ReactDOM and the react-dom index bundled (createPortal,
+flushSync); TypeScript 5.9, Tailwind 4, shadcn radix-nova (components.json; toggle and
+toggle-group copied as shadcn's add command wrote them for recordings), Vitest 3 in jsdom. Every
+package is pinned exactly. sr.ts re-exports shinyreact's hooks from the global, the npm package
+imported for its types only. App subscribes every output (capabilities, status) and holds the
+notice handler, as shinyreact 0.1.0 needs; notices are plain text, newest last, three at most,
+info in a polite live region and errors in an alert (spec §19.3). TopBar says which engine this
+is from capabilities and each endpoint's reach and key in words (spec §19.2); ThemeSwitch and
+lib/theme.ts are recordings', with the key vid2sub.theme. scripts/check-node.mjs accepts Node 22
+or later (.nvmrc says 22; this machine runs 25). _brand.yml and scripts/brand_css.py are
+recordings', writing frontend/src/theme.css; tests/test_brand.py (recordings') checks it is up to
+date, that text meets WCAG AA in both modes and that NYC orange is never a text colour (spec
+§19.3), with pyyaml 6.0.3 in the dev group to read _brand.yml. The Atkinson Hyperlegible fonts
+(OFL) are recordings' files in src/vid2sub/web/www/fonts/. The Makefile gains setup's npm ci,
+build, test-js (in check), brand and skills, loading nvm per line as recordings does;
+.gitignore keeps node_modules and the build output out, and lets frontend/src/lib/ past the
+Python template's lib/.
+
+The new tests failed first with: Error: Failed to resolve import "./theme" from
+"src/lib/theme.test.ts". Does the file exist? (and likewise ./notices and ./TopBar: Test Files
+3 failed | 1 passed), and tests/test_brand.py with FileNotFoundError (3 failed).
+
+Docs read: Vite 5's library-mode and build options (build.lib formats and fileName,
+rollupOptions external and output.globals, cssCodeSplit, emptyOutDir); Tailwind 4's Vite plugin
+and @import "tailwindcss"; shadcn's components.json; Vitest 3's environment option and
+describe.skipIf; shinyreact 0.1.0's _page.py and _dep.py (page_react serves ui.js as a module
+script and ui.css, versioned by ui.js's mtime) and its window.shinyreact global.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 12
+Co-Authored-By: <the model's own line>
+```
+
+  `git add frontend _brand.yml scripts/brand_css.py src/vid2sub/web/www/fonts Makefile .gitignore
+  pyproject.toml uv.lock tests/test_brand.py` (`git status --short` then shows no
+  `node_modules`, `ui.js` or `ui.css`), `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 12b: the shinyreact server, and a page the CSP allows
+
+- [ ] **Step 7: Write the failing test,** `tests/test_web_server.py`:
+
+```python
+"""The Shiny server for the React frontend: its page runs no inline script or style, so the spec's
+CSP allows all of it; `capabilities` and `status` are JSON outputs, with keys by presence only;
+and `notice` is a shinyreact message (spec §19.1, §19.2, §6.3; S26)."""
+
+import asyncio
+import json
+import re
+import threading
+
+import pytest
+from starlette.testclient import TestClient
+
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines import clients
+from vid2sub.engines.base import EngineError
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.web import runtime, server, views
+from vid2sub.web.app import create_app
+from vid2sub.web.guards import CSP
+
+PORT = 8765
+TOKEN = "t" * 43  # as long as a real token, and plainly not one (the leak scan agrees)
+BASE = f"http://127.0.0.1:{PORT}"
+WS = f"ws://127.0.0.1:{PORT}/websocket/"
+JSON = {"Content-Type": "application/json"}
+PAGE = {"Origin": BASE, "Sec-Fetch-Site": "same-origin"}
+KEY = "v" * 24  # a key's value, which must reach no output
+CONFIG = {
+    "endpoints": {
+        "spark": {"base_url": "http://127.0.0.1:9/v1", "key_env": "SPARK_TEST_KEY"},
+        "openai": {"base_url": "https://api.openai.com/v1", "key_env": "OPENAI_TEST_KEY"},
+        "lan": {"base_url": "http://127.0.0.1:10/v1"},
+    },
+    "models": {
+        "spark-turbo": {"endpoint": "spark", "model": "w", "parser": "whisper.cpp", "local": True},
+        "lan-gemma": {"endpoint": "lan", "model": "g", "task": "translate", "local": True},
+        "cloud": {"endpoint": "openai", "model": "whisper-1", "parser": "openai"},
+    },
+}
+
+
+@pytest.fixture(autouse=True)
+def fresh_reactive_lock():
+    """shiny's reactive lock is one asyncio.Lock per process, bound to the first event loop it is
+    contended on, and each TestClient runs its own loop: dropping it makes a new one (recordings'
+    packages/ui/tests/conftest.py)."""
+    from shiny.reactive import _core
+
+    _core._reactive_environment._lock = None
+    yield
+    _core._reactive_environment._lock = None
+
+
+@pytest.fixture
+def probed(monkeypatch):
+    """No endpoint is contacted for real: the spark answers, the LAN one is down."""
+    calls: list[str] = []
+
+    def list_models(name, endpoint, keys, *, timeout=5.0):
+        calls.append(name)
+        if name == "lan":
+            raise EngineError("connection", "the server isn't reachable")
+        return ["w"]
+
+    monkeypatch.setattr(clients, "list_models", list_models)
+    return calls
+
+
+@pytest.fixture
+def rt(tmp_path):
+    made = runtime.build(Config.model_validate(CONFIG), tools=Tools(None, None, None),
+                         keys=KeyRing(environ={"SPARK_TEST_KEY": KEY}),
+                         cache=Cache(tmp_path / "cache", max_bytes=0))
+    runtime.configure(made)
+    yield made
+    runtime.configure(None)
+    made.queue.close()
+
+
+@pytest.fixture
+def client(rt):
+    with TestClient(create_app(rt, token=TOKEN, port=PORT, shiny_app=server.app),
+                    base_url=BASE) as c:
+        r = c.post("/auth", content=json.dumps({"token": TOKEN}), headers={**JSON, **PAGE})
+        assert r.status_code == 204
+        yield c
+
+
+def _session(client, outputs: set[str], until) -> list[dict]:
+    """Every message the server sends a new session until `until(messages)` holds (20 s at
+    most). Shiny runs the server function after the client's `init`, and sends an output only
+    once the client says it isn't hidden (recordings' test_demo_guard.py)."""
+    messages: list[dict] = []
+    with client.websocket_connect(WS, headers={"Origin": BASE}) as ws:
+        init = {f".clientdata_output_{name}_hidden": False for name in outputs}
+        ws.send_text(json.dumps({"method": "init", "data": init}))
+
+        def read() -> None:
+            while not until(messages):
+                messages.append(json.loads(ws.receive_text()))
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        reader.join(20)  # receive_text has no timeout: a missing output must not hang
+    assert until(messages), f"the session sent only {messages}"
+    return messages
+
+
+def _values(messages: list[dict]) -> dict:
+    out: dict = {}
+    for m in messages:
+        out.update(m.get("values", {}))
+    return out
+
+
+def test_the_page_runs_no_inline_script_or_style(client):
+    # The CSP's script-src 'self' blocks inline scripts, and with no style-src, default-src
+    # 'self' blocks inline styles (spec §6.3). Shiny 1.8.0's own page has one inline script,
+    # the busy indicators; server.py serves it as a file instead.
+    r = client.get("/")
+    assert r.status_code == 200 and r.headers["content-security-policy"] == CSP
+    for attrs, body in re.findall(r"<script\b([^>]*)>(.*?)</script>", r.text, re.DOTALL):
+        if "src=" in attrs:
+            assert body.strip() == ""
+            continue
+        kind = re.search(r'type="([^"]+)"', attrs)
+        assert kind and kind.group(1) in ("application/json", "application/html-dependencies"), (
+            f"an inline script the CSP would block: <script{attrs}>{body[:80]}")
+    assert "<style" not in r.text and " style=" not in r.text
+
+
+def test_the_busy_indicators_still_switch_on_from_a_file(client):
+    page = client.get("/").text
+    srcs = re.findall(r'<script src="([^"]*busy-indicators\.js)"', page)
+    assert len(srcs) == 1
+    script = client.get("/" + srcs[0].lstrip("/"))
+    assert script.status_code == 200
+    assert "document.documentElement.dataset.shinyBusySpinners = true;" in script.text
+    assert "document.documentElement.dataset.shinyBusyPulse = true;" in script.text
+    assert re.search(r'href="[^"]*busy-indicators\.css"', page)  # Shiny's stylesheet stays
+
+
+def test_the_page_loads_the_frontend_and_its_fonts_from_the_engine(client):
+    page = client.get("/").text
+    assert "<title>vid2sub</title>" in page
+    assert client.get("/fonts/AtkinsonHyperlegible-Regular.woff2").status_code == 200
+    assert "http://" not in page.replace(BASE, "") and "https://" not in page  # nothing third-party
+
+
+def test_capabilities_says_this_is_the_local_engine(client, probed):
+    values = _values(_session(client, {"capabilities"}, lambda m: "capabilities" in _values(m)))
+    assert values["capabilities"] == {"engine": "local", "generate": True, "save": "disk",
+                                      "path_input": True}
+
+
+def test_status_names_each_endpoint_its_reach_and_its_key_by_presence_only(client, probed):
+    def probed_all(messages):
+        status = _values(messages).get("status")
+        return bool(status) and all(e["reachable"] is not None or not e["local"]
+                                    for e in status["endpoints"])
+
+    messages = _session(client, {"status"}, probed_all)
+    assert _values(messages)["status"] == {
+        "ffmpeg": False,
+        "endpoints": [
+            {"name": "spark", "local": True, "key": "present", "reachable": True},
+            {"name": "openai", "local": False, "key": "missing", "reachable": None},
+            {"name": "lan", "local": True, "key": "none", "reachable": False},
+        ],
+    }
+    assert sorted(probed) == ["lan", "spark"]  # a cloud endpoint is never contacted
+    assert KEY not in json.dumps(messages)
+
+
+def test_a_notice_reaches_the_browser_as_a_shinyreact_message():
+    class Session:
+        def __init__(self):
+            self.sent = []
+
+        async def send_custom_message(self, kind, message):
+            self.sent.append((kind, message))
+
+    session = Session()
+    asyncio.run(server.notice(session, "error", "couldn't save Show.en.srt"))
+    assert session.sent == [("shinyReactMessage", {"id": "notice", "data": {
+        "kind": "error", "text": "couldn't save Show.en.srt"}})]
+
+
+# ---- the views -------------------------------------------------------------------------------
+
+
+def test_a_typed_key_counts_as_present_and_is_never_shown():
+    config = Config.model_validate({"endpoints": {"openai": {
+        "base_url": "https://api.openai.com/v1", "allow_typed_key": True}}})
+    keys = KeyRing(typed={"openai": KEY}, environ={})
+    status = views.status_view(config, keys, {}, ffmpeg=True)
+    assert status["endpoints"] == [
+        {"name": "openai", "local": False, "key": "present", "reachable": None}]
+    assert KEY not in json.dumps(status)
+
+
+def test_an_endpoint_not_checked_yet_or_in_the_cloud_is_neither_reachable_nor_not():
+    config = Config.model_validate(CONFIG)
+    found = {"spark": True, "openai": True}  # a cloud endpoint is never shown as checked
+    status = views.status_view(config, KeyRing(environ={}), found, ffmpeg=True)
+    assert [(e["name"], e["reachable"]) for e in status["endpoints"]] == [
+        ("spark", True), ("openai", None), ("lan", None)]
+
+
+def test_capabilities_view_is_the_backends_capabilities_as_json(rt):
+    assert views.capabilities_view(rt.backend.capabilities()) == {
+        "engine": "local", "generate": True, "save": "disk", "path_input": True}
+```
+
+- [ ] **Step 8: Run it; watch it fail.** `uv run pytest tests/test_web_server.py -q`. Expected:
+  `E   ImportError: cannot import name 'server' from 'vid2sub.web' (…/src/vid2sub/web/__init__.py)`.
+- [ ] **Step 9: Write the code,** `src/vid2sub/web/static/busy/busy-indicators.js`:
+
+```js
+// Shiny's busy indicators, switched on as Shiny 1.8.0's shiny.ui.busy_indicators.use() does, but
+// from a file: Shiny writes these two lines as an inline script, which the CSP's script-src
+// 'self' blocks (spec §6.3). src/vid2sub/web/server.py puts this file in that script's place.
+document.documentElement.dataset.shinyBusySpinners = true;
+document.documentElement.dataset.shinyBusyPulse = true;
+```
+
+  `src/vid2sub/web/server.py`:
+
+```python
+"""The Shiny server for the React frontend: every output is JSON from a pure view function, and
+every message goes through shinyreact's `send_message` (spec §19.1).
+
+As recordings' shiny_app.py does (packages/ui/src/recordings_ui/shiny_app.py at 8deb039): the
+server holds only reactive computation and returns JSON (the shinyreact-build-app skill), and
+`ReactApp(...)` is called in this file. It reads the launch's parts from `runtime.current()`,
+which `vid2sub serve` sets before importing this module. An unset input is a silent exception the
+client treats as pending; an explicit null clears a pane (§19.1). Work that blocks (the endpoint
+check here; opening, saving and retranslating later) runs off the event loop. Shiny's reconnect
+stays off: nothing here calls `session.allow_reconnect`, so a tab whose engine restarted asks for
+the new link instead of retrying (Review Focus 5).
+
+The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
+for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
+indicators on with an inline script, which the CSP's `script-src 'self'` blocks (§6.3), so the
+same two lines are served as a file instead (checked in Chromium, spec §29). With that, the page
+runs no inline script or style, and the CSP needs no `style-src` of its own.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from pathlib import Path
+from typing import Any, Literal
+
+import shiny
+import shinyreact
+from htmltools import HTMLDependency
+from shiny import Inputs, Outputs, Session, reactive
+from shinyreact import ReactApp, page_react, reactive_output
+
+from vid2sub.config import Config
+from vid2sub.engines import clients
+from vid2sub.engines.base import EngineError
+from vid2sub.engines.clients import KeyRing
+from vid2sub.web import WWW, runtime, views
+
+# By name: a test may load this file as a module of another name.
+log = logging.getLogger("vid2sub.web.server")
+
+STATUS_EVERY = 60  # seconds between checks of the local endpoints
+# htmltools keeps the highest version of a dependency per name. Shiny's own version with a local
+# label (1.8.0+vid2sub, which PEP 440 sorts above 1.8.0) makes this one replace Shiny's
+# shiny-busy-indicators: its stylesheet, without the inline script in its head. The second
+# dependency is that script, as a file. tests/test_web_server.py checks the rendered page, so a
+# Shiny or htmltools upgrade that stops this winning fails there.
+BUSY_INDICATORS = [
+    HTMLDependency(
+        "shiny-busy-indicators",
+        f"{shiny.__version__}+vid2sub",
+        source={"package": "shiny", "subdir": "www/shared/busy-indicators"},
+        stylesheet={"href": "busy-indicators.css"},
+        all_files=True,
+    ),
+    HTMLDependency(
+        "vid2sub-busy-indicators",
+        "1",
+        source={"subdir": str(Path(__file__).parent / "static" / "busy")},
+        script={"src": "busy-indicators.js"},
+    ),
+]
+
+
+def page(request: Any) -> Any:
+    """The page, built per request, so a rebuilt `ui.js` is fetched without a restart (its mtime
+    is the dependency's version, as in ReactApp's own discovery)."""
+    return page_react(*BUSY_INDICATORS, src_dir=WWW, title="vid2sub")
+
+
+async def notice(session: Session, kind: Literal["info", "error"], text: str) -> None:
+    """Tell the person something, as plain text (the frontend never renders it as markup)."""
+    await shinyreact.send_message(session, "notice", {"kind": kind, "text": text})
+
+
+def reachable(config: Config, keys: KeyRing) -> dict[str, bool]:
+    """Whether each local endpoint answers its model list. Blocks on the network: run it off the
+    event loop. Cloud endpoints are never contacted."""
+    found = {}
+    for name in views.local_endpoints(config):
+        try:
+            clients.list_models(name, config.endpoints[name], keys, timeout=3.0)
+            found[name] = True
+        except EngineError:
+            found[name] = False
+    return found
+
+
+def server(input: Inputs, output: Outputs, session: Session) -> None:
+    rt = runtime.current()
+
+    @reactive_output
+    def capabilities():
+        return views.capabilities_view(rt.backend.capabilities())
+
+    # The endpoint check runs as this session's extended task, off the event loop and outside
+    # Shiny's reactive lock, now and every STATUS_EVERY seconds. The status keeps showing the last
+    # result while the next check runs.
+    found = reactive.value({})
+
+    @reactive.extended_task
+    async def check() -> dict[str, bool]:
+        return await asyncio.to_thread(reachable, rt.config, rt.keys)
+
+    @reactive.effect
+    def _check_every_minute() -> None:
+        reactive.invalidate_later(STATUS_EVERY)
+        check.invoke()
+
+    @reactive.effect
+    def _keep_the_last_check() -> None:
+        if check.status() == "success":
+            found.set(check.result())
+
+    @reactive_output
+    def status():
+        return views.status_view(rt.config, rt.keys, found(),
+                                 ffmpeg=bool(rt.backend.tools.ffmpeg))
+
+
+app = ReactApp(server, ui=page, static_assets={"/": WWW})
+```
+
+  In `src/vid2sub/web/views.py`, replace the docstring's last sentence
+
+```python
+covers. The view never holds a path, only the video's bare file name (§6.8).
+"""
+```
+
+  with
+
+```python
+covers. The view never holds a path, only the video's bare file name (§6.8). The top bar's
+views are here too (§19.2): the backend's capabilities, and the engine's status, which gives each
+endpoint's key by presence only, never its value, and its reach only for local endpoints: a cloud
+endpoint is never contacted (as `vid2sub doctor` decides).
+"""
+```
+
+  replace the imports' first lines
+
+```python
+from bisect import bisect_right
+from typing import Any
+
+from vid2sub.subs import langs, naming
+```
+
+  with
+
+```python
+import dataclasses
+from bisect import bisect_right
+from collections.abc import Mapping
+from typing import Any
+
+from vid2sub.config import Config, is_local
+from vid2sub.engines.clients import KeyRing
+from vid2sub.subs import langs, naming
+```
+
+  replace the backend import
+
+```python
+from vid2sub.web.backend import Episode, all_stale
+```
+
+  with
+
+```python
+from vid2sub.web.backend import Capabilities, Episode, all_stale
+```
+
+  and add, directly above `def _rows(ep: Episode) -> list[dict[str, Any]]:`, so that it reads
+
+```python
+def _rows(ep: Episode) -> list[dict[str, Any]]:
+```
+
+  with
+
+```python
+def capabilities_view(caps: Capabilities) -> dict[str, Any]:
+    return dataclasses.asdict(caps)
+
+
+def local_endpoints(config: Config) -> list[str]:
+    """The endpoints that serve a local model, the only ones the engine contacts unasked."""
+    return [name for name in config.endpoints
+            if any(m.endpoint == name and is_local(m, config) for m in config.models.values())]
+
+
+def status_view(config: Config, keys: KeyRing, reachable: Mapping[str, bool], *,
+                ffmpeg: bool) -> dict[str, Any]:
+    """`reachable`: what the last check found for each local endpoint; one not in it is `None`
+    (not checked yet), as is every cloud endpoint (never contacted)."""
+    local = set(local_endpoints(config))
+    endpoints = []
+    for name, ep in config.endpoints.items():
+        needs_key = bool(ep.key_env) or ep.allow_typed_key
+        key = ("present" if keys.key_for(name, ep) else "missing") if needs_key else "none"
+        endpoints.append({"name": name, "local": name in local, "key": key,
+                          "reachable": reachable.get(name) if name in local else None})
+    return {"endpoints": endpoints, "ffmpeg": ffmpeg}
+
+
+def _rows(ep: Episode) -> list[dict[str, Any]]:
+```
+
+- [ ] **Step 10: Run the checks; they pass.** `uv run pytest tests/test_web_server.py -q`.
+  Expected: `9 passed`. Without the build (move `www/ui.js` and `ui.css` aside) it still passes,
+  with shinyreact's "JS entry point not found" warnings, as CI's Python job will. `make check`.
+  Expected: `926 passed, 2 skipped, 4 deselected` twice, `Test Files  4 passed (4)`,
+  `All checks passed!`, `no leaks found`.
+- [ ] **Step 11: Each guard fails its tests without its fix.** `git add src/vid2sub/web/server.py
+  src/vid2sub/web/views.py src/vid2sub/web/static/busy/busy-indicators.js
+  tests/test_web_server.py`. Then, for each row, make the change in `server.py` (the middle two
+  rows: `views.py`), run `uv run pytest tests/test_web_server.py -q`, see it fail, and restore
+  with `git checkout -- <the file>`. The last column is what this listing's build saw.
+
+| Guard | Change | To | Failed |
+|---|---|---|---|
+| Shiny's inline script replaced | `return page_react(*BUSY_INDICATORS, src_dir=WWW, title="vid2sub")` | `return page_react(src_dir=WWW, title="vid2sub")` | 2 |
+| the replacement wins | `f"{shiny.__version__}+vid2sub",` | `shiny.__version__,` | 1 |
+| a cloud endpoint never checked | `"reachable": reachable.get(name) if name in local else None})` | `"reachable": reachable.get(name)})` | 1 |
+| keys by presence only | `key = ("present" if keys.key_for(name, ep) else "missing") if needs_key else "none"` | `key = keys.key_for(name, ep) or "none"` | 2 |
+| only local endpoints probed | `for name in views.local_endpoints(config):` | `for name in config.endpoints:` | 1 |
+
+- [ ] **Step 12: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the Shiny server sends capabilities and status as JSON, and its page runs no inline script, so the spec's CSP allows all of it
+
+src/vid2sub/web/server.py follows recordings' shiny_app.py (8deb039): ReactApp(...) is called
+here, the server reads runtime.current() and returns JSON from pure view functions (spec §19.1).
+Outputs: capabilities (views.capabilities_view of the backend's Capabilities) and status
+(views.status_view: each endpoint in vid2sub.toml with its key by presence only, never its value,
+and its reach for local endpoints only, checked off the event loop as an extended task now and
+every 60 s, keeping the last result; a cloud endpoint is never contacted, as doctor decides;
+whether ffmpeg is there). server.notice(session, kind, text) sends the notice message.
+
+The CSP: in Chromium (Playwright 1.64.1), Shiny 1.8.0's page logs one violation, its busy
+indicators' inline script (busy_indicators.use() in the shiny-busy-indicators dependency's head,
+sha256-erP5hScmId9gRru9k52QQl/lSJmUl8NfFAiLNMbPtcg=). Shiny has no option that leaves it out:
+use(spinners=False, pulse=False) emits an inline script too. htmltools keeps the highest version
+of a dependency per name, so the page is page_react with a shiny-busy-indicators of version
+"<Shiny's>+vid2sub" (a PEP 440 local version, above Shiny's): the same stylesheet, no head, and
+static/busy/busy-indicators.js with the same two lines as a file. Checked in Chromium: no
+violation, no console line, and the busy pulse still animates while the server is busy. Without
+it, blocking the script costs only that pulse (spinners attach to Shiny output elements, which a
+React page has none of). No style-src is needed: default-src 'self' covers the stylesheets,
+React's style props go through the CSSOM, and the page has no <style> or style attribute. www/
+stays served at "/" (static_assets) for the fonts, as ReactApp's own discovery mounts it.
+
+The new test failed first with: ImportError: cannot import name 'server' from 'vid2sub.web'.
+Each guard was then reverted in turn and its tests failed: Shiny's inline script back (2 failed),
+the replacement at Shiny's own version (1), a cloud endpoint shown as checked (1), a key's value
+in the status (2), every endpoint probed (1). The page test checks the rendered page, so an
+upgrade that stops the replacement winning fails it.
+
+Docs read: shiny 1.8.0's html_dependencies.py and ui/busy_indicators.py, and shiny.js's busy
+and disconnect handling; htmltools 0.7.0's _resolve_dependencies; shinyreact 0.1.0's _app.py
+(ReactApp's ui= and static_assets) and _page.py (page_react); shiny's ExtendedTask (invoke
+queues behind a running one and isolates itself); CSP Level 3 on script-src-elem and the
+fallback of style-src to default-src (MDN).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 12
+Co-Authored-By: <the model's own line>
+```
+
+  `git commit -F .git/COMMIT_MSG` (the four files are staged from Step 11), then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 12c: the browser tests, and a tab whose engine restarted
+
+- [ ] **Step 13: Write the failing tests.** `tests/e2e/conftest.py`:
+
+```python
+"""Servers and pages for the browser tests (spec §22.7): the real `vid2sub serve`, on a free port,
+in a child process with its own TMPDIR and an empty vid2sub.toml, and a page signed in through
+the launch link as a person's browser is (Task 9's token flow, scripted).
+
+As recordings' e2e conftest (packages/ui/tests/e2e/conftest.py at 8deb039): a server per test,
+polled on /healthz, stopped at the end. vid2sub prints the link only to a terminal, so the
+harness reads it from the redirect file whose path the server prints (0600, its own user's).
+`page` replaces pytest-playwright's: it is already signed in, and the test fails on any console
+error or CSP violation the page saw, unless the test took them itself (`watch`). Run with
+`make e2e`, which builds the frontend first.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import pytest
+from playwright.sync_api import BrowserContext, Page, expect
+
+from vid2sub.web import WWW
+
+LINK = re.compile(r"http://127\.0\.0\.1:(\d+)/auth#t=([A-Za-z0-9_-]{43})")
+PAGE_LINE = re.compile(r"^  (.+open\.html)$", re.MULTILINE)
+# Runs before any page script, outside the CSP (Playwright injects it): a page's CSP violations,
+# with what was blocked, for the document that is open now.
+WATCH_CSP = """
+window.__csp = [];
+document.addEventListener("securitypolicyviolation", (e) => {
+  window.__csp.push(`${e.violatedDirective} ${e.blockedURI} ${e.sample || ""}`.trim());
+});
+"""
+
+
+@dataclass
+class Server:
+    url: str  # http://127.0.0.1:<port>
+    link: str  # the launch link, /auth#t=<token>
+    port: int
+    proc: subprocess.Popen
+    log: Path
+    tmp: Path  # the server's TMPDIR
+
+    def stop(self) -> int:
+        if self.proc.poll() is None:
+            if os.name == "nt":
+                self.proc.terminate()
+            else:
+                self.proc.send_signal(signal.SIGINT)
+            try:
+                self.proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait()
+        return self.proc.returncode
+
+
+def start_server(tmp: Path, *args: str, port: int = 0) -> Server:
+    """`vid2sub serve --no-browser` on `port` (0: any free one), up and answering."""
+    if not (WWW / "ui.js").is_file():
+        pytest.fail("the frontend isn't built: run make build (make e2e does)")
+    tmp.mkdir(parents=True, exist_ok=True)
+    config = tmp / "vid2sub.toml"
+    config.write_text("", encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("VID2SUB_")}
+    env["TMPDIR"] = str(tmp)
+    log = tmp / "server.log"
+    with log.open("wb") as out:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "vid2sub", "serve", "--no-browser", "--port", str(port),
+             "--config", str(config), *args],
+            env=env, stdout=out, stderr=subprocess.STDOUT)
+
+    def tail() -> str:
+        return log.read_text(encoding="utf-8", errors="replace")[-2000:]
+
+    deadline = time.monotonic() + 60
+    while not (found := PAGE_LINE.search(log.read_text(encoding="utf-8", errors="replace"))):
+        if proc.poll() is not None:
+            pytest.fail(f"vid2sub serve exited with {proc.returncode}:\n{tail()}")
+        if time.monotonic() > deadline:
+            proc.kill()
+            pytest.fail(f"vid2sub serve printed no redirect file in 60 s:\n{tail()}")
+        time.sleep(0.1)
+    link = LINK.search(Path(found.group(1)).read_text(encoding="utf-8"))
+    url = f"http://127.0.0.1:{link.group(1)}"
+    while True:
+        try:
+            with urllib.request.urlopen(f"{url}/healthz", timeout=1) as r:
+                if json.load(r) == {"ok": True}:
+                    break
+        except OSError:
+            pass
+        if time.monotonic() > deadline:
+            proc.kill()
+            pytest.fail(f"vid2sub serve never answered /healthz:\n{tail()}")
+        time.sleep(0.1)
+    return Server(url, link.group(0), int(link.group(1)), proc, log, tmp)
+
+
+@pytest.fixture
+def server(tmp_path):
+    started = start_server(tmp_path / "server")
+    yield started
+    started.stop()
+
+
+@pytest.fixture
+def launch():
+    """Starts another server, `launch(tmp, *args, port=0)`, stopped at the end of the test."""
+    started: list[Server] = []
+
+    def run(tmp: Path, *args: str, port: int = 0) -> Server:
+        started.append(start_server(tmp, *args, port=port))
+        return started[-1]
+
+    yield run
+    for s in started:
+        s.stop()
+
+
+@dataclass
+class Watch:
+    """What a page did: console errors (CSP violations among them, as Chromium logs each one)
+    and every request it made, across navigations."""
+
+    page: Page
+    errors: list[str] = field(default_factory=list)
+    requests: list[str] = field(default_factory=list)
+
+    def violations(self) -> list[str]:
+        """The CSP violations in the document open now."""
+        return self.page.evaluate("() => window.__csp")
+
+    def clear(self) -> None:
+        """Takes what was seen so far, for a test whose point it was."""
+        self.errors.clear()
+        self.page.evaluate("() => { window.__csp = []; }")
+
+
+def watched_page(context: BrowserContext) -> Watch:
+    context.add_init_script(script=WATCH_CSP)
+    page = context.new_page()
+    watch = Watch(page)
+    page.on("console", lambda m: watch.errors.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: watch.errors.append(f"uncaught: {e}"))
+    page.on("request", lambda r: watch.requests.append(r.url))
+    return watch
+
+
+def sign_in(page: Page, server: Server) -> None:
+    """Through the launch link, as the browser vid2sub opens does: /auth posts the token from the
+    fragment, gets the cookie and replaces the address with "/"."""
+    page.goto(server.link)
+    page.wait_for_url(f"{server.url}/")
+    expect(page.get_by_test_id("app")).to_be_visible()
+
+
+@pytest.fixture
+def open_page(context):
+    """Opens a new page signed in to `server`, watched; the test checks what it saw itself."""
+
+    def run(server: Server) -> Watch:
+        watched = watched_page(context)
+        sign_in(watched.page, server)
+        return watched
+
+    return run
+
+
+@pytest.fixture
+def watch(open_page, server):
+    watched = open_page(server)
+    yield watched
+    assert watched.errors == [], f"console errors: {watched.errors}"
+    assert watched.violations() == []
+
+
+@pytest.fixture
+def page(watch) -> Page:
+    """A page already through /auth on the `server` fixture's engine; the test fails on any
+    console error or CSP violation it saw."""
+    return watch.page
+```
+
+  `tests/e2e/test_csp.py`:
+
+```python
+"""In Chromium, the engine's page runs under the spec's CSP with no violation and no console
+error, the CSP blocks inline scripts, eval and inline styles, nothing leaves the engine's own
+origin, and a tab whose engine restarted says to open the new link instead of reconnecting
+(spec §6.3, §29; S26; Review Focus 5). Run with `make e2e`."""
+
+import time
+
+import pytest
+from playwright.sync_api import expect
+
+from vid2sub.web.auth import SIGN_IN_AGAIN
+from vid2sub.web.guards import CSP
+
+pytestmark = pytest.mark.e2e
+
+
+def test_the_page_loads_with_no_csp_violation_or_console_error(page, server, watch):
+    expect(page.get_by_test_id("engine")).to_have_text("Local engine")
+    for theme in ("dark", "light", "system"):  # Radix's toggle group, and the theme classes
+        page.get_by_test_id(f"theme-{theme}").click()
+    assert page.evaluate("() => document.documentElement.classList.contains('light')")
+    assert page.request.get(f"{server.url}/").headers["content-security-policy"] == CSP
+    # Shiny's busy indicators still switch on, from the file that replaced the inline script.
+    assert page.evaluate("() => document.documentElement.dataset.shinyBusyPulse") == "true"
+    # The fonts are the engine's own (spec §19.3).
+    loaded = page.evaluate("""async () => {
+        await document.fonts.ready;
+        return document.fonts.check('16px "Atkinson Hyperlegible"');
+    }""")
+    assert loaded
+    assert watch.errors == [] and watch.violations() == []
+
+
+def test_the_csp_blocks_an_inline_script_eval_and_inline_styles(page, watch):
+    ran = page.evaluate("""() => {
+        const s = document.createElement("script");
+        s.textContent = "window.__ran = true";
+        document.body.append(s);
+        return window.__ran === true;
+    }""")
+    assert ran is False
+    # eval here only proves the CSP refuses it ('unsafe-eval' is never allowed, spec §6.3). It
+    # runs from a real click: code Playwright evaluates itself is exempt from the CSP's eval rule.
+    page.evaluate("""() => {
+        window.__eval = "not run";
+        document.querySelector("main").addEventListener("click", () => {
+            try { window.__eval = String(eval("1 + 1")); } catch (e) { window.__eval = e.name; }
+        }, { once: true });
+    }""")
+    page.get_by_test_id("main").click()
+    assert page.evaluate("() => window.__eval") == "EvalError"
+    styled = page.evaluate("""() => {
+        const style = document.createElement("style");
+        style.textContent = "main { color: rgb(1, 2, 3) }";
+        document.head.append(style);
+        const main = document.querySelector("main");
+        main.setAttribute("style", "background-color: rgb(4, 5, 6)");
+        const seen = getComputedStyle(main);
+        return [seen.color, seen.backgroundColor];
+    }""")
+    assert "rgb(1, 2, 3)" not in styled and "rgb(4, 5, 6)" not in styled
+    # The browser reports each violation as a task of its own, and logs the three inline ones.
+    deadline = time.monotonic() + 5
+    while (len(watch.violations()) < 4 or len(watch.errors) < 3) and time.monotonic() < deadline:
+        page.wait_for_timeout(50)
+    assert sorted(v.split()[0] for v in watch.violations()) == [
+        "script-src", "script-src-elem", "style-src-attr", "style-src-elem"]
+    watch.clear()  # the violations were the point
+
+
+def test_nothing_leaves_the_engines_own_origin(page, server, watch):
+    page.get_by_test_id("theme-dark").click()
+    assert watch.requests, "no request was seen"
+    assert [u for u in watch.requests if not u.startswith(f"{server.url}/")] == []
+
+
+def test_a_restarted_engine_tells_the_page_to_open_the_new_link_and_it_never_reconnects(
+        open_page, server, launch, tmp_path):
+    # Review Focus 5. A refused websocket reaches the browser as an HTTP 403 (close code 1006),
+    # so the page asks the engine for "/" once when Shiny says the socket closed.
+    watch = open_page(server)
+    page = watch.page
+    expect(page.get_by_test_id("engine")).to_have_text("Local engine")
+    opened = []  # websockets opened after the first
+    page.on("websocket", lambda ws: opened.append(ws.url))
+    server.stop()
+    lost = page.get_by_test_id("lost")
+    expect(lost).to_contain_text("vid2sub isn't running")
+    launch(tmp_path / "again", port=server.port)  # a new launch, so a new token
+    page.wait_for_timeout(2000)  # long enough for any reconnect Shiny might try
+    page.get_by_test_id("check-again").click()
+    expect(lost).to_contain_text(f"vid2sub was restarted, so this page is signed out: "
+                                 f"{SIGN_IN_AGAIN}.")
+    assert opened == []  # it never reconnected
+    page.reload()  # the old cookie is refused by the new launch
+    expect(page.locator("body")).to_have_text(SIGN_IN_AGAIN)
+    # A closed socket, a refused fetch and a 401 are logged; a CSP violation never is.
+    assert [e for e in watch.errors if "Content Security Policy" in e] == []
+```
+
+  In `pyproject.toml`, replace `addopts` and the markers
+
+```toml
+addopts = "--import-mode=importlib -m 'not live'"
+markers = [
+    "media: needs ffmpeg and ffprobe (skipped without them unless VID2SUB_REQUIRE_FFMPEG=1)",
+    "live: a real model or the Spark; opt-in, see tests/README.md",
+]
+```
+
+  with
+
+```toml
+addopts = "--import-mode=importlib -m 'not live and not e2e'"
+markers = [
+    "media: needs ffmpeg and ffprobe (skipped without them unless VID2SUB_REQUIRE_FFMPEG=1)",
+    "live: a real model or the Spark; opt-in, see tests/README.md",
+    "e2e: Chromium against vid2sub serve; needs the built frontend (make e2e)",
+]
+```
+
+  In the `Makefile`, replace the `.PHONY` line
+
+```make
+.PHONY: setup build test test-utc test-js lint leaks check hooks live readme brand skills help
+```
+
+  with
+
+```make
+.PHONY: setup build test test-utc test-js e2e lint leaks check hooks live readme brand skills help
+```
+
+  and add the target above `lint`:
+
+```make
+lint: ## Lint with ruff
+```
+
+  with
+
+```make
+e2e: build ## The browser tests against vid2sub serve (installs Playwright's Chromium first)
+	uv run playwright install chromium
+	uv run pytest -m e2e
+
+lint: ## Lint with ruff
+```
+
+- [ ] **Step 14: Run them; watch them fail.** `make e2e` (it builds the frontend, installs
+  Playwright's Chromium if it isn't there, and runs `pytest -m e2e`). Expected:
+  `FAILED tests/e2e/test_csp.py::test_a_restarted_engine_tells_the_page_to_open_the_new_link_and_it_never_reconnects[chromium]`,
+  with `AssertionError: Locator expected to contain text 'vid2sub isn't running'`,
+  `Actual value: None`, then `1 failed, 3 passed`.
+- [ ] **Step 15: Write the code,** `frontend/src/lib/connection.test.ts`:
+
+```ts
+import { describe, expect, it, vi } from "vitest";
+
+import { LOST_MESSAGES, SIGN_IN_AGAIN, whyLost } from "./connection";
+
+describe("a lost connection (Review Focus 5)", () => {
+  it("asks for / once, with the cookie and nothing cached", async () => {
+    const fetchFn = vi.fn(async () => ({ status: 200 }));
+    await whyLost(fetchFn);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(fetchFn).toHaveBeenCalledWith("/", { cache: "no-store", credentials: "same-origin" });
+  });
+
+  it("a 401 means the engine restarted: open the new link", async () => {
+    expect(await whyLost(async () => ({ status: 401 }))).toBe("signed-out");
+    expect(LOST_MESSAGES["signed-out"]).toContain(SIGN_IN_AGAIN);
+  });
+
+  it("no answer means vid2sub isn't running", async () => {
+    expect(await whyLost(async () => { throw new TypeError("Failed to fetch"); })).toBe("stopped");
+  });
+
+  it("any other answer means the engine is up: reload", async () => {
+    expect(await whyLost(async () => ({ status: 200 }))).toBe("dropped");
+  });
+
+  it("says what the engine says to a page without its cookie", () => {
+    expect(SIGN_IN_AGAIN).toBe("open the link vid2sub printed when it started");
+  });
+});
+```
+
+  `frontend/src/lib/connection.ts`:
+
+```ts
+// What the page says when its websocket to the engine closes (Review Focus 5). Shiny's own
+// reconnect stays off, so the page never retries by itself. It asks the engine for "/" once, with
+// its cookie: a 401 means the engine was restarted and this page's cookie is from the old launch,
+// so the person must open the new link; no answer means vid2sub isn't running; any other answer
+// means the engine is up, and a reload carries on. A refused websocket handshake reaches the
+// browser as an HTTP 403 (close code 1006), never 1008, so the close code can't tell these apart.
+
+/** auth.SIGN_IN_AGAIN, as the engine says it to a request without its cookie. */
+export const SIGN_IN_AGAIN = "open the link vid2sub printed when it started";
+
+export type Lost = "signed-out" | "stopped" | "dropped";
+
+export const LOST_MESSAGES: Record<Lost, string> = {
+  "signed-out": `vid2sub was restarted, so this page is signed out: ${SIGN_IN_AGAIN}.`,
+  stopped: "vid2sub isn't running. Start it again, then open the link it prints.",
+  dropped: "The connection to vid2sub closed. Reload the page to carry on.",
+};
+
+type Fetch = (input: string, init: RequestInit) => Promise<{ status: number }>;
+
+/** Asks the engine once why the connection closed. */
+export async function whyLost(fetchFn: Fetch): Promise<Lost> {
+  try {
+    const r = await fetchFn("/", { cache: "no-store", credentials: "same-origin" });
+    return r.status === 401 ? "signed-out" : "dropped";
+  } catch {
+    return "stopped";
+  }
+}
+```
+
+  and replace `frontend/src/App.tsx` with:
+
+```tsx
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { TopBar } from "@/components/TopBar";
+import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
+import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
+import { useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { Capabilities, Status } from "@/types";
+
+type JQueryLike = (target: Document) => {
+  on(event: string, handler: () => void): unknown;
+  off(event: string, handler: () => void): unknown;
+};
+
+export default function App() {
+  const initialized = useShinyInitialized();
+  // Every output is subscribed here, and every message handler lives here: shinyreact 0.1.0
+  // drops a message that has no handler, and an output that unmounts logs "Output <id> not found"
+  // for each later value (recordings' App.tsx). A new output or message gets a line here too.
+  const capabilities = useShinyOutputValue<Capabilities>("capabilities");
+  const status = useShinyOutputValue<Status>("status");
+  const [notices, setNotices] = useState<Shown[]>([]);
+  const nextId = useRef(1);
+  useShinyMessageHandler("notice", (data: unknown) => {
+    setNotices((shown) => addNotice(shown, data, nextId.current++));
+  });
+
+  // The websocket closed: ask the engine once why, and say so; never reconnect (Review Focus 5).
+  const [lost, setLost] = useState<Lost | null>(null);
+  const check = useCallback(() => {
+    void whyLost((input, init) => window.fetch(input, init)).then(setLost);
+  }, []);
+  useEffect(() => {
+    // Shiny triggers shiny:disconnected through jQuery, which addEventListener never sees.
+    const $ = (window as unknown as { jQuery?: JQueryLike }).jQuery;
+    if (!$) return;
+    $(document).on("shiny:disconnected", check);
+    return () => void $(document).off("shiny:disconnected", check);
+  }, [check]);
+
+  if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
+  return (
+    <div className="flex h-dvh flex-col" data-testid="app">
+      <TopBar capabilities={capabilities} status={status} />
+      {lost && (
+        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
+        <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">
+          <span>{LOST_MESSAGES[lost]}</span>
+          {lost === "stopped" && (
+            <button type="button" className="underline" onClick={check} data-testid="check-again">Check again</button>
+          )}
+          {lost === "dropped" && (
+            <button type="button" className="underline" onClick={() => window.location.reload()}>Reload</button>
+          )}
+        </div>
+      )}
+      <main className="flex flex-1 items-center justify-center text-muted-foreground" data-testid="main">
+        <p>The editor opens here.</p>
+      </main>
+      <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">
+        <div role="status" aria-live="polite" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "info").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+        <div role="alert" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "error").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: Shown[]) => Shown[]) => void }) {
+  return (
+    <div className={`flex items-start gap-2 rounded-lg border bg-card p-3 text-sm shadow ${notice.kind === "error" ? "border-destructive text-destructive" : "border-border"}`} data-testid="notice">
+      {/* Plain text: a notice can carry a file name or a server's error (spec §6.3). */}
+      <span className="flex-1">{notice.text}</span>
+      <button type="button" aria-label="Dismiss" onClick={() => onDismiss((s) => dismissNotice(s, notice.id))}>×</button>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 16: Run the checks; they pass.** `make test-js`. Expected: `Test Files  5 passed
+  (5)`, `Tests  24 passed (24)`. `make e2e`, twice. Expected: `4 passed, 932 deselected` each
+  time. `make check`. Expected: `926 passed, 2 skipped, 8 deselected` twice (the e2e tests are
+  the 4 new ones deselected), the Vitest lines, `All checks passed!`, `no leaks found`.
+- [ ] **Step 17: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+test(e2e): 🤖 in Chromium the editor runs with no CSP violation, and a tab whose engine restarted says to open the new link instead of reconnecting
+
+tests/e2e/conftest.py, as recordings' e2e conftest (8deb039): the real `vid2sub serve
+--no-browser` on a free port in a child process with its own TMPDIR and an empty vid2sub.toml,
+polled on /healthz; the link read from the redirect file the server names (it prints the link
+only to a terminal); a page signed in through /auth#t=<token> as a person's browser is; and a
+watch on every console error, CSP violation (a securitypolicyviolation listener injected before
+the page's scripts) and request, which fails the test unless it took them (`page`, `watch`,
+`open_page`, `launch`, `server`). The e2e marker is off by default (pyproject addopts);
+`make e2e` builds the frontend, installs Playwright's Chromium and runs them.
+
+tests/e2e/test_csp.py: the page loads with no violation and no console error, theme switching
+included, with the spec's CSP header, the busy pulse switched on from its file, and the fonts the
+engine's own; an inline script, eval (from a real click: code Playwright evaluates is exempt) and
+an inline style element and attribute are each blocked and reported (script-src-elem,
+script-src, style-src-elem, style-src-attr); every request goes to the engine's own origin; and
+Review Focus 5 with a real restart: the engine stopped, the page says vid2sub isn't running;
+started again on the same port, Check again says it was restarted and to open the link vid2sub
+printed (auth.SIGN_IN_AGAIN), no websocket was opened again, and a reload gets the new launch's
+401. The frontend's lib/connection.ts asks for "/" once with the cookie when Shiny says the
+socket closed (a 401: signed out; no answer: stopped; else: reload), and App shows it in an alert
+above Shiny's grey overlay; Shiny triggers shiny:disconnected through jQuery, which
+addEventListener never sees, so App listens with jQuery. A refused websocket handshake reaches
+the browser as an HTTP 403 (close code 1006), never 1008.
+
+The new test failed first with: Locator expected to contain text 'vid2sub isn't running',
+Actual value: None (1 failed, 3 passed).
+
+Docs read: Playwright for Python 1.64's BrowserContext.add_init_script (runs before page
+scripts, not subject to the page's CSP), Page.on("console"/"pageerror"/"request"/"websocket"),
+expect().to_have_text and to_contain_text, page.request; pytest-playwright 0.10.0's context and
+page fixtures (page is overridden here); CDP's Runtime.evaluate (allowUnsafeEvalBlockedByCSP,
+why an evaluated eval isn't refused); MDN on SecurityPolicyViolationEvent; shiny.js's
+socket.onclose (shiny:disconnected only after a socket opened, 1012 marks a restart).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 12
+Co-Authored-By: <the model's own line>
+```
+
+  `git add tests/e2e/conftest.py tests/e2e/test_csp.py pyproject.toml Makefile
+  frontend/src/lib/connection.ts frontend/src/lib/connection.test.ts frontend/src/App.tsx`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 18: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that the rendered page has no executable
+  inline script, `<style>` or style attribute, and the test checks the page, not the dependency
+  object; that `status` never holds a key's value and never contacts a cloud endpoint; that
+  untrusted text (endpoint names, notices) reaches React only as text; that React stays external
+  (the build test) and every output and message handler lives in `App`; that the restart path
+  never reconnects. The forward review over Tasks 13–19, 21, 22 and 23 (Task 13 makes the e2e
+  `server` the demo and adds `start_server(..., toml=...)`; Tasks 14–19 add each output to
+  `App`'s subscriptions and each message to its handlers, use `notice` for plain-text errors, and
+  build their modal parts on the native `<dialog>` described above, never a modal Radix part or
+  Radix Select; Task 18's drawer is that dialog with `side="right"`; Task 21's CI frontend job runs
+  `make test-js` with `CI=true` and the e2e job `make e2e`, both on Node 22; Task 22's README
+  says `make build` comes before `vid2sub serve`; Task 23's Step 2 builds with `make build`). The
+  docs this task made untrue: spec §29's M2 bullet on the CSP, which this task settles: add to it
+  "*Result (2026-10-24, Chromium via Playwright 1.64.1):* Shiny 1.8.0's one inline script, its
+  busy indicators, is served as a file instead (`server.BUSY_INDICATORS`), so `script-src 'self'`
+  holds with no violation; no `style-src` is needed and none is set; `eval` is never needed.
+  Radix's modal parts and Select inject `<style>` elements, so the editor's modal parts use the
+  native `<dialog>`, its menus are non-modal and its choices native `<select>`s." Then the close,
+  its own commit, holding this plan with this task's boxes ticked and **Now** set to
+  `Task 13: The end-to-end harness and the demo, open.`, and the spec's §29 as above; S26 stays
+  `planned` (its hostile fixtures are Task 13's and its overlay Task 14's), with the message in
+  `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 12: The frontend scaffold and the shinyreact server
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 12
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -11271,18 +15640,1281 @@ Co-Authored-By: <the model's own line>
 **Tier:** 2 · **Scenarios:** S26
 
 **Files:**
-- Create: `demo/` (the canned sidecar, `CREDITS.md`), `src/vid2sub/web/demo.py`,
-  `tests/e2e/conftest.py`, `tests/e2e/test_shell.py`, `tests/test_demo_guard.py`,
-  `tests/fixtures/hostile/`
-- Modify: `src/vid2sub/commands/serve.py` (`--demo`), `pyproject.toml` (the `e2e` marker),
-  `Makefile` (`e2e`, `demo`)
+- Create: `demo/` (`CREDITS.md`, the canned sidecar `jfk.vid2sub.jsonl`, `jfk.en.srt`,
+  `jfk.ja.srt`), `src/vid2sub/web/demo.py`, `scripts/demo_sidecar.py`,
+  `tests/test_demo_guard.py`, `tests/fixtures/hostile/` (`hostile.srt`, `hostile.ass`,
+  `names.json`), `tests/test_hostile_fixtures.py`, `tests/e2e/test_shell.py`
+- Modify: `src/vid2sub/commands/serve.py` (`--demo`), `Makefile` (`demo`, `demo-sidecar`),
+  `tests/e2e/conftest.py` (the demo server; `toml=`), `tests/fixtures/CREDITS.md`
+- `tests/e2e/conftest.py`, the `e2e` marker and `make e2e` came with Task 12, whose CSP test needs
+  them.
 
 **Interfaces:**
-- Produces: `demo.prepare(tools: Tools) -> Path` (a temporary copy of `demo/` with its MP4 muxed);
-  `vid2sub serve --demo`; the `server` and `page` e2e fixtures (a running demo server, its URL,
-  and a page already through `/auth`).
+- Consumes: Task 11's `runtime.build`, `Runtime`, `serve`; Task 12's e2e fixtures; Task 5's
+  `LocalBackend`, `OpenError`; M1's `pipeline.run_one`, `RunContext`, `RunOptions` (for the
+  canned sidecar), `store.header_for`, `sidecar_path`, `now`, `media.identity`, `media.probe`,
+  `media.tools.run_tool`, `subs.sidecar`.
+- Produces:
+  - `demo.prepare(tools: Tools) -> Path`: a fresh copy of `demo/` at `<a new mkdtemp
+    "vid2sub-demo-…" folder>/demo`, removed at exit, with `jfk.mp4` muxed (14 000 ms; a still
+    640×360 picture in VP9 and the clip in Opus, which Playwright's Chromium plays) and the
+    sidecar's header and identity naming it. Raises `demo.DemoMissing` outside a checkout of the
+    repository, and ffmpeg's `ToolMissing` or `ToolFailed`.
+  - `demo.runtime_for(copy: Path, tools: Tools) -> Runtime`: no vid2sub.toml (`Config()`), no key
+    (`KeyRing(environ={})`), a cache in `copy.parent / "cache"`, and `demo.DemoBackend`
+    (`LocalBackend` whose `open` refuses any path outside the copy with `OpenError("the demo
+    opens only its own episode")`).
+  - `demo.isolate(folder: Path, *, home: Path | None = None) -> None` and `demo.release()`: an
+    audit hook refusing, with `demo.DemoIsolationError` (a `PermissionError`), writes outside
+    `folder`, reads in `home` (default `Path.home()`) outside `folder`, `sys.prefix`,
+    `sys.base_prefix` and the vid2sub package, and lookups or connections beyond 127.0.0.1, ::1
+    and localhost; `tempfile.tempdir` becomes `folder / "tmp"`; bytecode isn't written; released
+    at exit before the folder is removed.
+  - `demo.CannedEngine` (the Engine protocol: the clip's words, one chunk), `demo.canned_ask(system,
+    prompt, data_model)` (translate.run's AskFn: `demo.JAPANESE`, else `demo.NO_TRANSLATION`),
+    `demo.WORDS`, `demo.mux(tools, out)`, `demo.DEMO`, `demo.CLIP`, `demo.VIDEO` (`"jfk.mp4"`).
+  - `vid2sub serve --demo` (exclusive with `--config`; exit 69 without ffmpeg, without libvpx
+    and libopus, or outside a checkout); `make demo`; `make demo-sidecar`.
+  - The e2e `server` fixture is now the demo; `start_server(tmp, *args, port=0, toml=None)` and
+    `launch(tmp, *args, port=0, toml=None)` serve a vid2sub.toml instead when given one.
+  - The demo episode: source `en`, 4 cues ("I am delighted to be here, and I am / particularly
+    delighted to be here on this", "occasion.", "We meet at a college noted for knowledge,", "in a
+    city noted for progress, / in a state noted for strength,"), 37 timed words; translation `ja`,
+    3 cues, the first covering source cues 1 and 2; `jfk.en.srt` and `jfk.ja.srt` projected.
 
-<!-- steps: written in the next pass -->
+**For later tasks.** Task 14 finds the demo's copy from the test as
+`next(server.tmp.glob("vid2sub-demo-*/demo"))` and opens `<copy>/jfk.mp4`; to show the hostile
+SRT in the editor, it writes `tests/fixtures/hostile/hostile.srt` over `<copy>/jfk.en.srt` before
+opening (an outside edit, which the open keeps as an external version). Task 17's retranslate in
+the demo needs a translator: give `LocalBackend` a seam (`_translator` and a new `_ask(name,
+entry, policy)` wrapping `make_ask`) and have `DemoBackend` answer with a `canned-ja` model and
+`canned_ask`. Task 19's demo jobs give `runtime_for`'s queue a runner using `CannedEngine` (the
+demo clip only). Anything new that writes while the demo runs must write in its folder:
+`tempfile` already goes there, and the cache is `copy.parent / "cache"`. Task 21's e2e job needs
+an ffmpeg with libvpx and libopus (Ubuntu's apt ffmpeg has both).
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+
+#### Round 13a: the demo, isolated by the app
+
+- [ ] **Step 1: Write the failing test,** `tests/test_demo_guard.py`:
+
+```python
+"""Demo mode touches nothing but its own copy, and the app enforces it (spec §22.4, §22.7):
+writes outside the demo's folder, reads in the home folder, lookups and connections beyond this
+machine are refused while the demo runs, its backend opens only its own episode, it reads no
+vid2sub.toml and no key, and its folder goes when it stops. As recordings' test_demo_guard.py
+(packages/ui/tests at 8deb039), whose audit hook only watched; vid2sub's refuses. Each refusal is
+a DemoIsolationError, which these tests expect, so they fail if the hook isn't there."""
+
+import json
+import os
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.request
+from pathlib import Path
+
+import pytest
+from starlette.testclient import TestClient
+
+import vid2sub
+from vid2sub.media.tools import Tools
+from vid2sub.web import demo, runtime, server
+from vid2sub.web.app import create_app
+from vid2sub.web.backend import OpenError
+from vid2sub.web.demo import DemoIsolationError
+from vid2sub.web.views import episode_view
+
+TOKEN = "t" * 43  # as long as a real token, and plainly not one (the leak scan agrees)
+PORT = 8765
+BASE = f"http://127.0.0.1:{PORT}"
+PAGE = {"Origin": BASE, "Sec-Fetch-Site": "same-origin", "Content-Type": "application/json"}
+
+
+@pytest.fixture(autouse=True)
+def fresh_reactive_lock():
+    """As tests/test_web_server.py: each TestClient runs its own event loop."""
+    from shiny.reactive import _core
+
+    _core._reactive_environment._lock = None
+    yield
+    _core._reactive_environment._lock = None
+
+
+@pytest.fixture
+def place(tmp_path):
+    """A demo folder, a stand-in for the person's home with their config and a secret in it, and
+    a folder elsewhere with a file in it, all made before the demo is isolated."""
+    folder, home, outside = tmp_path / "demo", tmp_path / "home", tmp_path / "outside"
+    for d in (folder, home, outside / "dir"):
+        d.mkdir(parents=True)
+    (home / "vid2sub.toml").write_text("[server]\nport = 1\n", encoding="utf-8")
+    (outside / "file.txt").write_text("x", encoding="utf-8")
+    (folder / "inside.txt").write_text("x", encoding="utf-8")
+    yield folder, home, outside
+    demo.release()
+
+
+def test_the_demo_refuses_every_kind_of_write_outside_its_folder(place):
+    folder, home, outside = place
+    demo.isolate(folder, home=home)
+    file, d = outside / "file.txt", outside / "dir"
+    writes = [
+        lambda: open(outside / "new.txt", "w"),  # noqa: SIM115
+        lambda: (file).open("a"),
+        lambda: os.open(outside / "fd.txt", os.O_WRONLY | os.O_CREAT),
+        lambda: os.replace(folder / "inside.txt", outside / "moved.txt"),
+        lambda: os.mkdir(outside / "made"),
+        lambda: os.chmod(file, 0o600),
+        lambda: os.utime(file),
+        lambda: os.symlink(folder / "inside.txt", outside / "link"),
+        lambda: os.link(folder / "inside.txt", outside / "hard"),
+        lambda: os.truncate(file, 0),
+        lambda: os.remove(file),
+        lambda: os.rmdir(d),
+        lambda: shutil.rmtree(d),
+        lambda: shutil.copyfile(folder / "inside.txt", outside / "copy.txt"),
+        lambda: tempfile.mkdtemp(dir=outside),
+    ]
+    for write in writes:
+        with pytest.raises(DemoIsolationError, match="inside its own folder"):
+            write()
+    assert sorted(p.name for p in outside.iterdir()) == ["dir", "file.txt"]
+    assert file.read_text(encoding="utf-8") == "x"
+    # Inside, everything works, shutil.rmtree's removals through a folder's descriptor included.
+    (folder / "sub").mkdir()
+    (folder / "sub" / "a.txt").write_text("y", encoding="utf-8")
+    os.replace(folder / "sub" / "a.txt", folder / "sub" / "b.txt")
+    shutil.rmtree(folder / "sub")
+    assert not (folder / "sub").exists()
+
+
+def test_the_demo_reads_nothing_in_the_home_folder_but_python_and_vid2sub(place):
+    folder, home, outside = place
+    demo.isolate(folder, home=home)
+    with pytest.raises(DemoIsolationError, match="nothing of yours"):
+        (home / "vid2sub.toml").read_text(encoding="utf-8")
+    assert (folder / "inside.txt").read_text(encoding="utf-8") == "x"
+    assert (outside / "file.txt").read_text(encoding="utf-8") == "x"  # outside home: allowed
+    assert Path(vid2sub.__file__).read_text(encoding="utf-8")
+    assert Path(os.__file__).read_text(encoding="utf-8")
+
+
+def test_the_demo_looks_up_and_connects_to_nothing_beyond_this_machine(place):
+    folder, home, _ = place
+    demo.isolate(folder, home=home)
+    with pytest.raises(DemoIsolationError, match="no other machine"):
+        socket.getaddrinfo("example.com", 443)
+    with socket.socket() as s, pytest.raises(DemoIsolationError, match="beyond this machine"):
+        s.settimeout(2)
+        s.connect(("192.0.2.1", 9))  # refused before a packet goes
+    assert socket.getaddrinfo("127.0.0.1", 9)
+
+
+def test_the_demos_temporary_files_go_in_its_folder_until_it_is_released(place):
+    folder, home, _ = place
+    before = tempfile.gettempdir()
+    demo.isolate(folder, home=home)
+    made = Path(tempfile.mkdtemp(prefix="vid2sub-"))
+    assert made.parent == folder / "tmp"
+    demo.release()
+    assert tempfile.gettempdir() == before
+    with open(home / "vid2sub.toml", encoding="utf-8"):  # released: nothing is refused
+        pass
+
+
+@pytest.mark.media
+def test_demo_mode_serves_and_opens_its_episode_touching_nothing_else(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    secret = home / "Films" / "secret.mkv"
+    secret.parent.mkdir()
+    secret.write_bytes(b"\0" * 16)
+    tools = Tools.find()
+    copy = demo.prepare(tools)
+    rt = demo.runtime_for(copy, tools)
+    assert rt.config.endpoints == {} and dict(rt.keys.environ) == {}  # no toml, no key
+    runtime.configure(rt)
+    demo.isolate(copy.parent, home=home)
+    try:
+        with TestClient(create_app(rt, token=TOKEN, port=PORT, shiny_app=server.app),
+                        base_url=BASE) as client:
+            assert client.post("/auth", content=json.dumps({"token": TOKEN}),
+                               headers=PAGE).status_code == 204
+            assert client.get("/").status_code == 200
+            seen = _session_values(client, {"capabilities", "status"})
+            assert seen["status"] == {"endpoints": [], "ffmpeg": True}
+            ep = rt.backend.open(str(copy / demo.VIDEO))  # probes, hashes, reads the sidecar
+            view = episode_view(ep, video_url=None, audio_url=None)
+            assert view["notes"] == [] and view["tracks"]
+            texts = [r["text"] for r in view["rows"]]
+            assert texts[2] == "We meet at a college noted for knowledge,"
+            token = rt.media.issue(copy / demo.VIDEO, owner=ep.id)
+            r = client.get(f"/media/{token}", headers={"Range": "bytes=0-9"})
+            assert r.status_code == 206
+            with pytest.raises(OpenError, match="only its own episode"):
+                rt.backend.open(str(secret))
+            with pytest.raises(DemoIsolationError):
+                secret.read_bytes()  # and the hook would stop a bug that got past the backend
+    finally:
+        demo.release()
+        runtime.configure(None)
+        rt.queue.close()
+
+
+def _session_values(client, outputs: set[str]) -> dict:
+    values: dict = {}
+    with client.websocket_connect("ws://127.0.0.1:8765/websocket/",
+                                  headers={"Origin": BASE}) as ws:
+        init = {f".clientdata_output_{name}_hidden": False for name in outputs}
+        ws.send_text(json.dumps({"method": "init", "data": init}))
+
+        def read() -> None:
+            while not outputs <= values.keys() or not values.get("status", {}).get("ffmpeg"):
+                values.update(json.loads(ws.receive_text()).get("values", {}))
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        reader.join(20)
+    assert outputs <= values.keys(), f"the demo's session sent only {sorted(values)}"
+    return values
+
+
+# The child: the real `vid2sub serve --demo`, with `www/` pointing at a folder holding a ui.js,
+# as tests/test_cli_serve.py runs it, so the frontend needn't be built.
+CHILD = r"""
+import sys
+from pathlib import Path
+
+from vid2sub.cli import main
+from vid2sub.commands import serve
+
+serve.WWW = Path(sys.argv[1])
+raise SystemExit(main(sys.argv[2:]))
+"""
+
+
+@pytest.mark.media
+@pytest.mark.skipif(os.name == "nt", reason="POSIX signals")
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
+def test_demo_mode_reads_no_vid2sub_toml_and_removes_its_copy_when_it_stops(tmp_path, sig):
+    www = tmp_path / "www"
+    www.mkdir()
+    (www / "ui.js").write_text("// built\n", encoding="utf-8")
+    scratch = tmp_path / "tmp"
+    scratch.mkdir()
+    broken = tmp_path / "vid2sub.toml"
+    broken.write_text("[server\n", encoding="utf-8")  # would exit 78 if it were read
+    env = {**os.environ, "TMPDIR": str(scratch), "VID2SUB_CONFIG": str(broken)}
+    log = tmp_path / "serve.log"
+    with log.open("wb") as out:
+        proc = subprocess.Popen([sys.executable, "-c", CHILD, str(www), "serve", "--demo",
+                                 "--no-browser", "--port", "0"],
+                                env=env, stdout=out, stderr=subprocess.STDOUT)
+    try:
+        deadline = time.monotonic() + 60
+        while "port " not in log.read_text(encoding="utf-8", errors="replace"):
+            assert proc.poll() is None, log.read_text(encoding="utf-8", errors="replace")
+            assert time.monotonic() < deadline, "the demo never started"
+            time.sleep(0.1)
+        port = log.read_text(encoding="utf-8").split("port ")[1].split(".")[0]
+        while True:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=1):
+                    break
+            except OSError:
+                assert time.monotonic() < deadline, "healthz never answered"
+                time.sleep(0.1)
+        (made,) = scratch.glob("vid2sub-demo-*")
+        assert (made / "demo" / demo.VIDEO).is_file()
+        proc.send_signal(sig)
+        code = proc.wait(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert code == (0 if sig == signal.SIGINT else 128 + signal.SIGTERM)
+    assert list(scratch.glob("vid2sub-demo-*")) == []
+```
+
+- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_demo_guard.py -q`. Expected:
+  `E   ImportError: cannot import name 'demo' from 'vid2sub.web' (…/src/vid2sub/web/__init__.py)`.
+- [ ] **Step 3: Write the code,** `src/vid2sub/web/demo.py`:
+
+```python
+"""The demo: `vid2sub serve --demo` serves a fresh copy of `demo/`, with a canned engine, and
+touches nothing else on the machine (spec §21, §22.4, §22.7; the Phase 2 plan's Decision 6).
+
+`demo/` holds no video. `prepare` copies it into a new private temporary folder, muxes the
+public-domain `tests/fixtures/speech/jfk-14s.wav` under a still NYC-blue picture into `jfk.mp4`
+(VP9 and Opus, which every Chromium plays, Playwright's included), and makes the copied sidecar's
+header and identity name that MP4, so the episode opens as the M1 episode it is. The canned sidecar
+and its subtitle files were made by the real pipeline (`make demo-sidecar`) with the canned engine:
+the clip's words as Whisper heard them (recordings' demo transcript of the same speech, cut to
+these 14 s) and a hand-written Japanese translation. Everything goes when the engine exits.
+
+Demo isolation is as in recordings, but enforced by the app, not only watched by a test: a
+Python audit hook (`isolate`) refuses, while the demo runs, any file written outside the demo's
+folder, any file read in the person's home folder outside the demo, Python and vid2sub
+themselves, and any connection or name lookup beyond this machine. The demo's backend opens only
+episodes in its copy, and its runtime reads no vid2sub.toml and no key from the environment.
+"""
+
+from __future__ import annotations
+
+import atexit
+import os
+import re
+import shutil
+import sys
+import tempfile
+from collections.abc import Sequence
+from dataclasses import replace
+from pathlib import Path
+
+import vid2sub
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines.base import ChunkResult, ModelStamp
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.identity import full_sha256, identify
+from vid2sub.media.probe import probe
+from vid2sub.media.tools import Tools, run_tool
+from vid2sub.parse import ParsedChunk
+from vid2sub.store import header_for, now, sidecar_path
+from vid2sub.subs.model import Segment, Word
+from vid2sub.subs.sidecar import IdentityRecord, Sidecar, parse_sidecar, serialize
+from vid2sub.web import runtime
+from vid2sub.web.backend import Episode, LocalBackend, OpenError
+
+REPO = Path(__file__).resolve().parents[3]
+DEMO = REPO / "demo"
+CLIP = REPO / "tests" / "fixtures" / "speech" / "jfk-14s.wav"
+VIDEO = "jfk.mp4"
+CACHE_BYTES = 200_000_000  # the demo's own cache, in its temporary folder
+
+# The clip's words as Whisper heard them, in ms: recordings' demo transcript (demo/canned/
+# transcripts/jfk-rice.json at 8deb039) from 0:30 to 0:44, moved to start at 0.
+WORDS: tuple[tuple[str, int, int], ...] = (
+    (" I", 0, 140), (" am", 140, 320), (" delighted", 320, 600), (" to", 600, 760),
+    (" be", 760, 900), (" here,", 900, 1160), (" and", 1360, 2060), (" I", 2060, 2160),
+    (" am", 2160, 2240), (" particularly", 2240, 2600), (" delighted", 2600, 3000),
+    (" to", 3000, 3160), (" be", 3160, 3300), (" here", 3300, 3520), (" on", 3520, 3660),
+    (" this", 3660, 3820), (" occasion.", 3820, 4180), (" We", 4940, 5540),
+    (" meet", 5540, 5880), (" at", 5880, 6040), (" a", 6040, 6160), (" college", 6160, 6620),
+    (" noted", 6620, 8240), (" for", 8240, 8480), (" knowledge,", 8480, 8880),
+    (" in", 9360, 10120), (" a", 10120, 10240), (" city", 10240, 10520),
+    (" noted", 10520, 10800), (" for", 10800, 11000), (" progress,", 11000, 11440),
+    (" in", 11980, 12560), (" a", 12560, 12680), (" state", 12680, 12940),
+    (" noted", 12940, 13220), (" for", 13220, 13420), (" strength,", 13420, 13780),
+)
+# A hand-written Japanese translation: each English run of cues (as the pipeline cuts the clip
+# into cues, line breaks as spaces) with its Japanese. A sentence across two cues is one item.
+JAPANESE: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("I am delighted to be here, and I am particularly delighted to be here on this",
+      "occasion."), "ここに来られて、とてもうれしく思います。この機会に来られたことは格別の喜びです。"),
+    (("We meet at a college noted for knowledge,",), "私たちが集うのは、知識で知られる大学、"),
+    (("in a city noted for progress, in a state noted for strength,",),
+     "進歩で知られる都市、力強さで知られる州です。"),
+)
+NO_TRANSLATION = "（訳はありません）"
+
+
+class DemoMissing(Exception):
+    """The demo isn't here: it lives in vid2sub's repository, not in an installed wheel."""
+
+
+class DemoIsolationError(PermissionError):
+    """The demo tried to touch something outside itself. A PermissionError, so Python's own
+    best-effort writes (bytecode caches) shrug it off as they would any refused write."""
+
+
+class CannedEngine:
+    """A transcription engine that hears the demo clip's words, for the demo's one chunk."""
+
+    name = "canned"
+    max_chunk_s = 300.0
+    supports_prompt = False
+
+    def transcribe(self, chunk, *, language: str | None, prompt: str) -> ChunkResult:
+        if chunk.index != 0:
+            raise ValueError("the canned engine hears only the demo clip, in one chunk")
+        words = tuple(Word(text=t, start_ms=s, end_ms=e) for t, s, e in WORDS)
+        seg = Segment(text="".join(w.text for w in words), start_ms=words[0].start_ms,
+                      end_ms=words[-1].end_ms, words=words)
+        return ChunkResult(ParsedChunk((seg,), "en", {"en": 1.0}))
+
+    def detect_language(self, chunk) -> dict[str, float]:
+        return {"en": 1.0}
+
+    def stamp(self) -> ModelStamp:
+        return ModelStamp(self.name, "canned-jfk", "demo")
+
+    def close(self) -> None:
+        pass
+
+
+def canned_ask(system: str, prompt: str, data_model):
+    """translate.run's AskFn for the demo: the hand-written Japanese for each run of lines it
+    knows, and NO_TRANSLATION for any other line (one a person edited, say)."""
+    asked = re.findall(r"^\[(\S+)\] \(max \d+ characters\) (.*)$", prompt, flags=re.MULTILINE)
+    items, i = [], 0
+    while i < len(asked):
+        for lines, text in JAPANESE:
+            run = asked[i:i + len(lines)]
+            if tuple(line for _, line in run) == lines:
+                items.append({"src": [cid for cid, _ in run], "text": text})
+                i += len(lines)
+                break
+        else:
+            items.append({"src": [asked[i][0]], "text": NO_TRANSLATION})
+            i += 1
+    return data_model.model_validate({"items": items})
+
+
+def mux(tools: Tools, out: Path) -> None:
+    """The demo clip under a still picture, as an MP4 of VP9 and Opus, with no metadata."""
+    ffmpeg = tools.need("ffmpeg")
+    with tempfile.TemporaryDirectory(prefix="vid2sub-") as scratch:
+        run_tool([ffmpeg, "-nostdin", "-v", "error", "-y",
+                  "-f", "lavfi", "-i", "color=c=0x236192:s=640x360:r=2:d=14",
+                  "-i", f"file:{CLIP}", "-map", "0:v", "-map", "1:a", "-shortest",
+                  "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "40", "-deadline", "realtime",
+                  "-c:a", "libopus", "-b:a", "48k", "-map_metadata", "-1",
+                  "-fflags", "+bitexact", f"file:{out}"], cwd=Path(scratch), timeout=120)
+
+
+def prepare(tools: Tools) -> Path:
+    """A fresh copy of `demo/` in a new private temporary folder, with its MP4 muxed and its
+    sidecar's header naming that MP4; the folder is removed at exit. DemoMissing outside a
+    checkout of vid2sub's repository."""
+    if not (DEMO / VIDEO.replace(".mp4", ".vid2sub.jsonl")).is_file() or not CLIP.is_file():
+        raise DemoMissing("the demo is in vid2sub's repository: run it from a checkout "
+                          "(make demo)")
+    folder = Path(tempfile.mkdtemp(prefix="vid2sub-demo-"))  # mode 0700
+    atexit.register(shutil.rmtree, folder, ignore_errors=True)
+    copy = folder / "demo"
+    shutil.copytree(DEMO, copy)
+    video = copy / VIDEO
+    mux(tools, video)
+    path = sidecar_path(video)
+    side, _ = parse_sidecar(path.read_text(encoding="utf-8"))
+    with tempfile.TemporaryDirectory(prefix="vid2sub-") as scratch:
+        duration = probe(video, tools, scratch=Path(scratch)).duration_ms
+    header = header_for(video, identify(video), duration)
+    records = [r for r in side.records if not isinstance(r, IdentityRecord)]
+    records.append(IdentityRecord(sha256=full_sha256(video), at=now()))
+    path.write_text(serialize(Sidecar(header, tuple(records))), encoding="utf-8")
+    return copy
+
+
+class DemoBackend(LocalBackend):
+    """LocalBackend, opening only episodes in the demo's copy."""
+
+    def __init__(self, copy: Path, tools: Tools, cache: Cache):
+        super().__init__(Config(), tools, KeyRing(environ={}), cache)
+        self.copy = copy.resolve()
+
+    def open(self, path: str) -> Episode:
+        try:
+            inside = Path(path).resolve().is_relative_to(self.copy)
+        except (OSError, ValueError):
+            inside = False
+        if not inside:
+            raise OpenError("the demo opens only its own episode")
+        return super().open(path)
+
+
+def runtime_for(copy: Path, tools: Tools) -> runtime.Runtime:
+    """The demo's parts: no vid2sub.toml, no key from the environment, a cache in the demo's own
+    folder, and a backend that opens only the copy's episodes."""
+    cache = Cache(copy.parent / "cache", max_bytes=CACHE_BYTES)
+    backend = DemoBackend(copy, tools, cache)
+    built = runtime.build(backend.config, tools=tools, keys=backend.keys, cache=cache)
+    return replace(built, backend=backend)
+
+
+# ---- isolation --------------------------------------------------------------------------------
+
+# The audit events that change the file system: each path argument's position, with the position
+# of the dir_fd it is relative to, if any (Python's audit events table; os.replace is os.rename).
+# shutil.rmtree removes through dir_fd, so a bare name there is resolved against that folder.
+_WRITES: dict[str, tuple[tuple[int, int | None], ...]] = {
+    "os.rename": ((0, 2), (1, 3)), "os.link": ((0, 2), (1, 3)), "os.symlink": ((1, 2),),
+    "os.mkdir": ((0, 2),), "os.remove": ((0, 1),), "os.rmdir": ((0, 1),),
+    "os.chmod": ((0, 2),), "os.chown": ((0, 3),), "os.utime": ((0, 3),),
+    "os.truncate": ((0, None),), "shutil.rmtree": ((0, 1),), "shutil.copyfile": ((1, None),),
+    "shutil.copymode": ((1, None),), "shutil.copystat": ((1, None),),
+    "shutil.move": ((1, None),),
+}
+_WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+_LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+_state: dict = {"folder": None, "home": None, "reads": (), "tempdir": None}
+
+
+def isolate(folder: Path, *, home: Path | None = None) -> None:
+    """Refuse, from now on in this process, writes outside `folder`, reads in `home` (the
+    person's home folder) outside `folder` and Python's and vid2sub's own files, and any
+    connection or name lookup beyond this machine. Temporary files go in `folder/tmp` (scratch,
+    the redirect file, Shiny's upload folders), and bytecode isn't written, so a lazy import
+    doesn't write beside the code. The hook is installed once and can't be removed (Python's
+    rule); `release()` lets everything through again and puts the temporary folder back, as
+    happens at exit, before the folder is removed."""
+    scratch = folder / "tmp"
+    scratch.mkdir(mode=0o700, exist_ok=True)
+    _state["tempdir"] = tempfile.tempdir
+    tempfile.tempdir = str(scratch)
+    _state["folder"] = os.path.realpath(folder)
+    _state["home"] = os.path.realpath(home if home is not None else Path.home())
+    roots = (folder, sys.prefix, sys.base_prefix, Path(vid2sub.__file__).parent)
+    _state["reads"] = tuple(os.path.realpath(p) for p in roots)
+    sys.dont_write_bytecode = True
+    if not _state.get("installed"):
+        sys.addaudithook(_hook)
+        _state["installed"] = True
+    atexit.register(release)  # atexit runs last-in first: before prepare's removal of `folder`
+
+
+def release() -> None:
+    if _state["folder"] is not None:
+        tempfile.tempdir = _state["tempdir"]
+    _state["folder"] = None
+
+
+def _inside(path: str, roots: Sequence[str], *, as_given: bool = False) -> bool:
+    """Whether `path`, symlinks resolved, is in one of `roots`; with `as_given`, the path as
+    written counts too (a read through a venv's symlink to uv's cache)."""
+    seen = [os.path.realpath(path)] + ([os.path.abspath(path)] if as_given else [])
+    return any(p == r or p.startswith(r.rstrip(os.sep) + os.sep) for p in seen for r in roots)
+
+
+def _fd_folder(fd: int) -> str | None:
+    """The folder an open directory descriptor names, where the OS says (macOS, Linux)."""
+    try:
+        if sys.platform == "darwin":
+            import fcntl
+
+            return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b"\0")[0])
+        return os.readlink(f"/proc/self/fd/{fd}")
+    except (OSError, AttributeError):
+        return None
+
+
+def _target(value, dir_fd) -> str | None:
+    """An event's path argument as an absolute path; None when there is none to check (a file
+    descriptor), "" when it can't be told (a dir_fd the OS won't name), which is refused."""
+    if not isinstance(value, (str, bytes, os.PathLike)):
+        return None
+    path = os.fsdecode(value)
+    if os.path.isabs(path):
+        return path
+    if isinstance(dir_fd, int):
+        folder = _fd_folder(dir_fd)
+        return os.path.join(folder, path) if folder else ""
+    return os.path.abspath(path)
+
+
+def _refuse_write(path: str | None) -> None:
+    if path is not None and (path == "" or not _inside(path, [_state["folder"]])):
+        raise DemoIsolationError("the demo writes only inside its own folder")
+
+
+def _hook(event: str, args: tuple) -> None:
+    if _state["folder"] is None:
+        return
+    if event == "open" and args:
+        mode = args[1] if len(args) > 1 else None
+        flags = args[2] if len(args) > 2 else 0
+        writes = (isinstance(mode, str) and bool(set(mode) & set("wax+"))) or (
+            isinstance(flags, int) and bool(flags & _WRITE_FLAGS))
+        if writes:
+            _refuse_write(_target(args[0], None))
+            return
+        # A read by a bare name is relative to a dir_fd the event doesn't carry (shutil.rmtree's
+        # walk), so only absolute paths are checked; vid2sub itself opens only those.
+        raw = args[0]
+        if not isinstance(raw, (str, bytes, os.PathLike)) or not os.path.isabs(os.fsdecode(raw)):
+            return
+        path = os.fsdecode(raw)
+        if _inside(path, [_state["home"]]) and not _inside(path, _state["reads"], as_given=True):
+            raise DemoIsolationError("the demo reads nothing of yours")
+    elif event in _WRITES:
+        for at, fd_at in _WRITES[event]:
+            if len(args) > at:
+                dir_fd = args[fd_at] if fd_at is not None and len(args) > fd_at else None
+                _refuse_write(_target(args[at], dir_fd))
+    elif event == "socket.connect" and len(args) > 1:
+        address = args[1]
+        if isinstance(address, tuple) and address and address[0] not in _LOOPBACK:
+            raise DemoIsolationError("the demo connects to nothing beyond this machine")
+    elif event in ("socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr") and args:
+        host = args[0].decode() if isinstance(args[0], bytes) else args[0]
+        if host is not None and host not in _LOOPBACK:
+            raise DemoIsolationError("the demo looks up no other machine")
+```
+
+  `scripts/demo_sidecar.py`:
+
+```python
+"""Make demo/'s canned sidecar and subtitle files with the real pipeline and the canned engine.
+
+    make demo-sidecar        (uv run python scripts/demo_sidecar.py)
+
+As recordings' demo/build.py makes its canned archive. vid2sub.web.demo muxes the clip; M1's
+pipeline transcribes it with the canned engine (the clip's words) and translates it to Japanese
+with the canned translation, exactly as `vid2sub run --from en --to ja` would; then the sidecar,
+`jfk.en.srt` and `jfk.ja.srt` are copied into demo/. The MP4 isn't kept: `vid2sub serve --demo`
+muxes its own and points the sidecar's header at it.
+"""
+
+from __future__ import annotations
+
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+
+from vid2sub import pipeline
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.store import sidecar_path
+from vid2sub.web import demo
+
+CONFIG = Config.model_validate({
+    "endpoints": {"canned": {"base_url": "http://127.0.0.1:9/v1"}},
+    "models": {
+        "canned": {"endpoint": "canned", "model": "canned-jfk", "parser": "whisper.cpp",
+                   "local": True},
+        "canned-ja": {"endpoint": "canned", "model": "canned-ja", "task": "translate",
+                      "local": True},
+    },
+})
+
+
+def main() -> int:
+    tools = Tools.find()
+    with tempfile.TemporaryDirectory(prefix="vid2sub-demo-build-") as tmp:
+        video = Path(tmp) / demo.VIDEO
+        demo.mux(tools, video)
+        options = pipeline.RunOptions(source_lang="en", targets=["ja"], model="canned",
+                                      translate_model="canned-ja", formats=["srt"])
+        ctx = pipeline.RunContext(config=CONFIG, tools=tools, keys=KeyRing(environ={}),
+                                  options=options, engines={"canned": demo.CannedEngine()})
+        pipeline.make_ask = lambda *args, **kwargs: demo.canned_ask  # the canned translation
+        result = pipeline.run_one(str(video), ctx)
+        if result.status != "done":
+            print(f"the pipeline failed: {result.reason}", file=sys.stderr)
+            return 1
+        for path in (sidecar_path(video), video.with_name("jfk.en.srt"),
+                     video.with_name("jfk.ja.srt")):
+            shutil.copyfile(path, demo.DEMO / path.name)
+            print(f"wrote demo/{path.name}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+  In `src/vid2sub/commands/serve.py`, replace the docstring's last sentences
+
+```python
+Without the built frontend (`www/ui.js`), serve refuses before it reads or binds anything (§18,
+§23.5). The web modules are imported only when serve runs, so other commands don't load them, and
+the Shiny app only once `runtime.configure()` has run, as recordings imports it.
+```
+
+  with
+
+```python
+Without the built frontend (`www/ui.js`), serve refuses before it reads or binds anything (§18,
+§23.5). `--demo` serves a fresh copy of the demo instead, reading no vid2sub.toml and no key,
+and isolated from everything else once it is set up (`vid2sub.web.demo`, spec §22.7). The web
+modules are imported only when serve runs, so other commands don't load them, and the Shiny app
+only once `runtime.configure()` has run, as recordings imports it.
+```
+
+  replace the type-checking imports
+
+```python
+    import uvicorn
+    from starlette.types import ASGIApp
+```
+
+  with
+
+```python
+    import uvicorn
+    from starlette.types import ASGIApp
+
+    from vid2sub.media.tools import Tools
+```
+
+  replace `--config`'s argument
+
+```python
+    p.add_argument("--config", metavar="PATH", help="the vid2sub.toml to use")
+```
+
+  with
+
+```python
+    which = p.add_mutually_exclusive_group()
+    which.add_argument("--config", metavar="PATH", help="the vid2sub.toml to use")
+    which.add_argument("--demo", action="store_true",
+                       help="serve a fresh copy of the demo episode, reading no vid2sub.toml "
+                            "and touching nothing else")
+```
+
+  replace `run`'s imports
+
+```python
+    from vid2sub.engines.clients import quiet_libraries
+    from vid2sub.web import auth, runtime
+```
+
+  with
+
+```python
+    from vid2sub.config import Config
+    from vid2sub.engines.clients import quiet_libraries
+    from vid2sub.web import auth, demo, runtime
+```
+
+  replace the config's line
+
+```python
+        config = load(args)
+        sock = bind
+```
+
+  with
+
+```python
+        made = _demo() if args.demo else None
+        config = Config() if args.demo else load(args)  # the demo reads no vid2sub.toml
+        sock = bind
+```
+
+  replace the runtime's lines
+
+```python
+        rt = runtime.build(config)
+        runtime.configure(rt)
+        token = auth.new_token()
+        app = create_app(rt, token=token, port=sock.getsockname()[1], shiny_app=shiny_app())
+```
+
+  with
+
+```python
+        rt = demo.runtime_for(*made) if made else runtime.build(config)
+        runtime.configure(rt)
+        token = auth.new_token()
+        app = create_app(rt, token=token, port=sock.getsockname()[1], shiny_app=shiny_app())
+        if made:
+            demo.isolate(made[0].parent)  # from here on, the demo touches nothing else
+```
+
+  and add, directly above `def serve(`, so that it reads
+
+```python
+def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
+```
+
+  with
+
+```python
+def _demo() -> tuple[Path, Tools]:
+    """The demo's fresh copy (spec §22.7), and the tools that made its video."""
+    from vid2sub.media.tools import ToolFailed, ToolMissing, Tools
+    from vid2sub.web import demo
+
+    tools = Tools.find()
+    try:
+        return demo.prepare(tools), tools
+    except demo.DemoMissing as err:
+        raise CommandError(exitcodes.UNAVAILABLE, str(err)) from None
+    except ToolMissing:
+        raise CommandError(exitcodes.UNAVAILABLE, "the demo needs ffmpeg",
+                           "install ffmpeg 6 or later (vid2sub doctor checks it)") from None
+    except ToolFailed:
+        raise CommandError(exitcodes.UNAVAILABLE, "ffmpeg couldn't make the demo's video",
+                           "it needs ffmpeg built with libvpx and libopus") from None
+
+
+def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
+```
+
+  In the `Makefile`, replace the `.PHONY` line
+
+```make
+.PHONY: setup build test test-utc test-js e2e lint leaks check hooks live readme brand skills help
+```
+
+  with
+
+```make
+.PHONY: setup build test test-utc test-js e2e demo demo-sidecar lint leaks check hooks live readme brand skills help
+```
+
+  and add the targets above `lint`:
+
+```make
+lint: ## Lint with ruff
+```
+
+  with
+
+```make
+demo: build ## Serve a fresh copy of the demo episode, touching nothing else (needs ffmpeg)
+	uv run vid2sub serve --demo
+
+demo-sidecar: ## Remake demo/'s canned sidecar and subtitles with the pipeline and the canned engine
+	uv run python scripts/demo_sidecar.py
+
+lint: ## Lint with ruff
+```
+
+  `demo/CREDITS.md`:
+
+```markdown
+# The demo
+
+`vid2sub serve --demo` (`make demo`) serves a fresh copy of this folder. It holds no video: at
+start-up vid2sub muxes `tests/fixtures/speech/jfk-14s.wav` under a still picture into `jfk.mp4`
+in the copy. `make demo-sidecar` remakes the sidecar and subtitles here with the real pipeline
+and the canned engine in `src/vid2sub/web/demo.py`.
+
+| File | Source | License |
+|---|---|---|
+| `jfk.mp4` (made at start-up) | 14 s from 0:30 of "JFK at Rice University", https://commons.wikimedia.org/wiki/File:Jfk_rice_university_we_choose_to_go_to_the_moon.ogg (via `recordings`' demo, as `tests/fixtures/speech/jfk-14s.wav`) | Public domain (John F. Kennedy Presidential Library & Museum) |
+| `jfk.vid2sub.jsonl`, `jfk.en.srt` | the clip's words with their times from `recordings`' demo transcript of the same speech (local Whisper output, `demo/canned/transcripts/jfk-rice.json` at 8deb039), cut into cues by vid2sub | Public domain speech; the transcript is Dan's, MIT here |
+| `jfk.ja.srt` | a Japanese translation written for this demo | MIT |
+```
+
+  Then `make demo-sidecar`. Expected: `wrote demo/jfk.vid2sub.jsonl`, `wrote demo/jfk.en.srt`,
+  `wrote demo/jfk.ja.srt`. `demo/jfk.en.srt` reads:
+
+```text
+1
+00:00:00,000 --> 00:00:03,736
+I am delighted to be here, and I am
+particularly delighted to be here on this
+
+2
+00:00:03,820 --> 00:00:04,653
+occasion.
+
+3
+00:00:04,940 --> 00:00:09,276
+We meet at a college noted for knowledge,
+
+4
+00:00:09,360 --> 00:00:13,780
+in a city noted for progress,
+in a state noted for strength,
+```
+
+  and `demo/jfk.ja.srt`:
+
+```text
+1
+00:00:00,000 --> 00:00:04,653
+ここに来られて、とてもうれしく思います。この機会に来られたことは格別の喜びです。
+
+2
+00:00:04,940 --> 00:00:09,276
+私たちが集うのは、
+知識で知られる大学、
+
+3
+00:00:09,360 --> 00:00:13,780
+進歩で知られる都市、
+力強さで知られる州です。
+```
+
+  The sidecar has 9 lines: the header, the transcript, `en` and `ja` renditions, their two heads,
+  two projection records and an identity record (its ids and times differ from run to run).
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_demo_guard.py -q`.
+  Expected: `7 passed`. By hand: `TMPDIR=$(mktemp -d) uv run vid2sub serve --demo --no-browser
+  --port 0`, then Ctrl-C: a `vid2sub-demo-…` folder is in that TMPDIR while it runs and gone after.
+  `make check`. Expected: `933 passed, 2 skipped, 8 deselected` twice, `Test Files  5 passed (5)`,
+  `All checks passed!`, `no leaks found`. The line-length check on the Python files prints nothing.
+- [ ] **Step 5: Each guard fails its tests without its fix.** `git add demo
+  scripts/demo_sidecar.py src/vid2sub/web/demo.py tests/test_demo_guard.py
+  src/vid2sub/commands/serve.py Makefile`. Then, for each row, make the change in `demo.py` (the
+  sixth row: `serve.py`), run `uv run pytest tests/test_demo_guard.py -q`, see it fail, and
+  restore with `git checkout -- <the file>`. The last column is what this listing's build saw.
+
+| Guard | Change | To | Failed |
+|---|---|---|---|
+| the hook | `sys.addaudithook(_hook)` | `pass` | 4 |
+| the backend's copy only | `the two lines from `if not inside:`` | `pass` | 1 |
+| temporary files inside | `tempfile.tempdir = str(scratch)` | `pass` | 4 |
+| a descriptor's folder | `return os.path.join(folder, path) if folder else ""` | `return os.path.abspath(path)` | 1 |
+| no key from the environment | `super().__init__(Config(), tools, KeyRing(environ={}), cache)` | `super().__init__(Config(), tools, KeyRing(), cache)` | 1 |
+| no vid2sub.toml (serve.py) | `config = Config() if args.demo else load(args)  # …` | `config = load(args)` | 2 |
+| the copy removed | `atexit.register(shutil.rmtree, folder, ignore_errors=True)` | `pass` | 2 |
+| no reads in the home folder | `raise DemoIsolationError("the demo reads nothing of yours")` | `pass` | 2 |
+| no connections | `raise DemoIsolationError("the demo connects to nothing beyond this machine")` | `pass` | 1 |
+
+- [ ] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 vid2sub serve --demo serves a fresh copy of the demo episode, and the app itself refuses anything the demo would touch outside it
+
+src/vid2sub/web/demo.py (spec §21, §22.4, §22.7; the Phase 2 plan's Decision 6). demo/ holds no
+video: prepare() copies it into a new mkdtemp folder (removed at exit), muxes
+tests/fixtures/speech/jfk-14s.wav under a still NYC-blue picture into jfk.mp4 (VP9 and Opus, which
+Playwright's Chromium plays; it has no H.264 or AAC, as recordings found), and points the copied
+sidecar's header and identity at that MP4. demo/'s canned sidecar and its jfk.en.srt and
+jfk.ja.srt were made by the real pipeline (scripts/demo_sidecar.py, `make demo-sidecar`, as
+recordings' demo/build.py makes its archive) with the canned engine: the clip's 37 words with
+Whisper's times from recordings' demo transcript of the same speech (0:30 to 0:44, moved to 0),
+and a hand-written Japanese translation (canned_ask, a sentence across two cues as one item).
+The demo's runtime reads no vid2sub.toml and no key (Config(), KeyRing(environ={})), caches in its
+own folder, and its DemoBackend opens only episodes in the copy. `serve --demo` (exclusive with
+--config) prepares it, then demo.isolate(): an audit hook, as recordings' demo guard but enforced
+by the app rather than only watched by a test, refusing writes outside the demo's folder (each of
+Python's write events, shutil.rmtree's removals through a folder's descriptor resolved by the OS),
+reads in the home folder outside the demo, Python and vid2sub, and lookups and connections beyond
+this machine; temporary files go in the folder's tmp/, bytecode isn't written, and at exit the
+hook lets go before the folder is removed. `make demo` builds and serves it.
+
+The new test failed first with: ImportError: cannot import name 'demo' from 'vid2sub.web'.
+Each guard was then reverted in turn and its tests failed: the hook not installed (4 failed),
+the backend opening anything (1), temporary files left in TMPDIR (4), a descriptor-relative path
+not followed (1), keys from the environment (1), the demo reading vid2sub.toml (2), the copy
+never removed (2), reads in the home folder allowed (2), connections allowed (1).
+
+Docs read: Python's audit events table (os.rename, os.remove, os.rmdir, os.mkdir, os.chmod,
+os.utime, os.symlink, os.link, os.truncate, shutil.rmtree with their dir_fd arguments; open's
+path, mode, flags; socket.connect, socket.getaddrinfo) and sys.addaudithook (hooks can't be
+removed); shutil.rmtree's fd-based walk; tempfile.tempdir; fcntl F_GETPATH (macOS) and
+/proc/self/fd (Linux); ffmpeg's libvpx-vp9 and libopus encoder options; recordings'
+test_demo_guard.py and settings.py (its demo copy and atexit removal).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 13
+Co-Authored-By: <the model's own line>
+```
+
+  `git commit -F .git/COMMIT_MSG` (the files are staged from Step 5), then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 13b: the hostile fixtures, and the shell in a browser
+
+- [ ] **Step 7: Write the failing tests,** `tests/test_hostile_fixtures.py`:
+
+```python
+"""The hostile fixtures (spec §6.3, §22.4; S26) are what the browser tests expect: M1's parser
+keeps a subtitle's text and only `<i>` of its markup, so a `<script>`, an `<img onerror>`, `<font>`
+or an ASS override reaches the editor as inert text, which it must show as text."""
+
+import json
+from pathlib import Path
+
+from vid2sub.subs.formats import parse_subtitles
+
+HOSTILE = Path(__file__).parent / "fixtures" / "hostile"
+
+
+def test_a_hostile_srt_keeps_its_text_and_only_italics():
+    cues = parse_subtitles((HOSTILE / "hostile.srt").read_bytes(), "srt")
+    assert [c.text for c in cues] == [
+        "window.__pwned = 1after the script",
+        "red bold <i>italic</i>",
+        "an image",
+        "a link &lt;b&gt; &amp;",
+        "braces *gone?",
+    ]
+
+
+def test_a_hostile_ass_keeps_its_text_and_only_italics():
+    cues = parse_subtitles((HOSTILE / "hostile.ass").read_bytes(), "ass")
+    assert [c.text for c in cues] == [
+        "moved, huge and red",
+        "<i>italic</i> and bold\nsecond line",
+        "m 0 0 l 100 0 100 100after a drawing",
+        "window.__pwned = 5tags in ASS",
+    ]
+
+
+def test_the_hostile_names_are_markup_bidi_and_paths():
+    names = json.loads((HOSTILE / "names.json").read_text(encoding="utf-8"))["names"]
+    assert any("<img" in n for n in names) and any("<script>" in n for n in names)
+    assert any("\u202e" in n for n in names) and "../../etc/passwd" in names
+```
+
+  and `tests/e2e/test_shell.py`:
+
+```python
+"""The shell in Chromium, against `vid2sub serve --demo` and a hostile vid2sub.toml: the top bar
+says this is the local engine, every hostile name shows as plain text, and nothing it carries
+runs (spec §6.3, §19.2; S26). Run with `make e2e`."""
+
+import json
+from pathlib import Path
+
+import pytest
+from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
+
+HOSTILE = Path(__file__).parents[1] / "fixtures" / "hostile"
+NAMES = json.loads((HOSTILE / "names.json").read_text(encoding="utf-8"))["names"]
+
+
+def test_the_demo_is_the_local_engine_with_nothing_configured(page):
+    expect(page.get_by_test_id("engine")).to_have_text("Local engine")
+    expect(page.get_by_test_id("endpoint")).to_have_count(0)  # the demo reads no vid2sub.toml
+    expect(page.get_by_text("ffmpeg missing")).to_have_count(0)
+
+
+def test_hostile_names_show_as_plain_text_and_run_nothing(open_page, launch, tmp_path):
+    toml = "".join(f"[endpoints.{json.dumps(name, ensure_ascii=False)}]\n"
+                   'base_url = "http://127.0.0.1:9/v1"\n' for name in NAMES)
+    watch = open_page(launch(tmp_path / "hostile", toml=toml))
+    page = watch.page
+    shown = page.get_by_test_id("endpoint")
+    expect(shown).to_have_count(len(NAMES))
+    assert shown.all_inner_texts() == [f"{name}: cloud" for name in NAMES]
+    assert page.locator("[data-testid=endpoint] *").count() == 0  # text only, no element
+    assert page.evaluate("() => window.__pwned") is None
+    assert watch.errors == [] and watch.violations() == []
+```
+
+- [ ] **Step 8: Run them; watch them fail.** `uv run pytest tests/test_hostile_fixtures.py -q`.
+  Expected: `E       FileNotFoundError: [Errno 2] No such file or directory:
+  '…/tests/fixtures/hostile/hostile.srt'`, then `3 failed`; `uv run pytest -m e2e
+  tests/e2e/test_shell.py -q` stops at collection with the same for `names.json`.
+- [ ] **Step 9: Write the code.** `tests/fixtures/hostile/hostile.srt`:
+
+```text
+1
+00:00:00,500 --> 00:00:02,000
+<script>window.__pwned = 1</script>after the script
+
+2
+00:00:02,500 --> 00:00:04,000
+<font color="#ff0000">red</font> <b>bold</b> <i>italic</i>
+
+3
+00:00:04,500 --> 00:00:06,000
+<img src=x onerror="window.__pwned = 2">an image
+
+4
+00:00:06,500 --> 00:00:08,000
+<a href="javascript:window.__pwned=3">a link</a> &lt;b&gt; &amp;
+
+5
+00:00:08,500 --> 00:00:10,000
+{\an8}{\b1}braces{\b0} <style>*{display:none}</style>gone?
+```
+
+  `tests/fixtures/hostile/hostile.ass`:
+
+```text
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 640
+PlayResY: 360
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.50,0:00:02.00,Default,,0,0,0,,{\an8}{\fs99}{\1c&H0000FF&}moved, huge and red
+Dialogue: 0,0:00:02.50,0:00:04.00,Default,,0,0,0,,{\i1}italic{\i0} and {\b1}bold{\b0}\Nsecond line
+Dialogue: 0,0:00:04.50,0:00:06.00,Default,,0,0,0,,{\p1}m 0 0 l 100 0 100 100{\p0}after a drawing
+Dialogue: 0,0:00:06.50,0:00:08.00,Default,,0,0,0,,<script>window.__pwned = 5</script><img src=x onerror="window.__pwned = 6">tags in ASS
+```
+
+  `tests/fixtures/hostile/names.json` (the bidi override and the emoji as JSON escapes, so no
+  file holds a raw bidi character):
+
+```json
+{
+  "why": "Names and titles that must show as plain text wherever the app shows them (spec §6.3, S26): file names, YouTube titles, endpoint names from vid2sub.toml.",
+  "names": [
+    "<img src=x onerror=\"window.__pwned = 7\">",
+    "<script>window.__pwned = 8</script>",
+    "\u202ekcod.exe",
+    "\ud83c\udfac <b>Bold</b> & <i>it</i>",
+    "../../etc/passwd",
+    "CON"
+  ]
+}
+```
+
+  At the end of `tests/fixtures/CREDITS.md`'s table, add:
+
+```markdown
+| `hostile/hostile.srt`, `hostile/hostile.ass`, `hostile/names.json` | written for these tests: markup, ASS overrides, a bidi override and path-like names that must show as plain text (spec §6.3, S26) | MIT |
+```
+
+  In `tests/e2e/conftest.py`, replace the docstring's first paragraph
+
+```python
+"""Servers and pages for the browser tests (spec §22.7): the real `vid2sub serve`, on a free port,
+in a child process with its own TMPDIR and an empty vid2sub.toml, and a page signed in through
+the launch link as a person's browser is (Task 9's token flow, scripted).
+```
+
+  with
+
+```python
+"""Servers and pages for the browser tests (spec §22.7): the real `vid2sub serve --demo` (a canned
+engine over a copy of demo/), on a free port, in a child process with its own TMPDIR, and a page
+signed in through the launch link as a person's browser is (Task 9's token flow, scripted).
+`start_server(..., toml=...)` serves a vid2sub.toml instead of the demo.
+```
+
+  replace `start_server`'s head, down to its `Popen`
+
+```python
+def start_server(tmp: Path, *args: str, port: int = 0) -> Server:
+    """`vid2sub serve --no-browser` on `port` (0: any free one), up and answering."""
+    if not (WWW / "ui.js").is_file():
+        pytest.fail("the frontend isn't built: run make build (make e2e does)")
+    tmp.mkdir(parents=True, exist_ok=True)
+    config = tmp / "vid2sub.toml"
+    config.write_text("", encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("VID2SUB_")}
+    env["TMPDIR"] = str(tmp)
+    log = tmp / "server.log"
+    with log.open("wb") as out:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "vid2sub", "serve", "--no-browser", "--port", str(port),
+             "--config", str(config), *args],
+            env=env, stdout=out, stderr=subprocess.STDOUT)
+```
+
+  with
+
+```python
+def start_server(tmp: Path, *args: str, port: int = 0, toml: str | None = None) -> Server:
+    """`vid2sub serve --no-browser --demo` on `port` (0: any free one), up and answering; with
+    `toml`, that vid2sub.toml instead of the demo."""
+    if not (WWW / "ui.js").is_file():
+        pytest.fail("the frontend isn't built: run make build (make e2e does)")
+    tmp.mkdir(parents=True, exist_ok=True)
+    which = ["--demo"]
+    if toml is not None:
+        config = tmp / "vid2sub.toml"
+        config.write_text(toml, encoding="utf-8")
+        which = ["--config", str(config)]
+    env = {k: v for k, v in os.environ.items() if not k.startswith("VID2SUB_")}
+    env["TMPDIR"] = str(tmp)
+    log = tmp / "server.log"
+    with log.open("wb") as out:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "vid2sub", "serve", "--no-browser", "--port", str(port),
+             *which, *args],
+            env=env, stdout=out, stderr=subprocess.STDOUT)
+```
+
+  and replace `launch`'s head
+
+```python
+def launch():
+    """Starts another server, `launch(tmp, *args, port=0)`, stopped at the end of the test."""
+    started: list[Server] = []
+
+    def run(tmp: Path, *args: str, port: int = 0) -> Server:
+        started.append(start_server(tmp, *args, port=port))
+        return started[-1]
+```
+
+  with
+
+```python
+def launch():
+    """Starts another server, `launch(tmp, *args, port=0, toml=None)`, stopped at the end."""
+    started: list[Server] = []
+
+    def run(tmp: Path, *args: str, port: int = 0, toml: str | None = None) -> Server:
+        started.append(start_server(tmp, *args, port=port, toml=toml))
+        return started[-1]
+```
+
+- [ ] **Step 10: Run the checks; they pass.** `uv run pytest tests/test_hostile_fixtures.py -q`.
+  Expected: `3 passed`. `make e2e`. Expected: `6 passed, 942 deselected` (Task 12's four, now
+  against the demo, and these two). `make check`. Expected: `936 passed, 2 skipped, 10 deselected`
+  twice, `Test Files  5 passed (5)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 11: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+test(e2e): 🤖 the browser tests run against vid2sub serve --demo, and hostile names show as plain text and run nothing
+
+tests/e2e/conftest.py's server is now `vid2sub serve --demo` (spec §22.7: a canned engine over a
+copy of demo/), isolated as the app runs it; `start_server(..., toml=...)` and `launch(...,
+toml=...)` serve a vid2sub.toml instead. tests/fixtures/hostile/ holds the hostile files S26
+names (spec §6.3, §22.4): an SRT with <script>, <font>, <img onerror>, a javascript: link, HTML
+entities and ASS braces; an ASS file with position, size and colour overrides, \N, a drawing and
+HTML; and names.json, names and titles with markup, a bidi override, an emoji and path-like
+names. tests/test_hostile_fixtures.py pins what M1's parser makes of them, text and only <i>, so
+the editor's tests (Task 14) know what reaches React. tests/e2e/test_shell.py: the demo is the
+local engine with nothing configured; a vid2sub.toml whose endpoints carry every hostile name
+shows each as plain text in the top bar, with no element made from it, no script run
+(window.__pwned stays unset) and no console error or CSP violation.
+
+The new tests failed first with: FileNotFoundError: [Errno 2] No such file or directory:
+'…/tests/fixtures/hostile/hostile.srt' (3 failed), and the e2e module with the same for
+names.json.
+
+Docs read: TOML 1.0's quoted keys and basic strings (a name with quotes and backslashes,
+json.dumps-escaped, non-ASCII kept literal); pysubs2's SRT and ASS readers through
+subs.formats.parse_subtitles; Playwright's Locator.all_inner_texts.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 13
+Co-Authored-By: <the model's own line>
+```
+
+  `git add tests/fixtures/hostile tests/fixtures/CREDITS.md tests/test_hostile_fixtures.py
+  tests/e2e/test_shell.py tests/e2e/conftest.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 12: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that every write event Python audits is
+  covered, `shutil.rmtree`'s descriptor-relative removals included, and that a path the OS won't
+  name is refused, not let through; that the demo reads no vid2sub.toml and no key, and opens only
+  its copy; that nothing the demo starts with (`prepare`, imports) runs after `isolate` in a way
+  the hook would break; that the copy goes on Ctrl-C and SIGTERM; that the canned sidecar holds no
+  path or personal data (it names `jfk.mp4` only); that the hostile names show as text. Known and
+  accepted: the hook can't watch child processes (ffprobe, ffmpeg, the browser opener), which the
+  demo starts only on its own files; reads by a bare name (a descriptor-relative walk) aren't
+  checked. The forward review over Tasks 14, 16, 17, 19 and 21 (the notes *For later tasks*
+  above). The docs this task made untrue: none expected (the README's *Use* block will name
+  `make demo`: Task 22). Then the close, its own commit, holding this plan with this task's
+  boxes ticked and **Now** set to `Task 14: The editor view, open.`; S26 stays `planned` (Task 14
+  shows the hostile subtitles and the overlay), with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 13: The end-to-end harness and the demo
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 13
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -13065,3 +18697,4 @@ fi
 |---|---|---|---|---|
 | Task 7 (planning) | Minor | `src/vid2sub/web/backend.py` | With no model named, `retranslate` asks the route's servers which models they serve before it knows anything is stale, so a server that's down gives an error where "nothing is stale" would do | open |
 | Task 6 (planning) | Minor | `src/vid2sub/store.py` | A crash (not an exception) between a projection record and its file write leaves the record naming the new head while the file holds the old one; an outside edit to that file before the next Save would then replace the new head without a conflict | open |
+| Task 12 (planning) | Minor | `frontend/package.json` | `npm install` reports 8 audit findings in the pinned dev dependencies (the same pins as `recordings`); none is triaged yet, so Task 21 or the phase end checks whether any reaches the built `ui.js` | open |
