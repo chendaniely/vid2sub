@@ -43,9 +43,10 @@ ffmpeg ≥6 for the playback audio.
    keeps the whole track from automatic replacement.
 5. **The glossary is written at Save,** never on each keystroke (spec §16).
 6. **The demo folder holds no video:** `vid2sub serve --demo` muxes the public-domain
-   `tests/fixtures/speech/jfk-14s.wav` into a short MP4 (VP9 and Opus, since Playwright's
-   Chromium plays neither H.264 nor AAC) in its temporary copy at start-up, beside a committed
-   canned sidecar. Phase 4 replaces it with the non-English clip spec §21 asks for.
+   `tests/fixtures/speech/jfk-14s.wav` into a short MP4 (VP9 and Opus, which every Chromium
+   build plays, with or without H.264 and AAC; Playwright 1.64's Chromium on macOS has both)
+   in its temporary copy at start-up, beside a committed canned sidecar. Phase 4 replaces it
+   with the non-English clip spec §21 asks for.
 7. **Cancel stops between chunks and between translation batches;** a running ffmpeg finishes its
    (short) step first. M1's pipeline has no cancellation, so Task 4 adds a check to `RunContext`.
 8. **Retranslating cues a person names replaces them even where a translation was edited:** the
@@ -71,6 +72,24 @@ ffmpeg ≥6 for the playback audio.
     choices are a native `<select>` (Tasks 12, 16, 18).
 14. **Shiny's busy-indicator script is served as a file,** so `script-src 'self'` stays as spec
     §6.3 has it and no `style-src` is needed (Task 12, recorded in §29 at its close).
+15. **The browser's own `canPlayType` has a say in playability** (spec §8.2). The player asks
+    it about the container, the picture and the sound before loading the video. It falls back
+    to the playback audio when an answer is empty or a codec is unknown, when the `<video>`
+    reports a decode or source error, or when the picture has no size once its metadata loads.
+    Chromium plays an MP4's sound while dropping a picture it can't decode, and reports no
+    error (Task 14, round 14d).
+16. **Keys beyond spec §20's list:** ←/→ choose the source or translation cell; Ctrl/⌘+Z,
+    Ctrl/⌘+Shift+Z and Ctrl+Y undo and redo. For J/K/L, J jumps back 2 s, since Chromium can't
+    play backwards; K pauses, L plays. No ⌘S: Save is a button (Task 15).
+17. **Insert makes a cue reading "…" and opens it for editing,** since `subs.edit.insert`
+    refuses empty text (Task 15).
+18. **The crash draft is a replay of the tab's edits, undos and redos,** keyed by the heads it
+    started from. A pick that leaves unsaved edits carries the draft forward; editing without
+    restoring an offered draft discards it (Task 16).
+19. **"ASS too" at Save writes ASS for every track,** as the backend's `save` does (Task 16).
+20. **The conflict picker numbers the versions and shows the cues where they differ,** side by
+    side as plain text: at most 50, then how many more. While the source track itself is in
+    conflict, the cue list stays empty until a version is picked (Task 16, round 16c).
 
 ## Global Constraints
 
@@ -99,10 +118,10 @@ ffmpeg ≥6 for the playback audio.
   message handler and input lives in `App` (shinyreact 0.1.0).
 - The Shiny server runs in Pages too (spec §3.3, §21), so `vid2sub.web.server` and
   `vid2sub.web.views` import, at module level, only the pure packages, shiny, shinyreact,
-  htmltools, pydantic and `vid2sub.web.{episode, views, runtime}`. Local-only code is reached
-  through the configured `Runtime`, and every blocking call goes through `runtime.blocking`, never
-  a thread or executor directly (Pyodide has none). `tests/test_pages_imports.py` pins both
-  (Task 14, round 14a).
+  htmltools, pydantic and `vid2sub.web.{episode, ops, views, runtime}`. Local-only code is
+  reached through the configured `Runtime`, and every blocking call goes through
+  `runtime.blocking`, never a thread or executor directly (Pyodide has none; `blocking` runs
+  inline there). `tests/test_pages_imports.py` pins both (Task 14, round 14a).
 - Colours: NYC blue `#236192` (`#6CA6D9` dark) is the working colour; NYC orange `#F26522` marks
   bars and backgrounds, never text. Atkinson Hyperlegible and Atkinson Hyperlegible Mono.
 - British spelling; module docstrings give one sentence of purpose, then why, citing spec sections
@@ -16580,7 +16599,7 @@ feat(web): 🤖 vid2sub serve --demo serves a fresh copy of the demo episode, an
 src/vid2sub/web/demo.py (spec §21, §22.4, §22.7; the Phase 2 plan's Decision 6). demo/ holds no
 video: prepare() copies it into a new mkdtemp folder (removed at exit), muxes
 tests/fixtures/speech/jfk-14s.wav under a still NYC-blue picture into jfk.mp4 (VP9 and Opus, which
-Playwright's Chromium plays; it has no H.264 or AAC, as recordings found), and points the copied
+every Chromium build plays, with or without H.264 and AAC), and points the copied
 sidecar's header and identity at that MP4. demo/'s canned sidecar and its jfk.en.srt and
 jfk.ja.srt were made by the real pipeline (scripts/demo_sidecar.py, `make demo-sidecar`, as
 recordings' demo/build.py makes its archive) with the canned engine: the clip's 37 words with
@@ -16926,15 +16945,2983 @@ Co-Authored-By: <the model's own line>
 
 ### Task 14: The editor view
 
-**Tier:** 2 · **Scenarios:** S27, S37
+**Tier:** 2 · **Scenarios:** S26, S27, S37
+
+S26 is here because Task 13 left it for this task (the hostile subtitles shown in the editor and
+the caption overlay); S37's view half is here (every control reached by keyboard, focus
+visible), its editing half is Task 15's and its job progress Task 19's, so it stays `planned`.
 
 **Files:**
-- Create: `frontend/src/components/{Editor,Player,CaptionOverlay,CueList,CueRow,Flags}.tsx`,
-  `frontend/src/lib/{cues,overlay}.ts` and their `.test.ts`
-- Modify: `src/vid2sub/web/server.py` (input `open`, output `episode`), `frontend/src/App.tsx`
-- Test: `tests/test_web_server.py`, `tests/e2e/test_editor_view.py`
+- Create: `src/vid2sub/web/episode.py`; `frontend/src/components/{Editor,Player,CaptionOverlay,CueList,CueRow,Flags}.tsx`,
+  `frontend/src/components/CaptionOverlay.test.ts`, `frontend/src/lib/{cues,overlay,playable}.ts`
+  and their `.test.ts`
+- Modify: `src/vid2sub/web/server.py` (inputs `open` and `playback`, outputs `episode` and
+  `busy`, the `Editor`), `src/vid2sub/web/runtime.py` (`blocking`, `Media`, `Runtime.reachable`,
+  `Runtime.media_for`), `src/vid2sub/web/views.py`, `src/vid2sub/web/backend.py` (round 14a's
+  split; `Streams` at open),
+  `frontend/src/App.tsx`, `frontend/src/types.ts`, `frontend/package.json` and
+  `frontend/package-lock.json` (`@tanstack/react-virtual` 3.14.14)
+- Test: `tests/test_pages_imports.py`, `tests/test_web_server.py`, `tests/test_views.py`,
+  `tests/e2e/test_editor_view.py`
 
-<!-- steps: written in the next pass -->
+**Interfaces:**
+- Consumes: `LocalBackend.open/close/is_open` and `Episode` (Task 5); `views.episode_view(ep, *,
+  video_url, audio_url)` (Task 5); `MediaTokens.issue(path, *, owner) -> str` and
+  `revoke_owner(owner)` (Task 10); `preview.playback_audio(video, *, key, audio_index, tools,
+  cache, timeout) -> Path` (Task 3); `server.notice`, `App`'s subscriptions and
+  `useSetShinyInput` (Task 12); the demo's copy at `next(server.tmp.glob("vid2sub-demo-*/demo"))`
+  and the hostile fixtures (Task 13); `tests/episodes.py::make_episode` (Task 5).
+- Produces, round 14a (the Pages-safe split, spec §3.3, §21):
+  - `vid2sub.web.episode`, pure (only `vid2sub.subs` and the standard library): `OpenError`,
+    `SaveError`, `SaveResult`, `Capabilities`, `Episode`, `glossary_with`, `track_setup`,
+    `setup_changed`, `all_stale`, moved from `web.backend`, which imports and so re-exports the
+    five classes; `views` imports them from `web.episode`.
+  - `vid2sub.web.server` and `vid2sub.web.views` import at module level only the pure packages,
+    shiny, shinyreact, htmltools, pydantic and `vid2sub.web.{episode, views, runtime, ops}`
+    (`ops` is pure, and Task 15 needs it); `views.local_endpoints` imports `is_local` inside;
+    `status_view`'s `Config` and `KeyRing` are type-only.
+  - `vid2sub.web.runtime`: local parts imported inside `build()`;
+    `async def blocking[**P, R](fn: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R`
+    (`asyncio.to_thread`, or inline when `runtime.INLINE`, which is
+    `sys.platform == "emscripten"`); `Runtime.reachable(self) -> dict[str, bool]` (Task 12's
+    endpoint check, moved from `server.reachable`, which is gone; blocks: call it through
+    `blocking`).
+  - `tests/test_pages_imports.py` refuses, in a fresh interpreter that has loaded shiny,
+    shinyreact, htmltools, pydantic and pysubs2: every `vid2sub` module but `vid2sub`,
+    `vid2sub.subs.*`, `vid2sub.parse.*`, `vid2sub.catalog`, `vid2sub.web`, `vid2sub.web.server`,
+    `vid2sub.web.views`, `vid2sub.web.episode`, `vid2sub.web.runtime`, `vid2sub.web.ops`; and
+    `platformdirs`, `numpy`, `onnxruntime`, `chatlas`, `openai`, `httpx`, `yt_dlp`, `fastapi`,
+    `uvicorn`, `mlx_qwen3_asr`, `faster_whisper`. An AST test keeps `server.py` from importing
+    `threading`, `concurrent`, `multiprocessing`, `subprocess` or `_thread` and from naming
+    `to_thread` or `run_in_executor`.
+- Produces, round 14b (the server):
+  - `runtime.Media(video_url: str | None, audio_url: str | None, problem: str | None = None)`,
+    frozen; `Runtime.media_for(self, ep: Episode) -> Media`: `/media/<token>` for the video when
+    `ep.playable_audio`, else for the playback audio (`preview.playback_audio(ep.video,
+    key=ep.header.video.quick_sha256, audio_index=ep.audio_index, tools=backend.tools,
+    cache=backend.cache, timeout=runtime.PLAYBACK_TIMEOUT)`, 3600 s), tokens owned by `ep.id`; a
+    problem (ffmpeg missing or failing, a file `issue` refuses) is `Media(None, None, "<text fit to
+    show>")`. Blocks: call it through `blocking`.
+  - `server.Editor(rt, session)`, one per tab: `submit(kind: str, request: object) -> None`
+    queues `(kind, request)` and runs the queue in one asyncio task of the tab's own, one request
+    at a time, each awaiting `self._<kind>(request)`; `async end()` (registered with
+    `session.on_ended`) drops what waits and closes the episode once the running request ends;
+    `ep: Episode | None` (the truth), `media: runtime.Media`, and the reactive values
+    `shown: (Episode, Media) | None` and `busy: str | None`, set under `reactive.lock()` with a
+    `reactive.flush()` (`_publish`, `_set_busy`). An exception in a request logs its type only and
+    is the notice `something went wrong (<kind>); see the log`. Opening another episode closes the
+    first (`backend.close`, `media.revoke_owner`).
+  - Input `open`: `{"path": str, "n": int}` (`n` counts the tab's requests, so the same path twice
+    is two requests). A path that isn't a non-empty string of at most 4,096 characters is the
+    notice `type the video's full path to open it`; an `OpenError` is its message; a
+    `Media.problem` is a notice after the episode opens.
+  - Output `episode`: `views.episode_view(ep, video_url=media.video_url,
+    audio_url=media.audio_url)`, or `null` when none is open. Output `busy`: `"opening"` while an
+    open runs, else `null`.
+- Produces, round 14c (the frontend):
+  - `types.ts`: `TrCue`, `TrCell`, `Row`, `TrackInfo`, `SpokenWord`, `Version`, `EpisodeView`
+    (the view's JSON), `Busy = "opening" | null`.
+  - `lib/overlay.ts`: `segments(text: string): Segment[]` (`{text, italic}`; `<i>`/`</i>` in any
+    case are the only markup), `type Showing = "source" | "translation" | "both"`,
+    `captionLines(showing, source: string | null, translation: string | null): string[]`.
+  - `lib/cues.ts`: `indexAt(items, ms): number` (start ≤ ms < end, binary search, -1),
+    `wordAt(words, range: [i, j) | null, ms): number`, `wordSpans(text, words)` (character
+    ranges, null from the first word the text no longer has), `trackCues(rows, track | null):
+    TrCue[]`, `formatTime(ms): string` (`m:ss.mmm`, `h:mm:ss.mmm` from an hour).
+  - Components: `Editor({episode, busy, pathInput, onOpen})` (the path form, `data-testid`
+    `open-path` and `open-button`, and the episode keyed by its id); `Player({video, mediaRef,
+    lines, onTime})` (`data-testid="media"` on the `<video>` or `<audio>`); `CaptionOverlay({lines})`
+    (`caption-line`); `CueList({rows, words, track, current, word, selected, follow, onPick})`
+    (`role="listbox"`, `cue-list`); `CueRow({row, track, current, selected, word, words, total,
+    onPick})` (`role="option"`, `aria-current`, `aria-setsize`, `aria-posinset`, `data-cue`;
+    `cue-row`, `cue-times` comes in Task 15, `cue-text`, `cue-translation`, `spoken-word`);
+    `Flags({flags})` (`data-flag` on each badge) and `flagLabel(flag)`. Practice aids:
+    `showing`, `track` (only with two or more translations), `speed`, `loop` (`aria-pressed`),
+    `follow`.
+  - `App` subscribes `episode` and `busy` and sets `open` with
+    `useSetShinyInput("open", null, {priority: "event", debounceMs: 0})`.
+- Produces, round 14d (what the browser can play, spec §8.2, §8.8, §20):
+  - `web.episode.Streams(container: str = "", video_codec: str | None = None, audio_codec: str =
+    "")`, frozen; `Episode.streams: Streams = Streams()`, set by `LocalBackend.open` from the probe
+    (`p.container`, `p.video_codec`, the played track's `codec`). The view's `video` gains
+    `"container"`, `"video_codec"` and `"audio_codec"` (ffprobe's names; never a path).
+  - `Runtime.media_for(self, ep, *, audio_only: bool = False) -> Media`: with `audio_only`, the
+    playback audio whatever `ep.playable_audio` says.
+  - Input `playback`: `{"episode": str, "n": int}`: the page found the browser can't play the
+    video. `Editor._playback` revokes the episode's tokens, makes the playback audio through
+    `runtime.blocking(rt.media_for, ep, audio_only=True)` with `busy` at `"playback"`, and
+    publishes `url: null` and `audio_url`; a request for another episode, or when the audio is
+    already playing, does nothing. `Editor._named(request) -> Episode | None` (the open episode
+    when the request names it) is introduced here.
+  - `lib/playable.ts`: `mediaTypes(video) -> {container, video, audio}` (the MIME types asked
+    about, codecs as RFC 6381 names them) and `canPlay(ask, video) -> boolean` (yes only when the
+    container, the picture if there is one, and the sound each get a non-empty answer; an
+    unknown codec or container is no).
+  - `Player({video, mediaRef, lines, busy, onTime, onCantPlay})`: asks `canPlay` with
+    `canPlayType` before loading; `onCantPlay` (once) on that, on the `<video>`'s
+    `MEDIA_ERR_DECODE` or `MEDIA_ERR_SRC_NOT_SUPPORTED`, or on `videoWidth === 0` after
+    `loadedmetadata` when the probe found a picture. `Editor` and `EpisodeEditor` take
+    `onCantPlay`; `EpisodeEditor` takes `busy`. `types.ts`: the view's three new fields, `Busy`
+    gains `"playback"`. `App` sets `playback`.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+
+#### Round 14a: the server imports only what the Pages bundle has
+
+- [ ] **Step 1: Write the failing test,** `tests/test_pages_imports.py`:
+
+```python
+"""The Shiny server and its views import only what the Pages bundle has, and never start a thread
+or a process themselves (spec §3.3, §21; the Phase 2 plan's Global Constraints).
+
+Spec §21 bundles `vid2sub.subs`, `vid2sub.catalog`, `vid2sub.parse` and `web/server.py` with
+`BrowserBackend`, with shinyreact and the wheels of pysubs2, opencc-purepy and
+charset-normalizer; Pyodide brings shiny, htmltools and pydantic, and has no FastAPI, uvicorn,
+network client, ffmpeg or threads. So a fresh interpreter first loads what the bundle brings
+(the host's shiny imports uvicorn, httpx and openai on its own; that is shiny's business), then
+forgets and refuses at import every vid2sub module outside the server's own and the pure
+packages, and every package of vid2sub's dependencies the bundle lacks, and the server and its
+views must still import. Local-only code is reached through the configured `Runtime`, and every
+blocking call goes through `runtime.blocking`, which runs inline in Pyodide.
+"""
+
+import ast
+import asyncio
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+from vid2sub.web import runtime
+
+SRC = Path(__file__).resolve().parents[1] / "src" / "vid2sub"
+
+# What spec §21's bundle holds of vid2sub: whole packages, then single modules. `web.ops` parses
+# the editor's edits at the door, so the browser editor needs it too; it is pure.
+BUNDLED_TREES = ("vid2sub.subs", "vid2sub.parse")
+BUNDLED_MODULES = ("vid2sub", "vid2sub.catalog", "vid2sub.web", "vid2sub.web.server",
+                   "vid2sub.web.views", "vid2sub.web.episode", "vid2sub.web.runtime",
+                   "vid2sub.web.ops")
+# vid2sub's own dependencies (pyproject.toml, the mac extra, and Phase 3's faster-whisper) that
+# the bundle doesn't have.
+NOT_BUNDLED = ("platformdirs", "numpy", "onnxruntime", "chatlas", "openai", "httpx", "yt_dlp",
+               "fastapi", "uvicorn", "mlx_qwen3_asr", "faster_whisper")
+
+SCRIPT = r"""
+import importlib, sys
+
+import htmltools, pydantic, pysubs2, shiny, shinyreact  # what the bundle brings, loaded first
+
+TREES, MODULES, PACKAGES = {trees!r}, {modules!r}, {packages!r}
+
+
+def refused(name):
+    if name.split(".")[0] == "vid2sub":
+        return name not in MODULES and not any(name == t or name.startswith(t + ".")
+                                               for t in TREES)
+    return name.split(".")[0] in PACKAGES
+
+
+class Refuse:
+    def find_spec(self, name, path=None, target=None):
+        if refused(name):
+            raise ImportError(f"the Pages bundle has no {{name}}")
+        return None
+
+
+for name in [n for n in sys.modules if refused(n)]:
+    del sys.modules[name]  # so an import of it asks the finder again
+sys.meta_path.insert(0, Refuse())
+for module in sys.argv[1:]:
+    importlib.import_module(module)
+print("imported", *sys.argv[1:])
+"""
+
+
+def _import_as_pages(*modules: str) -> subprocess.CompletedProcess:
+    script = SCRIPT.format(trees=BUNDLED_TREES, modules=BUNDLED_MODULES, packages=NOT_BUNDLED)
+    return subprocess.run([sys.executable, "-c", script, *modules], check=False,
+                          capture_output=True, text=True, timeout=120)
+
+
+def test_the_server_and_its_views_import_with_only_what_the_pages_bundle_has():
+    done = _import_as_pages("vid2sub.web.views", "vid2sub.web.server")
+    assert done.returncode == 0, done.stderr[-3000:]
+    assert done.stdout.strip() == "imported vid2sub.web.views vid2sub.web.server"
+
+
+def test_the_refusal_itself_works():
+    # why: a finder that refused nothing would pass the test above whatever the server imports.
+    done = _import_as_pages("vid2sub.web.backend")
+    assert done.returncode != 0
+    assert "ImportError: the Pages bundle has no vid2sub.web.backend" in done.stderr
+
+
+THREADS = {"threading", "concurrent", "multiprocessing", "subprocess", "_thread"}
+
+
+def test_the_server_never_starts_a_thread_or_a_process_itself():
+    tree = ast.parse((SRC / "web" / "server.py").read_text(encoding="utf-8"))
+    bad = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            bad += [a.name for a in node.names if a.name.split(".")[0] in THREADS]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".")[0] in THREADS:
+                bad.append(node.module)
+            bad += [f"{node.module}.{a.name}" for a in node.names
+                    if a.name in ("to_thread", "run_in_executor")]
+        elif isinstance(node, ast.Attribute) and node.attr in ("to_thread", "run_in_executor"):
+            bad.append(ast.unparse(node))
+    assert bad == [], f"server.py must go through runtime.blocking: {bad}"
+
+
+def test_blocking_runs_a_call_off_the_event_loop_and_returns_its_result():
+    async def main():
+        loop_thread = threading.get_ident()
+        return loop_thread, await runtime.blocking(lambda a, *, b: (threading.get_ident(), a + b),
+                                                   1, b=2)
+
+    loop_thread, (worker, total) = asyncio.run(main())
+    assert total == 3 and worker != loop_thread
+
+
+def test_blocking_runs_inline_in_pyodide_which_has_no_threads(monkeypatch):
+    monkeypatch.setattr(runtime, "INLINE", True)  # as sys.platform == "emscripten" makes it
+
+    async def main():
+        return threading.get_ident(), await runtime.blocking(threading.get_ident)
+
+    loop_thread, worker = asyncio.run(main())
+    assert worker == loop_thread
+```
+
+- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_pages_imports.py -q`. Expected:
+  `4 failed, 1 passed`, with `ImportError: the Pages bundle has no vid2sub.config`,
+  `AssertionError: server.py must go through runtime.blocking: ['asyncio.to_thread']` and
+  `AttributeError: module 'vid2sub.web.runtime' has no attribute 'blocking'` (and `'INLINE'`).
+- [ ] **Step 3: Write the code.** `src/vid2sub/web/episode.py`:
+
+```python
+"""The editor's episode, and the shapes the Shiny server, its views and the backends share (spec
+§3.3, §19.1, §21).
+
+Pure, so the server and its views import only what the Pages bundle has: spec §21 bundles
+`vid2sub.subs`, `vid2sub.catalog`, `vid2sub.parse` and `web/server.py` with `BrowserBackend`, and
+Pyodide has no ffmpeg, network client or threads (the Phase 2 plan's Global Constraints, Task 14
+round 14a). `LocalBackend` (`web.backend`) makes and changes these values and re-exports them, so
+its callers' imports stay as they were. An `Episode` is never changed in place: every backend call
+returns a new one, so a reactive value that holds it sees each change. Stale follows spec §13.4
+as M1 decides it (`pipeline._translate_targets`): a translation is stale when its source text
+changed, and every cue of it when the glossary's hash or the translation model differs from the
+ones its head was made with (Decision 9).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+from vid2sub.subs.edit import Tracks
+from vid2sub.subs.glossary import Glossary
+from vid2sub.subs.model import Word
+from vid2sub.subs.sidecar import Header, Sidecar
+
+
+class OpenError(Exception):
+    """An episode that can't be opened; the reason is fit to show."""
+
+
+class SaveError(Exception):
+    """Nothing was saved; the reason is fit to show."""
+
+
+@dataclass(frozen=True)
+class SaveResult:
+    written: tuple[str, ...]  # file names written
+    foreign: tuple[str, ...]  # file names left alone: someone else's, or changed outside since
+    conflicts: tuple[str, ...]  # tracks in conflict, so not written until a version is picked
+    notes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Capabilities:
+    engine: Literal["local", "browser"]
+    generate: bool
+    save: Literal["disk", "download"]
+    path_input: bool
+
+
+@dataclass(frozen=True)
+class Episode:
+    id: str
+    video: Path
+    header: Header  # the video as it is now, from the probe at open
+    source_key: str
+    tracks: Tracks
+    heads: dict[str, str]  # track → the head rendition its cues came from
+    conflicts: dict[str, tuple[str, ...]]  # track → its diverged versions (rendition ids)
+    words: tuple[Word, ...]
+    notes: list[str]
+    playable_audio: bool
+    audio_index: int  # among audio tracks: ffmpeg's a:N, as preview.playback_audio takes
+    sidecar: Sidecar  # as of the open or the last Save
+    base: Tracks  # the tracks as of the open or the last Save
+    glossary: Glossary | None  # beside the video at open; None if it couldn't be read
+    translate_model: str | None  # the model Retranslate would use with none named (offline)
+    undo: list[tuple[Tracks, dict[str, str]]] = field(default_factory=list)
+    redo: list[tuple[Tracks, dict[str, str]]] = field(default_factory=list)
+    taken: set[str] = field(default_factory=set)
+    glossary_adds: dict[str, str] = field(default_factory=dict)
+    made_with: dict[str, tuple[str, str | None]] = field(default_factory=dict)  # since a redo-all
+
+    @property
+    def dirty(self) -> bool:
+        return self.tracks != self.base or bool(self.glossary_adds)
+
+
+def glossary_with(glossary: Glossary, adds: dict[str, str]) -> Glossary:
+    """The glossary as it will read once Save has added `adds`: a term it has keeps its own."""
+    have = dict(glossary.terms)
+    return Glossary(glossary.description, glossary.terms + tuple(
+        (term, translation) for term, translation in adds.items() if term not in have))
+
+
+def track_setup(ep: Episode, track: str) -> tuple[str, str | None]:
+    """The glossary hash ("" for none) and the model the track's cues were made with: those of a
+    retranslation that redid every unedited cue, while none of the cues it replaced is back (an
+    undo), else its head's."""
+    made = ep.made_with.get(track)
+    if made is not None:
+        before = {c.id for c in ep.base.translations.get(track, ())}
+        if not any(c.id in before for c in ep.tracks.translations.get(track, ())
+                   if "edited" not in c.flags):
+            return made
+    body = ep.sidecar.renditions()[ep.heads[track]].body
+    return body.get("payload", {}).get("glossary_sha") or "", body.get("model")
+
+
+def setup_changed(setup: tuple[str, str | None], glossary_sha: str | None,
+                  model: str | None) -> bool:
+    """Spec §13.4's other two legs, as M1 decides them: the glossary's hash, or the model, isn't
+    the one the cues were made with. A leg whose current value is unknown (None) is left out."""
+    made_sha, made_model = setup
+    return ((glossary_sha is not None and made_sha != glossary_sha)
+            or (model is not None and made_model != model))
+
+
+def all_stale(ep: Episode, track: str) -> bool:
+    """Every cue of a loaded translation track is stale: against the glossary beside the video
+    with the terms waiting for Save, and the model Retranslate would use with none named."""
+    sha = None if ep.glossary is None else glossary_with(ep.glossary, ep.glossary_adds).sha()
+    return setup_changed(track_setup(ep, track), sha, ep.translate_model)
+```
+
+  `src/vid2sub/web/backend.py`: in the module docstring, replace
+
+```python
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+```
+
+  with
+
+```python
+every call returns a new one, so a reactive value that holds it sees each change. The `Episode`,
+`SaveResult`, the errors and the stale test live in the pure `web.episode`, so the Shiny server
+imports nothing local (Task 14 round 14a); they are re-exported here. A translation
+```
+
+  replace `from dataclasses import dataclass, field, replace` with `from dataclasses import
+  replace`; after `from vid2sub.web import ops` add
+
+```python
+from vid2sub.web.episode import (
+    Capabilities,
+    Episode,
+    OpenError,
+    SaveError,
+    SaveResult,
+    glossary_with,
+    setup_changed,
+    track_setup,
+)
+```
+
+  then delete everything from `class OpenError(Exception):` down to the blank lines before
+  `class LocalBackend:` (the five classes, now in `web.episode`), and the four functions
+  `glossary_with`, `track_setup`, `setup_changed` and `all_stale` between `read_glossary` and
+  `_lang` (now in `web.episode`).
+
+  `src/vid2sub/web/views.py`: in the module docstring, replace `` or model (§13.4,
+  `backend.all_stale`) `` with `` or model (§13.4, `episode.all_stale`) ``, and replace
+
+```python
+endpoint is never contacted (as `vid2sub doctor` decides).
+"""
+```
+
+  with
+
+```python
+endpoint is never contacted (as `vid2sub doctor` decides). The server runs in Pages too (§21), so
+this module imports only pure packages and `web.episode` at its top; the status views' config and
+keys are the local engine's, imported only where they are used (Task 14 round 14a).
+"""
+```
+
+  replace the imports from `from typing import Any` to `from vid2sub.web.backend import
+  Capabilities, Episode, all_stale` with
+
+```python
+from typing import TYPE_CHECKING, Any
+
+from vid2sub.subs import langs, naming
+from vid2sub.subs.lint import lint
+from vid2sub.subs.model import Cue
+from vid2sub.subs.rules import rules_for
+from vid2sub.subs.sidecar import HeadRecord
+from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.web.episode import Capabilities, Episode, all_stale
+
+if TYPE_CHECKING:  # local only: the Pages bundle has neither (spec §21)
+    from vid2sub.config import Config
+    from vid2sub.engines.clients import KeyRing
+```
+
+  and in `local_endpoints`, after its docstring, add
+
+```python
+    from vid2sub.config import is_local  # here: the Pages bundle has no vid2sub.config
+
+```
+
+  `src/vid2sub/web/runtime.py`, in full:
+
+```python
+"""The engine's running parts, made once per launch by `vid2sub serve` and read by the Shiny
+server (spec §19.1), and the one way the server runs a call that blocks.
+
+As recordings' runtime does: Shiny's app object is made when its module is imported, and its
+server function runs once per browser session, so the server finds the backend, the job queue
+and the media tokens here (`current()`), and `serve` calls `configure()` before it imports the
+Shiny app. There is one of each per launch: the backend holds the open episodes, the queue holds
+the jobs, which belong to the engine rather than a tab (spec §17.1), and the media tokens die
+with the engine (the Phase 2 plan's Decision 1). Until the Jobs page gives the queue the
+pipeline (S36), a job that somehow reaches it fails without running anything.
+
+The server runs in Pages too (spec §3.3, §21), so this module imports nothing the Pages bundle
+lacks at its top: `build()` imports the local parts (the backend, the queue, ffmpeg's tools, the
+cache, the network client) when it runs, and the server reaches local-only work through the
+`Runtime` (`reachable`). Every call that blocks goes through `blocking`, never a
+thread or an executor of the server's own: a worker thread here, inline in Pyodide, which has no
+threads (Task 14 round 14a, decided with the coordinator 2026-10-24).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vid2sub.cache import Cache
+    from vid2sub.config import Config
+    from vid2sub.engines.clients import KeyRing
+    from vid2sub.jobs import Queue
+    from vid2sub.media.tools import Tools
+    from vid2sub.pipeline import Event, InputResult
+    from vid2sub.web.backend import LocalBackend
+    from vid2sub.web.media import MediaTokens
+
+INLINE = sys.platform == "emscripten"  # Pyodide: no threads, so a blocking call runs inline
+
+
+async def blocking[**P, R](fn: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:
+    """`fn(*args, **kwargs)` off the event loop, awaited: in a worker thread (`asyncio.to_thread`,
+    which carries the caller's context, Shiny's session included), or inline where there are no
+    threads (Pyodide)."""
+    if INLINE:
+        return fn(*args, **kwargs)
+    return await asyncio.to_thread(fn, *args, **kwargs)
+
+
+@dataclass(frozen=True)
+class Runtime:
+    backend: LocalBackend
+    queue: Queue
+    media: MediaTokens
+    config: Config
+    keys: KeyRing
+
+    def reachable(self) -> dict[str, bool]:
+        """Whether each local endpoint answers its model list. Blocks on the network: call it
+        through `blocking`. Cloud endpoints are never contacted."""
+        from vid2sub.engines import clients
+        from vid2sub.engines.base import EngineError
+        from vid2sub.web.views import local_endpoints
+
+        found = {}
+        for name in local_endpoints(self.config):
+            try:
+                clients.list_models(name, self.config.endpoints[name], self.keys, timeout=3.0)
+                found[name] = True
+            except EngineError:
+                found[name] = False
+        return found
+
+
+_current: Runtime | None = None
+
+
+def configure(rt: Runtime | None) -> None:
+    """Make `rt` the launch's runtime; None forgets it (tests)."""
+    global _current
+    _current = rt
+
+
+def current() -> Runtime:
+    if _current is None:
+        raise RuntimeError("vid2sub.web.runtime.configure() was not called")
+    return _current
+
+
+def build(config: Config, *, tools: Tools | None = None, keys: KeyRing | None = None,
+          cache: Cache | None = None) -> Runtime:
+    """One launch's parts: the tools found on PATH, the keys from the environment, and the cache
+    that `[defaults] cache_max_gb` caps, unless the caller gives its own."""
+    from vid2sub import cache as caching
+    from vid2sub.engines.clients import KeyRing
+    from vid2sub.jobs import Queue
+    from vid2sub.media.tools import Tools
+    from vid2sub.web.backend import LocalBackend
+    from vid2sub.web.media import MediaTokens
+
+    tools = tools if tools is not None else Tools.find()
+    keys = keys if keys is not None else KeyRing()
+    cache = cache if cache is not None else caching.from_config(config)
+    return Runtime(backend=LocalBackend(config, tools, keys, cache), queue=Queue(_no_jobs),
+                   media=MediaTokens(), config=config, keys=keys)
+
+
+def _no_jobs(source: str, events: Event, cancelled: Callable[[], bool]) -> InputResult:
+    raise RuntimeError("this engine has no job runner")
+```
+
+  `src/vid2sub/web/server.py`: in the module docstring, replace
+
+```python
+check here; opening, saving and retranslating later) runs off the event loop. Shiny's reconnect
+```
+
+  with
+
+```python
+check here; opening, saving and retranslating later) runs off the event loop, through
+`runtime.blocking` only. The server runs in Pages too (spec §3.3, §21), so this module imports,
+at its top, only the pure packages, shiny, shinyreact, htmltools, pydantic and
+`vid2sub.web.{episode, views, runtime, ops}`, and reaches local-only work through the configured
+`Runtime` (Task 14 round 14a; `tests/test_pages_imports.py`). Shiny's reconnect
+```
+
+  delete `import asyncio` and the four imports `from vid2sub.config import Config`, `from
+  vid2sub.engines import clients`, `from vid2sub.engines.base import EngineError` and `from
+  vid2sub.engines.clients import KeyRing`; delete the function `reachable` (it is
+  `Runtime.reachable` now); and in `check()` replace
+  `return await asyncio.to_thread(reachable, rt.config, rt.keys)` with
+  `return await runtime.blocking(rt.reachable)`.
+
+- [ ] **Step 4: Run the checks; they pass.** First the guard: put
+  `from vid2sub.engines import clients  # noqa: F401` back above `from vid2sub.web import WWW,
+  runtime, views` in `server.py`, run `uv run pytest tests/test_pages_imports.py -q` and see
+  `ImportError: the Pages bundle has no vid2sub.engines` (`1 failed, 4 passed`), then take it out
+  again. `make check`. Expected:
+  `941 passed, 2 skipped, 10 deselected` (twice: as it is and under `TZ=UTC`), `Tests  24 passed
+  (24)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+refactor(web): 🤖 the Shiny server and its views import only what the Pages bundle has, and every blocking call goes through runtime.blocking
+
+Spec §3.3 has the Shiny server talk to a Backend interface, and §21 runs it in Pages, whose bundle
+holds vid2sub.subs, vid2sub.catalog, vid2sub.parse and web/server.py with BrowserBackend; Pyodide
+has no FastAPI, uvicorn, network client, ffmpeg or threads. web/server.py imported
+vid2sub.engines.clients (openai, httpx, chatlas) and web/runtime.py (the backend, the queue,
+ffmpeg's tools, the pipeline and the cache), and called asyncio.to_thread itself. Now:
+
+- vid2sub.web.episode, pure, holds Episode, Capabilities, SaveResult, OpenError, SaveError,
+  glossary_with, track_setup, setup_changed and all_stale; web.backend imports and re-exports them,
+  so Tasks 5 to 7's tests and imports are unchanged.
+- web.views imports only pure packages and web.episode at its top; status_view's Config and
+  KeyRing are type-only, and local_endpoints imports is_local where it runs.
+- web.runtime imports its local parts inside build(); Runtime.reachable() is Task 12's endpoint
+  check, moved from server.py with its imports inside it; runtime.blocking(fn, /, *args,
+  **kwargs) is asyncio.to_thread, or inline where sys.platform is "emscripten" (runtime.INLINE).
+- web.server imports only shiny, shinyreact, htmltools and vid2sub.web, and awaits
+  runtime.blocking(rt.reachable).
+
+tests/test_pages_imports.py loads what the bundle brings in a fresh interpreter, then forgets and
+refuses every other vid2sub module (vid2sub.subs and vid2sub.parse, catalog, and web's server,
+views, episode, runtime and ops are bundled) and every dependency the bundle lacks (platformdirs,
+numpy, onnxruntime, chatlas, openai, httpx, yt_dlp, fastapi, uvicorn, mlx_qwen3_asr,
+faster_whisper), and imports the server and its views; an AST test keeps server.py from threads,
+processes, to_thread and run_in_executor. They failed first with:
+  ImportError: the Pages bundle has no vid2sub.config
+  AssertionError: server.py must go through runtime.blocking: ['asyncio.to_thread']
+and, with `from vid2sub.engines import clients` put back in server.py after the change:
+  ImportError: the Pages bundle has no vid2sub.engines
+
+Docs read: spec §3.3 and §21; Python's importlib (sys.meta_path finders' find_spec, raising
+ImportError) and PEP 695 type parameters; shiny 1.8.0's reactive.extended_task (shiny/reactive/
+_extended_task.py: it awaits its function outside the reactive lock); asyncio.to_thread (it copies
+the caller's contextvars).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 14
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/episode.py src/vid2sub/web/backend.py src/vid2sub/web/views.py
+  src/vid2sub/web/runtime.py src/vid2sub/web/server.py tests/test_pages_imports.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 14b: a tab opens an episode and gets its view and its media
+
+- [ ] **Step 6: Write the failing tests,** in `tests/test_web_server.py`: below `import asyncio`
+  add `import contextlib`, below `import threading` add `import time`, below `import pytest` add
+  `from episodes import ENGLISH, LINES, make_episode`, and at the end of the file add (the two blank lines first):
+
+```python
+
+
+# ---- the editor: opening an episode (Task 14) -------------------------------------------------
+
+
+class Tab:
+    """One browser tab's websocket to the Shiny server, driven by hand: inputs go in as
+    shinyreact sends them (`<id>:shinyreact.default`), and a reader thread keeps every message."""
+
+    def __init__(self, ws):
+        self.ws = ws
+        self.messages: list[dict] = []
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self) -> None:
+        with contextlib.suppress(Exception):  # until the socket closes
+            while True:
+                self.messages.append(json.loads(self.ws.receive_text()))
+
+    def send(self, method: str, data: dict) -> None:
+        self.ws.send_text(json.dumps({"method": method, "data": data}))
+
+    def set(self, **inputs) -> None:
+        self.send("update", {f"{name}:shinyreact.default": v for name, v in inputs.items()})
+
+    def until(self, check, timeout: float = 20.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            found = check(self)
+            if found:
+                return found
+            time.sleep(0.02)
+        raise AssertionError(f"timed out; the tab saw {self.messages[-5:]}")
+
+    def value(self, name: str):
+        """The output's latest value; KeyError while it has none."""
+        for m in reversed(self.messages):
+            if name in m.get("values", {}):
+                return m["values"][name]
+        raise KeyError(name)
+
+    def has(self, name: str) -> bool:
+        try:
+            self.value(name)
+        except KeyError:
+            return False
+        return True
+
+    def notices(self) -> list[dict]:
+        return [m["custom"]["shinyReactMessage"]["data"] for m in self.messages
+                if m.get("custom", {}).get("shinyReactMessage", {}).get("id") == "notice"]
+
+
+EDITOR_OUTPUTS = {"episode", "busy"}
+
+
+@contextlib.contextmanager
+def tab(client, outputs=EDITOR_OUTPUTS):
+    with client.websocket_connect(WS, headers={"Origin": BASE}) as ws:
+        t = Tab(ws)
+        t.send("init", {f".clientdata_output_{name}_hidden": False for name in outputs})
+        yield t
+
+
+@pytest.fixture
+def media_rt(tmp_path):
+    """A runtime with the real ffmpeg and ffprobe, for opening episodes."""
+    made = runtime.build(Config(), tools=Tools.find(), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=10**9))
+    runtime.configure(made)
+    yield made
+    runtime.configure(None)
+    made.queue.close()
+
+
+@pytest.fixture
+def media_client(media_rt):
+    with TestClient(create_app(media_rt, token=TOKEN, port=PORT, shiny_app=server.app),
+                    base_url=BASE) as c:
+        r = c.post("/auth", content=json.dumps({"token": TOKEN}), headers={**JSON, **PAGE})
+        assert r.status_code == 204
+        yield c
+
+
+def opened(t: Tab):
+    return t.has("episode") and t.value("episode")
+
+
+def test_with_no_episode_open_the_episode_output_is_null_and_nothing_is_busy(client):
+    with tab(client) as t:
+        t.until(lambda t: t.has("episode") and t.has("busy"))
+        assert t.value("episode") is None and t.value("busy") is None
+
+
+@pytest.mark.media
+def test_opening_an_episode_sends_its_view_with_the_video_by_a_media_token(
+        media_client, media_rt, tmp_path):
+    video = make_episode(tmp_path / "Secret Show")
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        ep = t.until(opened)
+        assert [r["text"] for r in ep["rows"]] == list(LINES)
+        assert [c["text"] for r in ep["rows"] for c in r["tr"]["en"]["cues"]] == list(ENGLISH)
+        url = ep["video"]["url"]
+        assert re.fullmatch(r"/media/[A-Za-z0-9_-]{43}", url) and ep["video"]["audio_url"] is None
+        assert media_rt.media.resolve(url.removeprefix("/media/")) == video
+        assert media_rt.backend.is_open(ep["id"])
+        everything = json.dumps(t.messages)
+        assert "Secret Show" not in everything and str(tmp_path) not in everything
+        assert t.value("busy") is None
+
+
+@pytest.mark.media
+def test_a_video_whose_audio_the_browser_cant_play_gets_the_playback_audio_instead(
+        media_client, media_rt, tmp_path):
+    # Decision 2: AC-3 can't be played by a browser, so the player gets the playback audio and no
+    # picture; the audio is made into the cache, keyed by the video's quick hash (§8.8, §8.9).
+    video = make_episode(tmp_path / "ac3", audio_codec="ac3")
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        ep = t.until(opened)
+        assert ep["video"]["url"] is None and ep["video"]["playable_audio"] is False
+        audio = media_rt.media.resolve(ep["video"]["audio_url"].removeprefix("/media/"))
+        assert audio is not None and audio.name == "playback-a0.m4a"
+        assert audio.parent.parent == tmp_path / "cache"
+
+
+@pytest.mark.media
+def test_an_episode_that_cant_be_opened_is_a_notice_and_the_editor_stays_empty(
+        media_client, tmp_path):
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": "Show.mkv", "n": 1})
+        notice = t.until(lambda t: t.notices())[0]
+        assert notice == {"kind": "error", "text": "give the video's full path"}
+        assert t.value("episode") is None
+
+
+def test_an_open_request_that_isnt_a_path_is_refused_without_echoing_it(client):
+    with tab(client) as t:
+        t.until(lambda t: t.has("episode"))
+        for bad in ({"path": 7, "n": 1}, {"n": 2}, "<img src=x>", {"path": "x" * 5000, "n": 3}):
+            t.set(open=bad)
+        t.until(lambda t: len(t.notices()) == 4)
+        assert {n["text"] for n in t.notices()} == {"type the video's full path to open it"}
+        assert "<img" not in json.dumps(t.messages)
+
+
+@pytest.mark.media
+def test_closing_the_tab_closes_its_episode_and_revokes_its_media(media_client, media_rt,
+                                                                 tmp_path):
+    first, second = make_episode(tmp_path / "one"), make_episode(tmp_path / "two")
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(first), "n": 1})
+        one = t.until(opened)
+        t.set(open={"path": str(second), "n": 2})
+        two = t.until(lambda t: opened(t) and opened(t)["id"] != one["id"] and opened(t))
+        # opening another episode closes the first, and its token stops working
+        assert not media_rt.backend.is_open(one["id"])
+        assert media_rt.media.resolve(one["video"]["url"].removeprefix("/media/")) is None
+        token = two["video"]["url"].removeprefix("/media/")
+        assert media_rt.media.resolve(token) == second
+    deadline = time.monotonic() + 10
+    while media_rt.backend.is_open(two["id"]) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not media_rt.backend.is_open(two["id"])
+    assert media_rt.media.resolve(token) is None
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q` (each new
+  test waits 20 s for what never comes). Expected: `6 failed, 9 passed`, each with
+  `AssertionError: timed out; the tab saw [{'values': {}, 'inputMessages': [], 'errors': {}}, ...`.
+- [ ] **Step 8: Write the code.** `src/vid2sub/web/runtime.py`: in the docstring replace
+  `` `Runtime` (`reachable`). `` with `` `Runtime` (`reachable`, `media_for`). ``; in the
+  `TYPE_CHECKING` block, after `from vid2sub.web.backend import LocalBackend`, add
+  `from vid2sub.web.episode import Episode`; above `INLINE = ...` add
+
+```python
+PLAYBACK_TIMEOUT = 3600.0  # seconds: a two-hour episode's audio, read from a slow network share
+```
+
+  above `@dataclass(frozen=True)` / `class Runtime:` add
+
+```python
+@dataclass(frozen=True)
+class Media:
+    """What the player plays an episode by: `/media/<token>` URLs, or a problem fit to show."""
+
+    video_url: str | None
+    audio_url: str | None
+    problem: str | None = None
+
+
+```
+
+  and after `Runtime.reachable`'s `return found` add
+
+```python
+
+    def media_for(self, ep: Episode) -> Media:
+        """The video by a media token when the browser can play its audio; else the playback
+        audio (spec §8.8; Decision 2), made into the cache under the video's quick hash the first
+        time, which blocks on ffmpeg: call it through `blocking`. Tokens are owned by the
+        episode's id, so closing it revokes them."""
+        from vid2sub.media.preview import playback_audio
+        from vid2sub.media.tools import ToolFailed, ToolMissing
+
+        if ep.playable_audio:
+            try:
+                return Media(f"/media/{self.media.issue(ep.video, owner=ep.id)}", None)
+            except ValueError as err:  # never the path: issue's messages name none
+                return Media(None, None, f"the browser can't be given this video: {err}")
+        try:
+            audio = playback_audio(ep.video, key=ep.header.video.quick_sha256,
+                                   audio_index=ep.audio_index, tools=self.backend.tools,
+                                   cache=self.backend.cache, timeout=PLAYBACK_TIMEOUT)
+            return Media(None, f"/media/{self.media.issue(audio, owner=ep.id)}")
+        except ToolMissing as err:
+            return Media(None, None, f"the browser can't play this video's audio, and {err}")
+        except (ToolFailed, OSError, ValueError):
+            return Media(None, None, "the browser can't play this video's audio, and ffmpeg "
+                         "couldn't make a copy it can play")
+```
+
+  `src/vid2sub/web/server.py`, in full:
+
+```python
+"""The Shiny server for the React frontend: every output is JSON from a pure view function, and
+every message goes through shinyreact's `send_message` (spec §19.1).
+
+As recordings' shiny_app.py does (packages/ui/src/recordings_ui/shiny_app.py at 8deb039): the
+server holds only reactive computation and returns JSON (the shinyreact-build-app skill), and
+`ReactApp(...)` is called in this file. It reads the launch's parts from `runtime.current()`,
+which `vid2sub serve` sets before importing this module. An unset input is a silent exception the
+client treats as pending; an explicit null clears a pane (§19.1). Work that blocks (the endpoint
+check here; opening, saving and retranslating later) runs off the event loop, through
+`runtime.blocking` only. The server runs in Pages too (spec §3.3, §21), so this module imports,
+at its top, only the pure packages, shiny, shinyreact, htmltools, pydantic and
+`vid2sub.web.{episode, views, runtime, ops}`, and reaches local-only work through the configured
+`Runtime` (Task 14 round 14a; `tests/test_pages_imports.py`). Shiny's reconnect
+stays off: nothing here calls `session.allow_reconnect`, so a tab whose engine restarted asks for
+the new link instead of retrying (Review Focus 5).
+
+The editor (spec §20): each tab holds at most one open episode, in an `Editor`. Every call that
+changes it (open here; edits, Save and picks later) runs one at a time, in the order the tab sent
+them, in a task of the tab's own that holds no reactive lock while it waits on the disk or ffmpeg,
+so a slow open never freezes another tab and no edit is lost to a Save running at the same time.
+The backend returns a new frozen `Episode` each time, which the editor sets as the reactive value
+the `episode` output reads. The player gets the video by a media token, or the playback audio
+when the browser can't play the video's audio (Decision 2), and both are revoked with the episode
+when the tab opens another or closes: the mount passes no lifespan events on, so that happens in
+`session.on_ended`. Requests come from the browser, so they are checked before use and never
+echoed (§6.3, §6.8).
+
+The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
+for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
+indicators on with an inline script, which the CSP's `script-src 'self'` blocks (§6.3), so the
+same two lines are served as a file instead (checked in Chromium, spec §29). With that, the page
+runs no inline script or style, and the CSP needs no `style-src` of its own.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections import deque
+from pathlib import Path
+from typing import Any, Literal
+
+import shiny
+import shinyreact
+from htmltools import HTMLDependency
+from shiny import Inputs, Outputs, Session, reactive
+from shinyreact import ReactApp, page_react, reactive_output
+
+from vid2sub.web import WWW, runtime, views
+from vid2sub.web.episode import Episode, OpenError
+
+# By name: a test may load this file as a module of another name.
+log = logging.getLogger("vid2sub.web.server")
+
+STATUS_EVERY = 60  # seconds between checks of the local endpoints
+MAX_PATH = 4096  # characters in a typed path
+TYPE_A_PATH = "type the video's full path to open it"
+# htmltools keeps the highest version of a dependency per name. Shiny's own version with a local
+# label (1.8.0+vid2sub, which PEP 440 sorts above 1.8.0) makes this one replace Shiny's
+# shiny-busy-indicators: its stylesheet, without the inline script in its head. The second
+# dependency is that script, as a file. tests/test_web_server.py checks the rendered page, so a
+# Shiny or htmltools upgrade that stops this winning fails there.
+BUSY_INDICATORS = [
+    HTMLDependency(
+        "shiny-busy-indicators",
+        f"{shiny.__version__}+vid2sub",
+        source={"package": "shiny", "subdir": "www/shared/busy-indicators"},
+        stylesheet={"href": "busy-indicators.css"},
+        all_files=True,
+    ),
+    HTMLDependency(
+        "vid2sub-busy-indicators",
+        "1",
+        source={"subdir": str(Path(__file__).parent / "static" / "busy")},
+        script={"src": "busy-indicators.js"},
+    ),
+]
+
+
+def page(request: Any) -> Any:
+    """The page, built per request, so a rebuilt `ui.js` is fetched without a restart (its mtime
+    is the dependency's version, as in ReactApp's own discovery)."""
+    return page_react(*BUSY_INDICATORS, src_dir=WWW, title="vid2sub")
+
+
+async def notice(session: Session, kind: Literal["info", "error"], text: str) -> None:
+    """Tell the person something, as plain text (the frontend never renders it as markup)."""
+    await shinyreact.send_message(session, "notice", {"kind": kind, "text": text})
+
+
+class Editor:
+    """One tab's episode. `submit` queues a request; one task per tab runs them in order, each to
+    the end before the next, and publishes the episode the backend returned."""
+
+    def __init__(self, rt: runtime.Runtime, session: Session):
+        self.rt = rt
+        self.session = session
+        self.ep: Episode | None = None  # the truth; only the worker changes it
+        self.media = runtime.Media(None, None)
+        self.shown: reactive.Value[tuple[Episode, runtime.Media] | None] = reactive.value(None)
+        self.busy: reactive.Value[str | None] = reactive.value(None)
+        self._todo: deque[tuple[str, object]] = deque()
+        self._worker: asyncio.Task | None = None
+        self._ended = False
+
+    def submit(self, kind: str, request: object) -> None:
+        if self._ended:
+            return
+        self._todo.append((kind, request))
+        if self._worker is None or self._worker.done():
+            self._worker = asyncio.create_task(self._drain())
+
+    async def end(self) -> None:
+        """The tab closed: drop what waits, and close the episode once the running call ends."""
+        self._ended = True
+        self._todo.clear()
+        if self._worker is None or self._worker.done():
+            self._close(self.ep)
+
+    async def _drain(self) -> None:
+        while self._todo and not self._ended:
+            kind, request = self._todo.popleft()
+            try:
+                await getattr(self, f"_{kind}")(request)
+            except Exception as err:  # noqa: BLE001 - one failing must not stop the queue
+                # The type only: a message or traceback can carry a path (spec §6.8).
+                log.error("the editor's %s failed: %s", kind, type(err).__name__)
+                await notice(self.session, "error", f"something went wrong ({kind}); see the log")
+                await self._set_busy(None)
+        if self._ended:
+            self._close(self.ep)
+
+    async def _open(self, request: object) -> None:
+        path = request.get("path") if isinstance(request, dict) else None
+        if not isinstance(path, str) or not path.strip() or len(path) > MAX_PATH:
+            await notice(self.session, "error", TYPE_A_PATH)
+            return
+        await self._set_busy("opening")
+        try:
+            ep = await runtime.blocking(self.rt.backend.open, path)
+        except OpenError as err:
+            await self._set_busy(None)
+            await notice(self.session, "error", str(err))
+            return
+        media = await runtime.blocking(self.rt.media_for, ep)
+        old, self.ep, self.media = self.ep, ep, media
+        if old is not None:
+            self._close(old)
+        await self._publish(busy=None)
+        if media.problem:
+            await notice(self.session, "error", media.problem)
+
+    def _close(self, ep: Episode | None) -> None:
+        if ep is not None:
+            self.rt.backend.close(ep.id)
+            self.rt.media.revoke_owner(ep.id)
+
+    async def _publish(self, *, busy: str | None) -> None:
+        """Shows the episode as it is now: the reactive values change under Shiny's lock, and the
+        flush sends the outputs, as an extended task's result does."""
+        async with reactive.lock():
+            self.shown.set(None if self.ep is None else (self.ep, self.media))
+            self.busy.set(busy)
+            await reactive.flush()
+
+    async def _set_busy(self, busy: str | None) -> None:
+        async with reactive.lock():
+            self.busy.set(busy)
+            await reactive.flush()
+
+
+def server(input: Inputs, output: Outputs, session: Session) -> None:
+    rt = runtime.current()
+
+    @reactive_output
+    def capabilities():
+        return views.capabilities_view(rt.backend.capabilities())
+
+    # The endpoint check runs as this session's extended task, off the event loop and outside
+    # Shiny's reactive lock, now and every STATUS_EVERY seconds. The status keeps showing the last
+    # result while the next check runs.
+    found = reactive.value({})
+
+    @reactive.extended_task
+    async def check() -> dict[str, bool]:
+        return await runtime.blocking(rt.reachable)
+
+    @reactive.effect
+    def _check_every_minute() -> None:
+        reactive.invalidate_later(STATUS_EVERY)
+        check.invoke()
+
+    @reactive.effect
+    def _keep_the_last_check() -> None:
+        if check.status() == "success":
+            found.set(check.result())
+
+    @reactive_output
+    def status():
+        return views.status_view(rt.config, rt.keys, found(),
+                                 ffmpeg=bool(rt.backend.tools.ffmpeg))
+
+    editor = Editor(rt, session)
+    session.on_ended(editor.end)
+
+    @reactive.effect
+    @reactive.event(input.open)
+    def _open() -> None:
+        editor.submit("open", input.open())
+
+    @reactive_output
+    def episode():
+        shown = editor.shown()
+        if shown is None:
+            return None  # an explicit null: nothing is open
+        ep, media = shown
+        return views.episode_view(ep, video_url=media.video_url, audio_url=media.audio_url)
+
+    @reactive_output
+    def busy():
+        return editor.busy()
+
+
+app = ReactApp(server, ui=page, static_assets={"/": WWW})
+```
+
+- [ ] **Step 9: Run the checks; they pass.** First the guard: replace
+  `session.on_ended(editor.end)` with `pass`, run
+  `uv run pytest tests/test_web_server.py -q -k closing` and see `AssertionError: assert not
+  True` (the episode still open after the tab closed); do the same with `self._close(old)` in
+  `_open`; put both back. `make check`. Expected: `947 passed, 2 skipped, 10 deselected` (twice),
+  `Tests  24 passed (24)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 a tab opens an episode by its path and gets its view, with the video or its playback audio by a media token revoked when the tab moves on or closes
+
+The Shiny server gains the editor's first input and outputs (spec §19.1, §20):
+
+- input `open`, {"path": str, "n": int}: the backend opens the episode off the event loop
+  (runtime.blocking), then Runtime.media_for(ep) issues the video's media token, or, when the
+  browser can't play the video's audio (Decision 2), makes the playback audio into the cache
+  under ep.header.video.quick_sha256 and ep.audio_index and issues its token; both are owned by
+  ep.id. An OpenError, a media problem, or a request that isn't a path is a plain-text `notice`,
+  never echoing what was sent.
+- output `episode`: views.episode_view of the open episode with its /media/ URLs, or an explicit
+  null when none is open; output `busy`: "opening" while an open runs, else null.
+- server.Editor holds one tab's episode: requests run one at a time, in the order sent, in the
+  tab's own asyncio task, which holds no reactive lock while it waits on ffprobe or ffmpeg (so a
+  slow open never freezes another tab) and publishes each new Episode under reactive.lock() with
+  a flush, as Shiny's extended tasks publish their results. Opening another episode closes the
+  first and revokes its tokens; session.on_ended does the same for the last one (the mount passes
+  no lifespan events on). A failure logs only its type, since a message can carry a path (§6.8).
+
+The new tests failed first with:
+  AssertionError: timed out; the tab saw [{'values': {}, 'inputMessages': [], 'errors': {}}, ...
+The closing test is a guard: with `session.on_ended(editor.end)` taken out it failed with
+`assert not True` (the episode still open), and again with `self._close(old)` taken out.
+
+Docs read: shinyreact 0.1.0's send_message and reactive_output (its wheel), and the npm types'
+useSetShinyInput (priority, debounceMs: a trailing debounce, so each request carries a count);
+shiny 1.8.0's Session.on_ended, reactive.lock and reactive.flush (shiny/session/_session.py,
+shiny/reactive/_extended_task.py) and its JS InputBatchSender ("event" priority sends at once);
+Starlette's TestClient websocket_connect.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 14
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/server.py src/vid2sub/web/runtime.py tests/test_web_server.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 14c: the player, the captions and the cue list
+
+- [ ] **Step 11: Add the virtualiser,** checked first: `@tanstack/react-virtual` 3.14.14
+  (published 2026-10-09; it imports `react`, kept external as `window.shinyreact.React`, and
+  `flushSync` from `react-dom`, whose index the build bundles; its `useFlushSync: false` keeps
+  React 19's flushSync warning away, as TanStack's React page says).
+  `cd frontend && npm install --save-exact @tanstack/react-virtual@3.14.14`.
+- [ ] **Step 12: Write the failing tests.** `frontend/src/lib/cues.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { Row } from "@/types";
+
+import { formatTime, indexAt, trackCues, wordAt, wordSpans } from "./cues";
+
+const cues = [
+  { start_ms: 0, end_ms: 1000 },
+  { start_ms: 1500, end_ms: 3000 },
+  { start_ms: 3000, end_ms: 4000 },
+];
+
+describe("what plays now (spec §20)", () => {
+  it("finds the cue whose span holds the time, start included and end excluded", () => {
+    expect(indexAt(cues, 0)).toBe(0);
+    expect(indexAt(cues, 999)).toBe(0);
+    expect(indexAt(cues, 1000)).toBe(-1); // a gap
+    expect(indexAt(cues, 3000)).toBe(2); // one cue ends as the next starts
+    expect(indexAt(cues, 4000)).toBe(-1);
+    expect(indexAt([], 10)).toBe(-1);
+  });
+
+  it("finds a cue among 2,000 in a few steps", () => {
+    const many = Array.from({ length: 2000 }, (_, i) => ({ start_ms: i * 3600, end_ms: i * 3600 + 3000 }));
+    expect(indexAt(many, 1999 * 3600 + 10)).toBe(1999);
+    expect(indexAt(many, 1234 * 3600 + 3100)).toBe(-1);
+  });
+
+  it("finds the spoken word among the row's own words only", () => {
+    const words = [
+      { start_ms: 0, end_ms: 400, text: " I" },
+      { start_ms: 400, end_ms: 900, text: " am" },
+      { start_ms: 900, end_ms: 1400, text: " here" },
+    ];
+    expect(wordAt(words, [1, 3], 450)).toBe(1);
+    expect(wordAt(words, [1, 3], 100)).toBe(-1); // word 0 is another row's
+    expect(wordAt(words, null, 450)).toBe(-1);
+  });
+});
+
+describe("where each word is in a cue's text", () => {
+  it("finds the words in order, past line breaks and punctuation", () => {
+    const words = [" I", " am", " here,", " and"].map((text) => ({ start_ms: 0, end_ms: 1, text }));
+    expect(wordSpans("I am here,\nand", words)).toEqual([[0, 1], [2, 4], [5, 10], [11, 14]]);
+  });
+
+  it("finds words with no spaces between them", () => {
+    const words = ["おは", "よう"].map((text) => ({ start_ms: 0, end_ms: 1, text }));
+    expect(wordSpans("おはよう", words)).toEqual([[0, 2], [2, 4]]);
+  });
+
+  it("stops at a word the text no longer has", () => {
+    const words = [" I", " am", " here"].map((text) => ({ start_ms: 0, end_ms: 1, text }));
+    expect(wordSpans("I was here", words)).toEqual([[0, 1], null, null]);
+  });
+});
+
+describe("a translation track's cues", () => {
+  const row = (id: string, tr: { id: string; start_ms: number; end_ms: number }[]): Row => ({
+    id, n: 1, start_ms: 0, end_ms: 1, text: "", w: null, flags: [],
+    tr: { en: { cues: tr.map((c) => ({ ...c, text: c.id, src: [], detached: false, flags: [] })), flags: [] } },
+  });
+
+  it("lists each cue once, in time order", () => {
+    const a = { id: "a", start_ms: 0, end_ms: 2000 };
+    const b = { id: "b", start_ms: 2000, end_ms: 3000 };
+    expect(trackCues([row("1", [a]), row("2", [b]), row("3", [])], "en").map((c) => c.id)).toEqual(["a", "b"]);
+    expect(trackCues([row("1", [a])], null)).toEqual([]);
+    expect(trackCues([row("1", [a])], "ja")).toEqual([]);
+  });
+});
+
+describe("times", () => {
+  it("are minutes, seconds and milliseconds, with hours from an hour", () => {
+    expect(formatTime(0)).toBe("0:00.000");
+    expect(formatTime(3600)).toBe("0:03.600");
+    expect(formatTime(61_005)).toBe("1:01.005");
+    expect(formatTime(7_199_999)).toBe("1:59:59.999");
+  });
+});
+```
+
+  `frontend/src/lib/overlay.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import { captionLines, segments } from "./overlay";
+
+describe("the caption overlay's markup (spec §6.3)", () => {
+  it("keeps <i> and nothing else", () => {
+    expect(segments("red bold <i>italic</i>")).toEqual([
+      { text: "red bold ", italic: false },
+      { text: "italic", italic: true },
+    ]);
+  });
+
+  it("shows every other tag, entity and brace as the characters it is", () => {
+    for (const text of ["<script>window.__pwned = 1</script>after", "a link &lt;b&gt; &amp;", "{\\an8}braces", "<img src=x onerror=alert(1)>"]) {
+      expect(segments(text)).toEqual([{ text, italic: false }]);
+    }
+  });
+
+  it("treats <I> as <i>, ignores a stray close or a nested open, and runs an open <i> to the end", () => {
+    expect(segments("<I>a</I>b")).toEqual([{ text: "a", italic: true }, { text: "b", italic: false }]);
+    expect(segments("a</i>b")).toEqual([{ text: "ab", italic: false }]);
+    expect(segments("<i>a<i>b</i>c")).toEqual([{ text: "ab", italic: true }, { text: "c", italic: false }]);
+    expect(segments("<i>a\nb")).toEqual([{ text: "a\nb", italic: true }]);
+    expect(segments("<i></i>")).toEqual([]);
+  });
+});
+
+describe("what the overlay shows", () => {
+  it("shows the source, the translation or both, leaving out a part with no cue", () => {
+    expect(captionLines("source", "おはよう", "Good morning")).toEqual(["おはよう"]);
+    expect(captionLines("translation", "おはよう", "Good morning")).toEqual(["Good morning"]);
+    expect(captionLines("both", "おはよう", "Good morning")).toEqual(["おはよう", "Good morning"]);
+    expect(captionLines("both", null, "Good morning")).toEqual(["Good morning"]);
+    expect(captionLines("both", null, null)).toEqual([]);
+  });
+});
+```
+
+  `frontend/src/components/CaptionOverlay.test.ts`:
+
+```ts
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import { CaptionOverlay } from "./CaptionOverlay";
+
+describe("the caption overlay (spec §6.3)", () => {
+  it("makes an <i> from <i> and text of everything else", () => {
+    const html = renderToStaticMarkup(createElement(CaptionOverlay, {
+      lines: ["red <i>italic</i>", "<script>window.__pwned = 1</script><img src=x onerror=alert(1)>"],
+    }));
+    expect(html).toContain("red <i>italic</i>");
+    expect(html).toContain("&lt;script&gt;window.__pwned = 1&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).not.toMatch(/<(script|img)\b/);
+  });
+});
+```
+
+  `tests/e2e/test_editor_view.py`:
+
+```python
+"""The editor view in Chromium, against `vid2sub serve --demo` (spec §20, §6.3, §19.3; S26, S27,
+S37; Review Focus 3): the demo episode opens and plays with captions, the cue list follows
+playback with the orange bar, `aria-current` and the spoken word marked, hostile subtitles show
+as plain text with only `<i>` in the overlay, a two-hour episode opens in under a second with
+only the rows on screen in the page, the practice aids work, and every control is reached by
+keyboard with its focus visible. Run with `make e2e`."""
+
+import re
+import shutil
+import time
+from pathlib import Path
+
+import pytest
+from episodes import make_episode
+from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
+
+HOSTILE = Path(__file__).parents[1] / "fixtures" / "hostile"
+ORANGE = "rgb(242, 101, 34)"  # NYC orange, #F26522: the current cue's bar (spec §19.3)
+DEMO_EN = ["I am delighted to be here, and I am\nparticularly delighted to be here on this",
+           "occasion.", "We meet at a college noted for knowledge,",
+           "in a city noted for progress,\nin a state noted for strength,"]
+
+
+def demo_copy(server) -> Path:
+    return next(server.tmp.glob("vid2sub-demo-*/demo"))
+
+
+def open_episode(page, video: Path):
+    page.get_by_test_id("open-path").fill(str(video))
+    page.get_by_test_id("open-button").click()
+    rows = page.get_by_test_id("cue-row")
+    expect(rows.first).to_be_visible()
+    return rows
+
+
+def seek(page, seconds: float) -> None:
+    page.get_by_test_id("media").evaluate(
+        "(m, s) => new Promise((done) => { m.addEventListener('seeked', done, { once: true });"
+        " m.currentTime = s; })", seconds)
+
+
+def test_the_demo_episode_plays_with_captions_and_the_cue_list_follows_playback(page, server):
+    rows = open_episode(page, demo_copy(server) / "jfk.mp4")
+    expect(page.get_by_test_id("episode-name")).to_have_text("jfk.mp4")
+    expect(rows).to_have_count(4)
+    assert page.get_by_test_id("cue-text").all_inner_texts() == DEMO_EN
+    expect(page.get_by_test_id("cue-translation").first).to_have_text(
+        "ここに来られて、とてもうれしく思います。この機会に来られたことは格別の喜びです。")
+    media = page.get_by_test_id("media")
+    expect(media).to_have_attribute("src", re.compile(r"^/media/[A-Za-z0-9_-]{43}$"))
+    # It plays (muted: Chromium lets a muted video play without a gesture).
+    media.evaluate("m => { m.muted = true; return m.play(); }")
+    page.wait_for_function("() => document.querySelector('[data-testid=media]').currentTime > 0.5")
+    current = page.locator("[data-testid=cue-row][aria-current=true]")
+    expect(current).to_have_count(1)
+    expect(current).to_have_attribute("data-cue", rows.first.get_attribute("data-cue"))
+    assert current.evaluate("e => getComputedStyle(e).borderLeftColor") == ORANGE
+    assert rows.nth(1).evaluate("e => getComputedStyle(e).borderLeftColor") != ORANGE
+    spoken = current.get_by_test_id("spoken-word")
+    expect(spoken).to_have_count(1)
+    assert spoken.inner_text() in DEMO_EN[0]
+    captions = page.get_by_test_id("caption-line")
+    expect(captions).to_have_text([DEMO_EN[0], re.compile("^ここに来られて")])
+    # A seek moves the bar, the captions and the spoken word to the cue at that time.
+    media.evaluate("m => m.pause()")
+    seek(page, 6.3)  # "college" is spoken from 6.16 s to 6.62 s
+    expect(current).to_have_attribute("data-cue", rows.nth(2).get_attribute("data-cue"))
+    expect(current.get_by_test_id("spoken-word")).to_have_text("college")
+    expect(captions).to_have_text([DEMO_EN[2], "私たちが集うのは、\n知識で知られる大学、"])
+    seek(page, 4.8)  # the gap between cues 2 and 3: nothing is current, no caption
+    expect(current).to_have_count(0)
+    expect(captions).to_have_count(0)
+    page.get_by_test_id("showing").select_option("translation")
+    seek(page, 10.0)
+    expect(captions).to_have_text(["進歩で知られる都市、\n力強さで知られる州です。"])
+
+
+def test_hostile_subtitles_show_as_plain_text_and_the_overlay_renders_only_italics(page, server):
+    # S26, spec §6.3: written over the demo's English, it comes back as an outside edit.
+    copy = demo_copy(server)
+    shutil.copyfile(HOSTILE / "hostile.srt", copy / "jfk.en.srt")
+    open_episode(page, copy / "jfk.mp4")
+    expect(page.get_by_test_id("episode-notes")).to_contain_text("kept your outside edit to en")
+    texts = page.get_by_test_id("cue-text")
+    expect(texts).to_have_text(["window.__pwned = 1after the script", "red bold <i>italic</i>",
+                                "an image", "a link &lt;b&gt; &amp;", "braces *gone?"])
+    assert page.locator("[data-testid=cue-row] [data-testid=cue-text] *").count() == 0
+    page.get_by_test_id("showing").select_option("source")
+    seek(page, 3.0)  # cue 2
+    line = page.get_by_test_id("caption-line")
+    expect(line).to_have_text("red bold italic")
+    assert line.evaluate("e => [...e.querySelectorAll('*')].map((c) => c.tagName)") == ["I"]
+    expect(line.locator("i")).to_have_text("italic")
+    seek(page, 7.0)  # cue 4: entities stay as typed
+    expect(line).to_have_text("a link &lt;b&gt; &amp;")
+    assert line.evaluate("e => e.children.length") == 0
+    assert page.evaluate("() => window.__pwned") is None
+
+
+def test_a_two_hour_episode_opens_in_under_a_second_with_only_the_rows_on_screen_in_the_page(
+        page, server):
+    # Review Focus 3: 2,000 cues, one every 3.6 s. The demo opens anything inside its copy.
+    video = make_episode(demo_copy(server) / "long", n=2000)
+    page.get_by_test_id("open-path").fill(str(video))
+    began = time.monotonic()
+    page.get_by_test_id("open-button").click()
+    expect(page.get_by_test_id("cue-row").first).to_be_visible()
+    elapsed = time.monotonic() - began
+    assert elapsed < 1.0, f"{elapsed:.2f} s"  # about 0.25 s where it was built
+    rows = page.get_by_test_id("cue-row")
+    assert 5 < rows.count() < 60, rows.count()
+    expect(rows.first).to_have_attribute("aria-setsize", "2000")
+    page.get_by_test_id("cue-list").evaluate("e => { e.scrollTop = e.scrollHeight; }")
+    expect(page.locator("[data-testid=cue-row][aria-posinset='2000']")).to_be_visible()
+    assert rows.count() < 60
+
+
+def test_rows_follow_playback_unless_that_is_turned_off(page, server):
+    page.set_viewport_size({"width": 1280, "height": 460})  # too short for all four rows
+    rows = open_episode(page, demo_copy(server) / "jfk.mp4")
+    last = rows.nth(3)
+    expect(last).not_to_be_in_viewport()
+    seek(page, 10.0)
+    expect(last).to_be_in_viewport()
+    page.get_by_test_id("follow").uncheck()
+    seek(page, 1.0)  # cue 1 is current now, but the list stays where it is
+    expect(rows.first).to_have_attribute("aria-current", "true")
+    expect(rows.first).not_to_be_in_viewport()
+    page.get_by_test_id("follow").check()
+    seek(page, 6.0)
+    seek(page, 1.0)
+    expect(rows.first).to_be_in_viewport()
+
+
+def test_the_practice_aids_loop_the_current_cue_and_change_the_speed(page, server):
+    open_episode(page, demo_copy(server) / "jfk.mp4")
+    media = page.get_by_test_id("media")
+    page.get_by_test_id("speed").select_option("0.75")
+    assert media.evaluate("m => m.playbackRate") == 0.75
+    seek(page, 3.9)  # inside cue 2, "occasion." (3.82 s to 4.653 s)
+    page.get_by_test_id("loop").click()
+    expect(page.get_by_test_id("loop")).to_have_attribute("aria-pressed", "true")
+    page.get_by_test_id("speed").select_option("1.25")
+    media.evaluate("m => { m.muted = true; return m.play(); }")
+    page.wait_for_timeout(2500)  # three times the cue's length at 1.25×
+    at = media.evaluate("m => m.currentTime")
+    assert 3.8 <= at <= 4.75, at
+    page.get_by_test_id("loop").click()
+    expect(page.get_by_test_id("loop")).to_have_attribute("aria-pressed", "false")
+    page.wait_for_function("() => document.querySelector('[data-testid=media]').currentTime > 5")
+
+
+def test_every_control_of_the_view_is_reached_by_keyboard_with_its_focus_visible(page, server):
+    # S37, spec §19.3: Tab reaches each control in order, and each shows where focus is.
+    open_episode(page, demo_copy(server) / "jfk.mp4")
+    page.get_by_test_id("open-path").focus()
+    wanted = ["open-button", "media", "showing", "speed", "loop", "follow", "cue-list"]
+    seen = []
+    for _ in range(40):  # the video's own controls take several stops
+        page.keyboard.press("Tab")
+        found = page.evaluate("() => document.activeElement.dataset.testid || null")
+        if found in wanted and found not in seen:
+            seen.append(found)
+            visible = page.evaluate("""() => {
+                const s = getComputedStyle(document.activeElement);
+                return document.activeElement.matches(':focus-visible')
+                    && (s.outlineStyle !== 'none' && s.outlineWidth !== '0px'
+                        || s.boxShadow !== 'none' || document.activeElement.tagName === 'VIDEO');
+            }""")
+            assert visible, f"{found} has no visible focus"
+        if seen == wanted:
+            break
+    assert seen == wanted
+```
+
+- [ ] **Step 13: Run them; watch them fail.** `cd frontend && npx vitest run src/lib
+  src/components/CaptionOverlay.test.ts`. Expected: `Error: Failed to resolve import "./cues"
+  from "src/lib/cues.test.ts". Does the file exist?` (and the same for `./overlay` and
+  `./CaptionOverlay`). `make build && uv run pytest -m e2e tests/e2e/test_editor_view.py -q -x`.
+  Expected: `playwright._impl._errors.TimeoutError: Locator.fill: Timeout 30000ms exceeded.`,
+  waiting for `get_by_test_id("open-path")`.
+- [ ] **Step 14: Write the code.** Append to `frontend/src/types.ts`:
+
+```ts
+
+/** A translation cue in a row (spec §13.4): the source cues it covers, and its flags. */
+export type TrCue = {
+  id: string;
+  start_ms: number;
+  end_ms: number;
+  text: string;
+  src: string[];
+  detached: boolean | null;
+  flags: string[];
+};
+
+/** One translation track's part of a row: its cues there, and `untranslated` when it has none. */
+export type TrCell = { cues: TrCue[]; flags: string[] };
+
+/** One source cue with its translations alongside (spec §20): `w` is its word range [i, j) in
+ * `words`; `n` its number, for display only. */
+export type Row = {
+  id: string;
+  n: number;
+  start_ms: number;
+  end_ms: number;
+  text: string;
+  w: [number, number] | null;
+  flags: string[];
+  tr: Record<string, TrCell>;
+};
+
+export type TrackInfo = {
+  key: string;
+  label: string;
+  role: "source" | "translation";
+  head_by: string | null;
+  in_conflict: boolean;
+  all_stale: boolean;
+};
+
+export type SpokenWord = { start_ms: number; end_ms: number; text: string };
+
+/** One of a conflicted track's versions (spec §14.4). */
+export type Version = { rendition: string; by: string | null; at: string | null; cue_count: number };
+
+/** The `episode` output: views.episode_view. `video.url` plays the video; `audio_url` the
+ * playback audio when the browser can't play the video's audio (Decision 2). No path, ever. */
+export type EpisodeView = {
+  id: string;
+  video: { name: string; duration_ms: number; url: string | null; audio_url: string | null; playable_audio: boolean };
+  source: string;
+  tracks: TrackInfo[];
+  rows: Row[];
+  words: SpokenWord[];
+  dirty: boolean;
+  can_undo: boolean;
+  can_redo: boolean;
+  notes: string[];
+  conflicts: Record<string, Version[]>;
+  glossary_adds: Record<string, string>;
+};
+
+/** The `busy` output: what the tab's editor is doing, or null. */
+export type Busy = "opening" | null;
+```
+
+  `frontend/src/lib/overlay.ts`:
+
+```ts
+// The caption overlay's text: a cue's text with `<i>` and `</i>` as the only markup, everything
+// else shown as the characters it is (spec §6.3). M1's parser keeps only `<i>` of a subtitle's
+// markup, but an SRT edited elsewhere comes back as text, so a `<script>`, `&lt;` or an ASS brace
+// can be in it: none of it becomes an element or an entity. The overlay makes React elements from
+// these segments; never dangerouslySetInnerHTML.
+
+/** A run of the caption: its text and whether it is in italics. */
+export type Segment = { text: string; italic: boolean };
+
+const TAG = /<(\/?)i>/gi;
+
+/** The caption's runs, in order, with empty ones left out. An `</i>` with no `<i>` open, or an
+ * `<i>` inside one, changes nothing; an `<i>` never closed runs to the end. */
+export function segments(text: string): Segment[] {
+  const out: Segment[] = [];
+  let italic = false;
+  let at = 0;
+  const push = (end: number) => {
+    const part = text.slice(at, end);
+    if (!part) return;
+    const last = out[out.length - 1];
+    if (last && last.italic === italic) last.text += part;
+    else out.push({ text: part, italic });
+  };
+  for (const m of text.matchAll(TAG)) {
+    push(m.index);
+    at = m.index + m[0].length;
+    italic = m[1] !== "/";
+  }
+  push(text.length);
+  return out;
+}
+
+/** What the overlay shows for a row: the source, the translation or both (spec §20). */
+export type Showing = "source" | "translation" | "both";
+
+/** The caption lines for one moment: the source cue's text and the translation's, as chosen;
+ * a part with no cue at that moment is left out. */
+export function captionLines(showing: Showing, source: string | null, translation: string | null): string[] {
+  const lines: string[] = [];
+  if (showing !== "translation" && source) lines.push(source);
+  if (showing !== "source" && translation) lines.push(translation);
+  return lines;
+}
+```
+
+  `frontend/src/lib/cues.ts`:
+
+```ts
+// Finding what plays now, and showing times (spec §20). The cue list and the caption overlay
+// follow playback many times a second over up to about 2,000 cues (Review Focus 3), so every
+// lookup is a binary search over cues sorted by start, which spec §12.1 guarantees.
+
+import type { Row, SpokenWord, TrCue } from "@/types";
+
+type Timed = { start_ms: number; end_ms: number };
+
+/** The index of the item playing at `ms` (start ≤ ms < end), else -1. `items` are sorted by
+ * start and never overlap. */
+export function indexAt(items: readonly Timed[], ms: number): number {
+  let lo = 0;
+  let hi = items.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (items[mid].start_ms <= ms) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found >= 0 && ms < items[found].end_ms ? found : -1;
+}
+
+/** The index in `words` of the word spoken at `ms`, among the row's own words ([i, j)), else -1. */
+export function wordAt(words: readonly SpokenWord[], range: readonly [number, number] | null, ms: number): number {
+  if (!range) return -1;
+  const [i, j] = range;
+  const k = indexAt(words.slice(i, j), ms);
+  return k < 0 ? -1 : i + k;
+}
+
+/** Where each of the row's words is in its text, found in order: [start, end) character offsets,
+ * or null for a word the text no longer has (a person edited it), and for every word after it. */
+export function wordSpans(text: string, words: readonly SpokenWord[]): (readonly [number, number] | null)[] {
+  const out: (readonly [number, number] | null)[] = [];
+  let at = 0;
+  let lost = false;
+  for (const w of words) {
+    const word = w.text.trim();
+    const k = lost || !word ? -1 : text.indexOf(word, at);
+    if (k < 0) {
+      lost = lost || Boolean(word);
+      out.push(null);
+      continue;
+    }
+    out.push([k, k + word.length]);
+    at = k + word.length;
+  }
+  return out;
+}
+
+/** A translation track's cues in time order, each once (one can span several rows). */
+export function trackCues(rows: readonly Row[], track: string | null): TrCue[] {
+  if (!track) return [];
+  const seen = new Set<string>();
+  const out: TrCue[] = [];
+  for (const row of rows) {
+    for (const c of row.tr[track]?.cues ?? []) {
+      if (!seen.has(c.id)) {
+        seen.add(c.id);
+        out.push(c);
+      }
+    }
+  }
+  return out.sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
+}
+
+/** A time as m:ss.mmm, or h:mm:ss.mmm from an hour. */
+export function formatTime(ms: number): string {
+  const total = Math.max(0, Math.round(ms));
+  const h = Math.floor(total / 3_600_000);
+  const m = Math.floor(total / 60_000) % 60;
+  const s = Math.floor(total / 1000) % 60;
+  const frac = String(total % 1000).padStart(3, "0");
+  const ss = String(s).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}.${frac}` : `${m}:${ss}.${frac}`;
+}
+```
+
+  `frontend/src/components/Flags.tsx`:
+
+```tsx
+// A cue's flags as badges, in words (spec §12.5, §20): the lint flags the server recomputes each
+// time (reading speed, width, duration) and the stored ones (est, halluc, edited), with stale and
+// untranslated from the view. An unknown flag shows as it came, as text.
+
+const LABELS: Record<string, string> = {
+  cps: "reading speed",
+  width: "too wide",
+  duration: "duration",
+  est: "estimated time",
+  halluc: "possible hallucination",
+  edited: "edited",
+  stale: "stale",
+  untranslated: "untranslated",
+};
+
+export function flagLabel(flag: string): string {
+  return LABELS[flag] ?? flag;
+}
+
+export function Flags({ flags }: { flags: readonly string[] }) {
+  if (!flags.length) return null;
+  return (
+    <ul className="flex flex-wrap gap-1" aria-label="Flags">
+      {[...new Set(flags)].map((f) => (
+        <li key={f} data-flag={f} className="rounded-sm bg-muted px-1.5 text-xs text-muted-foreground">
+          {flagLabel(f)}
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+  `frontend/src/components/CaptionOverlay.tsx`:
+
+```tsx
+import { Fragment } from "react";
+
+import { segments } from "@/lib/overlay";
+
+/** The captions over the player, redrawn as playback moves and as cues change (spec §20). Each
+ * line's `<i>` becomes an <i> element and everything else is a text node (spec §6.3): no other
+ * element is made from a subtitle's text. */
+export function CaptionOverlay({ lines }: { lines: string[] }) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-14 flex flex-col items-center gap-1 px-4" data-testid="captions">
+      {lines.map((line, k) => (
+        <p key={k} className="max-w-[90%] rounded-sm bg-black/75 px-2 py-0.5 text-center text-lg leading-snug whitespace-pre-line text-white" data-testid="caption-line">
+          {segments(line).map((s, j) => (s.italic ? <i key={j}>{s.text}</i> : <Fragment key={j}>{s.text}</Fragment>))}
+        </p>
+      ))}
+    </div>
+  );
+}
+```
+
+  `frontend/src/components/Player.tsx`:
+
+```tsx
+import { type RefObject, useEffect, useRef, useState } from "react";
+
+import type { EpisodeView } from "@/types";
+
+import { CaptionOverlay } from "./CaptionOverlay";
+
+/** The player (spec §20): the video by its media token, or, when the browser can't play the
+ * video's audio, the playback audio with no picture (Decision 2), with the caption overlay over
+ * it. While it plays it reports the time every frame, so the cue list, the spoken word and the
+ * captions keep up; paused, it reports each seek. */
+export function Player({ video, mediaRef, lines, onTime }: {
+  video: EpisodeView["video"];
+  mediaRef: RefObject<HTMLVideoElement | HTMLAudioElement | null>;
+  lines: string[];
+  onTime: (ms: number) => void;
+}) {
+  const report = useRef(onTime);
+  report.current = onTime;
+  const [failed, setFailed] = useState(false);
+  const src = video.url ?? video.audio_url;
+
+  useEffect(() => {
+    const media = mediaRef.current;
+    if (!media) return;
+    let frame = 0;
+    const now = () => report.current(media.currentTime * 1000);
+    const tick = () => {
+      now();
+      if (!media.paused && !media.ended) frame = requestAnimationFrame(tick);
+    };
+    const play = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(tick);
+    };
+    const events = ["seeked", "timeupdate", "loadedmetadata", "pause"] as const;
+    media.addEventListener("play", play);
+    for (const e of events) media.addEventListener(e, now);
+    return () => {
+      cancelAnimationFrame(frame);
+      media.removeEventListener("play", play);
+      for (const e of events) media.removeEventListener(e, now);
+    };
+  }, [mediaRef, src]);
+
+  const box = "relative flex min-h-48 flex-1 items-center justify-center overflow-hidden rounded-lg bg-black";
+  if (!src) {
+    return <div className={box} data-testid="player"><p className="text-white/80">Nothing to play.</p></div>;
+  }
+  return (
+    <div className={box} data-testid="player">
+      {video.url ? (
+        <video
+          ref={mediaRef as RefObject<HTMLVideoElement>}
+          src={video.url}
+          controls
+          playsInline
+          preload="metadata"
+          className="max-h-full w-full"
+          data-testid="media"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <div className="flex w-full flex-col items-center gap-3 p-4">
+          <p className="text-center text-sm text-white/80" data-testid="audio-only">
+            Playing the sound only: the browser can't play this video's own audio track.
+          </p>
+          <audio ref={mediaRef as RefObject<HTMLAudioElement>} src={video.audio_url ?? undefined} controls preload="metadata" className="w-full" data-testid="media" onError={() => setFailed(true)} />
+        </div>
+      )}
+      {failed && (
+        <p role="alert" className="absolute inset-x-0 top-0 bg-card px-3 py-2 text-sm text-destructive" data-testid="media-error">
+          The browser can't play this file.
+        </p>
+      )}
+      <CaptionOverlay lines={lines} />
+    </div>
+  );
+}
+```
+
+  `frontend/src/components/CueRow.tsx`:
+
+```tsx
+import { cn } from "@/lib/utils";
+import { formatTime, wordSpans } from "@/lib/cues";
+import type { Row, SpokenWord } from "@/types";
+
+import { Flags } from "./Flags";
+
+/** One source cue with its translation alongside (spec §20): number, times, source text, the
+ * chosen track's translation and the flags. The current cue has the orange bar and
+ * `aria-current`; in it the spoken word is marked, found in the text from the transcript's words.
+ * Every string is a text node (spec §6.3). */
+export function CueRow({ row, track, current, selected, word, words, total, onPick }: {
+  row: Row;
+  track: string | null;
+  current: boolean;
+  selected: boolean;
+  word: number; // the spoken word's index in `words`, or -1
+  words: readonly SpokenWord[];
+  total: number;
+  onPick: () => void;
+}) {
+  const cell = track ? row.tr[track] : undefined;
+  const flags = [...row.flags, ...(cell?.flags ?? []), ...(cell?.cues.flatMap((c) => c.flags) ?? [])];
+  return (
+    <div
+      role="option"
+      id={`cue-${row.id}`}
+      aria-selected={selected}
+      aria-current={current ? "true" : undefined}
+      aria-setsize={total}
+      aria-posinset={row.n}
+      data-testid="cue-row"
+      data-cue={row.id}
+      onClick={onPick}
+      className={cn(
+        "grid cursor-pointer grid-cols-[2.5rem_1fr] gap-x-2 border-b border-l-4 border-b-border px-2 py-1.5",
+        current ? "border-l-(--brand-orange)" : "border-l-transparent",
+        selected && "bg-accent",
+      )}
+    >
+      <span className="pt-0.5 text-xs text-muted-foreground tabular-nums">{row.n}</span>
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="font-mono text-xs text-muted-foreground">
+          {formatTime(row.start_ms)} → {formatTime(row.end_ms)}
+        </span>
+        <SourceText row={row} word={current ? word : -1} words={words} />
+        {cell && (
+          <span className="whitespace-pre-line text-muted-foreground" data-testid="cue-translation">
+            {cell.cues.length ? cell.cues.map((c) => c.text).join("\n") : "—"}
+          </span>
+        )}
+        <Flags flags={flags} />
+      </div>
+    </div>
+  );
+}
+
+function SourceText({ row, word, words }: { row: Row; word: number; words: readonly SpokenWord[] }) {
+  const span = word >= 0 && row.w ? wordSpans(row.text, words.slice(row.w[0], row.w[1]))[word - row.w[0]] : null;
+  if (!span) return <span className="whitespace-pre-line" data-testid="cue-text">{row.text}</span>;
+  const [start, end] = span;
+  return (
+    <span className="whitespace-pre-line" data-testid="cue-text">
+      {row.text.slice(0, start)}
+      <mark className="rounded-sm bg-primary px-0.5 text-primary-foreground" data-testid="spoken-word">{row.text.slice(start, end)}</mark>
+      {row.text.slice(end)}
+    </span>
+  );
+}
+```
+
+  `frontend/src/components/CueList.tsx`:
+
+```tsx
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useCallback, useEffect, useRef } from "react";
+
+import type { Row, SpokenWord } from "@/types";
+
+import { CueRow } from "./CueRow";
+
+/** The cue list (spec §20), one row per source cue. Only the rows on screen, and a few either
+ * side, are in the page (Review Focus 3: about 2,000 cues for two hours), measured as they render
+ * since a row's height follows its text; @tanstack/react-virtual places them, through React's
+ * style props (the CSSOM, which the CSP allows), never a style attribute in the markup. While
+ * playback is followed, the current row is scrolled into view. */
+export function CueList({ rows, words, track, current, word, selected, follow, onPick }: {
+  rows: readonly Row[];
+  words: readonly SpokenWord[];
+  track: string | null;
+  current: number;
+  word: number;
+  selected: number;
+  follow: boolean;
+  onPick: (index: number) => void;
+}) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scroller.current,
+    estimateSize: () => 84,
+    overscan: 6,
+    getItemKey: useCallback((i: number) => rows[i].id, [rows]),
+    useFlushSync: false, // React 19 warns of flushSync inside a render (TanStack's React docs)
+  });
+
+  useEffect(() => {
+    if (follow && current >= 0) virtualizer.scrollToIndex(current, { align: "auto" });
+  }, [follow, current, virtualizer]);
+  useEffect(() => {
+    if (selected >= 0) virtualizer.scrollToIndex(selected, { align: "auto" });
+  }, [selected, virtualizer]);
+
+  const items = virtualizer.getVirtualItems();
+  return (
+    <div
+      ref={scroller}
+      role="listbox"
+      aria-label="Cues"
+      tabIndex={0}
+      aria-activedescendant={selected >= 0 && selected < rows.length ? `cue-${rows[selected].id}` : undefined}
+      className="h-full min-h-0 overflow-y-auto rounded-lg border border-border bg-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      data-testid="cue-list"
+    >
+      <div role="none" className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+        <div role="none" className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${items[0]?.start ?? 0}px)` }}>
+          {items.map((item) => (
+            <div role="none" key={item.key} data-index={item.index} ref={virtualizer.measureElement}>
+              <CueRow
+                row={rows[item.index]}
+                track={track}
+                current={item.index === current}
+                selected={item.index === selected}
+                word={word}
+                words={words}
+                total={rows.length}
+                onPick={() => onPick(item.index)}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+  `frontend/src/components/Editor.tsx`:
+
+```tsx
+import { type FormEvent, useCallback, useMemo, useRef, useState } from "react";
+
+import { indexAt, trackCues, wordAt } from "@/lib/cues";
+import { captionLines, type Showing } from "@/lib/overlay";
+import type { Busy, EpisodeView } from "@/types";
+
+import { CueList } from "./CueList";
+import { Player } from "./Player";
+
+const SPEEDS = [0.75, 1, 1.25] as const; // the practice aids' playback rates (spec §20)
+const control = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-ring";
+
+/** The editor (spec §20): the path box, then, once an episode is open, the player on the left
+ * and the cue list on the right. */
+export function Editor({ episode, busy, pathInput, onOpen }: {
+  episode: EpisodeView | null;
+  busy: Busy;
+  pathInput: boolean;
+  onOpen: (path: string) => void;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
+      {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
+      {episode ? (
+        <EpisodeEditor key={episode.id} episode={episode} />
+      ) : (
+        <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
+      )}
+    </div>
+  );
+}
+
+function OpenForm({ busy, onOpen }: { busy: Busy; onOpen: (path: string) => void }) {
+  const [path, setPath] = useState("");
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (path.trim()) onOpen(path.trim());
+  };
+  return (
+    <form className="flex items-center gap-2" onSubmit={submit} data-testid="open-form">
+      <label htmlFor="open-path" className="text-sm font-bold">Video</label>
+      <input id="open-path" className={`${control} min-w-0 flex-1 font-mono`} value={path} onChange={(e) => setPath(e.target.value)} placeholder="/full/path/to/Show - S01E01.mkv" spellCheck={false} autoComplete="off" data-testid="open-path" />
+      <button type="submit" className="rounded-md bg-primary px-3 py-1 text-sm font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60" disabled={busy === "opening"} data-testid="open-button">
+        {busy === "opening" ? "Opening…" : "Open"}
+      </button>
+    </form>
+  );
+}
+
+function EpisodeEditor({ episode }: { episode: EpisodeView }) {
+  const translations = episode.tracks.filter((t) => t.role === "translation" && !t.in_conflict);
+  const [track, setTrack] = useState<string | null>(translations[0]?.key ?? null);
+  const [showing, setShowing] = useState<Showing>("both");
+  const [follow, setFollow] = useState(true);
+  const [loop, setLoop] = useState<{ start_ms: number; end_ms: number } | null>(null);
+  const [rate, setRate] = useState<number>(1);
+  const [current, setCurrent] = useState(-1);
+  const [word, setWord] = useState(-1);
+  const [trAt, setTrAt] = useState(-1);
+  const [selected, setSelected] = useState(-1);
+  const media = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+
+  const rows = episode.rows;
+  const shownTrack = track && episode.tracks.some((t) => t.key === track) ? track : null;
+  const trCues = useMemo(() => trackCues(rows, shownTrack), [rows, shownTrack]);
+
+  // Called every frame while playing: state changes only when the cue, the word or the
+  // translation playing changes, so the list re-renders a few times a second at most.
+  const onTime = useCallback((ms: number) => {
+    if (loop && media.current && ms >= loop.end_ms) {
+      media.current.currentTime = loop.start_ms / 1000;
+      return;
+    }
+    const row = indexAt(rows, ms);
+    setCurrent(row);
+    setWord(row >= 0 ? wordAt(episode.words, rows[row].w, ms) : -1);
+    setTrAt(indexAt(trCues, ms));
+  }, [loop, rows, trCues, episode.words]);
+
+  const seek = (index: number) => {
+    setSelected(index);
+    if (media.current) media.current.currentTime = (rows[index].start_ms + 1) / 1000;
+  };
+  const toggleLoop = () => {
+    const at = current >= 0 ? current : selected;
+    setLoop(loop || at < 0 ? null : { start_ms: rows[at].start_ms, end_ms: rows[at].end_ms });
+  };
+  const changeRate = (value: number) => {
+    setRate(value);
+    if (media.current) media.current.playbackRate = value;
+  };
+
+  const lines = captionLines(showing, current >= 0 ? rows[current].text : null, trAt >= 0 ? trCues[trAt].text : null);
+  const stale = translations.filter((t) => t.all_stale);
+  const conflicted = episode.tracks.filter((t) => t.in_conflict);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <header className="flex flex-col gap-1">
+        <h1 className="truncate text-lg font-bold" data-testid="episode-name">{episode.video.name}</h1>
+        {(episode.notes.length > 0 || stale.length > 0 || conflicted.length > 0) && (
+          <ul role="status" className="flex flex-col gap-0.5 text-sm" data-testid="episode-notes">
+            {episode.notes.map((note, k) => <li key={k}>{note}</li>)}
+            {stale.map((t) => (
+              <li key={`stale-${t.key}`}>Every {t.label} cue is stale: the glossary or the translation model changed since it was made, or a glossary term is waiting for Save.</li>
+            ))}
+            {conflicted.map((t) => (
+              <li key={`conflict-${t.key}`} className="text-destructive">The {t.label} track has two versions: pick one before editing it.</li>
+            ))}
+          </ul>
+        )}
+      </header>
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]">
+        <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
+          <Player video={episode.video} mediaRef={media} lines={lines} onTime={onTime} />
+          <div className="flex flex-wrap items-center gap-3 text-sm" data-testid="practice">
+            <label className="flex items-center gap-1">
+              Captions
+              <select className={control} value={showing} onChange={(e) => setShowing(e.target.value as Showing)} data-testid="showing">
+                <option value="source">Source</option>
+                <option value="translation">Translation</option>
+                <option value="both">Both</option>
+              </select>
+            </label>
+            {translations.length > 1 && (
+              <label className="flex items-center gap-1">
+                Translation
+                <select className={control} value={shownTrack ?? ""} onChange={(e) => setTrack(e.target.value)} data-testid="track">
+                  {translations.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                </select>
+              </label>
+            )}
+            <label className="flex items-center gap-1">
+              Speed
+              <select className={control} value={rate} onChange={(e) => changeRate(Number(e.target.value))} data-testid="speed">
+                {SPEEDS.map((s) => <option key={s} value={s}>{s}×</option>)}
+              </select>
+            </label>
+            <button type="button" className={control} aria-pressed={loop !== null} onClick={toggleLoop} data-testid="loop">
+              {loop ? "Looping this cue" : "Loop this cue"}
+            </button>
+            <label className="flex items-center gap-1">
+              <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} className="size-4 accent-(--primary)" data-testid="follow" />
+              Follow playback
+            </label>
+          </div>
+        </section>
+        <section aria-label="Cue list" className="min-h-0">
+          <CueList rows={rows} words={episode.words} track={shownTrack} current={current} word={word} selected={selected} follow={follow} onPick={seek} />
+        </section>
+      </div>
+    </div>
+  );
+}
+```
+
+  `frontend/src/App.tsx`, in full:
+
+```tsx
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { Editor } from "@/components/Editor";
+import { TopBar } from "@/components/TopBar";
+import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
+import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
+import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { Busy, Capabilities, EpisodeView, Status } from "@/types";
+
+type JQueryLike = (target: Document) => {
+  on(event: string, handler: () => void): unknown;
+  off(event: string, handler: () => void): unknown;
+};
+
+export default function App() {
+  const initialized = useShinyInitialized();
+  // Every output is subscribed here, and every message handler lives here: shinyreact 0.1.0
+  // drops a message that has no handler, and an output that unmounts logs "Output <id> not found"
+  // for each later value (recordings' App.tsx). A new output or message gets a line here too.
+  const capabilities = useShinyOutputValue<Capabilities>("capabilities");
+  const status = useShinyOutputValue<Status>("status");
+  const episode = useShinyOutputValue<EpisodeView | null>("episode");
+  const busy = useShinyOutputValue<Busy>("busy");
+  // Every input is set from here too. Each request carries a count, so the same path asked for
+  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
+  const sent = useRef(0);
+  const [notices, setNotices] = useState<Shown[]>([]);
+  const nextId = useRef(1);
+  useShinyMessageHandler("notice", (data: unknown) => {
+    setNotices((shown) => addNotice(shown, data, nextId.current++));
+  });
+
+  // The websocket closed: ask the engine once why, and say so; never reconnect (Review Focus 5).
+  const [lost, setLost] = useState<Lost | null>(null);
+  const check = useCallback(() => {
+    void whyLost((input, init) => window.fetch(input, init)).then(setLost);
+  }, []);
+  useEffect(() => {
+    // Shiny triggers shiny:disconnected through jQuery, which addEventListener never sees.
+    const $ = (window as unknown as { jQuery?: JQueryLike }).jQuery;
+    if (!$) return;
+    $(document).on("shiny:disconnected", check);
+    return () => void $(document).off("shiny:disconnected", check);
+  }, [check]);
+
+  if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
+  return (
+    <div className="flex h-dvh flex-col" data-testid="app">
+      <TopBar capabilities={capabilities} status={status} />
+      {lost && (
+        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
+        <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">
+          <span>{LOST_MESSAGES[lost]}</span>
+          {lost === "stopped" && (
+            <button type="button" className="underline" onClick={check} data-testid="check-again">Check again</button>
+          )}
+          {lost === "dropped" && (
+            <button type="button" className="underline" onClick={() => window.location.reload()}>Reload</button>
+          )}
+        </div>
+      )}
+      <main className="min-h-0 flex-1" data-testid="main">
+        <Editor
+          episode={episode ?? null}
+          busy={busy ?? null}
+          pathInput={capabilities?.path_input ?? false}
+          onOpen={(path) => setOpen({ path, n: ++sent.current })}
+        />
+      </main>
+      <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">
+        <div role="status" aria-live="polite" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "info").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+        <div role="alert" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "error").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: Shown[]) => Shown[]) => void }) {
+  return (
+    <div className={`flex items-start gap-2 rounded-lg border bg-card p-3 text-sm shadow ${notice.kind === "error" ? "border-destructive text-destructive" : "border-border"}`} data-testid="notice">
+      {/* Plain text: a notice can carry a file name or a server's error (spec §6.3). */}
+      <span className="flex-1">{notice.text}</span>
+      <button type="button" aria-label="Dismiss" onClick={() => onDismiss((s) => dismissNotice(s, notice.id))}>×</button>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 15: Run the checks; they pass.** `make check`. Expected:
+  `947 passed, 2 skipped, 16 deselected` (twice), `Test Files  8 passed (8)`, `Tests  37 passed
+  (37)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `12 passed`. The
+  2,000-cue open took about 0.25 s where this was built.
+- [ ] **Step 16: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(frontend): 🤖 the editor plays an episode with live captions beside a cue list that follows playback, marks the spoken word and renders only the rows on screen
+
+Spec §20's view, for S26, S27 and S37's view half, and Review Focus 3:
+
+- Editor: the path box (capabilities.path_input) and, once open, the player on the left and the
+  cue list on the right; the episode's notes (an outside edit kept, say), every track whose cues
+  are all stale and why, and every track in conflict are said in a polite status list.
+- Player: the video by its /media/ token, or the playback audio with no picture when the browser
+  can't play the video's audio (Decision 2); it reports the time every frame while playing.
+- CaptionOverlay: source, translation or both, redrawn as playback and cues change; lib/overlay's
+  segments keep `<i>` and make text of everything else, so no element but <i> comes from a
+  subtitle (spec §6.3).
+- CueList and CueRow: one row per source cue with number, times, text, the chosen translation and
+  Flags (reading speed, width, duration, est, halluc, edited, stale, untranslated, in words); the
+  current cue has the orange bar (border colour, never text) and aria-current; its spoken word is
+  marked in NYC blue from the transcript's words (lib/cues wordSpans); rows follow playback unless
+  "Follow playback" is off. @tanstack/react-virtual 3.14.14 keeps only the rows on screen in the
+  page, positioned through React's style props (the CSSOM, which the CSP allows), with
+  useFlushSync off.
+- Practice aids: loop the current cue, and 0.75×, 1× and 1.25×; every control is a native
+  element with a visible focus ring.
+- App subscribes `episode` and `busy` and sets `open` ({path, n}, priority "event").
+
+tests/e2e/test_editor_view.py: the demo plays with captions and a following list; the hostile SRT
+shows as text with only <i> in the overlay; a 2,000-cue episode opens in about 0.25 s with fewer
+than 60 rows in the page; follow can be turned off; the practice aids work; Tab reaches every
+control with its focus visible; and the page fixture sees no console error or CSP violation.
+They failed first with:
+  Error: Failed to resolve import "./cues" from "src/lib/cues.test.ts". Does the file exist?
+  playwright._impl._errors.TimeoutError: Locator.fill: Timeout 30000ms exceeded.
+  (waiting for get_by_test_id("open-path"))
+
+Docs read: TanStack Virtual's Virtualizer API and React adapter pages (count, getScrollElement,
+estimateSize, overscan, getItemKey, measureElement with data-index, scrollToIndex's align,
+useFlushSync: false for React 19), and its 3.14.14 source (it imports react, kept external as
+window.shinyreact.React, and flushSync from the bundled react-dom index); React 19's ref as a
+prop; MDN's HTMLMediaElement events (play, pause, seeked, timeupdate, loadedmetadata) and
+playbackRate; Playwright 1.64's to_be_in_viewport, select_option and keyboard.press.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 14
+Co-Authored-By: <the model's own line>
+```
+
+  `git add frontend/package.json frontend/package-lock.json frontend/src/App.tsx
+  frontend/src/types.ts frontend/src/lib/cues.ts frontend/src/lib/cues.test.ts
+  frontend/src/lib/overlay.ts frontend/src/lib/overlay.test.ts
+  frontend/src/components/Editor.tsx frontend/src/components/Player.tsx
+  frontend/src/components/CaptionOverlay.tsx frontend/src/components/CaptionOverlay.test.ts
+  frontend/src/components/CueList.tsx frontend/src/components/CueRow.tsx
+  frontend/src/components/Flags.tsx tests/e2e/test_editor_view.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 14d: what the browser can play
+
+Spec §8.2: "Browser playability comes from the probe plus the browser's own canPlayType,
+reported by the UI"; §20: "the video when the browser can play it, else the playback audio";
+§8.8: an unplayable video's playback audio plays straight away (Make preview copy is Phase 3's,
+S63). Probed in Playwright 1.64's Chromium: an MP4 of MPEG-4 Part 2 and Opus plays its sound
+with the picture dropped (`videoWidth` 0, no frames) and fires no error, so canPlayType comes
+first; `video/x-matroska; codecs="vp9, opus"` answers `""` though the file plays, so Matroska is
+asked as WebM too.
+
+- [ ] **Step 17: Write the failing tests.** In `tests/test_views.py`, below
+  `from vid2sub.web.backend import Episode, LocalBackend` add
+  `from vid2sub.web.episode import Streams`; in
+  `test_the_video_has_the_urls_it_was_given_its_name_and_never_its_folder` replace
+
+```python
+    assert v["video"] == {"name": "Show - S01E01.mkv", "duration_ms": 20_000, "url": None,
+                          "audio_url": "/media/abc", "playable_audio": True}
+```
+
+  with
+
+```python
+    assert v["video"] == {"name": "Show - S01E01.mkv", "duration_ms": 20_000, "url": None,
+                          "audio_url": "/media/abc", "playable_audio": True, "container": "",
+                          "video_codec": None, "audio_codec": ""}
+```
+
+  and above `def test_a_view_is_plain_json():` add
+
+```python
+def test_the_video_names_its_container_and_codecs_for_the_browser_to_ask_about():
+    # Spec §8.2: playability comes from the probe plus the browser's own canPlayType. The view
+    # carries ffprobe's names for the container, the video and the audio track the editor plays.
+    ep = episode(streams=Streams("matroska,webm", "h264", "aac"))
+    video = view(ep, video_url="/media/v")["video"]
+    assert (video["container"], video["video_codec"], video["audio_codec"]) == (
+        "matroska,webm", "h264", "aac")
+
+
+```
+
+  At the end of `tests/test_web_server.py` add (the two blank lines first):
+
+```python
+
+
+# ---- the editor: what the browser can play (Task 14, round 14d) ------------------------------
+
+
+@pytest.mark.media
+def test_the_view_names_the_container_and_codecs_the_browser_is_asked_about(media_client,
+                                                                           tmp_path):
+    video = make_episode(tmp_path / "ep")  # tests/helpers.make_clip: MPEG-4 Part 2 and AAC in MKV
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        ep = t.until(opened)
+        assert {k: ep["video"][k] for k in ("container", "video_codec", "audio_codec")} == {
+            "container": "matroska,webm", "video_codec": "mpeg4", "audio_codec": "aac"}
+
+
+@pytest.mark.media
+def test_a_tab_whose_browser_cant_play_the_video_gets_the_playback_audio_and_its_token_goes(
+        media_client, media_rt, tmp_path):
+    # Spec §8.2, §8.8: the UI reports what canPlayType and the <video> say; the editor then plays
+    # the playback audio with no picture, and the video's own token stops working.
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        ep = t.until(opened)
+        token = ep["video"]["url"].removeprefix("/media/")
+        assert media_rt.media.resolve(token) == video
+        t.set(playback={"episode": ep["id"], "n": 2})
+        audio = t.until(lambda t: opened(t)["video"]["audio_url"] and opened(t))["video"]
+        assert audio["url"] is None
+        played = media_rt.media.resolve(audio["audio_url"].removeprefix("/media/"))
+        assert played is not None and played.name == "playback-a0.m4a"
+        assert media_rt.media.resolve(token) is None
+        busy = [m["values"]["busy"] for m in t.messages if "busy" in m.get("values", {})]
+        assert "playback" in busy and t.value("busy") is None
+        # Asked again, or for an episode the tab has moved on from, nothing happens.
+        sent = len(t.messages)
+        t.set(playback={"episode": ep["id"], "n": 3})
+        t.set(playback={"episode": "e" + "0" * 16, "n": 4})
+        time.sleep(0.5)
+        assert not any("episode" in m.get("values", {}) for m in t.messages[sent:])
+        assert t.notices() == []
+```
+
+  `frontend/src/lib/playable.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import { canPlay, mediaTypes } from "./playable";
+
+type Video = Parameters<typeof canPlay>[1];
+
+const MP4: Video = { name: "Show.mp4", container: "mov,mp4,m4a,3gp,3g2,mj2", video_codec: "h264", audio_codec: "aac" };
+const MKV: Video = { name: "Show.mkv", container: "matroska,webm", video_codec: "vp9", audio_codec: "opus" };
+
+/** A browser that answers "probably" for exactly these types, and "" for anything else. */
+const browser = (...yes: string[]) => (type: string) => (yes.includes(type) ? "probably" : "");
+
+describe("the types the browser is asked about (spec §8.2)", () => {
+  it("names the container's types and each codec as RFC 6381 does", () => {
+    expect(mediaTypes(MP4)).toEqual({
+      container: ["video/mp4"],
+      video: ['video/mp4; codecs="avc1.640028"'],
+      audio: ['audio/mp4; codecs="mp4a.40.2"'],
+    });
+    expect(mediaTypes(MKV)).toEqual({
+      container: ["video/webm", "video/x-matroska"],
+      video: ['video/webm; codecs="vp9"', 'video/mp4; codecs="vp09.00.10.08"'],
+      audio: ['audio/webm; codecs="opus"', 'audio/ogg; codecs="opus"', 'audio/mp4; codecs="opus"'],
+    });
+    expect(mediaTypes({ ...MP4, name: "Show.MOV" }).container).toEqual(["video/quicktime", "video/mp4"]);
+    expect(mediaTypes({ ...MP4, video_codec: "mpeg4" }).video).toEqual(['video/mp4; codecs="mp4v.20.9"']);
+  });
+
+  it("names nothing for a codec or container it doesn't know", () => {
+    const odd = mediaTypes({ name: "a.wmv", container: "asf", video_codec: "wmv3", audio_codec: "wmav2" });
+    expect(odd).toEqual({ container: [], video: [], audio: [] });
+  });
+});
+
+describe("whether the browser can play a video", () => {
+  it("is yes when the container, the picture and the sound each have a type it can play", () => {
+    const chrome = browser("video/mp4", 'video/mp4; codecs="avc1.640028"', 'audio/mp4; codecs="mp4a.40.2"');
+    expect(canPlay(chrome, MP4)).toBe(true);
+  });
+
+  it("is no when the browser can't decode the picture, though it could play the sound", () => {
+    // Chromium plays an MP4's Opus while dropping MPEG-4 Part 2 video, with no error at all.
+    const chromium = browser("video/mp4", 'audio/mp4; codecs="opus"', 'audio/webm; codecs="opus"');
+    expect(canPlay(chromium, { ...MP4, video_codec: "mpeg4", audio_codec: "opus" })).toBe(false);
+  });
+
+  it("takes either of Matroska's types, since a browser may answer for WebM only", () => {
+    const chromium = browser("video/webm", 'video/webm; codecs="vp9"', 'audio/webm; codecs="opus"');
+    expect(canPlay(chromium, MKV)).toBe(true);
+  });
+
+  it("counts an empty answer, an unknown codec or an unknown container as no", () => {
+    const yesToAll = () => "maybe";
+    expect(canPlay(() => "", MP4)).toBe(false);
+    expect(canPlay(yesToAll, { ...MP4, video_codec: "wmv3" })).toBe(false);
+    expect(canPlay(yesToAll, { ...MP4, audio_codec: "truehd" })).toBe(false);
+    expect(canPlay(yesToAll, { ...MP4, container: "avi" })).toBe(true); // video/x-msvideo: "maybe"
+    expect(canPlay(yesToAll, { ...MP4, container: "asf" })).toBe(false);
+  });
+
+  it("needs no picture type for a file with no picture", () => {
+    const ask = browser("video/mp4", 'audio/mp4; codecs="mp4a.40.2"');
+    expect(canPlay(ask, { ...MP4, video_codec: null })).toBe(true);
+  });
+});
+```
+
+  At the end of `tests/e2e/test_editor_view.py` add (the two blank lines first):
+
+```python
+
+
+def mpeg4_episode(server) -> Path:
+    """MPEG-4 Part 2 video, which Chromium can't decode, with Opus sound, which it plays, in an
+    MP4: both from ffmpeg's own encoders, so any ffmpeg makes it (tests/helpers.make_clip)."""
+    return make_episode(demo_copy(server) / "mpeg4", name="Clip.mp4", audio_codec="libopus")
+
+
+def media_urls(watch) -> list[str]:
+    return list(dict.fromkeys(u for u in watch.requests if "/media/" in u))
+
+
+def test_a_video_the_browser_cant_decode_plays_its_sound_through_the_playback_audio(
+        page, server, watch):
+    # Spec §8.2, §8.8: canPlayType says no before anything loads, so the page asks for the
+    # playback audio and plays it with no picture. Make preview copy is Phase 3's (S63).
+    assert page.evaluate("""() => document.createElement('video')
+        .canPlayType('video/mp4; codecs="mp4v.20.9"')""") == ""
+    open_episode(page, mpeg4_episode(server))
+    expect(page.get_by_test_id("audio-only")).to_have_text(
+        "Playing the sound only: this browser can't play the video itself.")
+    media = page.get_by_test_id("media")
+    assert media.evaluate("m => m.tagName") == "AUDIO"
+    expect(media).to_have_attribute("src", re.compile(r"^/media/[A-Za-z0-9_-]{43}$"))
+    media.evaluate("m => { m.muted = true; return m.play(); }")
+    page.wait_for_function("() => document.querySelector('[data-testid=media]').currentTime > 0.3")
+    assert len(media_urls(watch)) == 1  # the video itself was never loaded
+
+
+def test_the_videos_own_signals_catch_what_canplaytype_misses(page, server, watch):
+    # A browser that says yes to everything still drops the picture it can't decode, with no
+    # error but no size: the page then asks for the playback audio, and the video's token goes.
+    page.add_init_script(script="HTMLMediaElement.prototype.canPlayType = () => 'probably';")
+    page.reload()
+    open_episode(page, mpeg4_episode(server))
+    expect(page.get_by_test_id("audio-only")).to_have_text(
+        "Playing the sound only: this browser can't play the video itself.")
+    expect(page.get_by_test_id("media")).to_have_attribute("src", re.compile("^/media/"))
+    first, *rest = media_urls(watch)
+    assert rest and page.request.get(first).status == 404  # the video's token was revoked
+```
+
+- [ ] **Step 18: Run them; watch them fail.** `uv run pytest tests/test_views.py -q`. Expected:
+  `ImportError: cannot import name 'Streams' from 'vid2sub.web.episode'`.
+  `uv run pytest tests/test_web_server.py -q -k 'codecs or cant_play'`. Expected: `2 failed, 1
+  passed, 14 deselected` (round 14b's AC-3 test matches too), with `KeyError: 'container'` and
+  `AssertionError: timed out; the tab saw [...`. `cd frontend && npx vitest run
+  src/lib/playable.test.ts`. Expected: `Error: Failed to resolve import "./playable" from
+  "src/lib/playable.test.ts". Does the file exist?`. `uv run pytest -m e2e
+  tests/e2e/test_editor_view.py -q -k 'cant_decode or own_signals'`. Expected: `2 failed`, each
+  `AssertionError: Locator expected to have text 'Playing the sound only: this browser can't play
+  the video itself.'` (`element(s) not found`).
+- [ ] **Step 19: Write the code.** `src/vid2sub/web/episode.py`: above `@dataclass(frozen=True)`
+  / `class Episode:` add
+
+```python
+@dataclass(frozen=True)
+class Streams:
+    """What the browser is asked about before it plays the video (spec §8.2): ffprobe's names for
+    the container, the video's codec and the codec of the audio track the editor plays."""
+
+    container: str = ""  # ffprobe's format_name, such as "mov,mp4,m4a,3gp,3g2,mj2"
+    video_codec: str | None = None  # None: no picture (or only cover art)
+    audio_codec: str = ""
+
+
+```
+
+  and below `Episode`'s `made_with` field add
+
+```python
+    streams: Streams = Streams()  # from the probe at open
+```
+
+  `src/vid2sub/web/backend.py`: in the `from vid2sub.web.episode import (...)` block, below
+  `SaveResult,` add `Streams,`; and in `open`, replace
+  `glossary=glossary, translate_model=self._route_model(_lang(source_key)))` with
+
+```python
+            glossary=glossary, translate_model=self._route_model(_lang(source_key)),
+            streams=Streams(p.container, p.video_codec, track.codec))
+```
+
+  `src/vid2sub/web/views.py`: in the docstring replace
+  `` covers. The view never holds a path, only the video's bare file name (§6.8). The top bar's ``
+  with
+
+```python
+covers. The view never holds a path, only the video's bare file name (§6.8), and the probe's
+container and codec names, which the browser's canPlayType is asked about (§8.2). The top bar's
+```
+
+  and in `episode_view` replace
+  `"url": video_url, "audio_url": audio_url, "playable_audio": ep.playable_audio},` with
+
+```python
+                  "url": video_url, "audio_url": audio_url, "playable_audio": ep.playable_audio,
+                  "container": ep.streams.container, "video_codec": ep.streams.video_codec,
+                  "audio_codec": ep.streams.audio_codec},
+```
+
+  `src/vid2sub/web/runtime.py`: replace `media_for`'s first line and docstring with
+
+```python
+    def media_for(self, ep: Episode, *, audio_only: bool = False) -> Media:
+        """The video by a media token when the browser can play its audio; else, or with
+        `audio_only` (the browser said it can't play the video, spec §8.2), the playback audio
+        (spec §8.8; Decision 2), made into the cache under the video's quick hash the first time,
+        which blocks on ffmpeg: call it through `blocking`. Tokens are owned by the episode's id,
+        so closing it revokes them."""
+```
+
+  and `if ep.playable_audio:` with `if ep.playable_audio and not audio_only:`.
+
+  `src/vid2sub/web/server.py`: replace the module docstring's paragraph that begins
+  `The editor (spec §20):` with
+
+```python
+The editor (spec §20): each tab holds at most one open episode, in an `Editor`. Every call that
+changes it (open here; edits, Save and picks later) runs one at a time, in the order the tab sent
+them, in a task of the tab's own that holds no reactive lock while it waits on the disk or ffmpeg,
+so a slow open never freezes another tab and no edit is lost to a Save running at the same time.
+The backend returns a new frozen `Episode` each time, which the editor sets as the reactive value
+the `episode` output reads. The player gets the video by a media token, or the playback audio
+when the browser can't play the video's audio (Decision 2) or, as the page reports from
+canPlayType and the video's own errors, the video itself (`playback`, spec §8.2, §8.8); its
+tokens are revoked with the episode when the tab opens another or closes: the mount passes no
+lifespan events on, so that happens in `session.on_ended`. Requests come from the browser, so
+they are checked before use and never echoed (§6.3, §6.8).
+```
+
+  in `class Editor`, above `def _close`, add
+
+```python
+    async def _playback(self, request: object) -> None:
+        """The page found the browser can't play the video (spec §8.2: canPlayType, or the
+        <video>'s error), so the video's token goes and the playback audio plays (§8.8)."""
+        ep = self._named(request)
+        if ep is None or self.media.video_url is None:  # nothing open, or the audio already
+            return
+        await self._set_busy("playback")
+        self.rt.media.revoke_owner(ep.id)
+        self.media = await runtime.blocking(self.rt.media_for, ep, audio_only=True)
+        await self._publish(busy=None)
+        if self.media.problem:
+            await notice(self.session, "error", self.media.problem)
+
+    def _named(self, request: object) -> Episode | None:
+        """The open episode, when the request names it."""
+        if (isinstance(request, dict) and self.ep is not None
+                and request.get("episode") == self.ep.id):
+            return self.ep
+        return None
+
+```
+
+  and in `server()`, below the `_open` effect, add
+
+```python
+
+    @reactive.effect
+    @reactive.event(input.playback)
+    def _playback() -> None:
+        editor.submit("playback", input.playback())
+```
+
+  `frontend/src/lib/playable.ts`:
+
+```ts
+// Whether this browser can play a video itself (spec §8.2: "Browser playability comes from the
+// probe plus the browser's own canPlayType, reported by the UI"). The server sends ffprobe's
+// container and codec names; this asks canPlayType about each, as RFC 6381 names them, before
+// the video is loaded. It must ask first: Chromium plays an MP4's sound while dropping a picture
+// it can't decode, and fires no error (checked in Playwright 1.64's Chromium with MPEG-4 Part 2
+// and Opus). canPlayType's "" means "cannot be played on the current device" (MDN), so an empty
+// answer is no; so is a codec or container this file doesn't know, since the playback audio
+// always plays. The player's own error event and a picture with no size back this up.
+
+type Ask = (type: string) => string;
+type Video = { name: string; container: string; video_codec: string | null; audio_codec: string };
+
+// The types to ask about for each codec ffprobe names: any one the browser can play will do.
+const VIDEO: Record<string, string[]> = {
+  h264: ['video/mp4; codecs="avc1.640028"'],
+  hevc: ['video/mp4; codecs="hvc1.1.6.L93.B0"', 'video/mp4; codecs="hev1.1.6.L93.B0"'],
+  vp8: ['video/webm; codecs="vp8"'],
+  vp9: ['video/webm; codecs="vp9"', 'video/mp4; codecs="vp09.00.10.08"'],
+  av1: ['video/mp4; codecs="av01.0.05M.08"', 'video/webm; codecs="av01.0.05M.08"'],
+  mpeg4: ['video/mp4; codecs="mp4v.20.9"'],
+  theora: ['video/ogg; codecs="theora"'],
+};
+const AUDIO: Record<string, string[]> = {
+  aac: ['audio/mp4; codecs="mp4a.40.2"'],
+  mp3: ["audio/mpeg"],
+  opus: ['audio/webm; codecs="opus"', 'audio/ogg; codecs="opus"', 'audio/mp4; codecs="opus"'],
+  vorbis: ['audio/webm; codecs="vorbis"', 'audio/ogg; codecs="vorbis"'],
+  flac: ["audio/flac", 'audio/mp4; codecs="flac"'],
+  alac: ['audio/mp4; codecs="alac"'],
+  ac3: ['audio/mp4; codecs="ac-3"'],
+  eac3: ['audio/mp4; codecs="ec-3"'],
+};
+
+function containerTypes(container: string, name: string): string[] {
+  const formats = container.split(",");
+  if (formats.includes("mp4") || formats.includes("mov")) {
+    return name.toLowerCase().endsWith(".mov") ? ["video/quicktime", "video/mp4"] : ["video/mp4"];
+  }
+  if (formats.includes("matroska") || formats.includes("webm")) return ["video/webm", "video/x-matroska"];
+  if (formats.includes("ogg")) return ["video/ogg"];
+  if (formats.includes("mpegts")) return ["video/mp2t"];
+  if (formats.includes("avi")) return ["video/x-msvideo"];
+  return [];
+}
+
+/** The types canPlayType is asked about: the container's, the picture's and the sound's. */
+export function mediaTypes(video: Video): { container: string[]; video: string[]; audio: string[] } {
+  return {
+    container: containerTypes(video.container, video.name),
+    video: video.video_codec ? (VIDEO[video.video_codec] ?? []) : [],
+    audio: AUDIO[video.audio_codec] ?? [],
+  };
+}
+
+/** Yes when the container, the picture (if there is one) and the sound each have a type the
+ * browser doesn't answer "" for. */
+export function canPlay(ask: Ask, video: Video): boolean {
+  const types = mediaTypes(video);
+  const any = (list: string[]) => list.some((t) => ask(t) !== "");
+  return any(types.container) && (video.video_codec === null || any(types.video)) && any(types.audio);
+}
+```
+
+  `frontend/src/components/Player.tsx`, in full:
+
+```tsx
+import { type RefObject, useEffect, useRef, useState } from "react";
+
+import { canPlay } from "@/lib/playable";
+import type { Busy, EpisodeView } from "@/types";
+
+import { CaptionOverlay } from "./CaptionOverlay";
+
+/** The player (spec §20): the video by its media token when the browser can play it, else the
+ * playback audio with no picture (§8.8; Decision 2), with the caption overlay over it. Whether it
+ * can is the browser's to say (§8.2): canPlayType is asked about the probe's container and codecs
+ * before the video loads, and a MEDIA_ERR_DECODE or MEDIA_ERR_SRC_NOT_SUPPORTED, or a picture
+ * with no size once its metadata is in, says so too; then `onCantPlay` asks the server for the
+ * playback audio, once. Making a preview copy with the picture is Phase 3's (S63). While it plays
+ * it reports the time every frame, so the cue list, the spoken word and the captions keep up;
+ * paused, it reports each seek. */
+export function Player({ video, mediaRef, lines, busy, onTime, onCantPlay }: {
+  video: EpisodeView["video"];
+  mediaRef: RefObject<HTMLVideoElement | HTMLAudioElement | null>;
+  lines: string[];
+  busy: Busy;
+  onTime: (ms: number) => void;
+  onCantPlay: () => void;
+}) {
+  const report = useRef(onTime);
+  report.current = onTime;
+  const [failed, setFailed] = useState(false);
+  const asked = useRef(false);
+  const cantPlay = () => {
+    if (asked.current) return;
+    asked.current = true;
+    onCantPlay();
+  };
+  // Asked once per video URL, before anything loads.
+  const [plays] = useState(() => !video.url || canPlay((t) => document.createElement("video").canPlayType(t), video));
+  const showVideo = video.url !== null && plays;
+  const src = showVideo ? video.url : video.audio_url;
+
+  useEffect(() => {
+    if (video.url && !plays) cantPlay();
+  }, [video.url, plays]);
+
+  useEffect(() => {
+    const media = mediaRef.current;
+    if (!media) return;
+    let frame = 0;
+    const now = () => report.current(media.currentTime * 1000);
+    const tick = () => {
+      now();
+      if (!media.paused && !media.ended) frame = requestAnimationFrame(tick);
+    };
+    const play = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(tick);
+    };
+    const events = ["seeked", "timeupdate", "loadedmetadata", "pause"] as const;
+    media.addEventListener("play", play);
+    for (const e of events) media.addEventListener(e, now);
+    return () => {
+      cancelAnimationFrame(frame);
+      media.removeEventListener("play", play);
+      for (const e of events) media.removeEventListener(e, now);
+    };
+  }, [mediaRef, src]);
+
+  const onVideoError = (e: { currentTarget: HTMLVideoElement }) => {
+    const code = e.currentTarget.error?.code;
+    if (code === MediaError.MEDIA_ERR_DECODE || code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) cantPlay();
+    else setFailed(true);
+  };
+  const onVideoMetadata = (e: { currentTarget: HTMLVideoElement }) => {
+    // A picture the browser can't decode can still leave the sound playing, with no error.
+    if (video.video_codec && e.currentTarget.videoWidth === 0) cantPlay();
+  };
+
+  const box = "relative flex min-h-48 flex-1 items-center justify-center overflow-hidden rounded-lg bg-black";
+  if (!src) {
+    const making = busy === "playback" || (video.url !== null && !plays);
+    return (
+      <div className={box} data-testid="player">
+        <p className="p-4 text-center text-white/80" data-testid="audio-only">
+          {making ? "This browser can't play the video itself, so vid2sub is making a copy of its sound…" : "Nothing to play."}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className={box} data-testid="player">
+      {showVideo ? (
+        <video
+          ref={mediaRef as RefObject<HTMLVideoElement>}
+          src={video.url ?? undefined}
+          controls
+          playsInline
+          preload="metadata"
+          className="max-h-full w-full"
+          data-testid="media"
+          onError={onVideoError}
+          onLoadedMetadata={onVideoMetadata}
+        />
+      ) : (
+        <div className="flex w-full flex-col items-center gap-3 p-4">
+          <p className="text-center text-sm text-white/80" data-testid="audio-only">
+            {video.playable_audio
+              ? "Playing the sound only: this browser can't play the video itself."
+              : "Playing the sound only: the browser can't play this video's own audio track."}
+          </p>
+          <audio ref={mediaRef as RefObject<HTMLAudioElement>} src={video.audio_url ?? undefined} controls preload="metadata" className="w-full" data-testid="media" onError={() => setFailed(true)} />
+        </div>
+      )}
+      {failed && (
+        <p role="alert" className="absolute inset-x-0 top-0 bg-card px-3 py-2 text-sm text-destructive" data-testid="media-error">
+          The browser can't play this file.
+        </p>
+      )}
+      <CaptionOverlay lines={lines} />
+    </div>
+  );
+}
+```
+
+  `frontend/src/components/Editor.tsx`: replace `export function Editor({ episode, busy,
+  pathInput, onOpen }: {` with `export function Editor({ episode, busy, pathInput, onOpen,
+  onCantPlay }: {`, and below its `onOpen: (path: string) => void;` add
+  `onCantPlay: () => void;`; replace `<EpisodeEditor key={episode.id} episode={episode} />` with
+  `<EpisodeEditor key={episode.id} episode={episode} busy={busy} onCantPlay={onCantPlay} />`;
+  replace `function EpisodeEditor({ episode }: { episode: EpisodeView }) {` with
+
+```tsx
+function EpisodeEditor({ episode, busy, onCantPlay }: {
+  episode: EpisodeView;
+  busy: Busy;
+  onCantPlay: () => void;
+}) {
+```
+
+  and replace `<Player video={episode.video} mediaRef={media} lines={lines} onTime={onTime} />`
+  with
+  `<Player video={episode.video} mediaRef={media} lines={lines} busy={busy} onTime={onTime} onCantPlay={onCantPlay} />`.
+
+  `frontend/src/types.ts`: replace the `EpisodeView` doc comment's last line and its `video`
+  line, from `* playback audio when the browser can't play the video's audio (Decision 2). No
+  path, ever. */` to the `video: { … };` line, with
+
+```ts
+ * playback audio when the browser can't play the video's audio (Decision 2), or the video itself
+ * (spec §8.2: asked with canPlayType about ffprobe's container and codec names). No path, ever. */
+export type EpisodeView = {
+  id: string;
+  video: {
+    name: string;
+    duration_ms: number;
+    url: string | null;
+    audio_url: string | null;
+    playable_audio: boolean;
+    container: string;
+    video_codec: string | null;
+    audio_codec: string;
+  };
+```
+
+  and `export type Busy = "opening" | null;` with
+  `export type Busy = "opening" | "playback" | null;`.
+
+  `frontend/src/App.tsx`: below the `setOpen` line add
+
+```tsx
+  const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
+```
+
+  and below `onOpen={(path) => setOpen({ path, n: ++sent.current })}` add
+
+```tsx
+          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+```
+
+- [ ] **Step 20: Run the checks; they pass.** First the guard: replace
+  `self.rt.media.revoke_owner(ep.id)` in `_playback` with `pass`; `uv run pytest
+  tests/test_web_server.py -q -k cant_play` fails `AssertionError: assert PosixPath('…/Show -
+  S01E01.mkv') is None` (the video's token still served); put it back. `make check`. Expected:
+  `950 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed
+  (44)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `14 passed`.
+- [ ] **Step 21: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the browser says whether it can play a video, and one it can't plays its sound through the playback audio
+
+Spec §8.2: "Browser playability comes from the probe plus the browser's own canPlayType,
+reported by the UI"; §20: "the video when the browser can play it, else the playback audio";
+§8.8: an unplayable video's playback audio plays straight away. The server judged by the audio
+codec alone, so a video the browser couldn't decode ended at "The browser can't play this file."
+with nothing to play.
+
+- Episode gains `streams` (web.episode.Streams: ffprobe's container, video codec and the played
+  audio track's codec, from the probe at open); the view's `video` carries them as `container`,
+  `video_codec` and `audio_codec`, never a path.
+- lib/playable.ts asks canPlayType about the container and each codec, as RFC 6381 names them,
+  before the video loads; an empty answer, or a codec or container it doesn't know, is no (the
+  playback audio always plays). It must come first: in Playwright 1.64's Chromium an MP4 of
+  MPEG-4 Part 2 and Opus plays its sound with the picture dropped (videoWidth 0, no frames) and
+  fires no error. The <video>'s MEDIA_ERR_DECODE or MEDIA_ERR_SRC_NOT_SUPPORTED, or a picture
+  with no size once its metadata is in, says the same afterwards.
+- On either, the page sends the new input `playback` ({"episode", "n"}) through the Editor's
+  queue: the video's token is revoked and Runtime.media_for(ep, audio_only=True) makes the
+  playback audio through runtime.blocking, with `busy` at "playback"; the player then says it is
+  playing the sound only. Make preview copy is Phase 3's (S63) and isn't built.
+
+The guard fails without its fix: with `self.rt.media.revoke_owner(ep.id)` taken out of
+Editor._playback, the server test failed `assert PosixPath('…/Show - S01E01.mkv') is None` (the
+video's token still served).
+
+The new tests failed first with:
+  ImportError: cannot import name 'Streams' from 'vid2sub.web.episode'
+  KeyError: 'container'
+  AssertionError: timed out; the tab saw [...
+  Error: Failed to resolve import "./playable" from "src/lib/playable.test.ts". Does the file exist?
+  AssertionError: Locator expected to have text 'Playing the sound only: this browser can't play
+  the video itself.' (element(s) not found)
+
+Docs read: spec §8.2, §8.8, §20; MDN's HTMLMediaElement.canPlayType ("" means the media "cannot
+be played on the current device"), MediaError.code (MEDIA_ERR_DECODE 3,
+MEDIA_ERR_SRC_NOT_SUPPORTED 4) and "The codecs parameter in common media types" (avc1, hvc1,
+vp09, av01, mp4a.40.2, mp4v, Opus, WebM's vp8, vp9, opus and vorbis); Chromium's answers and
+decoding probed in Playwright 1.64 (it plays H.264 and AAC there; it answers "" for
+`video/x-matroska; codecs="vp9, opus"` though it plays that file, so Matroska is asked as WebM
+too).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 14
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/episode.py src/vid2sub/web/backend.py src/vid2sub/web/views.py
+  src/vid2sub/web/runtime.py src/vid2sub/web/server.py tests/test_views.py
+  tests/test_web_server.py tests/e2e/test_editor_view.py frontend/src/lib/playable.ts
+  frontend/src/lib/playable.test.ts frontend/src/components/Player.tsx
+  frontend/src/components/Editor.tsx frontend/src/App.tsx frontend/src/types.ts`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 22: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that `tests/test_pages_imports.py`
+  refuses what §21's bundle lacks and that the AST test catches a thread started any other way;
+  that no edit or open is lost or reordered by the `Editor`'s queue, and that a slow open never
+  holds Shiny's reactive lock; that a media token outlives neither its episode nor its tab
+  (`on_ended`, opening another); that no path reaches an output, a notice or a log (a failure
+  logs its type only); that every subtitle string reaches the page as text, and the overlay makes
+  no element but `<i>`; that the orange is a border, never text; that a video the browser can't
+play (canPlayType first, then the `<video>`'s error or a picture with no size) gets the playback
+audio once and its own token is revoked; that the list renders only what
+  is on screen at 2,000 cues; that the page fixture's console and CSP guard is untouched. The
+  forward review over Tasks 15–19, 21 and 23 and Phase 3's file browser and Review pages (every
+  new server module and input keeps the Pages rule: module-level imports as in
+  `tests/test_pages_imports.py`'s list, blocking calls through `runtime.blocking`; Task 15's
+  `edit`, `undo` and `redo` go through `Editor.submit` and use `Editor._named`; Task 16's `save` and `resolve` too, with
+  `busy` "saving" and "picking"; Task 17's `retranslate` runs through `runtime.blocking` inside
+  the `Editor`'s queue; Task 18 reads endpoints through `rt.config` and `rt.keys`, never by
+  importing `vid2sub.config` at the top of `server.py`; Task 19's runner lives behind
+  `Runtime`; Task 21's e2e job needs ffmpeg with libvpx and libopus, and the 2,000-cue test calls
+  `make_episode`, which needs ffmpeg in the test process too; Task 23's Step 3 opens through the
+  path box this task builds). The docs this task made untrue: the plan's Global Constraints'
+  module list now includes `vid2sub.web.ops` (pure, and the server parses edits with it). Then the
+  close, its own commit, holding this plan with this task's boxes ticked and **Now** set to
+  `Task 15: Editing in the editor, open.`, and the spec's scenario rows S26 and S27 set to
+  `built` (S43's Proof gains `tests/e2e/test_editor_view.py`, the playback audio in the browser;
+  it stays `planned` for Task 23's AC-3 check) (S26's Proof: `Playwright with hostile fixtures (tests/e2e/test_shell.py,
+  tests/e2e/test_editor_view.py)`; S27's: `tests/e2e/test_editor_view.py; the exit test`); S37
+  stays `planned` (Tasks 15 and 19), with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 14: The editor view
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 14
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -16943,11 +19930,1860 @@ Co-Authored-By: <the model's own line>
 **Tier:** 2 · **Scenarios:** S28, S33, S37
 
 **Files:**
-- Create: `frontend/src/lib/keys.ts` (+ test), `frontend/src/components/FindReplace.tsx`
-- Modify: `src/vid2sub/web/server.py` (inputs `edit`, `undo`, `redo`), the editor components
-- Test: `tests/e2e/test_editing.py`
+- Create: `frontend/src/lib/keys.ts` (+ test), `frontend/src/lib/sends.ts` (+ test),
+  `frontend/src/components/FindReplace.tsx`
+- Modify: `src/vid2sub/web/server.py` (inputs `edit`, `undo`, `redo`; `as_json`),
+  `frontend/src/lib/cues.ts` (+ test: `splitPoint`, `countMatches`), `frontend/src/types.ts`
+  (`EditOp`), `frontend/src/components/{Editor,CueList,CueRow}.tsx`, `frontend/src/App.tsx`
+- Test: `tests/test_web_server.py`, `tests/e2e/test_editing.py`
 
-<!-- steps: written in the next pass -->
+**Interfaces:**
+- Consumes: Task 14's `server.Editor` (`submit`, `_named`, `_publish`), `App`'s inputs and
+  `Editor`/`CueList`/`CueRow` (with round 14d's `onCantPlay` and `busy`); `ops.parse_op`,
+  `ops.BadOp` and `LocalBackend.apply/undo/redo` (Task 6; an unchanged episode comes back as
+  itself); `subs.edit.EditError`.
+- Produces:
+  - Input `edit`: `{"episode": str, "n": int, "op": <an EditOp, as vid2sub.web.ops takes it>}`;
+    inputs `undo` and `redo`: `{"episode": str, "n": int}`. Each joins the tab's `Editor` queue
+    (`_edit`, `_undo`, `_redo`), runs on the event loop, and publishes the new episode; a
+    `BadOp`, `EditError` or `OpenError` is a notice with its message; a request naming another
+    episode than the one open is dropped; nothing that changes nothing is sent.
+  - `server.as_json(value: object) -> object`: Shiny 1.8.0 decodes every JSON array in an input
+    message as a tuple (`shiny._utils.lists_to_tuples`); `Editor.submit` turns them back into
+    lists, so every request (Tasks 16–19's too) reaches its checks as JSON has it.
+  - `types.ts`: `EditOp`, the union of the eleven `ops` kinds (`set_text`, `set_translation_text`,
+    `set_times`, `nudge`, `split`, `merge_next`, `insert`, `delete`, `detach`, `replace_all`,
+    `glossary_add`), field for field.
+  - `lib/keys.ts`: `type Mode = "navigate" | "edit"`; `type Action` (`play-pause`, `back`,
+    `pause`, `play`, `previous`, `next`, `cell` with `"source" | "translation"`, `set-start`,
+    `set-end`, `nudge` with `delta_ms`, `edit`, `undo`, `redo`, `commit`, `split`, `merge`,
+    `cancel`); `type KeyLike`; `NUDGE_MS = 100`, `BIG_NUDGE_MS = 500`;
+    `actionFor(e: KeyLike, mode: Mode): Action | null` (null while `isComposing` or keyCode 229).
+  - `lib/sends.ts`: `pacer(schedule?) -> (send: () => void) => void`, one queued send per task.
+  - `lib/cues.ts`: `splitPoint(text, share): number`; `countMatches(rows, sourceKey, tracks,
+    find): number`.
+  - Components: `Editor({episode, busy, pathInput, onOpen, onCantPlay, requests})` with
+    `type Requests = {edit(op), undo(), redo()}` and `control` (the class string controls use);
+    `CueList({listRef, rows, words, track, current, word, selected, cell, editing, follow, onPick,
+    onKeyDown, onDraft, onEditKey, editorRef})`; `CueRow({..., cell, editing, onPick(cell),
+    onDraft, onEditKey, editorRef})` with `type Cell` and `type Editing = {id, cell, trId, text}`;
+    `FindReplace({episode, onEdit, onClose})`. Test ids: `cue-editor` (the text box),
+    `cue-times`, `data-selected` on the selected cell, the edit bar's `tool-edit`, `tool-start`,
+    `tool-end`, `tool-earlier`, `tool-later`, `tool-split`, `tool-merge`, `tool-insert`,
+    `tool-delete`, `tool-undo`, `tool-redo`, `tool-find`; find's `find`, `replace`,
+    `match-count`, `find-track-<key>`, `replace-all`, `glossary-term`, `glossary-translation`,
+    `glossary-add`, `glossary-adds`.
+  - `App` sets `edit`, `undo` and `redo` with `useSetShinyInput(id, null, {priority: "event",
+    debounceMs: 0})`, each through one `pacer()`.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+
+#### Round 15a: edits, undo and redo reach the episode
+
+- [ ] **Step 1: Write the failing tests,** at the end of `tests/test_web_server.py` (the two blank lines first):
+
+```python
+
+
+# ---- the editor: edits, undo and redo (Task 15) -----------------------------------------------
+
+
+def opened_in(t: Tab, video) -> dict:
+    t.until(lambda t: t.has("episode"))
+    t.set(open={"path": str(video), "n": 1})
+    return t.until(opened)
+
+
+def latest(t: Tab, check):
+    """The episode output once `check(episode)` holds."""
+    return t.until(lambda t: opened(t) and check(t.value("episode")) and t.value("episode"))
+
+
+@pytest.mark.media
+def test_edits_undo_and_redo_reach_the_episode_one_at_a_time_in_the_order_sent(
+        media_client, tmp_path):
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        first = ep["rows"][0]
+        ask = {"episode": ep["id"]}
+        # sent back to back, each in its own message, as the frontend's pacer sends them
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": first["id"], "text": "やあ"}})
+        t.set(edit={**ask, "n": 2, "op": {"op": "nudge", "cue": first["id"], "delta_ms": 100}})
+        t.set(undo={**ask, "n": 3})
+        t.set(redo={**ask, "n": 4})
+        t.set(undo={**ask, "n": 5})
+        done = latest(t, lambda e: e["rows"][0]["text"] == "やあ" and e["can_redo"])
+        assert done["rows"][0]["start_ms"] == first["start_ms"]  # the nudge is undone again
+        assert done["dirty"] and done["can_undo"]
+        # the translation re-points nowhere new, but its source text changed: it is stale
+        assert "stale" in done["rows"][0]["tr"]["en"]["cues"][0]["flags"]
+        t.set(undo={**ask, "n": 6})
+        clean = latest(t, lambda e: not e["dirty"])
+        assert clean["rows"][0]["text"] == first["text"] and not clean["can_undo"]
+
+
+@pytest.mark.media
+def test_a_bad_edit_is_a_notice_naming_the_field_and_never_what_was_sent(media_client,
+                                                                        tmp_path):
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        cue = ep["rows"][0]["id"]
+        for n, op in enumerate([
+            {"op": "set_text", "cue": cue, "text": "x", "<img src=x>": 1},  # an unknown field
+            {"op": "set_text", "cue": "<script>", "text": "x"},  # not a cue id's shape
+            {"op": "nudge", "cue": cue, "delta_ms": "100"},  # a string is never a number
+            {"op": "merge_next", "cue": ep["rows"][-1]["id"]},  # the rules refuse it
+        ]):
+            t.set(edit={"episode": ep["id"], "n": n, "op": op})
+        t.until(lambda t: len(t.notices()) == 4)
+        assert [n["text"] for n in t.notices()] == [
+            "this edit can't be made: it has a field no edit has",
+            "this edit can't be made: cue isn't valid",
+            "this edit can't be made: delta_ms has the wrong type",
+            "the last cue has no next cue to merge with",
+        ]
+        assert "<img" not in json.dumps(t.messages) and "<script>" not in json.dumps(t.messages)
+        assert not t.value("episode")["dirty"]
+
+
+@pytest.mark.media
+def test_an_edit_for_an_episode_the_tab_has_moved_on_from_is_dropped(media_client, tmp_path):
+    first, second = make_episode(tmp_path / "one"), make_episode(tmp_path / "two")
+    with tab(media_client) as t:
+        one = opened_in(t, first)
+        t.set(open={"path": str(second), "n": 2})
+        two = t.until(lambda t: opened(t) and opened(t)["id"] != one["id"] and opened(t))
+        t.set(edit={"episode": one["id"], "n": 3,
+                    "op": {"op": "delete", "cue": one["rows"][0]["id"]}})
+        t.set(edit={"episode": two["id"], "n": 4,
+                    "op": {"op": "set_text", "cue": two["rows"][1]["id"], "text": "二"}})
+        done = latest(t, lambda e: e["rows"][1]["text"] == "二")
+        assert len(done["rows"]) == len(LINES) and t.notices() == []
+```
+
+- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q -k
+  'edits_undo or bad_edit or moved_on'`. Expected: `3 failed, 17 deselected`, each with
+  `AssertionError: timed out; the tab saw [...`.
+- [ ] **Step 3: Write the code,** in `src/vid2sub/web/server.py`. Replace the module docstring's
+  paragraph that begins `The editor (spec §20):` with
+
+```python
+The editor (spec §20): each tab holds at most one open episode, in an `Editor`. Every call that
+changes it (open, edits, undo and redo; Save and picks later) runs one at a time, in the order
+the tab sent them, in a task of the tab's own that holds no reactive lock while it waits on the
+disk or ffmpeg, so a slow open never freezes another tab and no edit is lost to a Save running at
+the same time. The backend returns a new frozen `Episode` each time, which the editor sets as the
+reactive value the `episode` output reads. The player gets the video by a media token, or the
+playback audio when the browser can't play the video's audio (Decision 2) or, as the page reports
+from canPlayType and the video's own errors, the video itself (`playback`, spec §8.2, §8.8); its
+tokens are revoked with the episode when the tab opens another or closes: the mount passes no
+lifespan events on, so that happens in `session.on_ended`. Requests come from the browser, so
+they are checked before use and never echoed (§6.3, §6.8). Edits go through the backend's
+`apply`, so the rules exist once (§20): an edit is checked at the door by `ops.parse_op`, and it,
+undo and redo run on the event loop (about 0.02 s for 2,000 cues, Task 6); a request naming an
+episode the tab has since moved on from (sent before an open finished) is dropped.
+```
+
+  Replace `from vid2sub.web import WWW, runtime, views` with
+
+```python
+from vid2sub.subs.edit import EditError
+from vid2sub.web import WWW, ops, runtime, views
+```
+
+  In `class Editor`, above `async def _playback`, add
+
+```python
+    async def _edit(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is None or not isinstance(request, dict):
+            return
+        try:
+            new = self.rt.backend.apply(ep, ops.parse_op(request.get("op")))
+        except (ops.BadOp, EditError, OpenError) as err:  # each is fit to show, and echoes nothing
+            await notice(self.session, "error", str(err))
+            return
+        await self._show(new)
+
+    async def _undo(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is not None:
+            await self._show(self.rt.backend.undo(ep))
+
+    async def _redo(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is not None:
+            await self._show(self.rt.backend.redo(ep))
+
+    async def _show(self, ep: Episode) -> None:
+        if ep is not self.ep:  # the backend returns `ep` itself when nothing changed
+            self.ep = ep
+            await self._publish(busy=None)
+
+```
+
+  and in `server()`, below the `_playback` effect, add
+
+```python
+
+    @reactive.effect
+    @reactive.event(input.edit)
+    def _edit() -> None:
+        editor.submit("edit", input.edit())
+
+    @reactive.effect
+    @reactive.event(input.undo)
+    def _undo() -> None:
+        editor.submit("undo", input.undo())
+
+    @reactive.effect
+    @reactive.event(input.redo)
+    def _redo() -> None:
+        editor.submit("redo", input.redo())
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `make check`. Expected: `953 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed (44)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 a tab's edits, undo and redo reach its episode through the backend's rules, one at a time in the order sent
+
+Inputs `edit` ({"episode": id, "n": int, "op": {...}}), `undo` and `redo` ({"episode": id,
+"n": int}) join the tab's Editor queue behind any open, so none is lost or reordered (spec §20).
+An edit is checked by ops.parse_op and applied by LocalBackend.apply, so the edit rules exist
+once; it, undo and redo run on the event loop (about 0.02 s for 2,000 cues, Task 6). A BadOp,
+an EditError or an OpenError is a plain-text notice that names a field at most and never echoes
+the request (§6.3, §6.8); a request naming an episode the tab has moved on from is dropped, since
+it was sent before the open finished. An undo or redo with nothing to do sends nothing.
+
+The new tests failed first with:
+  AssertionError: timed out; the tab saw [{'values': {}, 'inputMessages': [], 'errors': {}}, ...
+
+Docs read: shiny 1.8.0's reactive.event (ignore_none, the default, drops the null each input
+starts as); vid2sub.web.ops (parse_op, BadOp's messages) and backend.apply, undo and redo.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 15
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/server.py tests/test_web_server.py`, `git commit -F .git/COMMIT_MSG`,
+  then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 15b: Shiny's tuples read as JSON's lists
+
+Found while building find and replace in Chromium: Shiny 1.8.0 reads every JSON array in an
+input message as a tuple (`shiny/_utils.py`, `lists_to_tuples`, passed as `json.loads`'
+`object_hook` in `Session._run`), and `ops.parse_op` is strict, so `replace_all`'s `tracks` came
+back as `this edit can't be made: tracks has the wrong type`.
+
+- [ ] **Step 6: Write the failing test,** at the end of `tests/test_web_server.py` (the two blank lines first):
+
+```python
+
+
+@pytest.mark.media
+def test_an_edit_holding_a_list_is_read_as_json_has_it_though_shiny_makes_lists_tuples(
+        media_client, tmp_path):
+    # Shiny 1.8.0 decodes every JSON array in a message as a tuple (_utils.lists_to_tuples),
+    # and ops.parse_op is strict: a tuple is not a list.
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        t.set(edit={"episode": ep["id"], "n": 1, "op": {
+            "op": "replace_all", "find": "元気", "replace": "げんき", "tracks": ["source", "en"]}})
+        done = latest(t, lambda e: e["rows"][1]["text"] == "げんきですか")
+        assert done["rows"][2]["text"] == "はい、げんきです" and t.notices() == []
+```
+
+- [ ] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_web_server.py -q -k
+  holding_a_list`. Expected: `1 failed, 20 deselected`, with `AssertionError: timed out; the tab saw
+  [{'values': {'episode': {...`.
+- [ ] **Step 8: Write the code,** in `src/vid2sub/web/server.py`: above `async def notice` add
+
+```python
+def as_json(value: object) -> object:
+    """An input's value as JSON has it: Shiny 1.8.0 reads every JSON array in a message as a tuple
+    (`shiny._utils.lists_to_tuples`), and `ops.parse_op` takes JSON's lists, strictly."""
+    if isinstance(value, dict):
+        return {k: as_json(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return [as_json(v) for v in value]
+    return value
+
+
+```
+
+  and in `Editor.submit` replace `self._todo.append((kind, request))` with
+  `self._todo.append((kind, as_json(request)))`.
+- [ ] **Step 9: Run the checks; they pass.** `make check`. Expected: `954 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed (44)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(web): 🤖 an edit holding a list, such as replace_all's tracks, is read as JSON has it
+
+Shiny 1.8.0 decodes every JSON array in an input message as a tuple (shiny/_utils.py
+lists_to_tuples, passed as json.loads' object_hook in shiny/session/_session.py), and
+ops.parse_op is strict, so replace_all's `tracks` was refused as "tracks has the wrong type".
+server.as_json turns a request's tuples back into lists before the Editor queues it, so every
+input (Save's formats and Retranslate's ids too) reaches the backend's checks as JSON has it;
+ops.parse_op stays strict. Found while building the editor's find and replace in Chromium.
+
+The new test failed first with:
+  AssertionError: timed out; the tab saw [{'values': {'episode': {...
+(the notice said "this edit can't be made: tracks has the wrong type").
+
+Docs read: shiny 1.8.0's shiny/_utils.py (lists_to_tuples) and Session._run's message decoding.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 15
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/server.py tests/test_web_server.py`, `git commit -F .git/COMMIT_MSG`,
+  then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 15c: the keyboard model, the edit bar, and find and replace
+
+- [ ] **Step 11: Write the failing tests.** `frontend/src/lib/keys.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import { type KeyLike, actionFor } from "./keys";
+
+const press = (key: string, more: Partial<KeyLike> = {}): KeyLike => ({
+  key, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...more,
+});
+
+describe("navigate mode (spec §20)", () => {
+  it("plays, shuttles, moves between cues and cells, and sets times to the playhead", () => {
+    expect(actionFor(press(" "), "navigate")).toEqual({ kind: "play-pause" });
+    expect(actionFor(press("j"), "navigate")).toEqual({ kind: "back" });
+    expect(actionFor(press("K"), "navigate")).toEqual({ kind: "pause" }); // Caps Lock on
+    expect(actionFor(press("l"), "navigate")).toEqual({ kind: "play" });
+    expect(actionFor(press("ArrowUp"), "navigate")).toEqual({ kind: "previous" });
+    expect(actionFor(press("ArrowDown"), "navigate")).toEqual({ kind: "next" });
+    expect(actionFor(press("ArrowLeft"), "navigate")).toEqual({ kind: "cell", cell: "source" });
+    expect(actionFor(press("ArrowRight"), "navigate")).toEqual({ kind: "cell", cell: "translation" });
+    expect(actionFor(press("["), "navigate")).toEqual({ kind: "set-start" });
+    expect(actionFor(press("]"), "navigate")).toEqual({ kind: "set-end" });
+    expect(actionFor(press("Enter"), "navigate")).toEqual({ kind: "edit" });
+  });
+
+  it("nudges 100 ms with Alt and 500 ms with Alt and Shift", () => {
+    expect(actionFor(press("ArrowLeft", { altKey: true }), "navigate")).toEqual({ kind: "nudge", delta_ms: -100 });
+    expect(actionFor(press("ArrowRight", { altKey: true }), "navigate")).toEqual({ kind: "nudge", delta_ms: 100 });
+    expect(actionFor(press("ArrowRight", { altKey: true, shiftKey: true }), "navigate")).toEqual({ kind: "nudge", delta_ms: 500 });
+  });
+
+  it("undoes and redoes with Ctrl or ⌘", () => {
+    expect(actionFor(press("z", { metaKey: true }), "navigate")).toEqual({ kind: "undo" });
+    expect(actionFor(press("z", { ctrlKey: true }), "navigate")).toEqual({ kind: "undo" });
+    expect(actionFor(press("Z", { metaKey: true, shiftKey: true }), "navigate")).toEqual({ kind: "redo" });
+    expect(actionFor(press("y", { ctrlKey: true }), "navigate")).toEqual({ kind: "redo" });
+  });
+
+  it("leaves every other key to the browser", () => {
+    for (const k of [press("a"), press("Tab"), press("Escape"), press("s", { metaKey: true }), press("ArrowUp", { altKey: true })]) {
+      expect(actionFor(k, "navigate")).toBeNull();
+    }
+  });
+});
+
+describe("edit mode (spec §20)", () => {
+  it("lets typing go to the text: only Ctrl or ⌘ chords act, and Esc", () => {
+    for (const k of [" ", "j", "Enter", "[", "ArrowUp", "a"]) expect(actionFor(press(k), "edit")).toBeNull();
+    expect(actionFor(press("ArrowLeft", { altKey: true }), "edit")).toBeNull();
+    expect(actionFor(press("z", { metaKey: true }), "edit")).toBeNull(); // the text box's own undo
+    expect(actionFor(press("Escape"), "edit")).toEqual({ kind: "cancel" });
+  });
+
+  it("commits with ⌘↵, splits at the caret with ⌘⇧S and merges with ⌘M", () => {
+    expect(actionFor(press("Enter", { metaKey: true }), "edit")).toEqual({ kind: "commit" });
+    expect(actionFor(press("Enter", { ctrlKey: true }), "edit")).toEqual({ kind: "commit" });
+    expect(actionFor(press("S", { metaKey: true, shiftKey: true }), "edit")).toEqual({ kind: "split" });
+    expect(actionFor(press("m", { ctrlKey: true }), "edit")).toEqual({ kind: "merge" });
+    expect(actionFor(press("s", { metaKey: true }), "edit")).toBeNull();
+  });
+});
+
+describe("an input method's keys (S33)", () => {
+  it("are never an action while a composition runs, whatever the key", () => {
+    for (const mode of ["navigate", "edit"] as const) {
+      expect(actionFor(press("Enter", { isComposing: true }), mode)).toBeNull();
+      expect(actionFor(press("Enter", { metaKey: true, isComposing: true }), mode)).toBeNull();
+      expect(actionFor(press("Escape", { isComposing: true }), mode)).toBeNull();
+      // compositionstart can come after the keydown, with isComposing still false: keyCode 229
+      expect(actionFor(press("Enter", { keyCode: 229 }), mode)).toBeNull();
+      expect(actionFor(press("Process", { keyCode: 229 }), mode)).toBeNull();
+    }
+  });
+});
+```
+
+  `frontend/src/lib/sends.test.ts`:
+
+```ts
+import { describe, expect, it, vi } from "vitest";
+
+import { pacer } from "./sends";
+
+describe("sending requests one per task", () => {
+  it("runs each queued send in a task of its own, in order", () => {
+    const tasks: (() => void)[] = [];
+    const send = pacer((run) => void tasks.push(run));
+    const sent: string[] = [];
+    send(() => sent.push("set_text"));
+    send(() => sent.push("split"));
+    expect(sent).toEqual([]); // nothing in the task that queued them
+    tasks.shift()!();
+    expect(sent).toEqual(["set_text"]);
+    expect(tasks).toHaveLength(1);
+    tasks.shift()!();
+    expect(sent).toEqual(["set_text", "split"]);
+    tasks.shift()!(); // the queue is empty: it stops scheduling
+    expect(tasks).toHaveLength(0);
+    send(() => sent.push("undo"));
+    tasks.shift()!();
+    expect(sent).toEqual(["set_text", "split", "undo"]);
+  });
+
+  it("keeps two sends apart even when the setter debounces with setTimeout(0)", async () => {
+    // shinyreact's debounce, as in its bundle: a trailing setTimeout that keeps the last value
+    const delivered: number[] = [];
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const setter = (v: number) => {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; delivered.push(v); }, 0);
+    };
+    // (waited for, not slept on: a loaded machine runs timers late, never out of order)
+    const settled = { timeout: 2000, interval: 10 };
+    for (const v of [1, 2, 3]) setter(v); // why the pacer exists: set in one task, two are lost
+    await vi.waitFor(() => expect(delivered).toEqual([3]), settled);
+    delivered.length = 0;
+    const send = pacer();
+    for (const v of [1, 2, 3]) send(() => setter(v));
+    await vi.waitFor(() => expect(delivered).toEqual([1, 2, 3]), settled);
+  });
+});
+```
+
+  `frontend/src/lib/cues.test.ts`, in full (Task 14's, `countMatches` and `splitPoint` imported,
+  and two more `describe` blocks at the end):
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { Row } from "@/types";
+
+import { countMatches, formatTime, indexAt, splitPoint, trackCues, wordAt, wordSpans } from "./cues";
+
+const cues = [
+  { start_ms: 0, end_ms: 1000 },
+  { start_ms: 1500, end_ms: 3000 },
+  { start_ms: 3000, end_ms: 4000 },
+];
+
+describe("what plays now (spec §20)", () => {
+  it("finds the cue whose span holds the time, start included and end excluded", () => {
+    expect(indexAt(cues, 0)).toBe(0);
+    expect(indexAt(cues, 999)).toBe(0);
+    expect(indexAt(cues, 1000)).toBe(-1); // a gap
+    expect(indexAt(cues, 3000)).toBe(2); // one cue ends as the next starts
+    expect(indexAt(cues, 4000)).toBe(-1);
+    expect(indexAt([], 10)).toBe(-1);
+  });
+
+  it("finds a cue among 2,000 in a few steps", () => {
+    const many = Array.from({ length: 2000 }, (_, i) => ({ start_ms: i * 3600, end_ms: i * 3600 + 3000 }));
+    expect(indexAt(many, 1999 * 3600 + 10)).toBe(1999);
+    expect(indexAt(many, 1234 * 3600 + 3100)).toBe(-1);
+  });
+
+  it("finds the spoken word among the row's own words only", () => {
+    const words = [
+      { start_ms: 0, end_ms: 400, text: " I" },
+      { start_ms: 400, end_ms: 900, text: " am" },
+      { start_ms: 900, end_ms: 1400, text: " here" },
+    ];
+    expect(wordAt(words, [1, 3], 450)).toBe(1);
+    expect(wordAt(words, [1, 3], 100)).toBe(-1); // word 0 is another row's
+    expect(wordAt(words, null, 450)).toBe(-1);
+  });
+});
+
+describe("where each word is in a cue's text", () => {
+  it("finds the words in order, past line breaks and punctuation", () => {
+    const words = [" I", " am", " here,", " and"].map((text) => ({ start_ms: 0, end_ms: 1, text }));
+    expect(wordSpans("I am here,\nand", words)).toEqual([[0, 1], [2, 4], [5, 10], [11, 14]]);
+  });
+
+  it("finds words with no spaces between them", () => {
+    const words = ["おは", "よう"].map((text) => ({ start_ms: 0, end_ms: 1, text }));
+    expect(wordSpans("おはよう", words)).toEqual([[0, 2], [2, 4]]);
+  });
+
+  it("stops at a word the text no longer has", () => {
+    const words = [" I", " am", " here"].map((text) => ({ start_ms: 0, end_ms: 1, text }));
+    expect(wordSpans("I was here", words)).toEqual([[0, 1], null, null]);
+  });
+});
+
+describe("a translation track's cues", () => {
+  const row = (id: string, tr: { id: string; start_ms: number; end_ms: number }[]): Row => ({
+    id, n: 1, start_ms: 0, end_ms: 1, text: "", w: null, flags: [],
+    tr: { en: { cues: tr.map((c) => ({ ...c, text: c.id, src: [], detached: false, flags: [] })), flags: [] } },
+  });
+
+  it("lists each cue once, in time order", () => {
+    const a = { id: "a", start_ms: 0, end_ms: 2000 };
+    const b = { id: "b", start_ms: 2000, end_ms: 3000 };
+    expect(trackCues([row("1", [a]), row("2", [b]), row("3", [])], "en").map((c) => c.id)).toEqual(["a", "b"]);
+    expect(trackCues([row("1", [a])], null)).toEqual([]);
+    expect(trackCues([row("1", [a])], "ja")).toEqual([]);
+  });
+});
+
+describe("times", () => {
+  it("are minutes, seconds and milliseconds, with hours from an hour", () => {
+    expect(formatTime(0)).toBe("0:00.000");
+    expect(formatTime(3600)).toBe("0:03.600");
+    expect(formatTime(61_005)).toBe("1:01.005");
+    expect(formatTime(7_199_999)).toBe("1:59:59.999");
+  });
+});
+
+describe("where a split falls without a caret", () => {
+  it("is the space nearest the share of the text, never an end", () => {
+    expect(splitPoint("I am here and there", 0.5)).toBe(9); // "I am here| and there"
+    expect(splitPoint("I am here and there", 0.1)).toBe(1);
+    expect(splitPoint("おはようございます", 0.5)).toBe(5); // no space: the point itself
+    expect(splitPoint("ab", 0)).toBe(1);
+    expect(splitPoint("ab", 1)).toBe(1);
+  });
+});
+
+describe("counting what find would replace", () => {
+  const rows: Row[] = [
+    { id: "a", n: 1, start_ms: 0, end_ms: 1, text: "delighted, delighted", w: null, flags: [], tr: { en: { cues: [{ id: "x", start_ms: 0, end_ms: 2, text: "delighted", src: ["a", "b"], detached: false, flags: [] }], flags: [] } } },
+    { id: "b", n: 2, start_ms: 1, end_ms: 2, text: "here", w: null, flags: [], tr: { en: { cues: [], flags: [] } } },
+  ];
+
+  it("counts each match in the chosen tracks, a translation spanning rows once", () => {
+    expect(countMatches(rows, "ja", ["ja", "en"], "delighted")).toBe(3);
+    expect(countMatches(rows, "ja", ["en"], "delighted")).toBe(1);
+    expect(countMatches(rows, "ja", ["ja"], "Delighted")).toBe(0); // case-sensitive, as replace_all
+    expect(countMatches(rows, "ja", ["ja"], "")).toBe(0);
+  });
+});
+```
+
+  `tests/e2e/test_editing.py`:
+
+```python
+"""Editing in Chromium, against `vid2sub serve --demo` (spec §20, §13.5, §19.3; S28, S33, S37;
+Review Focus 3): text, times, nudges, split, merge, insert and delete go through the server's
+rules and come back with translations re-pointed and flagged, undo and redo walk them back and
+forth, find and replace works across tracks with a glossary term held for Save, committing an
+input method's candidate with Enter fires nothing, everything is done by keyboard with focus
+visible, and an edit to a two-hour episode comes back in under a second. Run with `make e2e`."""
+
+import re
+import time
+from pathlib import Path
+
+import pytest
+from episodes import make_episode
+from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
+
+LINE_1 = "I am delighted to be here, and I am"
+LINE_2 = "particularly delighted to be here on this"
+
+
+def open_demo(page, server):
+    copy = next(server.tmp.glob("vid2sub-demo-*/demo"))
+    page.get_by_test_id("open-path").fill(str(copy / "jfk.mp4"))
+    page.get_by_test_id("open-button").click()
+    rows = page.get_by_test_id("cue-row")
+    expect(rows).to_have_count(4)
+    return rows
+
+
+def pick(rows, k: int) -> None:
+    """Selects row k's source cell, as a click on its text does (a click on the translation
+    selects that cell instead)."""
+    rows.nth(k).get_by_test_id("cue-text").click()
+
+
+def seek(page, seconds: float) -> None:
+    page.get_by_test_id("media").evaluate(
+        "(m, s) => new Promise((done) => { m.addEventListener('seeked', done, { once: true });"
+        " m.currentTime = s; })", seconds)
+
+
+def texts(page) -> list[str]:
+    return page.get_by_test_id("cue-text").all_inner_texts()
+
+
+def test_a_cue_edited_flags_its_translation_stale_and_undo_and_redo_walk_it_back_and_forth(
+        page, server):
+    rows = open_demo(page, server)
+    pick(rows, 1)  # "occasion.", covered with cue 1 by the first Japanese cue
+    expect(rows.nth(1)).to_have_attribute("aria-selected", "true")
+    page.keyboard.press("Enter")
+    box = page.get_by_test_id("cue-editor")
+    expect(box).to_be_focused()
+    expect(box).to_have_value("occasion.")
+    box.fill("occasion!")
+    page.keyboard.press("ControlOrMeta+Enter")
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
+    expect(page.get_by_test_id("cue-list")).to_be_focused()  # back in navigate mode
+    expect(rows.first.locator("[data-flag=stale]")).to_have_count(1)  # §13.5: flagged
+    page.get_by_test_id("tool-undo").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion.")
+    expect(rows.first.locator("[data-flag=stale]")).to_have_count(0)
+    page.get_by_test_id("cue-list").focus()
+    page.keyboard.press("ControlOrMeta+Shift+Z")
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
+    page.keyboard.press("ControlOrMeta+Z")
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion.")
+    expect(page.get_by_test_id("tool-undo")).to_be_disabled()
+
+
+def test_split_merge_nudge_set_times_insert_and_delete_go_through_the_servers_rules(
+        page, server):
+    rows = open_demo(page, server)
+    times = page.get_by_test_id("cue-times")
+    # Split at the caret: the end of the first cue's first line.
+    pick(rows, 0)
+    page.keyboard.press("Enter")
+    # (Home and End move the caret on Linux and Windows, not on macOS: the caret is set directly)
+    page.get_by_test_id("cue-editor").evaluate(f"e => e.setSelectionRange({len(LINE_1)}, "
+                                               f"{len(LINE_1)})")
+    page.keyboard.press("ControlOrMeta+Shift+S")
+    expect(rows).to_have_count(5)
+    assert texts(page)[:2] == [LINE_1, LINE_2]
+    # the Japanese cue that covered cue 1 now covers both halves, flagged stale (§13.5)
+    expect(rows.first.locator("[data-flag=stale]")).to_have_count(1)
+    # Merge them again, from the edit bar.
+    pick(rows, 0)
+    page.get_by_test_id("tool-merge").click()
+    expect(rows).to_have_count(4)
+    assert texts(page)[0] == f"{LINE_1}\n{LINE_2}"
+    # Nudge cue 3 (4.940 to 9.276): 100 ms earlier, then 500 ms, stopped by cue 2's end (4.653).
+    pick(rows, 2)
+    page.keyboard.press("Alt+ArrowLeft")
+    expect(times.nth(2)).to_have_text("0:04.840 → 0:09.176")
+    page.keyboard.press("Shift+Alt+ArrowLeft")
+    expect(times.nth(2)).to_have_text("0:04.653 → 0:08.989")
+    # [ and ] set its start and end to the playhead.
+    seek(page, 5.5)
+    page.get_by_test_id("cue-list").focus()
+    page.keyboard.press("[")
+    expect(times.nth(2)).to_have_text("0:05.500 → 0:08.989")
+    seek(page, 8.0)
+    page.keyboard.press("]")
+    expect(times.nth(2)).to_have_text("0:05.500 → 0:08.000")
+    # Insert at the playhead, in the gap after cue 2: a new cue, untranslated, edited at once.
+    seek(page, 4.8)
+    page.get_by_test_id("tool-insert").click()
+    expect(rows).to_have_count(5)
+    box = page.get_by_test_id("cue-editor")
+    expect(box).to_be_focused()
+    box.fill("Hm.")
+    page.keyboard.press("ControlOrMeta+Enter")
+    new = rows.nth(2)
+    expect(new.get_by_test_id("cue-text")).to_have_text("Hm.")
+    expect(new.get_by_test_id("cue-times")).to_have_text("0:04.800 → 0:05.500")
+    expect(new.locator("[data-flag=untranslated]")).to_have_count(1)
+    page.get_by_test_id("tool-delete").click()
+    expect(rows).to_have_count(4)
+    assert "Hm." not in texts(page)
+
+
+def test_find_and_replace_works_across_tracks_and_a_glossary_term_waits_for_save(page, server):
+    rows = open_demo(page, server)
+    page.get_by_test_id("tool-find").click()
+    page.get_by_test_id("find").fill("delighted")
+    expect(page.get_by_test_id("match-count")).to_have_text("2 matches")
+    page.get_by_test_id("find-track-en").uncheck()
+    expect(page.get_by_test_id("match-count")).to_have_text("0 matches")
+    page.get_by_test_id("find-track-en").check()
+    page.get_by_test_id("replace").fill("pleased")
+    page.get_by_test_id("replace-all").click()
+    expect(rows.first.get_by_test_id("cue-text")).to_have_text(
+        "I am pleased to be here, and I am\nparticularly pleased to be here on this")
+    expect(page.get_by_test_id("match-count")).to_have_text("0 matches")
+    page.get_by_test_id("glossary-term").fill("ケネディ")
+    page.get_by_test_id("glossary-translation").fill("Kennedy")
+    page.get_by_test_id("glossary-add").click()
+    expect(page.get_by_test_id("glossary-adds")).to_have_text("ケネディ → Kennedy (written at Save)")
+    # A term waiting for Save makes every cue of the translation stale (Decision 9).
+    expect(page.get_by_test_id("episode-notes")).to_contain_text("Every Japanese cue is stale")
+    page.get_by_test_id("tool-undo").click()  # the glossary add is an undo step too
+    expect(page.get_by_test_id("glossary-adds")).to_have_count(0)
+
+
+def test_committing_an_input_methods_candidate_with_enter_fires_no_editor_action(page, server):
+    # S33, through Chromium's own IME path (CDP Input.imeSetComposition, then Input.insertText to
+    # commit), with Enter sent while the composition runs, as a Japanese IME sends it.
+    rows = open_demo(page, server)
+    pick(rows, 1)
+    page.keyboard.press("Enter")
+    box = page.get_by_test_id("cue-editor")
+    box.fill("")
+    page.evaluate("""() => {
+        window.__keys = [];
+        document.addEventListener('keydown', (e) => window.__keys.push(
+            [e.key, e.keyCode, e.isComposing]), true);
+    }""")
+    cdp = page.context.new_cdp_session(page)
+    cdp.send("Input.imeSetComposition", {"text": "にほんご", "selectionStart": 4,
+                                         "selectionEnd": 4})
+    expect(box).to_have_value("にほんご")
+    cdp.send("Input.dispatchKeyEvent", {"type": "rawKeyDown", "key": "Enter", "code": "Enter",
+                                        "windowsVirtualKeyCode": 229,
+                                        "nativeVirtualKeyCode": 229})
+    cdp.send("Input.insertText", {"text": "日本語"})
+    cdp.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Enter", "code": "Enter",
+                                        "windowsVirtualKeyCode": 13})
+    expect(box).to_have_value("日本語")
+    assert page.evaluate("() => window.__keys") == [["Enter", 229, True]]
+    # Nothing fired: still in edit mode, the cue unchanged on the server, no undo step.
+    expect(box).to_be_focused()
+    expect(page.get_by_test_id("tool-undo")).to_be_disabled()
+    # A plain keydown that says it is composing is ignored in navigate mode too.
+    page.keyboard.press("Escape")
+    expect(page.get_by_test_id("cue-list")).to_be_focused()
+    page.get_by_test_id("cue-list").dispatch_event("keydown", {"key": "Enter", "isComposing": True})
+    expect(page.get_by_test_id("cue-editor")).to_have_count(0)
+    page.keyboard.press("Enter")  # and without the composition, Enter edits
+    expect(page.get_by_test_id("cue-editor")).to_be_focused()
+    page.keyboard.press("ControlOrMeta+Enter")  # nothing changed, so nothing is sent
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion.")
+
+
+def test_the_editor_works_by_keyboard_alone_with_focus_always_visible(page, server):
+    # S37, spec §19.3: Tab reaches the cue list, the keyboard model selects a cue, and then
+    # Shift+Tab reaches every button of the edit bar, each with its focus visible.
+    rows = open_demo(page, server)
+    page.get_by_test_id("follow").focus()
+    for _ in range(10):
+        page.keyboard.press("Tab")
+        if page.evaluate("() => document.activeElement.dataset.testid") == "cue-list":
+            break
+    expect(page.get_by_test_id("cue-list")).to_be_focused()
+    page.keyboard.press("ArrowDown")
+    expect(rows.first).to_have_attribute("aria-selected", "true")
+    page.keyboard.press("ArrowDown")
+    expect(rows.nth(1)).to_have_attribute("aria-selected", "true")
+    expect(page.get_by_test_id("cue-list")).to_have_attribute(
+        "aria-activedescendant", re.compile(r"^cue-c[0-9a-f]{8}$"))
+    seen = []
+    for _ in range(10):
+        page.keyboard.press("Shift+Tab")
+        found = page.evaluate("() => document.activeElement.dataset.testid || null")
+        if not (found or "").startswith("tool-"):
+            break
+        seen.append(found)
+        assert page.evaluate("""() => document.activeElement.matches(':focus-visible')
+            && getComputedStyle(document.activeElement).outlineStyle !== 'none'"""), found
+    # Undo and Redo are disabled until there is something to undo, so Tab passes them by.
+    assert seen == ["tool-find", "tool-delete", "tool-insert", "tool-merge", "tool-split",
+                    "tool-later", "tool-earlier", "tool-end", "tool-start", "tool-edit"]
+    page.get_by_test_id("cue-list").focus()
+    page.keyboard.press("ArrowRight")  # the translation cell: none starts in this row
+    expect(rows.nth(1).get_by_test_id("cue-translation")).to_have_text("—")
+    expect(rows.nth(1).get_by_test_id("cue-translation")).to_have_attribute("data-selected", "true")
+    page.keyboard.press("ArrowUp")
+    expect(rows.first.get_by_test_id("cue-translation")).to_have_attribute("data-selected", "true")
+    page.keyboard.press("Enter")
+    box = page.get_by_test_id("cue-editor")
+    expect(box).to_have_value(re.compile("^ここに来られて"))
+    box.fill("ここに来られてうれしいです。")
+    page.keyboard.press("ControlOrMeta+Enter")
+    expect(rows.first.get_by_test_id("cue-translation")).to_have_text("ここに来られてうれしいです。")
+    expect(rows.first.locator("[data-flag=edited]")).to_have_count(1)  # Decision 4
+    page.keyboard.press("ArrowLeft")
+    page.keyboard.press("Enter")
+    page.keyboard.press("Escape")  # leaves edit mode without sending anything
+    expect(page.get_by_test_id("cue-editor")).to_have_count(0)
+    expect(page.get_by_test_id("cue-list")).to_be_focused()
+    media = page.get_by_test_id("media")
+    media.evaluate("m => { m.muted = true; }")
+    page.keyboard.press(" ")
+    page.wait_for_function("() => !document.querySelector('[data-testid=media]').paused")
+    page.keyboard.press("k")
+    page.wait_for_function("() => document.querySelector('[data-testid=media]').paused")
+    seek(page, 6.0)
+    page.get_by_test_id("cue-list").focus()
+    page.keyboard.press("j")
+    page.wait_for_function("() => document.querySelector('[data-testid=media]').currentTime < 4.1")
+    page.keyboard.press("l")
+    page.wait_for_function("() => !document.querySelector('[data-testid=media]').paused")
+    page.keyboard.press("k")
+    expect(page.get_by_test_id("tool-undo")).to_be_enabled()
+
+
+def test_an_edit_to_a_two_hour_episode_comes_back_in_under_a_second(page, server):
+    # Review Focus 3: 2,000 cues; the edit, the new view and its render, end to end.
+    copy = next(server.tmp.glob("vid2sub-demo-*/demo"))
+    video = make_episode(Path(copy) / "long", n=2000)
+    page.get_by_test_id("open-path").fill(str(video))
+    page.get_by_test_id("open-button").click()
+    rows = page.get_by_test_id("cue-row")
+    rows.first.click()
+    page.keyboard.press("Enter")
+    page.get_by_test_id("cue-editor").fill("新しい台詞")
+    began = time.monotonic()
+    page.keyboard.press("ControlOrMeta+Enter")
+    expect(rows.first.get_by_test_id("cue-text")).to_have_text("新しい台詞")
+    elapsed = time.monotonic() - began
+    assert elapsed < 1.0, f"{elapsed:.2f} s"
+```
+
+- [ ] **Step 12: Run them; watch them fail.** `cd frontend && npx vitest run src/lib`. Expected:
+  `Error: Failed to resolve import "./keys" from "src/lib/keys.test.ts". Does the file exist?`,
+  the same for `./sends`, and `TypeError: splitPoint is not a function` and `TypeError:
+  countMatches is not a function`. `make build && uv run pytest -m e2e tests/e2e/test_editing.py
+  -q -k a_cue_edited`. Expected: `AssertionError: Locator expected to be focused`, `Error:
+  element(s) not found` for `get_by_test_id("cue-editor")`.
+- [ ] **Step 13: Write the code.** `frontend/src/lib/keys.ts`:
+
+```ts
+// The editor's keyboard model, verbatim from spec §20, safe with CJK input methods.
+//
+// Navigate mode (the default): Space plays or pauses, J/K/L shuttle (J back two seconds, K
+// pause, L play), ↑/↓ the previous or next cue, ←/→ the source or the translation cell, `[` and
+// `]` set the cue's start or end to the playhead, Alt+←/→ nudge it 100 ms (500 ms with Shift),
+// Enter edits the selected cell, Ctrl/⌘+Z undoes and Ctrl/⌘+Shift+Z (or Ctrl+Y) redoes. Edit
+// mode: typing goes to the text and only Ctrl/⌘ chords act (⌘↵ commit, ⌘⇧S split at the caret,
+// ⌘M merge with the next cue); Esc returns to navigate mode. Ctrl and ⌘ are the same chord on
+// every system. A keydown that is part of an IME composition (`isComposing`, or keyCode 229, which
+// is all a browser sets when compositionstart comes after the keydown: MDN's keydown page) is
+// never an action, so committing a candidate with Enter does nothing but commit it (S33).
+
+export type Mode = "navigate" | "edit";
+
+export type Action =
+  | { kind: "play-pause" }
+  | { kind: "back" }
+  | { kind: "pause" }
+  | { kind: "play" }
+  | { kind: "previous" }
+  | { kind: "next" }
+  | { kind: "cell"; cell: "source" | "translation" }
+  | { kind: "set-start" }
+  | { kind: "set-end" }
+  | { kind: "nudge"; delta_ms: number }
+  | { kind: "edit" }
+  | { kind: "undo" }
+  | { kind: "redo" }
+  | { kind: "commit" }
+  | { kind: "split" }
+  | { kind: "merge" }
+  | { kind: "cancel" };
+
+/** What a keydown needs to say: React's and the DOM's KeyboardEvent both have it. */
+export type KeyLike = {
+  key: string;
+  keyCode?: number;
+  isComposing?: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+};
+
+export const NUDGE_MS = 100;
+export const BIG_NUDGE_MS = 500;
+
+/** The action a keydown asks for in `mode`, or null (let the browser have it). */
+export function actionFor(e: KeyLike, mode: Mode): Action | null {
+  if (e.isComposing || e.keyCode === 229) return null;
+  const chord = e.ctrlKey || e.metaKey;
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (mode === "edit") {
+    if (e.key === "Escape") return { kind: "cancel" };
+    if (!chord || e.altKey) return null;
+    if (key === "Enter") return { kind: "commit" };
+    if (key === "s" && e.shiftKey) return { kind: "split" };
+    if (key === "m" && !e.shiftKey) return { kind: "merge" };
+    return null;
+  }
+  if (chord) {
+    if (e.altKey) return null;
+    if (key === "z") return e.shiftKey ? { kind: "redo" } : { kind: "undo" };
+    if (key === "y" && e.ctrlKey && !e.shiftKey) return { kind: "redo" };
+    return null;
+  }
+  if (e.altKey) {
+    const step = e.shiftKey ? BIG_NUDGE_MS : NUDGE_MS;
+    if (key === "ArrowLeft") return { kind: "nudge", delta_ms: -step };
+    if (key === "ArrowRight") return { kind: "nudge", delta_ms: step };
+    return null;
+  }
+  switch (key) {
+    case " ": return { kind: "play-pause" };
+    case "j": return e.shiftKey ? null : { kind: "back" };
+    case "k": return e.shiftKey ? null : { kind: "pause" };
+    case "l": return e.shiftKey ? null : { kind: "play" };
+    case "ArrowUp": return { kind: "previous" };
+    case "ArrowDown": return { kind: "next" };
+    case "ArrowLeft": return { kind: "cell", cell: "source" };
+    case "ArrowRight": return { kind: "cell", cell: "translation" };
+    case "[": return { kind: "set-start" };
+    case "]": return { kind: "set-end" };
+    case "Enter": return e.shiftKey ? null : { kind: "edit" };
+    default: return null;
+  }
+}
+```
+
+  `frontend/src/lib/sends.ts`:
+
+```ts
+// Sends the editor's requests one per task, in order. shinyreact debounces each input with a
+// trailing setTimeout (useSetShinyInput's debounceMs; 0 still waits for the next task), so two
+// values set in one task reach the server as the last one only: a commit and a split sent
+// together, or a draft replayed, would lose all but one. Each queued send runs in a task of its
+// own, after the debounce timer the one before it started, since timers of equal delay run in
+// the order they were set (HTML's timer initialisation steps).
+
+export type Schedule = (run: () => void) => void;
+
+const nextTask: Schedule = (run) => void setTimeout(run, 0);
+
+/** A function that queues `send` to run in a later task, after every send queued before it. */
+export function pacer(schedule: Schedule = nextTask): (send: () => void) => void {
+  const queue: (() => void)[] = [];
+  let running = false;
+  const pump = () => {
+    const next = queue.shift();
+    if (!next) {
+      running = false;
+      return;
+    }
+    next();
+    schedule(pump);
+  };
+  return (send) => {
+    queue.push(send);
+    if (!running) {
+      running = true;
+      schedule(pump);
+    }
+  };
+}
+```
+
+  Append to `frontend/src/lib/cues.ts`:
+
+```ts
+
+/** Where to split a text at `share` (0 to 1) of its length when there is no caret: the space
+ * nearest that point, else the point itself, never at either end (spec §20's split). */
+export function splitPoint(text: string, share: number): number {
+  const target = Math.min(text.length - 1, Math.max(1, Math.round(text.length * share)));
+  let best = -1;
+  for (let k = 1; k < text.length; k++) {
+    if (/\s/.test(text[k]) && (best < 0 || Math.abs(k - target) < Math.abs(best - target))) best = k;
+  }
+  return best > 0 ? best : target;
+}
+
+/** How many times `find` is in the chosen tracks (`sourceKey` for the source), as replace_all
+ * would count it: plain and case-sensitive, each translation cue once. */
+export function countMatches(rows: readonly Row[], sourceKey: string, tracks: readonly string[], find: string): number {
+  if (!find) return 0;
+  const count = (text: string) => text.split(find).length - 1;
+  let n = 0;
+  for (const track of tracks) {
+    if (track === sourceKey) for (const r of rows) n += count(r.text);
+    else for (const c of trackCues(rows, track)) n += count(c.text);
+  }
+  return n;
+}
+```
+
+  Append to `frontend/src/types.ts`:
+
+```ts
+
+/** An edit, as `vid2sub.web.ops` takes it: every edit goes through the server's `apply`. */
+export type EditOp =
+  | { op: "set_text"; cue: string; text: string }
+  | { op: "set_translation_text"; track: string; cue: string; text: string }
+  | { op: "set_times"; cue: string; start_ms?: number; end_ms?: number }
+  | { op: "nudge"; cue: string; delta_ms: number; edge?: "start" | "end" | "both" }
+  | { op: "split"; cue: string; at_char: number; at_ms: number }
+  | { op: "merge_next"; cue: string }
+  | { op: "insert"; start_ms: number; end_ms: number; text: string }
+  | { op: "delete"; cue: string }
+  | { op: "detach"; track: string; cue: string; detached: boolean }
+  | { op: "replace_all"; find: string; replace: string; tracks: string[] }
+  | { op: "glossary_add"; term: string; translation: string };
+```
+
+  `frontend/src/components/CueRow.tsx`, in full:
+
+```tsx
+import type { KeyboardEvent, RefObject } from "react";
+
+import { formatTime, wordSpans } from "@/lib/cues";
+import { cn } from "@/lib/utils";
+import type { Row, SpokenWord } from "@/types";
+
+import { Flags } from "./Flags";
+
+export type Cell = "source" | "translation";
+
+/** The cell being edited: the source cue, or the translation cue `trId`, and the text so far. */
+export type Editing = { id: string; cell: Cell; trId: string | null; text: string };
+
+/** One source cue with its translation alongside (spec §20): number, times, source text, the
+ * chosen track's translation and the flags. The current cue has the orange bar and
+ * `aria-current`; in it the spoken word is marked, found in the text from the transcript's words.
+ * The selected row's selected cell is outlined, and in edit mode it is a text box. Every string is
+ * a text node or a text box's value (spec §6.3). */
+export function CueRow({ row, track, current, selected, cell, editing, word, words, total, onPick, onDraft, onEditKey, editorRef }: {
+  row: Row;
+  track: string | null;
+  current: boolean;
+  selected: boolean;
+  cell: Cell;
+  editing: Editing | null; // only when this row is being edited
+  word: number; // the spoken word's index in `words`, or -1
+  words: readonly SpokenWord[];
+  total: number;
+  onPick: (cell: Cell) => void;
+  onDraft: (text: string) => void;
+  onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+  editorRef: RefObject<HTMLTextAreaElement | null>;
+}) {
+  const tr = track ? row.tr[track] : undefined;
+  const flags = [...row.flags, ...(tr?.flags ?? []), ...(tr?.cues.flatMap((c) => c.flags) ?? [])];
+  const marked = (which: Cell) => selected && cell === which && !editing;
+  const box = (which: Cell) => (
+    <textarea
+      ref={editorRef}
+      value={editing?.text ?? ""}
+      rows={Math.max(2, (editing?.text ?? "").split("\n").length)}
+      onChange={(e) => onDraft(e.target.value)}
+      onKeyDown={onEditKey}
+      onClick={(e) => e.stopPropagation()}
+      aria-label={`${which === "source" ? "Cue" : "Translation of cue"} ${row.n}: ⌘↵ to commit, Esc to cancel`}
+      className="w-full resize-none rounded-sm border border-input bg-background px-1 font-sans text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+      data-testid="cue-editor"
+    />
+  );
+  return (
+    <div
+      role="option"
+      id={`cue-${row.id}`}
+      aria-selected={selected}
+      aria-current={current ? "true" : undefined}
+      aria-setsize={total}
+      aria-posinset={row.n}
+      data-testid="cue-row"
+      data-cue={row.id}
+      onClick={() => onPick("source")}
+      className={cn(
+        "grid cursor-pointer grid-cols-[2.5rem_1fr] gap-x-2 border-b border-l-4 border-b-border px-2 py-1.5",
+        current ? "border-l-(--brand-orange)" : "border-l-transparent",
+        selected && "bg-accent",
+      )}
+    >
+      <span className="pt-0.5 text-xs text-muted-foreground tabular-nums">{row.n}</span>
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="font-mono text-xs text-muted-foreground" data-testid="cue-times">
+          {formatTime(row.start_ms)} → {formatTime(row.end_ms)}
+        </span>
+        {editing?.cell === "source" ? box("source") : (
+          <span data-selected={marked("source") || undefined} className={cn("rounded-sm", marked("source") && "outline-2 outline-ring")}>
+            <SourceText row={row} word={current ? word : -1} words={words} />
+          </span>
+        )}
+        {tr && (editing?.cell === "translation" ? box("translation") : (
+          <span onClick={(e) => { e.stopPropagation(); onPick("translation"); }} data-selected={marked("translation") || undefined} className={cn("rounded-sm whitespace-pre-line text-muted-foreground", marked("translation") && "outline-2 outline-ring")} data-testid="cue-translation">
+            {tr.cues.length ? tr.cues.map((c) => c.text).join("\n") : "—"}
+          </span>
+        ))}
+        <Flags flags={flags} />
+      </div>
+    </div>
+  );
+}
+
+function SourceText({ row, word, words }: { row: Row; word: number; words: readonly SpokenWord[] }) {
+  const span = word >= 0 && row.w ? wordSpans(row.text, words.slice(row.w[0], row.w[1]))[word - row.w[0]] : null;
+  if (!span) return <span className="whitespace-pre-line" data-testid="cue-text">{row.text}</span>;
+  const [start, end] = span;
+  return (
+    <span className="whitespace-pre-line" data-testid="cue-text">
+      {row.text.slice(0, start)}
+      <mark className="rounded-sm bg-primary px-0.5 text-primary-foreground" data-testid="spoken-word">{row.text.slice(start, end)}</mark>
+      {row.text.slice(end)}
+    </span>
+  );
+}
+```
+
+  `frontend/src/components/CueList.tsx`, in full:
+
+```tsx
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { type KeyboardEvent, type RefObject, useCallback, useEffect } from "react";
+
+import type { Row, SpokenWord } from "@/types";
+
+import { type Cell, CueRow, type Editing } from "./CueRow";
+
+/** The cue list (spec §20), one row per source cue, and navigate mode's home: with focus here,
+ * the keyboard model's navigate keys act (`onKeyDown`). Only the rows on screen, and a few either
+ * side, are in the page (Review Focus 3: about 2,000 cues for two hours), measured as they render
+ * since a row's height follows its text; @tanstack/react-virtual places them, through React's
+ * style props (the CSSOM, which the CSP allows), never a style attribute in the markup. The
+ * selected row is scrolled into view, and while playback is followed so is the current one. */
+export function CueList({ listRef, rows, words, track, current, word, selected, cell, editing, follow, onPick, onKeyDown, onDraft, onEditKey, editorRef }: {
+  listRef: RefObject<HTMLDivElement | null>;
+  rows: readonly Row[];
+  words: readonly SpokenWord[];
+  track: string | null;
+  current: number;
+  word: number;
+  selected: number;
+  cell: Cell;
+  editing: Editing | null;
+  follow: boolean;
+  onPick: (index: number, cell: Cell) => void;
+  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
+  onDraft: (text: string) => void;
+  onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+  editorRef: RefObject<HTMLTextAreaElement | null>;
+}) {
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 84,
+    overscan: 6,
+    getItemKey: useCallback((i: number) => rows[i].id, [rows]),
+    useFlushSync: false, // React 19 warns of flushSync inside a render (TanStack's React docs)
+  });
+
+  useEffect(() => {
+    if (follow && current >= 0 && !editing) virtualizer.scrollToIndex(current, { align: "auto" });
+  }, [follow, current, editing, virtualizer]);
+  useEffect(() => {
+    if (selected >= 0) virtualizer.scrollToIndex(selected, { align: "auto" });
+  }, [selected, virtualizer]);
+
+  const items = virtualizer.getVirtualItems();
+  return (
+    <div
+      ref={listRef}
+      role="listbox"
+      aria-label="Cues: arrows to move, Enter to edit, Space to play"
+      tabIndex={0}
+      aria-activedescendant={selected >= 0 && selected < rows.length ? `cue-${rows[selected].id}` : undefined}
+      onKeyDown={onKeyDown}
+      className="h-full min-h-0 overflow-y-auto rounded-lg border border-border bg-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      data-testid="cue-list"
+    >
+      <div role="none" className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+        <div role="none" className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${items[0]?.start ?? 0}px)` }}>
+          {items.map((item) => {
+            const row = rows[item.index];
+            return (
+              <div role="none" key={item.key} data-index={item.index} ref={virtualizer.measureElement}>
+                <CueRow
+                  row={row}
+                  track={track}
+                  current={item.index === current}
+                  selected={item.index === selected}
+                  cell={cell}
+                  editing={editing?.id === row.id ? editing : null}
+                  word={word}
+                  words={words}
+                  total={rows.length}
+                  onPick={(which) => onPick(item.index, which)}
+                  onDraft={onDraft}
+                  onEditKey={onEditKey}
+                  editorRef={editorRef}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+  `frontend/src/components/FindReplace.tsx`:
+
+```tsx
+import { type FormEvent, useState } from "react";
+
+import { countMatches } from "@/lib/cues";
+import type { EditOp, EpisodeView } from "@/types";
+
+const field = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring";
+const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+
+/** Find and replace across tracks, with "add to glossary" (spec §20, §16): plain, case-sensitive
+ * text, replaced through the server's `replace_all` as one undoable edit; a glossary term waits
+ * for Save, which writes it (Decision 5). The count is of the matches in the chosen tracks as the
+ * cue list has them now. Not a modal: the cue list stays usable beside it. */
+export function FindReplace({ episode, onEdit, onClose }: {
+  episode: EpisodeView;
+  onEdit: (op: EditOp) => void;
+  onClose: () => void;
+}) {
+  const tracks = episode.tracks.filter((t) => !t.in_conflict);
+  const [find, setFind] = useState("");
+  const [replace, setReplace] = useState("");
+  const [chosen, setChosen] = useState<string[]>(tracks.map((t) => t.key));
+  const [term, setTerm] = useState("");
+  const [translation, setTranslation] = useState("");
+  const names = chosen.map((key) => (key === episode.source ? "source" : key));
+  const count = find ? countMatches(episode.rows, episode.source, chosen, find) : 0;
+  const adds = Object.entries(episode.glossary_adds);
+
+  const replaceAll = (e: FormEvent) => {
+    e.preventDefault();
+    if (find && names.length) onEdit({ op: "replace_all", find, replace, tracks: names });
+  };
+  const addTerm = (e: FormEvent) => {
+    e.preventDefault();
+    if (term.trim() && translation.trim()) {
+      onEdit({ op: "glossary_add", term: term.trim(), translation: translation.trim() });
+      setTerm("");
+      setTranslation("");
+    }
+  };
+  return (
+    <section aria-label="Find and replace" className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3 text-sm" data-testid="find-replace">
+      <form className="flex flex-col gap-2" onSubmit={replaceAll}>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1">Find <input className={field} value={find} onChange={(e) => setFind(e.target.value)} data-testid="find" /></label>
+          <label className="flex items-center gap-1">Replace with <input className={field} value={replace} onChange={(e) => setReplace(e.target.value)} data-testid="replace" /></label>
+          <span aria-live="polite" data-testid="match-count">{find ? `${count} ${count === 1 ? "match" : "matches"}` : ""}</span>
+        </div>
+        <fieldset className="flex flex-wrap items-center gap-3">
+          <legend className="sr-only">In these tracks</legend>
+          {tracks.map((t) => (
+            <label key={t.key} className="flex items-center gap-1">
+              <input type="checkbox" className="size-4 accent-(--primary)" checked={chosen.includes(t.key)}
+                onChange={(e) => setChosen(e.target.checked ? [...chosen, t.key] : chosen.filter((k) => k !== t.key))} data-testid={`find-track-${t.key}`} />
+              {t.label}
+            </label>
+          ))}
+          <button type="submit" className={button} disabled={!find || !names.length || !count} data-testid="replace-all">Replace all</button>
+          <button type="button" className={button} onClick={onClose}>Close</button>
+        </fieldset>
+      </form>
+      <form className="flex flex-wrap items-center gap-2" onSubmit={addTerm} aria-label="Add to glossary">
+        <span className="font-bold">Add to glossary</span>
+        <label className="flex items-center gap-1">Term <input className={field} value={term} onChange={(e) => setTerm(e.target.value)} data-testid="glossary-term" /></label>
+        <label className="flex items-center gap-1">Translation <input className={field} value={translation} onChange={(e) => setTranslation(e.target.value)} data-testid="glossary-translation" /></label>
+        <button type="submit" className={button} disabled={!term.trim() || !translation.trim()} data-testid="glossary-add">Add</button>
+      </form>
+      {adds.length > 0 && (
+        <ul className="flex flex-col gap-0.5" aria-label="Glossary terms waiting for Save" data-testid="glossary-adds">
+          {adds.map(([t, tr]) => <li key={t}>{t} → {tr} <span className="text-muted-foreground">(written at Save)</span></li>)}
+        </ul>
+      )}
+    </section>
+  );
+}
+```
+
+  `frontend/src/components/Editor.tsx`, in full:
+
+```tsx
+import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
+import { type Action, type KeyLike, actionFor } from "@/lib/keys";
+import { captionLines, type Showing } from "@/lib/overlay";
+import type { Busy, EditOp, EpisodeView } from "@/types";
+
+import { type Cell, type Editing } from "./CueRow";
+import { CueList } from "./CueList";
+import { FindReplace } from "./FindReplace";
+import { Player } from "./Player";
+
+const SPEEDS = [0.75, 1, 1.25] as const; // the practice aids' playback rates (spec §20)
+const INSERT_MS = 2000; // a new cue's length, where the gap allows
+export const control = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+
+/** What the editor asks the server for: every edit goes through its `apply` (spec §20). */
+export type Requests = {
+  edit: (op: EditOp) => void;
+  undo: () => void;
+  redo: () => void;
+};
+
+/** The editor (spec §20): the path box, then, once an episode is open, the player on the left
+ * and the cue list on the right, with the edit bar and find and replace. */
+export function Editor({ episode, busy, pathInput, onOpen, onCantPlay, requests }: {
+  episode: EpisodeView | null;
+  busy: Busy;
+  pathInput: boolean;
+  onOpen: (path: string) => void;
+  onCantPlay: () => void;
+  requests: Requests;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
+      {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
+      {episode ? (
+        <EpisodeEditor key={episode.id} episode={episode} busy={busy} requests={requests} onCantPlay={onCantPlay} />
+      ) : (
+        <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
+      )}
+    </div>
+  );
+}
+
+function OpenForm({ busy, onOpen }: { busy: Busy; onOpen: (path: string) => void }) {
+  const [path, setPath] = useState("");
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (path.trim()) onOpen(path.trim());
+  };
+  return (
+    <form className="flex items-center gap-2" onSubmit={submit} data-testid="open-form">
+      <label htmlFor="open-path" className="text-sm font-bold">Video</label>
+      <input id="open-path" className={`${control} min-w-0 flex-1 font-mono`} value={path} onChange={(e) => setPath(e.target.value)} placeholder="/full/path/to/Show - S01E01.mkv" spellCheck={false} autoComplete="off" data-testid="open-path" />
+      <button type="submit" className="rounded-md bg-primary px-3 py-1 text-sm font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60" disabled={busy === "opening"} data-testid="open-button">
+        {busy === "opening" ? "Opening…" : "Open"}
+      </button>
+    </form>
+  );
+}
+
+function keyOf(e: KeyboardEvent): KeyLike {
+  return { key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey };
+}
+
+function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
+  episode: EpisodeView;
+  busy: Busy;
+  requests: Requests;
+  onCantPlay: () => void;
+}) {
+  const translations = episode.tracks.filter((t) => t.role === "translation" && !t.in_conflict);
+  const [track, setTrack] = useState<string | null>(translations[0]?.key ?? null);
+  const [showing, setShowing] = useState<Showing>("both");
+  const [follow, setFollow] = useState(true);
+  const [loop, setLoop] = useState<{ start_ms: number; end_ms: number } | null>(null);
+  const [rate, setRate] = useState<number>(1);
+  const [current, setCurrent] = useState(-1);
+  const [word, setWord] = useState(-1);
+  const [trAt, setTrAt] = useState(-1);
+  const [sel, setSel] = useState<{ index: number; id: string | null }>({ index: -1, id: null });
+  const [cell, setCell] = useState<Cell>("source");
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [finding, setFinding] = useState(false);
+  const media = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const pending = useRef<{ start_ms: number } | null>(null); // an inserted cue, to select and edit
+
+  const rows = episode.rows;
+  const shownTrack = track && episode.tracks.some((t) => t.key === track) ? track : null;
+  const trCues = useMemo(() => trackCues(rows, shownTrack), [rows, shownTrack]);
+  const selected = sel.index;
+  const row = selected >= 0 ? rows[selected] : undefined;
+
+  // The rows change with every edit: the selection follows its cue, else stays at its place (a
+  // split or merge replaces the cue's id); an inserted cue is selected and edited.
+  useEffect(() => {
+    if (pending.current) {
+      const at = rows.findIndex((r) => r.start_ms === pending.current?.start_ms);
+      pending.current = null;
+      if (at >= 0) {
+        setSel({ index: at, id: rows[at].id });
+        setCell("source");
+        setEditing({ id: rows[at].id, cell: "source", trId: null, text: rows[at].text });
+        return;
+      }
+    }
+    setSel((s) => {
+      const found = rows.findIndex((r) => r.id === s.id);
+      if (found >= 0) return found === s.index ? s : { index: found, id: s.id };
+      const index = Math.min(s.index, rows.length - 1);
+      return { index, id: index >= 0 ? rows[index].id : null };
+    });
+    setEditing((e) => (e && rows.some((r) => r.id === e.id) ? e : null));
+  }, [rows]);
+
+  useEffect(() => {
+    if (editing) editor.current?.focus();
+  }, [editing?.id, editing?.cell]);
+
+  // Called every frame while playing: state changes only when the cue, the word or the
+  // translation playing changes, so the list re-renders a few times a second at most.
+  const onTime = useCallback((ms: number) => {
+    if (loop && media.current && ms >= loop.end_ms) {
+      media.current.currentTime = loop.start_ms / 1000;
+      return;
+    }
+    const at = indexAt(rows, ms);
+    setCurrent(at);
+    setWord(at >= 0 ? wordAt(episode.words, rows[at].w, ms) : -1);
+    setTrAt(indexAt(trCues, ms));
+  }, [loop, rows, trCues, episode.words]);
+
+  const playhead = () => Math.round((media.current?.currentTime ?? 0) * 1000);
+  const seekTo = (ms: number) => {
+    if (media.current) media.current.currentTime = ms / 1000;
+  };
+  const select = (index: number, which: Cell = cell) => {
+    if (index < 0 || index >= rows.length) return;
+    setSel({ index, id: rows[index].id });
+    setCell(which);
+    seekTo(rows[index].start_ms + 1);
+  };
+  const focusList = () => list.current?.focus();
+
+  const startEditing = (which: Cell) => {
+    if (!row) return;
+    if (which === "source") {
+      setEditing({ id: row.id, cell: "source", trId: null, text: row.text });
+      return;
+    }
+    const tr = shownTrack ? row.tr[shownTrack]?.cues[0] : undefined;
+    if (tr) setEditing({ id: row.id, cell: "translation", trId: tr.id, text: tr.text });
+  };
+  const commit = (): boolean => {
+    if (!editing || !row) return false;
+    const before = editing.cell === "source" ? row.text : row.tr[shownTrack ?? ""]?.cues.find((c) => c.id === editing.trId)?.text;
+    if (editing.text === before) return false;
+    if (editing.cell === "source") requests.edit({ op: "set_text", cue: editing.id, text: editing.text });
+    else if (shownTrack && editing.trId) requests.edit({ op: "set_translation_text", track: shownTrack, cue: editing.trId, text: editing.text });
+    return true;
+  };
+  const stopEditing = () => {
+    setEditing(null);
+    focusList();
+  };
+  // Split at the caret in edit mode (committing the text first), else at the space nearest the
+  // playhead's share of the cue; at the playhead when it is inside the cue, else at the caret's
+  // share of the cue's time.
+  const split = () => {
+    if (!row) return;
+    const ph = playhead();
+    const inside = row.start_ms < ph && ph < row.end_ms;
+    let text = row.text;
+    let at: number;
+    if (editing?.cell === "source") {
+      commit();
+      text = editing.text;
+      at = editor.current?.selectionStart ?? Math.floor(text.length / 2);
+      stopEditing();
+    } else {
+      at = splitPoint(text, inside ? (ph - row.start_ms) / (row.end_ms - row.start_ms) : 0.5);
+    }
+    const share = text.length ? at / text.length : 0.5;
+    const at_ms = inside ? ph
+      : Math.min(row.end_ms - 1, Math.max(row.start_ms + 1, Math.round(row.start_ms + (row.end_ms - row.start_ms) * share)));
+    requests.edit({ op: "split", cue: row.id, at_char: at, at_ms });
+  };
+  const merge = () => {
+    if (!row) return;
+    if (editing) {
+      commit();
+      stopEditing();
+    }
+    requests.edit({ op: "merge_next", cue: row.id });
+  };
+  const insert = () => {
+    const ph = playhead();
+    let start = ph;
+    if (indexAt(rows, ph) >= 0 && row) start = row.end_ms;
+    const next = rows.find((r) => r.start_ms > start);
+    const end = Math.min(start + INSERT_MS, next ? next.start_ms : start + INSERT_MS);
+    pending.current = { start_ms: start };
+    requests.edit({ op: "insert", start_ms: start, end_ms: end, text: "…" });
+  };
+
+  const act = (a: Action) => {
+    const m = media.current;
+    switch (a.kind) {
+      case "play-pause": if (m) void (m.paused ? m.play().catch(() => undefined) : m.pause()); return;
+      case "back": if (m) m.currentTime = Math.max(0, m.currentTime - 2); return;
+      case "pause": m?.pause(); return;
+      case "play": if (m) void m.play().catch(() => undefined); return;
+      case "previous": select(Math.max(0, selected - 1)); return;
+      case "next": select(Math.min(rows.length - 1, selected + 1)); return;
+      case "cell": if (a.cell === "source" || shownTrack) setCell(a.cell); return;
+      case "set-start": if (row) requests.edit({ op: "set_times", cue: row.id, start_ms: playhead() }); return;
+      case "set-end": if (row) requests.edit({ op: "set_times", cue: row.id, end_ms: playhead() }); return;
+      case "nudge": if (row) requests.edit({ op: "nudge", cue: row.id, delta_ms: a.delta_ms, edge: "both" }); return;
+      case "edit": startEditing(cell); return;
+      case "undo": requests.undo(); return;
+      case "redo": requests.redo(); return;
+      case "commit": commit(); stopEditing(); return;
+      case "split": if (editing?.cell !== "translation") split(); return;
+      case "merge": merge(); return;
+      case "cancel": stopEditing(); return;
+    }
+  };
+  const onListKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return; // a text box inside handles its own keys
+    const a = actionFor(keyOf(e), "navigate");
+    if (!a) return;
+    e.preventDefault();
+    if (selected < 0 && (a.kind === "next" || a.kind === "previous")) {
+      select(current >= 0 ? current : 0);
+      return;
+    }
+    act(a);
+  };
+  const onEditKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const a = actionFor(keyOf(e), "edit");
+    if (!a) return;
+    e.preventDefault();
+    act(a);
+  };
+
+  const toggleLoop = () => {
+    const at = current >= 0 ? current : selected;
+    setLoop(loop || at < 0 ? null : { start_ms: rows[at].start_ms, end_ms: rows[at].end_ms });
+  };
+  const changeRate = (value: number) => {
+    setRate(value);
+    if (media.current) media.current.playbackRate = value;
+  };
+
+  const lines = captionLines(showing, current >= 0 ? rows[current].text : null, trAt >= 0 ? trCues[trAt].text : null);
+  const stale = translations.filter((t) => t.all_stale);
+  const conflicted = episode.tracks.filter((t) => t.in_conflict);
+  const noRow = !row;
+  const tool = (label: string, keys: string, onClick: () => void, testid: string, disabled = noRow) => (
+    <button type="button" className={control} onClick={onClick} disabled={disabled} aria-keyshortcuts={keys || undefined} title={keys ? `${label} (${keys})` : label} data-testid={testid}>
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <header className="flex flex-col gap-1">
+        <h1 className="truncate text-lg font-bold" data-testid="episode-name">{episode.video.name}</h1>
+        {(episode.notes.length > 0 || stale.length > 0 || conflicted.length > 0) && (
+          <ul role="status" className="flex flex-col gap-0.5 text-sm" data-testid="episode-notes">
+            {episode.notes.map((note, k) => <li key={k}>{note}</li>)}
+            {stale.map((t) => (
+              <li key={`stale-${t.key}`}>Every {t.label} cue is stale: the glossary or the translation model changed since it was made, or a glossary term is waiting for Save.</li>
+            ))}
+            {conflicted.map((t) => (
+              <li key={`conflict-${t.key}`} className="text-destructive">The {t.label} track has two versions: pick one before editing it.</li>
+            ))}
+          </ul>
+        )}
+      </header>
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]">
+        <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
+          <Player video={episode.video} mediaRef={media} lines={lines} busy={busy} onTime={onTime} onCantPlay={onCantPlay} />
+          <div className="flex flex-wrap items-center gap-3 text-sm" data-testid="practice">
+            <label className="flex items-center gap-1">
+              Captions
+              <select className={control} value={showing} onChange={(e) => setShowing(e.target.value as Showing)} data-testid="showing">
+                <option value="source">Source</option>
+                <option value="translation">Translation</option>
+                <option value="both">Both</option>
+              </select>
+            </label>
+            {translations.length > 1 && (
+              <label className="flex items-center gap-1">
+                Translation
+                <select className={control} value={shownTrack ?? ""} onChange={(e) => setTrack(e.target.value)} data-testid="track">
+                  {translations.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                </select>
+              </label>
+            )}
+            <label className="flex items-center gap-1">
+              Speed
+              <select className={control} value={rate} onChange={(e) => changeRate(Number(e.target.value))} data-testid="speed">
+                {SPEEDS.map((s) => <option key={s} value={s}>{s}×</option>)}
+              </select>
+            </label>
+            <button type="button" className={control} aria-pressed={loop !== null} onClick={toggleLoop} data-testid="loop">
+              {loop ? "Looping this cue" : "Loop this cue"}
+            </button>
+            <label className="flex items-center gap-1">
+              <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} className="size-4 accent-(--primary)" data-testid="follow" />
+              Follow playback
+            </label>
+          </div>
+          {finding && <FindReplace episode={episode} onEdit={requests.edit} onClose={() => setFinding(false)} />}
+        </section>
+        <section aria-label="Cue list" className="flex min-h-0 flex-col gap-2">
+          <div role="toolbar" aria-label="Edit the selected cue" className="flex flex-wrap gap-1" data-testid="edit-bar">
+            {tool("Edit", "Enter", () => startEditing(cell), "tool-edit")}
+            {tool("Start to playhead", "[", () => act({ kind: "set-start" }), "tool-start")}
+            {tool("End to playhead", "]", () => act({ kind: "set-end" }), "tool-end")}
+            {tool("−100 ms", "Alt+ArrowLeft", () => act({ kind: "nudge", delta_ms: -100 }), "tool-earlier")}
+            {tool("+100 ms", "Alt+ArrowRight", () => act({ kind: "nudge", delta_ms: 100 }), "tool-later")}
+            {tool("Split", "Meta+Shift+S", split, "tool-split")}
+            {tool("Merge with next", "Meta+M", merge, "tool-merge", noRow || selected >= rows.length - 1)}
+            {tool("Insert", "", insert, "tool-insert", false)}
+            {tool("Delete", "", () => row && requests.edit({ op: "delete", cue: row.id }), "tool-delete")}
+            {tool("Undo", "Meta+Z", requests.undo, "tool-undo", !episode.can_undo)}
+            {tool("Redo", "Meta+Shift+Z", requests.redo, "tool-redo", !episode.can_redo)}
+            <button type="button" className={control} aria-pressed={finding} onClick={() => setFinding(!finding)} data-testid="tool-find">Find and replace</button>
+          </div>
+          <div className="min-h-0 flex-1">
+            <CueList
+              listRef={list}
+              rows={rows}
+              words={episode.words}
+              track={shownTrack}
+              current={current}
+              word={word}
+              selected={selected}
+              cell={cell}
+              editing={editing}
+              follow={follow}
+              onPick={(index, which) => select(index, which)}
+              onKeyDown={onListKey}
+              onDraft={(text) => setEditing((e) => (e ? { ...e, text } : e))}
+              onEditKey={onEditKey}
+              editorRef={editor}
+            />
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+```
+
+  `frontend/src/App.tsx`, in full:
+
+```tsx
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { Editor, type Requests } from "@/components/Editor";
+import { TopBar } from "@/components/TopBar";
+import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
+import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
+import { pacer } from "@/lib/sends";
+import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { Busy, Capabilities, EditOp, EpisodeView, Status } from "@/types";
+
+type Ask = { episode: string; n: number };
+
+type JQueryLike = (target: Document) => {
+  on(event: string, handler: () => void): unknown;
+  off(event: string, handler: () => void): unknown;
+};
+
+export default function App() {
+  const initialized = useShinyInitialized();
+  // Every output is subscribed here, and every message handler lives here: shinyreact 0.1.0
+  // drops a message that has no handler, and an output that unmounts logs "Output <id> not found"
+  // for each later value (recordings' App.tsx). A new output or message gets a line here too.
+  const capabilities = useShinyOutputValue<Capabilities>("capabilities");
+  const status = useShinyOutputValue<Status>("status");
+  const episode = useShinyOutputValue<EpisodeView | null>("episode");
+  const busy = useShinyOutputValue<Busy>("busy");
+  // Every input is set from here too. Each request carries a count, so the same path asked for
+  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
+  const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
+  const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
+  const setUndo = useSetShinyInput<Ask | null>("undo", null, { priority: "event", debounceMs: 0 });
+  const setRedo = useSetShinyInput<Ask | null>("redo", null, { priority: "event", debounceMs: 0 });
+  const sent = useRef(0);
+  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
+  const pace = useMemo(() => pacer(), []);
+  const episodeId = episode?.id ?? null;
+  const requests = useMemo<Requests>(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+    const send = <T,>(set: (v: T) => void, value: T | null) => value && pace(() => set(value));
+    return {
+      edit: (op) => { const a = ask(); send(setEdit, a && { ...a, op }); },
+      undo: () => send(setUndo, ask()),
+      redo: () => send(setRedo, ask()),
+    };
+  }, [episodeId, pace, setEdit, setUndo, setRedo]);
+  const [notices, setNotices] = useState<Shown[]>([]);
+  const nextId = useRef(1);
+  useShinyMessageHandler("notice", (data: unknown) => {
+    setNotices((shown) => addNotice(shown, data, nextId.current++));
+  });
+
+  // The websocket closed: ask the engine once why, and say so; never reconnect (Review Focus 5).
+  const [lost, setLost] = useState<Lost | null>(null);
+  const check = useCallback(() => {
+    void whyLost((input, init) => window.fetch(input, init)).then(setLost);
+  }, []);
+  useEffect(() => {
+    // Shiny triggers shiny:disconnected through jQuery, which addEventListener never sees.
+    const $ = (window as unknown as { jQuery?: JQueryLike }).jQuery;
+    if (!$) return;
+    $(document).on("shiny:disconnected", check);
+    return () => void $(document).off("shiny:disconnected", check);
+  }, [check]);
+
+  if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
+  return (
+    <div className="flex h-dvh flex-col" data-testid="app">
+      <TopBar capabilities={capabilities} status={status} />
+      {lost && (
+        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
+        <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">
+          <span>{LOST_MESSAGES[lost]}</span>
+          {lost === "stopped" && (
+            <button type="button" className="underline" onClick={check} data-testid="check-again">Check again</button>
+          )}
+          {lost === "dropped" && (
+            <button type="button" className="underline" onClick={() => window.location.reload()}>Reload</button>
+          )}
+        </div>
+      )}
+      <main className="min-h-0 flex-1" data-testid="main">
+        <Editor
+          episode={episode ?? null}
+          busy={busy ?? null}
+          pathInput={capabilities?.path_input ?? false}
+          onOpen={(path) => setOpen({ path, n: ++sent.current })}
+          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+          requests={requests}
+        />
+      </main>
+      <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">
+        <div role="status" aria-live="polite" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "info").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+        <div role="alert" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "error").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: Shown[]) => Shown[]) => void }) {
+  return (
+    <div className={`flex items-start gap-2 rounded-lg border bg-card p-3 text-sm shadow ${notice.kind === "error" ? "border-destructive text-destructive" : "border-border"}`} data-testid="notice">
+      {/* Plain text: a notice can carry a file name or a server's error (spec §6.3). */}
+      <span className="flex-1">{notice.text}</span>
+      <button type="button" aria-label="Dismiss" onClick={() => onDismiss((s) => dismissNotice(s, notice.id))}>×</button>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 14: Run the checks; they pass.** First the guard (S33): comment out `if
+  (e.isComposing || e.keyCode === 229) return null;` in `keys.ts`; `npx vitest run
+  src/lib/keys.test.ts` fails `an input method's keys (S33) > are never an action while a
+  composition runs, whatever the key`, and after `make build`, `uv run pytest -m e2e
+  tests/e2e/test_editing.py -q -k input_method` fails `AssertionError: Locator expected to have
+  count '0'` (navigate mode's Enter opened the editor); put the line back. `make check`.
+  Expected: `954 passed, 2 skipped, 24 deselected` (twice), `Test Files  11 passed (11)`, `Tests  55 passed (55)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `20 passed`.
+- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(frontend): 🤖 the editor edits, splits, merges, nudges, inserts, deletes, undoes and finds and replaces by spec §20's keyboard model, and an IME's Enter fires nothing
+
+Spec §20's editing, for S28, S33 and S37's editor half:
+
+- lib/keys.ts is the keyboard model, verbatim: navigate mode (Space, J/K/L, ↑/↓, `[` and `]`,
+  Alt+←/→ nudging 100 ms or 500 ms with Shift, Enter to edit the selected cell; ←/→ choose the
+  source or translation cell; Ctrl/⌘+Z and Ctrl/⌘+Shift+Z undo and redo) and edit mode (typing
+  goes to the text; only ⌘↵ commit, ⌘⇧S split at the caret and ⌘M merge act; Esc returns), with
+  Ctrl and ⌘ the same chord. A keydown with isComposing, or keyCode 229, is never an action (MDN's
+  keydown page: compositionstart can come after the keydown).
+- The cue list is navigate mode's home; the selected cell is outlined and, in edit mode, a text
+  box. The edit bar holds every action as a button, with aria-keyshortcuts: edit, start and end to
+  the playhead, ±100 ms, split (at the caret, or at the space nearest the playhead's share),
+  merge with next, insert (at the playhead in a gap, else after the selected cue, then edited),
+  delete, undo, redo, find and replace.
+- FindReplace: plain, case-sensitive text across the chosen tracks through replace_all, with the
+  match count, and "add to glossary", held for Save and listed (Decision 5); a held term makes the
+  translations all stale (Decision 9), which the editor says.
+- Every edit goes to the server's apply as {"episode", "n", "op"}; lib/sends' pacer sends one per
+  task, since shinyreact's trailing debounce keeps only the last value set in a task.
+
+The guard (S33) fails without its fix: with the isComposing/229 line taken out of keys.ts, Vitest
+failed "an input method's keys (S33) > are never an action while a composition runs" and the e2e
+test failed `expect(cue-editor).to_have_count(0)` (navigate mode's Enter fired).
+
+The new tests failed first with:
+  Error: Failed to resolve import "./keys" from "src/lib/keys.test.ts". Does the file exist?
+  TypeError: splitPoint is not a function
+  AssertionError: Locator expected to be focused ... get_by_test_id("cue-editor") (not found)
+
+The IME test drives a real composition in Chromium through CDP: Input.imeSetComposition, then a
+rawKeyDown Enter with windowsVirtualKeyCode 229 while it runs (the page sees
+["Enter", 229, true]), then Input.insertText to commit it.
+
+Docs read: spec §20; MDN's keydown event (isComposing, keyCode 229) and CompositionEvent; the
+Chrome DevTools Protocol's Input domain (imeSetComposition, insertText, dispatchKeyEvent; from
+its Input.pdl); Playwright 1.64's keyboard.press ("ControlOrMeta"), new_cdp_session and
+dispatch_event; HTMLTextAreaElement's selectionStart and setSelectionRange; shinyreact 0.1.0's
+debounce (its bundle: a trailing setTimeout); HTML's timer initialisation steps (equal timeouts
+run in order); Vitest 3.2's vi.waitFor (its
+index.d.ts: retries the callback until it passes or times out), so the pacer test waits for
+late timers instead of sleeping a fixed 20 ms.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 15
+Co-Authored-By: <the model's own line>
+```
+
+  `git add frontend/src/App.tsx frontend/src/types.ts frontend/src/lib/keys.ts
+  frontend/src/lib/keys.test.ts frontend/src/lib/sends.ts frontend/src/lib/sends.test.ts
+  frontend/src/lib/cues.ts frontend/src/lib/cues.test.ts frontend/src/components/Editor.tsx
+  frontend/src/components/CueList.tsx frontend/src/components/CueRow.tsx
+  frontend/src/components/FindReplace.tsx tests/e2e/test_editing.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that every edit reaches the server's
+  `apply` and none is lost to shinyreact's debounce (`pacer`) or reordered (the `Editor`'s
+  queue); that `as_json` changes only tuples, so `parse_op` stays strict on everything else; that
+  edit mode lets typing through and only the three chords and Esc act; that an IME's Enter, or
+  any keydown with `isComposing` or keyCode 229, is never an action; that every action has a
+  button with visible focus, and the list's `aria-activedescendant` names a row that is in the
+  page; that find and replace's count and the server's replace agree; that a glossary term waits
+  for Save (Decision 5) and the all-stale note says so. The forward review over Tasks 16, 17, 18
+  and 23 (Task 16's crash-recovery draft records the steps `requests` sends; its `save` and
+  `resolve` go through the same pacer and `Editor` queue, and arrays in them arrive as lists via
+  `as_json`; Task 17's Retranslate buttons join the edit bar and its `ids` arrive as a list;
+  Task 18's settings drawer, a native `<dialog>`, must not take the cue list's keys; Task 23's
+  Step 4 is done with this keyboard model). The docs this task made untrue: none expected (the
+  README's editor keys are Task 22's). Then the close, its own commit, holding this plan with this
+  task's boxes ticked and **Now** set to `Task 16: Saving, open.`, and the spec's S28 and S33 set
+  to `built` (S28's Proof: `tests/test_edit.py; tests/e2e/test_editing.py`; S33's:
+  `tests/e2e/test_editing.py`, a composition through Chromium's CDP `Input.imeSetComposition`);
+  S37 stays `planned` (Task 19's job progress), with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 15: Editing in the editor
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 15
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -16956,11 +21792,1994 @@ Co-Authored-By: <the model's own line>
 **Tier:** 2 · **Scenarios:** S29, S31, S32, S34
 
 **Files:**
-- Create: `frontend/src/lib/draft.ts` (+ test), `frontend/src/components/{SaveBar,ConflictPicker}.tsx`
-- Modify: `src/vid2sub/web/server.py` (inputs `save`, `resolve`; message `save_result`)
-- Test: `tests/e2e/test_saving.py`
+- Create: `frontend/src/lib/draft.ts` (+ test), `frontend/src/components/{SaveBar,ConflictPicker}.tsx`,
+  `frontend/src/components/{SaveBar,ConflictPicker}.test.ts`, `frontend/src/components/ui/dialog.tsx` (Task 12's
+  note's native `<dialog>`, built here as the first modal part)
+- Modify: `src/vid2sub/web/server.py` (inputs `save`, `resolve`; message `save_result`; `busy`
+  "saving" and "picking"), `src/vid2sub/web/views.py` (`heads`, `formats`, `differences`),
+  `frontend/src/{App.tsx,types.ts,index.css}`, `frontend/src/components/Editor.tsx`
+- Test: `tests/test_web_server.py`, `tests/test_views.py`, `tests/e2e/test_saving.py`
 
-<!-- steps: written in the next pass -->
+**Interfaces:**
+- Consumes: Task 15's `Editor` queue, `as_json`, `_named`, `Requests`, `pacer` and `control`;
+  `LocalBackend.save(ep, *, formats) -> (Episode, SaveResult)` and `.resolve(ep, track,
+  rendition) -> (Episode, SaveResult)` (Task 6; `SaveError` fit to show; a Save or a pick starts
+  the undo history again); `views.episode_view`'s `conflicts` and `tracks[].in_conflict` (Task 5);
+  `useShinyMessageHandler` and `addNotice` (Task 12).
+- Produces:
+  - Input `save`: `{"episode": str, "n": int, "formats": ["srt"] | ["srt", "ass"]}`; any other
+    `formats` is the notice `Save writes srt, and ass when asked for: nothing was saved`. Input
+    `resolve`: `{"episode": str, "n": int, "track": str, "rendition": str}`; a rendition not of
+    `make_rendition`'s shape (`r_` and 16 hex) is the notice `pick one of the track's versions`.
+    Both join the tab's `Editor` queue and run through `runtime.blocking`, with `busy` at
+    `"saving"` or `"picking"`; a `SaveError` or `OpenError` is a notice with its message.
+  - Message `save_result`: `{"episode": str, "kind": "save" | "pick", "written": [file names],
+    "foreign": [file names left alone], "conflicts": [track keys], "notes": [str]}`, sent after
+    the new episode is published.
+  - `views.episode_view` gains `"heads": {track: rendition}` and `"formats": ["srt"]` or
+    `["srt", "ass"]` (ASS where vid2sub has written one for this video before); round 16c adds
+    `"differences": {track: {"cues": [{"start_ms", "end_ms", "texts": [str | null, …]}], "more":
+    int}}` for each track in conflict (texts in `conflicts[track]`'s order, null where a version
+    lacks the cue; cues matched by id; at most `views.DIFFERENCES_SHOWN` = 50, in time order).
+  - `types.ts`: `EpisodeView.heads`, `EpisodeView.formats`, `Busy` with `"saving" | "picking"`,
+    `SaveResultMessage`; round 16c: `Difference`, `EpisodeView.differences`.
+  - `lib/draft.ts`: `type DraftStep = {edit: EditOp} | {undo: true} | {redo: true}`, `type Draft
+    = {v: 1, at: string, steps: DraftStep[]}`, `type DraftStorage`, `draftKey(heads) -> string`
+    (`vid2sub.draft.<track>=<rendition>,…`, sorted), `draftStorage()`, `loadDraft(storage, key)`,
+    `addStep(storage, key, step, now?)`, `clearDraft(storage, key)`; none ever throws.
+  - `components/ui/dialog.tsx`: `Dialog({open, onClose, title, side?, children, className?})`,
+    as Task 12's note gives it; `index.css` gains `html.dialog-open { overflow: hidden; }`.
+  - `SaveBar({dirty, busy, formats, draft, onSave, onRestore, onDiscard})` and
+    `resultNotices(result: SaveResultMessage, tracks: TrackInfo[]): Notice[]`;
+    `ConflictPicker({episode, open, onClose, onPick(track, rendition)})` and `versionLabel(v)`;
+    round 16c numbers the versions (`Version 1: …`) and adds the table of differing cues
+    (`data-testid="difference"` on each row).
+    Test ids: `save`, `save-ass`, `save-state`, `draft`, `draft-restore`, `draft-discard`,
+    `conflict-picker`, `version` (each version's label), `keep-<track>`, `picker-close`,
+    `pick-version` (the conflict note's button).
+  - `Editor` takes `saving: Saving` (`{draft, conflictsFound, onRestore, onDiscard}`) beside
+    round 14d's `onCantPlay`, and
+    `Requests` gains `save(formats)` and `resolve(track, rendition)`. `App` sets `save` and
+    `resolve` through the pacer, handles `save_result`, keeps the draft and adds the
+    `beforeunload` listener only while the episode is dirty.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+
+#### Round 16a: Save, the pick and what they did
+
+- [ ] **Step 1: Write the failing tests.** In `tests/test_views.py`, replace
+  `from vid2sub.subs.sidecar import Header, HeadRecord, Sidecar, VideoInfo, make_rendition` with
+
+```python
+from vid2sub.subs.sidecar import (
+    Header,
+    HeadRecord,
+    ProjectionRecord,
+    Sidecar,
+    VideoInfo,
+    make_rendition,
+)
+```
+
+  and above `def test_a_rows_flags_are_its_stored_flags_and_its_lint_flags():` add
+
+```python
+def test_the_view_names_each_tracks_head_and_the_formats_save_keeps_writing():
+    # The tab keys its crash-recovery draft by the heads (S34), and Save writes ASS again where
+    # an ASS was written before (spec §15.2).
+    ep = episode()
+    v = view(ep)
+    assert v["heads"] == ep.heads and v["formats"] == ["srt"]
+    ass = ProjectionRecord(path="Show - S01E01.en.ass", format="ass", track="en",
+                           rendition=ep.heads["en"], sha256="0" * 64, at=AT)
+    with_ass = dataclasses.replace(ep, sidecar=Sidecar(HEADER, ep.sidecar.records + (ass,)))
+    assert view(with_ass)["formats"] == ["srt", "ass"]
+
+
+```
+
+  At the end of `tests/test_web_server.py` add (the two blank lines first):
+
+```python
+
+
+# ---- the editor: Save and picking a version (Task 16) ------------------------------------------
+
+
+def results(t: Tab) -> list[dict]:
+    return [m["custom"]["shinyReactMessage"]["data"] for m in t.messages
+            if m.get("custom", {}).get("shinyReactMessage", {}).get("id") == "save_result"]
+
+
+def busy_seen(t: Tab) -> list:
+    return [m["values"]["busy"] for m in t.messages if "busy" in m.get("values", {})]
+
+
+@pytest.mark.media
+def test_save_writes_a_version_then_the_files_and_says_what_it_wrote(media_client, tmp_path):
+    # S29, spec §14.5.
+    video = make_episode(tmp_path / "ep")
+    srt = video.with_name("Show - S01E01.ja.srt")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"]}
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": ep["rows"][0]["id"],
+                                          "text": "おはようございます"}})
+        latest(t, lambda e: e["dirty"])
+        t.set(save={**ask, "n": 2, "formats": ["srt"]})
+        result = t.until(lambda t: results(t) and results(t)[0])
+        assert result == {"episode": ep["id"], "kind": "save", "written": [srt.name],
+                          "foreign": [], "conflicts": [], "notes": []}
+        saved = latest(t, lambda e: not e["dirty"])
+        assert saved["rows"][0]["text"] == "おはようございます" and not saved["can_undo"]
+        assert saved["heads"]["ja"] != ep["heads"]["ja"]
+        assert saved["heads"]["en"] == ep["heads"]["en"]
+        assert "saving" in busy_seen(t) and t.value("busy") is None
+        assert "おはようございます" in srt.read_text(encoding="utf-8")
+
+
+@pytest.mark.media
+def test_two_tabs_saving_one_episode_end_in_a_conflict_the_second_sees_and_a_pick_resolves(
+        media_client, tmp_path):
+    # Review Focus 4, S32: each Save is compare-and-swap on the version its tab opened.
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as a, tab(media_client) as b:
+        ep_a, ep_b = opened_in(a, video), opened_in(b, video)
+        cue = ep_a["rows"][1]["id"]
+        for t, ep, text in ((a, ep_a, "げんき？"), (b, ep_b, "元気？")):
+            t.set(edit={"episode": ep["id"], "n": 1,
+                        "op": {"op": "set_text", "cue": cue, "text": text}})
+            latest(t, lambda e: e["dirty"])
+            t.set(save={"episode": ep["id"], "n": 2, "formats": ["srt"]})
+            t.until(lambda t: results(t))
+        assert results(a)[0]["conflicts"] == [] and results(b)[0]["conflicts"] == ["ja"]
+        assert results(b)[0]["written"] == []  # a track in conflict is never written
+        torn = latest(b, lambda e: e["conflicts"])
+        assert [t["in_conflict"] for t in torn["tracks"] if t["key"] == "ja"] == [True]
+        versions = torn["conflicts"]["ja"]
+        assert len(versions) == 2 and {v["by"] for v in versions} == {"editor"}
+        # keep the second tab's own version: the file still holds the first's, so it is written
+        theirs = latest(a, lambda e: not e["dirty"])["heads"]["ja"]
+        mine = next(v["rendition"] for v in versions if v["rendition"] != theirs)
+        b.set(resolve={"episode": torn["id"], "n": 3, "track": "ja", "rendition": mine})
+        picked = b.until(lambda t: len(results(t)) == 2 and results(t)[1])
+        assert picked["kind"] == "pick" and picked["written"] == ["Show - S01E01.ja.srt"]
+        whole = latest(b, lambda e: not e["conflicts"])
+        assert whole["rows"][1]["text"] == "元気？"
+        assert "元気？" in video.with_name("Show - S01E01.ja.srt").read_text(encoding="utf-8")
+        assert "picking" in busy_seen(b)
+
+
+@pytest.mark.media
+def test_a_save_or_pick_that_isnt_well_formed_is_refused_without_echoing_it(media_client,
+                                                                            tmp_path):
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"]}
+        t.set(save={**ask, "n": 1, "formats": ["<mp4>"]})
+        t.set(save={**ask, "n": 2, "formats": "srt"})
+        t.set(resolve={**ask, "n": 3, "track": "ja", "rendition": "<script>"})
+        t.set(resolve={**ask, "n": 4, "track": "<b>", "rendition": "r_" + "0" * 16})
+        t.set(resolve={**ask, "n": 5, "track": "ja", "rendition": "r_" + "0" * 16})
+        t.until(lambda t: len(t.notices()) == 5)
+        assert [n["text"] for n in t.notices()] == [
+            "Save writes srt, and ass when asked for: nothing was saved",
+            "Save writes srt, and ass when asked for: nothing was saved",
+            "pick one of the track's versions",
+            "there's no such track",
+            "the ja track has only one version: there's nothing to pick",
+        ]
+        assert results(t) == [] and "<" not in json.dumps(t.notices())
+```
+
+- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_server.py
+  tests/test_views.py -q -k 'save or conflict or well_formed or head_and_the_formats'`. Expected:
+  `4 failed, 3 passed, 39 deselected`, three with `AssertionError: timed out; the tab saw [...` and one with
+  `KeyError: 'heads'`.
+- [ ] **Step 3: Write the code.** `src/vid2sub/web/views.py`: in the module docstring replace
+  `` container and codec names, which the browser's canPlayType is asked about (§8.2). The top
+  bar's `` (one line) with
+
+```python
+container and codec names, which the browser's canPlayType is asked about (§8.2). It names each
+track's head rendition, by which the tab keys its crash-recovery draft (§14.5, S34), and the
+formats Save writes: ASS too where one was written before (§15.2). The top bar's
+```
+
+  in `episode_view`, below `"glossary_adds": dict(ep.glossary_adds),`, add
+
+```python
+        "heads": dict(ep.heads),
+        "formats": _formats(ep),
+```
+
+  and above `def _flags` add
+
+```python
+def _formats(ep: Episode) -> list[str]:
+    """SRT, and ASS where vid2sub has written an ASS for this video before (spec §15.2)."""
+    written = {p.format for p in ep.sidecar.projections().values()}
+    return ["srt", "ass"] if "ass" in written else ["srt"]
+
+
+```
+
+  `src/vid2sub/web/server.py`: replace the module docstring's paragraph that begins
+  `The editor (spec §20):` with
+
+```python
+The editor (spec §20): each tab holds at most one open episode, in an `Editor`. Every call that
+changes it (open, edits, undo, redo, Save and picks) runs one at a time, in the order the tab sent
+them, in a task of the tab's own that holds no reactive lock while it waits on the disk or ffmpeg,
+so a slow open never freezes another tab and no edit is lost to a Save running at the same time.
+The backend returns a new frozen `Episode` each time, which the editor sets as the reactive value
+the `episode` output reads. The player gets the video by a media token, or the playback audio
+when the browser can't play the video's audio (Decision 2) or, as the page reports from
+canPlayType and the video's own errors, the video itself (`playback`, spec §8.2, §8.8); its
+tokens are revoked with the episode when the tab opens another or closes: the mount passes no
+lifespan events on, so that happens in `session.on_ended`. Requests come from the browser, so
+they are checked before use and never echoed (§6.3, §6.8). Edits go through the backend's
+`apply`, so the rules exist once (§20): an edit is checked at the door by `ops.parse_op`, and it,
+undo and redo run on the event loop (about 0.02 s for 2,000 cues, Task 6); a request naming an
+episode the tab has since moved on from (sent before an open finished) is dropped. Save (§14.5)
+and a pick of a conflicted track's version (§14.4) block on the disk, so they run through
+`runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each sends
+`save_result`: what was written, what was left alone, which tracks are in conflict, and the
+notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save sees
+(Review Focus 4, S32).
+```
+
+  Below `import logging` add `import re`; replace `from vid2sub.web.episode import Episode,
+  OpenError` with `from vid2sub.web.episode import Episode, OpenError, SaveError, SaveResult`;
+  below `TYPE_A_PATH = ...` add
+
+```python
+FORMATS = ("srt", "ass")
+BAD_FORMATS = "Save writes srt, and ass when asked for: nothing was saved"
+RENDITION = re.compile(r"r_[0-9a-f]{16}")  # sidecar.make_rendition's ids (spec §14.2)
+```
+
+  in `class Editor`, above `async def _show`, add
+
+```python
+    async def _save(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is None or not isinstance(request, dict):
+            return
+        formats = request.get("formats")
+        if (not isinstance(formats, list) or not 0 < len(formats) <= len(FORMATS)
+                or any(f not in FORMATS for f in formats)):
+            await notice(self.session, "error", BAD_FORMATS)
+            return
+        await self._set_busy("saving")
+        try:
+            saved, result = await runtime.blocking(self.rt.backend.save, ep, formats=formats)
+        except (SaveError, OpenError) as err:
+            await self._set_busy(None)
+            await notice(self.session, "error", str(err))
+            return
+        self.ep = saved
+        await self._publish(busy=None)
+        await self._report("save", saved, result)
+
+    async def _resolve(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is None or not isinstance(request, dict):
+            return
+        track, rendition = request.get("track"), request.get("rendition")
+        if not (isinstance(track, str) and isinstance(rendition, str)
+                and RENDITION.fullmatch(rendition)):
+            await notice(self.session, "error", "pick one of the track's versions")
+            return
+        await self._set_busy("picking")
+        try:
+            picked, result = await runtime.blocking(self.rt.backend.resolve, ep, track, rendition)
+        except (SaveError, OpenError) as err:  # never echoes the track or the rendition
+            await self._set_busy(None)
+            await notice(self.session, "error", str(err))
+            return
+        self.ep = picked
+        await self._publish(busy=None)
+        await self._report("pick", picked, result)
+
+    async def _report(self, kind: Literal["save", "pick"], ep: Episode,
+                      result: SaveResult) -> None:
+        """The `save_result` message: file names and track keys only, never a path (§6.8)."""
+        await shinyreact.send_message(self.session, "save_result", {
+            "episode": ep.id, "kind": kind, "written": list(result.written),
+            "foreign": list(result.foreign), "conflicts": list(result.conflicts),
+            "notes": list(result.notes)})
+
+```
+
+  and in `server()`, below the `_redo` effect, add
+
+```python
+
+    @reactive.effect
+    @reactive.event(input.save)
+    def _save() -> None:
+        editor.submit("save", input.save())
+
+    @reactive.effect
+    @reactive.event(input.resolve)
+    def _resolve() -> None:
+        editor.submit("resolve", input.resolve())
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `make check`. Expected: `958 passed, 2 skipped, 24 deselected` (twice), `Test Files  11 passed (11)`, `Tests  55 passed (55)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 a tab saves its episode and picks a conflicted track's version, and hears what was written, left alone or in conflict
+
+Inputs `save` ({"episode", "n", "formats": ["srt"] or ["srt", "ass"]}) and `resolve`
+({"episode", "n", "track", "rendition"}) join the tab's Editor queue: each runs
+LocalBackend.save or .resolve through runtime.blocking (they block on the disk), with `busy` at
+"saving" or "picking", then sends the `save_result` message, {"episode", "kind": "save" | "pick",
+"written", "foreign", "conflicts", "notes"}, file names and track keys only (§6.8). Edits sent
+meanwhile wait their turn and land on the saved episode. Formats are checked at the door, and a
+rendition must have make_rendition's shape; a SaveError or OpenError is a notice that never echoes
+the request. Two tabs saving one episode end in a conflict the later Save sees, never written
+until a person picks (Review Focus 4, S32).
+
+views.episode_view gains "heads" (track → head rendition, which the tab keys its crash-recovery
+draft by, S34) and "formats" (["srt", "ass"] where vid2sub has written an ASS for this video
+before, so Save keeps writing it, §15.2).
+
+The new tests failed first with:
+  AssertionError: timed out; the tab saw [{'recalculating': {'name': 'episode', ...
+  KeyError: 'heads'
+
+Docs read: spec §14.4, §14.5, §15.2; vid2sub.web.backend's save and resolve (SaveResult,
+SaveError's messages); sidecar.make_rendition's id shape and Sidecar.projections.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 16
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/server.py src/vid2sub/web/views.py tests/test_web_server.py
+  tests/test_views.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'`
+  shows `Plan:`.
+
+#### Round 16b: the save bar, the conflict picker, the draft and the warning
+
+- [ ] **Step 6: Write the failing tests.** `frontend/src/lib/draft.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import { addStep, clearDraft, draftKey, type DraftStorage, loadDraft } from "./draft";
+
+function memory(): DraftStorage & { data: Map<string, string> } {
+  const data = new Map<string, string>();
+  return {
+    data,
+    getItem: (k) => data.get(k) ?? null,
+    setItem: (k, v) => void data.set(k, v),
+    removeItem: (k) => void data.delete(k),
+  };
+}
+
+const throwing: DraftStorage = {
+  getItem: () => { throw new DOMException("denied", "SecurityError"); },
+  setItem: () => { throw new DOMException("full", "QuotaExceededError"); },
+  removeItem: () => { throw new DOMException("denied", "SecurityError"); },
+};
+
+const AT = new Date("2026-10-24T09:30:00Z");
+const EDIT = { edit: { op: "set_text", cue: "c0000000a", text: "occasion!" } } as const;
+
+describe("the crash-recovery draft (spec §14.5, S34)", () => {
+  it("is keyed by the episode's heads, whatever their order", () => {
+    expect(draftKey({ ja: "r_2", en: "r_1" })).toBe("vid2sub.draft.en=r_1,ja=r_2");
+    expect(draftKey({ en: "r_1", ja: "r_2" })).toBe(draftKey({ ja: "r_2", en: "r_1" }));
+    expect(draftKey({ en: "r_1", ja: "r_3" })).not.toBe(draftKey({ en: "r_1", ja: "r_2" }));
+  });
+
+  it("keeps each step in the order sent, from when the first was made", () => {
+    const s = memory();
+    const key = draftKey({ en: "r_1" });
+    expect(loadDraft(s, key)).toBeNull();
+    addStep(s, key, EDIT, AT);
+    addStep(s, key, { undo: true }, new Date("2026-10-24T10:00:00Z"));
+    addStep(s, key, { redo: true });
+    expect(loadDraft(s, key)).toEqual({ v: 1, at: "2026-10-24T09:30:00.000Z", steps: [EDIT, { undo: true }, { redo: true }] });
+    clearDraft(s, key);
+    expect(loadDraft(s, key)).toBeNull();
+  });
+
+  it("ignores junk and an empty draft", () => {
+    const s = memory();
+    for (const raw of ["not json", "{}", '{"v":2,"at":"x","steps":[]}', '{"v":1,"at":"x","steps":[]}', "null"]) {
+      s.data.set("k", raw);
+      expect(loadDraft(s, "k")).toBeNull();
+    }
+  });
+
+  it("never throws where storage is forbidden or full", () => {
+    expect(() => addStep(throwing, "k", EDIT)).not.toThrow();
+    expect(loadDraft(throwing, "k")).toBeNull();
+    expect(() => clearDraft(throwing, "k")).not.toThrow();
+    expect(loadDraft(null, "k")).toBeNull();
+    expect(() => addStep(null, "k", EDIT)).not.toThrow();
+  });
+});
+```
+
+  `frontend/src/components/SaveBar.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { SaveResultMessage, TrackInfo } from "@/types";
+
+import { resultNotices } from "./SaveBar";
+
+const TRACKS: TrackInfo[] = [
+  { key: "en", label: "English", role: "source", head_by: "editor", in_conflict: false, all_stale: false },
+  { key: "ja", label: "Japanese", role: "translation", head_by: "auto", in_conflict: true, all_stale: false },
+];
+const BASE: SaveResultMessage = { episode: "e1", kind: "save", written: [], foreign: [], conflicts: [], notes: [] };
+
+describe("what a Save says (spec §14.5, §15.3)", () => {
+  it("names the files it wrote, and says Saved when there was nothing to write", () => {
+    expect(resultNotices({ ...BASE, written: ["a.en.srt", "a.ja.srt"] }, TRACKS)).toEqual([
+      { kind: "info", text: "Saved: wrote a.en.srt, a.ja.srt" }]);
+    expect(resultNotices(BASE, TRACKS)).toEqual([{ kind: "info", text: "Saved" }]);
+  });
+
+  it("names each file left alone, each note, and each track in conflict", () => {
+    const r = { ...BASE, foreign: ["a.en.ass"], notes: ["kept your outside edit to en"], conflicts: ["ja"] };
+    expect(resultNotices(r, TRACKS)).toEqual([
+      { kind: "info", text: "Left a.en.ass alone: vid2sub didn't write it, or it was changed outside vid2sub since" },
+      { kind: "info", text: "Kept your outside edit to en" },
+      { kind: "error", text: "Japanese has two versions: pick the one to keep" },
+    ]);
+  });
+
+  it("says a pick kept the version picked", () => {
+    expect(resultNotices({ ...BASE, kind: "pick", written: ["a.ja.srt"] }, TRACKS)).toEqual([
+      { kind: "info", text: "Kept the version you picked: wrote a.ja.srt" }]);
+  });
+});
+```
+
+  `tests/e2e/test_saving.py`:
+
+```python
+"""Saving in Chromium, against `vid2sub serve --demo` (spec §14.4, §14.5, §15.3; S29, S31, S32,
+S34; Review Focus 4): Save appends a version and rewrites only vid2sub's own files, leaving
+someone else's alone; an SRT edited elsewhere comes back as an outside version and the editor
+says so; two tabs saving one episode end in a conflict the second sees, picked in the native
+<dialog>; a crashed tab's draft is offered back, and closing with unsaved edits warns first.
+Run with `make e2e`."""
+
+import re
+from pathlib import Path
+
+import pytest
+from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
+
+EN = "jfk.en.srt"
+
+
+def demo_copy(server) -> Path:
+    return next(server.tmp.glob("vid2sub-demo-*/demo"))
+
+
+def open_demo(page, server):
+    page.get_by_test_id("open-path").fill(str(demo_copy(server) / "jfk.mp4"))
+    page.get_by_test_id("open-button").click()
+    rows = page.get_by_test_id("cue-row")
+    expect(rows).to_have_count(4)
+    return rows
+
+
+def edit_cue(page, rows, k: int, text: str) -> None:
+    rows.nth(k).get_by_test_id("cue-text").click()
+    page.keyboard.press("Enter")
+    page.get_by_test_id("cue-editor").fill(text)
+    page.keyboard.press("ControlOrMeta+Enter")
+    expect(rows.nth(k).get_by_test_id("cue-text")).to_have_text(text)
+
+
+def notices(page) -> list[str]:
+    return [t.removesuffix("×").strip() for t in page.get_by_test_id("notice").all_inner_texts()]
+
+
+def test_save_appends_a_version_and_rewrites_only_vid2subs_own_files(page, server):
+    # S29, spec §14.5: an editor rendition, a head and projection records, then the files; a file
+    # vid2sub didn't write is left alone and said so (§15.3).
+    copy = demo_copy(server)
+    sidecar = copy / "jfk.vid2sub.jsonl"
+    before = len(sidecar.read_text(encoding="utf-8").splitlines())
+    ja = (copy / "jfk.ja.srt").read_bytes()
+    (copy / "jfk.en.ass").write_text("someone else's file\n", encoding="utf-8")
+    rows = open_demo(page, server)
+    expect(page.get_by_test_id("save-state")).to_have_text("All changes saved")
+    edit_cue(page, rows, 1, "occasion!")
+    expect(page.get_by_test_id("save-state")).to_have_text("Unsaved changes")
+    page.get_by_test_id("save-ass").check()
+    page.get_by_test_id("save").click()
+    expect(page.get_by_test_id("save-state")).to_have_text("All changes saved")
+    expect(page.get_by_test_id("notice").first).to_be_visible()
+    # ASS is asked for, so the Japanese ASS is written too; the English one is someone else's.
+    assert notices(page) == ["Saved: wrote jfk.en.srt, jfk.ja.ass",
+                             ("Left jfk.en.ass alone: vid2sub didn't write it, or it was changed "
+                              "outside vid2sub since")]
+    assert "occasion!" in (copy / EN).read_text(encoding="utf-8")
+    assert (copy / "jfk.ja.srt").read_bytes() == ja  # no Japanese edit: no new version or SRT
+    assert (copy / "jfk.en.ass").read_text(encoding="utf-8") == "someone else's file\n"
+    records = sidecar.read_text(encoding="utf-8").splitlines()[before:]
+    kinds = [re.search(r'"type":"(\w+)"', r).group(1) for r in records]
+    assert kinds[:2] == ["rendition", "head"] and "projection" in kinds
+    expect(page.get_by_test_id("tool-undo")).to_be_disabled()  # a Save starts the history again
+
+
+def test_an_srt_edited_elsewhere_comes_back_as_an_outside_version_and_the_editor_says_so(
+        page, server):
+    # S31: reopened after an outside edit, the change is the head and the editor says so.
+    copy = demo_copy(server)
+    srt = copy / EN
+    srt.write_text(srt.read_text(encoding="utf-8").replace("occasion.", "occasion, truly."),
+                   encoding="utf-8")
+    rows = open_demo(page, server)
+    expect(page.get_by_test_id("episode-notes")).to_contain_text("kept your outside edit to en")
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion, truly.")
+    # S32's other half: edited outside again while the editor has unsaved edits, then Save keeps
+    # both, as two versions to pick from, and writes neither over the other.
+    edit_cue(page, rows, 2, "We meet at a college.")
+    srt.write_text(srt.read_text(encoding="utf-8").replace("occasion, truly.", "occasion, again."),
+                   encoding="utf-8")
+    page.get_by_test_id("save").click()
+    expect(page.get_by_test_id("conflict-picker")).to_be_visible()
+    assert notices(page) == ["Kept your outside edit to en",
+                             "English has two versions: pick the one to keep"]
+    assert "occasion, again." in srt.read_text(encoding="utf-8")  # left as the outside edit made it
+
+
+def test_two_tabs_saving_one_episode_end_in_a_conflict_the_second_sees_and_picks_from(
+        open_page, server):
+    # Review Focus 4, S32: each Save is compare-and-swap on the version it was opened at.
+    first, second = open_page(server), open_page(server)
+    a, b = first.page, second.page
+    rows_a, rows_b = open_demo(a, server), open_demo(b, server)
+    edit_cue(a, rows_a, 1, "occasion!")
+    a.get_by_test_id("save").click()
+    expect(a.get_by_test_id("save-state")).to_have_text("All changes saved")
+    edit_cue(b, rows_b, 1, "occasion?")
+    opener = b.get_by_test_id("save")
+    opener.click()
+    dialog = b.locator("dialog[open]")
+    expect(dialog).to_be_visible()
+    expect(rows_b).to_have_count(0)  # the source is in conflict, so it isn't loaded (§14.4)
+    assert any(n.startswith("English has two versions") for n in notices(b))
+    # Decision 13: the native <dialog>, modal, focus inside, Tab kept inside, the page behind
+    # inert, Esc closes it and focus goes back to the opener.
+    assert dialog.evaluate("d => d.matches(':modal')")
+    assert dialog.evaluate("d => d.contains(document.activeElement)")
+    landed = set()
+    for _ in range(6):  # never on the page behind: inside, or out to the browser's own UI (body)
+        b.keyboard.press("Tab")
+        where = dialog.evaluate("""d => d.contains(document.activeElement)
+            ? document.activeElement.dataset.testid || document.activeElement.tagName
+            : document.activeElement === document.body ? "body" : "outside" """)
+        assert where != "outside"
+        landed.add(where)
+    assert "picker-close" in landed
+    theme = b.get_by_test_id("theme-dark").bounding_box()
+    x, y = theme["x"] + theme["width"] / 2, theme["y"] + theme["height"] / 2
+    assert b.evaluate("([x, y]) => document.elementFromPoint(x, y)?.dataset.testid ?? null",
+                      [x, y]) != "theme-dark"
+    b.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(opener).to_be_focused()
+    expect(b.locator("html")).not_to_have_class(re.compile(r"\bdialog-open\b"))
+    # The note's button opens it again; keep the first tab's version.
+    b.get_by_test_id("pick-version").click()
+    versions = b.get_by_test_id("version")
+    expect(versions).to_have_count(2)
+    assert all(re.match(r"^Saved in the editor, .+: 4 cues$", v)
+               for v in versions.all_inner_texts())
+    versions.first.check()
+    b.get_by_test_id("keep-en").click()
+    expect(dialog).to_have_count(0)
+    expect(b.get_by_test_id("pick-version")).to_have_count(0)  # no track in conflict now
+    expect(rows_b).to_have_count(4)  # the source is loaded again
+    picked = rows_b.nth(1).get_by_test_id("cue-text").inner_text()
+    assert picked in ("occasion!", "occasion?")
+    assert picked in (demo_copy(server) / EN).read_text(encoding="utf-8")
+    for watched in (first, second):
+        assert watched.errors == [] and watched.violations() == []
+
+
+def test_a_crashed_tab_offers_its_draft_back_and_closing_with_unsaved_edits_warns_first(
+        open_page, server):
+    # S34, spec §14.5: the draft is in localStorage; the warning is beforeunload's.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit_cue(a, rows, 1, "occasion!")
+    edit_cue(a, rows, 2, "We meet.")
+    a.get_by_test_id("tool-undo").click()
+    expect(rows.nth(2).get_by_test_id("cue-text")).to_have_text(
+        "We meet at a college noted for knowledge,")
+    warned = []
+    a.on("dialog", lambda d: (warned.append(d.type), d.dismiss()))
+    a.close(run_before_unload=True)
+    a.wait_for_timeout(500)
+    assert warned == ["beforeunload"] and not a.is_closed()  # dismissing it kept the tab
+    a.close()  # a crash: no warning, no Save
+    second = open_page(server)
+    b = second.page
+    rows = open_demo(b, server)
+    draft = b.get_by_test_id("draft")
+    expect(draft).to_contain_text("3 unsaved edits from")
+    b.get_by_test_id("draft-restore").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
+    expect(rows.nth(2).get_by_test_id("cue-text")).to_have_text(
+        "We meet at a college noted for knowledge,")
+    expect(b.get_by_test_id("save-state")).to_have_text("Unsaved changes")
+    expect(draft).to_have_count(0)
+    b.get_by_test_id("save").click()
+    expect(b.get_by_test_id("save-state")).to_have_text("All changes saved")
+    b.reload()  # saved: nothing is offered any more
+    rows = open_demo(b, server)
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
+    expect(b.get_by_test_id("draft")).to_have_count(0)
+    assert second.errors == [] and second.violations() == []
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `cd frontend && npx vitest run src/lib/draft.test.ts
+  src/components/SaveBar.test.ts`. Expected: `Error: Failed to resolve import "./draft" from
+  "src/lib/draft.test.ts". Does the file exist?` and the same for `./SaveBar`.
+  `uv run pytest -m e2e tests/e2e/test_saving.py -q -k srt_edited`. Expected:
+  `playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.`, waiting for
+  `get_by_test_id("save")`.
+- [ ] **Step 8: Write the code.** `frontend/src/lib/draft.ts`:
+
+```ts
+// The tab's crash-recovery draft (spec §14.5, S34): unsaved edits live in the tab, and every
+// request that changes the episode is also written to localStorage, so a tab that crashes or is
+// closed can offer them back when the episode is opened again. The draft is the edits, undos and
+// redos in the order they were sent, replayed through the server's rules on Restore, so the
+// rules exist once (§20). It is keyed by the heads the episode was opened at: a Save moves the
+// heads, so a draft is only ever offered on the versions its edits were made against. Every
+// storage call is wrapped in try/catch: a private window or blocked site data throws, and the
+// editor must work without it.
+
+import type { EditOp } from "@/types";
+
+export type DraftStep = { edit: EditOp } | { undo: true } | { redo: true };
+export type Draft = { v: 1; at: string; steps: DraftStep[] };
+export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+const PREFIX = "vid2sub.draft.";
+
+/** The draft's key: the episode's heads (track → rendition id), in a fixed order. */
+export function draftKey(heads: Record<string, string>): string {
+  return PREFIX + Object.keys(heads).sort().map((k) => `${k}=${heads[k]}`).join(",");
+}
+
+/** localStorage, or null where the browser forbids it. */
+export function draftStorage(): DraftStorage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** The draft under `key`, or null: none, junk, or storage that throws. */
+export function loadDraft(storage: DraftStorage | null, key: string): Draft | null {
+  try {
+    const raw = storage?.getItem(key);
+    if (!raw) return null;
+    const draft = JSON.parse(raw) as Partial<Draft>;
+    if (draft.v !== 1 || typeof draft.at !== "string" || !Array.isArray(draft.steps)) return null;
+    return draft.steps.length ? (draft as Draft) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Adds one step to the draft under `key`, started now if there is none. */
+export function addStep(storage: DraftStorage | null, key: string, step: DraftStep, now: Date = new Date()): void {
+  try {
+    const draft = loadDraft(storage, key) ?? { v: 1, at: now.toISOString(), steps: [] };
+    storage?.setItem(key, JSON.stringify({ ...draft, steps: [...draft.steps, step] }));
+  } catch {
+    /* full or forbidden: the edit still reaches the server, only the crash copy is lost */
+  }
+}
+
+export function clearDraft(storage: DraftStorage | null, key: string): void {
+  try {
+    storage?.removeItem(key);
+  } catch {
+    /* nothing to clear where storage is forbidden */
+  }
+}
+```
+
+  `frontend/src/components/ui/dialog.tsx` (Task 12's note, as it gives it):
+
+```tsx
+import { type ReactNode, useEffect, useId, useRef } from "react";
+
+import { cn } from "@/lib/utils";
+
+/** A modal dialog, or with `side` a sheet at that edge, on the native <dialog> element.
+ * showModal() puts it in the top layer, makes the rest of the page inert for focus and screen
+ * readers, closes it on Esc and moves focus in and, on close, back to the opener. Radix's modal
+ * parts inject a <style> element, which the CSP blocks (Task 12's probe), so the editor's modal
+ * parts are this one. Scroll lock is the `dialog-open` class on <html>, from index.css: a class,
+ * which the CSP allows, where an inline style isn't. */
+export function Dialog({ open, onClose, title, side, children, className }: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  side?: "left" | "right";
+  children: ReactNode;
+  className?: string;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    if (open && !dialog.open) {
+      dialog.showModal();
+      document.documentElement.classList.add("dialog-open");
+    } else if (!open && dialog.open) {
+      dialog.close();
+    }
+  }, [open]);
+  useEffect(() => () => document.documentElement.classList.remove("dialog-open"), []);
+  return (
+    <dialog
+      ref={ref}
+      aria-labelledby={titleId}
+      data-side={side}
+      onClose={() => {
+        document.documentElement.classList.remove("dialog-open");
+        onClose();
+      }}
+      className={cn(
+        "rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-lg backdrop:bg-black/40",
+        side && "m-0 h-dvh max-h-none w-96 max-w-full rounded-none data-[side=left]:mr-auto data-[side=right]:ml-auto",
+        className,
+      )}
+    >
+      <h2 id={titleId} className="mb-3 font-bold">{title}</h2>
+      {children}
+    </dialog>
+  );
+}
+```
+
+  `frontend/src/index.css` ends with `@layer base`'s closing `}` and no newline: add a newline
+  after that `}`, then append (the file now ends with a newline):
+
+```css
+
+/* Scroll lock while a modal <dialog> is open (components/ui/dialog.tsx): a class, which the CSP
+   allows, where Radix's injected <style> is blocked (the Phase 2 plan's Decision 13). */
+html.dialog-open {
+  overflow: hidden;
+}
+```
+
+  `frontend/src/types.ts`: in `EpisodeView`, below `glossary_adds: Record<string, string>;`, add
+
+```ts
+  heads: Record<string, string>; // track → head rendition: the crash-recovery draft's key
+  formats: ("srt" | "ass")[]; // what Save writes unless the person changes it
+```
+
+  replace `export type Busy = "opening" | "playback" | null;` with
+  `export type Busy = "opening" | "playback" | "saving" | "picking" | null;`, and append
+
+```ts
+
+/** The `save_result` message: what a Save or a pick wrote, left alone or found in conflict. */
+export type SaveResultMessage = {
+  episode: string;
+  kind: "save" | "pick";
+  written: string[];
+  foreign: string[];
+  conflicts: string[];
+  notes: string[];
+};
+```
+
+  `frontend/src/components/SaveBar.tsx`:
+
+```tsx
+import { useState } from "react";
+
+import type { Busy, Notice, SaveResultMessage, TrackInfo } from "@/types";
+
+const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+
+/** What a Save or a pick did, as notices: what was written, each file left alone (someone
+ * else's, or changed outside since: §15.3), each track in conflict, and the notes, as text. */
+export function resultNotices(r: SaveResultMessage, tracks: readonly TrackInfo[]): Notice[] {
+  const label = (key: string) => tracks.find((t) => t.key === key)?.label ?? key;
+  const out: Notice[] = [];
+  const wrote = r.written.length ? `: wrote ${r.written.join(", ")}` : "";
+  if (r.kind === "pick") out.push({ kind: "info", text: `Kept the version you picked${wrote}` });
+  else if (wrote || !r.conflicts.length) out.push({ kind: "info", text: `Saved${wrote}` });
+  if (r.foreign.length) {
+    out.push({ kind: "info", text: `Left ${r.foreign.join(", ")} alone: vid2sub didn't write ${r.foreign.length === 1 ? "it" : "them"}, or ${r.foreign.length === 1 ? "it was" : "they were"} changed outside vid2sub since` });
+  }
+  for (const note of r.notes) out.push({ kind: "info", text: note.charAt(0).toUpperCase() + note.slice(1) });
+  for (const key of r.conflicts) out.push({ kind: "error", text: `${label(key)} has two versions: pick the one to keep` });
+  return out;
+}
+
+/** Save (spec §14.5) and the draft a crashed tab left (S34). Save writes a version of each
+ * changed track and then the subtitle files: SRT always, ASS too when ticked, as the episode was
+ * written before unless the person changes it. A draft found for the versions this episode was
+ * opened at is offered back, to restore or discard. */
+export function SaveBar({ dirty, busy, formats, draft, onSave, onRestore, onDiscard }: {
+  dirty: boolean;
+  busy: Busy;
+  formats: readonly string[];
+  draft: { at: string; steps: number } | null;
+  onSave: (formats: ("srt" | "ass")[]) => void;
+  onRestore: () => void;
+  onDiscard: () => void;
+}) {
+  const [ass, setAss] = useState(formats.includes("ass"));
+  const saving = busy === "saving" || busy === "picking";
+  return (
+    <div className="flex flex-col gap-1" data-testid="save-bar">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <button
+          type="button"
+          className="rounded-md bg-primary px-3 py-1 font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
+          onClick={() => onSave(ass ? ["srt", "ass"] : ["srt"])}
+          disabled={saving}
+          data-testid="save"
+        >
+          {busy === "saving" ? "Saving…" : "Save"}
+        </button>
+        <label className="flex items-center gap-1">
+          <input type="checkbox" className="size-4 accent-(--primary)" checked={ass} onChange={(e) => setAss(e.target.checked)} data-testid="save-ass" />
+          ASS too
+        </label>
+        <span role="status" className="text-muted-foreground" data-testid="save-state">
+          {dirty ? "Unsaved changes" : "All changes saved"}
+        </span>
+      </div>
+      {draft && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm" data-testid="draft">
+          <span>
+            {draft.steps} unsaved {draft.steps === 1 ? "edit" : "edits"} from {new Date(draft.at).toLocaleString()} were kept in this browser.
+          </span>
+          <button type="button" className={button} onClick={onRestore} data-testid="draft-restore">Restore them</button>
+          <button type="button" className={button} onClick={onDiscard} data-testid="draft-discard">Discard</button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+  `frontend/src/components/ConflictPicker.tsx`:
+
+```tsx
+import { useState } from "react";
+
+import type { EpisodeView, Version } from "@/types";
+
+import { Dialog } from "./ui/dialog";
+
+const BY: Record<string, string> = {
+  editor: "saved in the editor",
+  external: "edited outside vid2sub",
+  auto: "made by vid2sub",
+  import: "imported",
+  user: "picked by you",
+};
+
+/** A version in words: who made it, when, and how many cues it has. */
+export function versionLabel(v: Version): string {
+  const who = v.by ? (BY[v.by] ?? v.by) : "saved";
+  const when = v.at ? `, ${new Date(v.at).toLocaleString()}` : "";
+  return `${who[0].toUpperCase()}${who.slice(1)}${when}: ${v.cue_count} ${v.cue_count === 1 ? "cue" : "cues"}`;
+}
+
+/** The conflict picker (spec §14.4, S32): a track whose versions diverged (two tabs, or a tab
+ * and a CLI run or an outside edit) shows each version, and the person keeps one, which the
+ * server's `resolve` makes the head and writes. The native <dialog> (Decision 13): modal, the
+ * page behind inert, Esc closes it, focus comes back. */
+export function ConflictPicker({ episode, open, onClose, onPick }: {
+  episode: EpisodeView;
+  open: boolean;
+  onClose: () => void;
+  onPick: (track: string, rendition: string) => void;
+}) {
+  const tracks = episode.tracks.filter((t) => t.in_conflict && episode.conflicts[t.key]?.length);
+  const [chosen, setChosen] = useState<Record<string, string>>({});
+  return (
+    <Dialog open={open} onClose={onClose} title="Pick a version" className="w-[32rem] max-w-[calc(100vw-2rem)]">
+      <div className="flex flex-col gap-4 text-sm" data-testid="conflict-picker">
+        <p>
+          These tracks were saved twice from the same version, by another tab, a command or an edit outside vid2sub.
+          Both versions are kept in the sidecar; pick the one to keep editing and write.
+        </p>
+        {tracks.map((t) => (
+          <fieldset key={t.key} className="flex flex-col gap-2 rounded-md border border-border p-3">
+            <legend className="px-1 font-bold">{t.label}</legend>
+            {episode.conflicts[t.key].map((v) => (
+              <label key={v.rendition} className="flex items-center gap-2" data-testid="version">
+                <input
+                  type="radio"
+                  name={`version-${t.key}`}
+                  value={v.rendition}
+                  checked={chosen[t.key] === v.rendition}
+                  onChange={() => setChosen({ ...chosen, [t.key]: v.rendition })}
+                  className="size-4 accent-(--primary)"
+                />
+                {versionLabel(v)}
+              </label>
+            ))}
+            <button
+              type="button"
+              className="self-start rounded-md bg-primary px-3 py-1 font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
+              disabled={!chosen[t.key]}
+              onClick={() => onPick(t.key, chosen[t.key])}
+              data-testid={`keep-${t.key}`}
+            >
+              Keep this version
+            </button>
+          </fieldset>
+        ))}
+        <button type="button" className="self-end rounded-md border border-input px-3 py-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" onClick={onClose} data-testid="picker-close">
+          Not now
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+```
+
+  `frontend/src/components/Editor.tsx`, in full:
+
+```tsx
+import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
+import { type Action, type KeyLike, actionFor } from "@/lib/keys";
+import { captionLines, type Showing } from "@/lib/overlay";
+import type { Busy, EditOp, EpisodeView } from "@/types";
+
+import { ConflictPicker } from "./ConflictPicker";
+import { type Cell, type Editing } from "./CueRow";
+import { CueList } from "./CueList";
+import { FindReplace } from "./FindReplace";
+import { Player } from "./Player";
+import { SaveBar } from "./SaveBar";
+
+const SPEEDS = [0.75, 1, 1.25] as const; // the practice aids' playback rates (spec §20)
+const INSERT_MS = 2000; // a new cue's length, where the gap allows
+export const control = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+
+/** What the editor asks the server for: every edit goes through its `apply` (spec §20). */
+export type Requests = {
+  edit: (op: EditOp) => void;
+  undo: () => void;
+  redo: () => void;
+  save: (formats: ("srt" | "ass")[]) => void;
+  resolve: (track: string, rendition: string) => void;
+};
+
+/** Saving's state, from App: the draft a crashed tab left (S34), and a count that goes up each
+ * time a Save or a pick finds a track in conflict, which opens the picker. */
+export type Saving = {
+  draft: { at: string; steps: number } | null;
+  conflictsFound: number;
+  onRestore: () => void;
+  onDiscard: () => void;
+};
+
+/** The editor (spec §20): the path box, then, once an episode is open, the player on the left
+ * and the cue list on the right, with the edit bar and find and replace. */
+export function Editor({ episode, busy, pathInput, onOpen, onCantPlay, requests, saving }: {
+  episode: EpisodeView | null;
+  busy: Busy;
+  pathInput: boolean;
+  onOpen: (path: string) => void;
+  onCantPlay: () => void;
+  requests: Requests;
+  saving: Saving;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
+      {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
+      {episode ? (
+        <EpisodeEditor key={episode.id} episode={episode} busy={busy} requests={requests} saving={saving} onCantPlay={onCantPlay} />
+      ) : (
+        <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
+      )}
+    </div>
+  );
+}
+
+function OpenForm({ busy, onOpen }: { busy: Busy; onOpen: (path: string) => void }) {
+  const [path, setPath] = useState("");
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (path.trim()) onOpen(path.trim());
+  };
+  return (
+    <form className="flex items-center gap-2" onSubmit={submit} data-testid="open-form">
+      <label htmlFor="open-path" className="text-sm font-bold">Video</label>
+      <input id="open-path" className={`${control} min-w-0 flex-1 font-mono`} value={path} onChange={(e) => setPath(e.target.value)} placeholder="/full/path/to/Show - S01E01.mkv" spellCheck={false} autoComplete="off" data-testid="open-path" />
+      <button type="submit" className="rounded-md bg-primary px-3 py-1 text-sm font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60" disabled={busy === "opening"} data-testid="open-button">
+        {busy === "opening" ? "Opening…" : "Open"}
+      </button>
+    </form>
+  );
+}
+
+function keyOf(e: KeyboardEvent): KeyLike {
+  return { key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey };
+}
+
+function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
+  episode: EpisodeView;
+  busy: Busy;
+  requests: Requests;
+  saving: Saving;
+  onCantPlay: () => void;
+}) {
+  const translations = episode.tracks.filter((t) => t.role === "translation" && !t.in_conflict);
+  const [track, setTrack] = useState<string | null>(translations[0]?.key ?? null);
+  const [showing, setShowing] = useState<Showing>("both");
+  const [follow, setFollow] = useState(true);
+  const [loop, setLoop] = useState<{ start_ms: number; end_ms: number } | null>(null);
+  const [rate, setRate] = useState<number>(1);
+  const [current, setCurrent] = useState(-1);
+  const [word, setWord] = useState(-1);
+  const [trAt, setTrAt] = useState(-1);
+  const [sel, setSel] = useState<{ index: number; id: string | null }>({ index: -1, id: null });
+  const [cell, setCell] = useState<Cell>("source");
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [finding, setFinding] = useState(false);
+  const conflicted = episode.tracks.filter((t) => t.in_conflict);
+  const [picking, setPicking] = useState(conflicted.length > 0); // open at once on a torn episode
+  const media = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const pending = useRef<{ start_ms: number } | null>(null); // an inserted cue, to select and edit
+
+  const rows = episode.rows;
+  const shownTrack = track && episode.tracks.some((t) => t.key === track) ? track : null;
+  const trCues = useMemo(() => trackCues(rows, shownTrack), [rows, shownTrack]);
+  const selected = sel.index;
+  const row = selected >= 0 ? rows[selected] : undefined;
+
+  // The rows change with every edit: the selection follows its cue, else stays at its place (a
+  // split or merge replaces the cue's id); an inserted cue is selected and edited.
+  useEffect(() => {
+    if (pending.current) {
+      const at = rows.findIndex((r) => r.start_ms === pending.current?.start_ms);
+      pending.current = null;
+      if (at >= 0) {
+        setSel({ index: at, id: rows[at].id });
+        setCell("source");
+        setEditing({ id: rows[at].id, cell: "source", trId: null, text: rows[at].text });
+        return;
+      }
+    }
+    setSel((s) => {
+      const found = rows.findIndex((r) => r.id === s.id);
+      if (found >= 0) return found === s.index ? s : { index: found, id: s.id };
+      const index = Math.min(s.index, rows.length - 1);
+      return { index, id: index >= 0 ? rows[index].id : null };
+    });
+    setEditing((e) => (e && rows.some((r) => r.id === e.id) ? e : null));
+  }, [rows]);
+
+  useEffect(() => {
+    if (editing) editor.current?.focus();
+  }, [editing?.id, editing?.cell]);
+
+  useEffect(() => {
+    if (saving.conflictsFound > 0) setPicking(true);
+  }, [saving.conflictsFound]);
+
+  // Called every frame while playing: state changes only when the cue, the word or the
+  // translation playing changes, so the list re-renders a few times a second at most.
+  const onTime = useCallback((ms: number) => {
+    if (loop && media.current && ms >= loop.end_ms) {
+      media.current.currentTime = loop.start_ms / 1000;
+      return;
+    }
+    const at = indexAt(rows, ms);
+    setCurrent(at);
+    setWord(at >= 0 ? wordAt(episode.words, rows[at].w, ms) : -1);
+    setTrAt(indexAt(trCues, ms));
+  }, [loop, rows, trCues, episode.words]);
+
+  // New rows (an edit, a Save, a pick): look again at what plays now, even while paused.
+  useEffect(() => {
+    if (media.current) onTime(media.current.currentTime * 1000);
+  }, [onTime]);
+
+  const playhead = () => Math.round((media.current?.currentTime ?? 0) * 1000);
+  const seekTo = (ms: number) => {
+    if (media.current) media.current.currentTime = ms / 1000;
+  };
+  const select = (index: number, which: Cell = cell) => {
+    if (index < 0 || index >= rows.length) return;
+    setSel({ index, id: rows[index].id });
+    setCell(which);
+    seekTo(rows[index].start_ms + 1);
+  };
+  const focusList = () => list.current?.focus();
+
+  const startEditing = (which: Cell) => {
+    if (!row) return;
+    if (which === "source") {
+      setEditing({ id: row.id, cell: "source", trId: null, text: row.text });
+      return;
+    }
+    const tr = shownTrack ? row.tr[shownTrack]?.cues[0] : undefined;
+    if (tr) setEditing({ id: row.id, cell: "translation", trId: tr.id, text: tr.text });
+  };
+  const commit = (): boolean => {
+    if (!editing || !row) return false;
+    const before = editing.cell === "source" ? row.text : row.tr[shownTrack ?? ""]?.cues.find((c) => c.id === editing.trId)?.text;
+    if (editing.text === before) return false;
+    if (editing.cell === "source") requests.edit({ op: "set_text", cue: editing.id, text: editing.text });
+    else if (shownTrack && editing.trId) requests.edit({ op: "set_translation_text", track: shownTrack, cue: editing.trId, text: editing.text });
+    return true;
+  };
+  const stopEditing = () => {
+    setEditing(null);
+    focusList();
+  };
+  // Split at the caret in edit mode (committing the text first), else at the space nearest the
+  // playhead's share of the cue; at the playhead when it is inside the cue, else at the caret's
+  // share of the cue's time.
+  const split = () => {
+    if (!row) return;
+    const ph = playhead();
+    const inside = row.start_ms < ph && ph < row.end_ms;
+    let text = row.text;
+    let at: number;
+    if (editing?.cell === "source") {
+      commit();
+      text = editing.text;
+      at = editor.current?.selectionStart ?? Math.floor(text.length / 2);
+      stopEditing();
+    } else {
+      at = splitPoint(text, inside ? (ph - row.start_ms) / (row.end_ms - row.start_ms) : 0.5);
+    }
+    const share = text.length ? at / text.length : 0.5;
+    const at_ms = inside ? ph
+      : Math.min(row.end_ms - 1, Math.max(row.start_ms + 1, Math.round(row.start_ms + (row.end_ms - row.start_ms) * share)));
+    requests.edit({ op: "split", cue: row.id, at_char: at, at_ms });
+  };
+  const merge = () => {
+    if (!row) return;
+    if (editing) {
+      commit();
+      stopEditing();
+    }
+    requests.edit({ op: "merge_next", cue: row.id });
+  };
+  const insert = () => {
+    const ph = playhead();
+    let start = ph;
+    if (indexAt(rows, ph) >= 0 && row) start = row.end_ms;
+    const next = rows.find((r) => r.start_ms > start);
+    const end = Math.min(start + INSERT_MS, next ? next.start_ms : start + INSERT_MS);
+    pending.current = { start_ms: start };
+    requests.edit({ op: "insert", start_ms: start, end_ms: end, text: "…" });
+  };
+
+  const act = (a: Action) => {
+    const m = media.current;
+    switch (a.kind) {
+      case "play-pause": if (m) void (m.paused ? m.play().catch(() => undefined) : m.pause()); return;
+      case "back": if (m) m.currentTime = Math.max(0, m.currentTime - 2); return;
+      case "pause": m?.pause(); return;
+      case "play": if (m) void m.play().catch(() => undefined); return;
+      case "previous": select(Math.max(0, selected - 1)); return;
+      case "next": select(Math.min(rows.length - 1, selected + 1)); return;
+      case "cell": if (a.cell === "source" || shownTrack) setCell(a.cell); return;
+      case "set-start": if (row) requests.edit({ op: "set_times", cue: row.id, start_ms: playhead() }); return;
+      case "set-end": if (row) requests.edit({ op: "set_times", cue: row.id, end_ms: playhead() }); return;
+      case "nudge": if (row) requests.edit({ op: "nudge", cue: row.id, delta_ms: a.delta_ms, edge: "both" }); return;
+      case "edit": startEditing(cell); return;
+      case "undo": requests.undo(); return;
+      case "redo": requests.redo(); return;
+      case "commit": commit(); stopEditing(); return;
+      case "split": if (editing?.cell !== "translation") split(); return;
+      case "merge": merge(); return;
+      case "cancel": stopEditing(); return;
+    }
+  };
+  const onListKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return; // a text box inside handles its own keys
+    const a = actionFor(keyOf(e), "navigate");
+    if (!a) return;
+    e.preventDefault();
+    if (selected < 0 && (a.kind === "next" || a.kind === "previous")) {
+      select(current >= 0 ? current : 0);
+      return;
+    }
+    act(a);
+  };
+  const onEditKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const a = actionFor(keyOf(e), "edit");
+    if (!a) return;
+    e.preventDefault();
+    act(a);
+  };
+
+  const toggleLoop = () => {
+    const at = rows[current] ? current : selected;
+    setLoop(loop || !rows[at] ? null : { start_ms: rows[at].start_ms, end_ms: rows[at].end_ms });
+  };
+  const changeRate = (value: number) => {
+    setRate(value);
+    if (media.current) media.current.playbackRate = value;
+  };
+
+  // The indexes can be a render behind the rows (an edit, or a track gone into conflict).
+  const lines = captionLines(showing, rows[current]?.text ?? null, trCues[trAt]?.text ?? null);
+  const stale = translations.filter((t) => t.all_stale);
+  const noRow = !row;
+  const tool = (label: string, keys: string, onClick: () => void, testid: string, disabled = noRow) => (
+    <button type="button" className={control} onClick={onClick} disabled={disabled} aria-keyshortcuts={keys || undefined} title={keys ? `${label} (${keys})` : label} data-testid={testid}>
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <header className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <h1 className="truncate text-lg font-bold" data-testid="episode-name">{episode.video.name}</h1>
+          <SaveBar dirty={episode.dirty} busy={busy} formats={episode.formats} draft={saving.draft}
+            onSave={requests.save} onRestore={saving.onRestore} onDiscard={saving.onDiscard} />
+        </div>
+        {(episode.notes.length > 0 || stale.length > 0 || conflicted.length > 0) && (
+          <ul role="status" className="flex flex-col gap-0.5 text-sm" data-testid="episode-notes">
+            {episode.notes.map((note, k) => <li key={k}>{note}</li>)}
+            {stale.map((t) => (
+              <li key={`stale-${t.key}`}>Every {t.label} cue is stale: the glossary or the translation model changed since it was made, or a glossary term is waiting for Save.</li>
+            ))}
+            {conflicted.map((t) => (
+              <li key={`conflict-${t.key}`} className="flex flex-wrap items-center gap-2 text-destructive">
+                The {t.label} track has two versions: pick one before editing it.
+                <button type="button" className={control} onClick={() => setPicking(true)} data-testid="pick-version">Pick a version</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </header>
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]">
+        <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
+          <Player video={episode.video} mediaRef={media} lines={lines} busy={busy} onTime={onTime} onCantPlay={onCantPlay} />
+          <div className="flex flex-wrap items-center gap-3 text-sm" data-testid="practice">
+            <label className="flex items-center gap-1">
+              Captions
+              <select className={control} value={showing} onChange={(e) => setShowing(e.target.value as Showing)} data-testid="showing">
+                <option value="source">Source</option>
+                <option value="translation">Translation</option>
+                <option value="both">Both</option>
+              </select>
+            </label>
+            {translations.length > 1 && (
+              <label className="flex items-center gap-1">
+                Translation
+                <select className={control} value={shownTrack ?? ""} onChange={(e) => setTrack(e.target.value)} data-testid="track">
+                  {translations.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                </select>
+              </label>
+            )}
+            <label className="flex items-center gap-1">
+              Speed
+              <select className={control} value={rate} onChange={(e) => changeRate(Number(e.target.value))} data-testid="speed">
+                {SPEEDS.map((s) => <option key={s} value={s}>{s}×</option>)}
+              </select>
+            </label>
+            <button type="button" className={control} aria-pressed={loop !== null} onClick={toggleLoop} data-testid="loop">
+              {loop ? "Looping this cue" : "Loop this cue"}
+            </button>
+            <label className="flex items-center gap-1">
+              <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} className="size-4 accent-(--primary)" data-testid="follow" />
+              Follow playback
+            </label>
+          </div>
+          {finding && <FindReplace episode={episode} onEdit={requests.edit} onClose={() => setFinding(false)} />}
+          <ConflictPicker episode={episode} open={picking && conflicted.length > 0} onClose={() => setPicking(false)}
+            onPick={(track, rendition) => { requests.resolve(track, rendition); setPicking(false); }} />
+        </section>
+        <section aria-label="Cue list" className="flex min-h-0 flex-col gap-2">
+          <div role="toolbar" aria-label="Edit the selected cue" className="flex flex-wrap gap-1" data-testid="edit-bar">
+            {tool("Edit", "Enter", () => startEditing(cell), "tool-edit")}
+            {tool("Start to playhead", "[", () => act({ kind: "set-start" }), "tool-start")}
+            {tool("End to playhead", "]", () => act({ kind: "set-end" }), "tool-end")}
+            {tool("−100 ms", "Alt+ArrowLeft", () => act({ kind: "nudge", delta_ms: -100 }), "tool-earlier")}
+            {tool("+100 ms", "Alt+ArrowRight", () => act({ kind: "nudge", delta_ms: 100 }), "tool-later")}
+            {tool("Split", "Meta+Shift+S", split, "tool-split")}
+            {tool("Merge with next", "Meta+M", merge, "tool-merge", noRow || selected >= rows.length - 1)}
+            {tool("Insert", "", insert, "tool-insert", false)}
+            {tool("Delete", "", () => row && requests.edit({ op: "delete", cue: row.id }), "tool-delete")}
+            {tool("Undo", "Meta+Z", requests.undo, "tool-undo", !episode.can_undo)}
+            {tool("Redo", "Meta+Shift+Z", requests.redo, "tool-redo", !episode.can_redo)}
+            <button type="button" className={control} aria-pressed={finding} onClick={() => setFinding(!finding)} data-testid="tool-find">Find and replace</button>
+          </div>
+          <div className="min-h-0 flex-1">
+            <CueList
+              listRef={list}
+              rows={rows}
+              words={episode.words}
+              track={shownTrack}
+              current={current}
+              word={word}
+              selected={selected}
+              cell={cell}
+              editing={editing}
+              follow={follow}
+              onPick={(index, which) => select(index, which)}
+              onKeyDown={onListKey}
+              onDraft={(text) => setEditing((e) => (e ? { ...e, text } : e))}
+              onEditKey={onEditKey}
+              editorRef={editor}
+            />
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+```
+
+  `frontend/src/App.tsx`, in full:
+
+```tsx
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { Editor, type Requests, type Saving } from "@/components/Editor";
+import { resultNotices } from "@/components/SaveBar";
+import { TopBar } from "@/components/TopBar";
+import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
+import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, loadDraft } from "@/lib/draft";
+import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
+import { pacer } from "@/lib/sends";
+import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { Busy, Capabilities, EditOp, EpisodeView, SaveResultMessage, Status } from "@/types";
+
+type Ask = { episode: string; n: number };
+
+type JQueryLike = (target: Document) => {
+  on(event: string, handler: () => void): unknown;
+  off(event: string, handler: () => void): unknown;
+};
+
+export default function App() {
+  const initialized = useShinyInitialized();
+  // Every output is subscribed here, and every message handler lives here: shinyreact 0.1.0
+  // drops a message that has no handler, and an output that unmounts logs "Output <id> not found"
+  // for each later value (recordings' App.tsx). A new output or message gets a line here too.
+  const capabilities = useShinyOutputValue<Capabilities>("capabilities");
+  const status = useShinyOutputValue<Status>("status");
+  const episode = useShinyOutputValue<EpisodeView | null>("episode");
+  const busy = useShinyOutputValue<Busy>("busy");
+  // Every input is set from here too. Each request carries a count, so the same path asked for
+  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
+  const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
+  const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
+  const setUndo = useSetShinyInput<Ask | null>("undo", null, { priority: "event", debounceMs: 0 });
+  const setRedo = useSetShinyInput<Ask | null>("redo", null, { priority: "event", debounceMs: 0 });
+  const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
+  const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
+  const sent = useRef(0);
+  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
+  const pace = useMemo(() => pacer(), []);
+
+  // The crash-recovery draft (spec §14.5, S34): every edit, undo and redo is also written to
+  // localStorage under the heads the episode was opened at, and offered back when it is opened
+  // again. When a Save or a pick moves the heads, the draft goes with them while edits are still
+  // unsaved (a pick keeps the other tracks' edits), and is cleared once everything is saved.
+  const [offer, setOffer] = useState<Draft | null>(null);
+  const drafted = useRef<{ id: string; key: string } | null>(null);
+  useEffect(() => {
+    if (!episode) {
+      drafted.current = null;
+      return;
+    }
+    const key = draftKey(episode.heads);
+    const was = drafted.current;
+    const store = draftStorage();
+    if (was?.id === episode.id && was.key !== key) {
+      const kept = loadDraft(store, was.key);
+      clearDraft(store, was.key);
+      if (kept && episode.dirty) for (const step of kept.steps) addStep(store, key, step, new Date(kept.at));
+    }
+    if (was?.id !== episode.id) setOffer(loadDraft(store, key));
+    drafted.current = { id: episode.id, key };
+  }, [episode]);
+  const record = useCallback((step: DraftStep) => {
+    const at = drafted.current;
+    if (!at) return;
+    if (offer) { // editing again without restoring: the old draft is discarded
+      clearDraft(draftStorage(), at.key);
+      setOffer(null);
+    }
+    addStep(draftStorage(), at.key, step);
+  }, [offer]);
+
+  const episodeId = episode?.id ?? null;
+  const requests = useMemo<Requests>(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+    const send = <T,>(set: (v: T) => void, value: T | null) => value && pace(() => set(value));
+    return {
+      edit: (op) => { record({ edit: op }); const a = ask(); send(setEdit, a && { ...a, op }); },
+      undo: () => { record({ undo: true }); send(setUndo, ask()); },
+      redo: () => { record({ redo: true }); send(setRedo, ask()); },
+      save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
+      resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
+    };
+  }, [episodeId, pace, record, setEdit, setUndo, setRedo, setSave, setResolve]);
+
+  const [conflictsFound, setConflictsFound] = useState(0);
+  useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
+    if (!episode || data.episode !== episode.id) return;
+    for (const n of resultNotices(data, episode.tracks)) setNotices((shown) => addNotice(shown, n, nextId.current++));
+    if (data.conflicts.length) setConflictsFound((k) => k + 1);
+  });
+  const saving: Saving = {
+    draft: offer && { at: offer.at, steps: offer.steps.length },
+    conflictsFound,
+    onRestore: () => {
+      const steps = offer?.steps ?? [];
+      if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
+      setOffer(null);
+      for (const step of steps) {
+        if ("edit" in step) requests.edit(step.edit);
+        else if ("undo" in step) requests.undo();
+        else requests.redo();
+      }
+    },
+    onDiscard: () => {
+      if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
+      setOffer(null);
+    },
+  };
+
+  // Closing the tab with unsaved edits warns first (S34): listened for only while there are
+  // some, as MDN advises; preventDefault, and returnValue for older browsers.
+  const dirty = episode?.dirty ?? false;
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = true;
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  const [notices, setNotices] = useState<Shown[]>([]);
+  const nextId = useRef(1);
+  useShinyMessageHandler("notice", (data: unknown) => {
+    setNotices((shown) => addNotice(shown, data, nextId.current++));
+  });
+
+  // The websocket closed: ask the engine once why, and say so; never reconnect (Review Focus 5).
+  const [lost, setLost] = useState<Lost | null>(null);
+  const check = useCallback(() => {
+    void whyLost((input, init) => window.fetch(input, init)).then(setLost);
+  }, []);
+  useEffect(() => {
+    // Shiny triggers shiny:disconnected through jQuery, which addEventListener never sees.
+    const $ = (window as unknown as { jQuery?: JQueryLike }).jQuery;
+    if (!$) return;
+    $(document).on("shiny:disconnected", check);
+    return () => void $(document).off("shiny:disconnected", check);
+  }, [check]);
+
+  if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
+  return (
+    <div className="flex h-dvh flex-col" data-testid="app">
+      <TopBar capabilities={capabilities} status={status} />
+      {lost && (
+        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
+        <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">
+          <span>{LOST_MESSAGES[lost]}</span>
+          {lost === "stopped" && (
+            <button type="button" className="underline" onClick={check} data-testid="check-again">Check again</button>
+          )}
+          {lost === "dropped" && (
+            <button type="button" className="underline" onClick={() => window.location.reload()}>Reload</button>
+          )}
+        </div>
+      )}
+      <main className="min-h-0 flex-1" data-testid="main">
+        <Editor
+          episode={episode ?? null}
+          busy={busy ?? null}
+          pathInput={capabilities?.path_input ?? false}
+          onOpen={(path) => setOpen({ path, n: ++sent.current })}
+          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+          requests={requests}
+          saving={saving}
+        />
+      </main>
+      <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">
+        <div role="status" aria-live="polite" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "info").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+        <div role="alert" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "error").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: Shown[]) => Shown[]) => void }) {
+  return (
+    <div className={`flex items-start gap-2 rounded-lg border bg-card p-3 text-sm shadow ${notice.kind === "error" ? "border-destructive text-destructive" : "border-border"}`} data-testid="notice">
+      {/* Plain text: a notice can carry a file name or a server's error (spec §6.3). */}
+      <span className="flex-1">{notice.text}</span>
+      <button type="button" aria-label="Dismiss" onClick={() => onDismiss((s) => dismissNotice(s, notice.id))}>×</button>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 9: Run the checks; they pass.** First the guards: comment out
+  `window.addEventListener("beforeunload", warn);` in `App.tsx`, `make build`, and
+  `uv run pytest -m e2e tests/e2e/test_saving.py -q -k crashed` fails
+  `TargetClosedError: Page.wait_for_timeout: Target page, context or browser has been closed`
+  (the tab closed unwarned); take the `try`/`catch` out of `draft.ts`'s `addStep` and
+  `npx vitest run src/lib/draft.test.ts` fails `never throws where storage is forbidden or full`;
+  put both back and `make build`. `make check`. Expected: `958 passed, 2 skipped, 28 deselected` (twice), `Test Files  13 passed (13)`, `Tests  62 passed (62)`, `All checks passed!`, `no leaks found`. Then `make e2e`.
+  Expected: `24 passed`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(frontend): 🤖 the editor saves, says what it wrote and left alone, picks a conflicted version in a native dialog, keeps a crash draft and warns before closing with unsaved edits
+
+Spec §14.4 and §14.5, for S29, S31, S32 and S34 end to end, and Review Focus 4:
+
+- SaveBar: Save (SRT always; ASS too when ticked, ticked where the episode has an ASS already,
+  the view's `formats`) and whether everything is saved; resultNotices turns `save_result` into
+  plain-text notices: the files written, each left alone (someone else's, or changed outside
+  since, §15.3), each note, and each track in conflict.
+- ConflictPicker on components/ui/dialog.tsx, the native <dialog> Task 12's note specifies
+  (Decision 13): it opens when a Save or a pick finds a track in conflict, or at once on an
+  episode opened torn, and from the conflict note's "Pick a version"; each version is said in
+  words (who, when, how many cues); "Keep this version" sends `resolve`. Scroll lock is
+  `html.dialog-open` in index.css.
+- lib/draft.ts: every edit, undo and redo is also kept in localStorage under the episode's heads
+  (the view's `heads`), every call in try/catch; reopened, the draft is offered back, to restore
+  (replayed through the server's rules) or discard; a Save clears it, and a pick that moves the
+  heads with edits still unsaved carries it to the new heads.
+- beforeunload warns while the episode has unsaved edits, listened for only then (MDN), with
+  preventDefault and returnValue.
+- The Editor guards its playing-cue indexes, which can be a render behind new rows (a track gone
+  into conflict has none until it is picked).
+
+The guards fail without their fixes: with the beforeunload listener taken out, the crash test
+failed "TargetClosedError: Page.wait_for_timeout: Target page, context or browser has been
+closed" (the tab closed unwarned); with addStep's try/catch taken out, Vitest failed "never throws
+where storage is forbidden or full".
+
+The new tests failed first with:
+  Error: Failed to resolve import "./draft" from "src/lib/draft.test.ts". Does the file exist?
+  Error: Failed to resolve import "./SaveBar" from "src/components/SaveBar.test.ts". Does the file exist?
+  playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
+  (waiting for get_by_test_id("save"))
+
+Docs read: MDN's <dialog> (showModal, the inert page behind, Esc and the cancel event, closedby,
+::backdrop, autofocus), the inert attribute, the beforeunload event (preventDefault, returnValue,
+sticky activation, adding the listener only while there are unsaved changes) and Web Storage's
+exceptions (SecurityError, QuotaExceededError); Task 12's dialog probe (Tab may leave a modal
+dialog only for the browser's own UI: activeElement is body); Playwright 1.64's page.close
+(run_before_unload), the dialog event's type "beforeunload", and check() on a label.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 16
+Co-Authored-By: <the model's own line>
+```
+
+  `git add frontend/src/App.tsx frontend/src/types.ts frontend/src/index.css
+  frontend/src/lib/draft.ts frontend/src/lib/draft.test.ts frontend/src/components/Editor.tsx
+  frontend/src/components/SaveBar.tsx frontend/src/components/SaveBar.test.ts
+  frontend/src/components/ConflictPicker.tsx frontend/src/components/ui/dialog.tsx
+  tests/e2e/test_saving.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 16c: the picker shows where the versions differ
+
+Spec §14.4: "the track is in conflict; the editor shows both and the user picks"; S32: "a track
+that diverged shows both versions for the user to pick". With who, when and how many cues alone,
+two tabs saving a minute apart read "Saved in the editor, 10:42: 120 cues" and "…10:43: 120
+cues", and nothing tells the person which holds their work.
+
+- [ ] **Step 11: Write the failing tests.** In `tests/test_views.py`, above
+  `def test_dirty_undo_and_redo_follow_the_episode():` add
+
+```python
+def conflicted(mine_cues, theirs_cues, source=None) -> Episode:
+    """An episode whose English track has two versions: mine (the editor's) and theirs."""
+    source = source_cues(3) if source is None else source
+    mine = make_rendition([], "en", body(mine_cues, "en", "translation"))
+    theirs = make_rendition([], "en", body(theirs_cues, "en", "translation"))
+    ep = episode(source, records=(
+        mine, HeadRecord(track="en", rendition=mine.id, by="editor", at="2026-10-23T12:00:00Z"),
+        theirs,
+        HeadRecord(track="en", rendition=theirs.id, by="editor", at="2026-10-23T12:01:00Z")))
+    return dataclasses.replace(ep, conflicts={"en": (mine.id, theirs.id)},
+                               tracks=Tracks(ep.tracks.source, {}))
+
+
+def test_a_track_in_conflict_shows_the_cues_where_its_versions_differ():
+    # Spec §14.4, S32: "the editor shows both and the user picks". Texts are in the order of the
+    # versions in `conflicts`; a version without the cue has None.
+    en = translation_cues(source_cues(3))
+    mine = [en[0], en[1].model_copy(update={"text": "How are you doing?"})]
+    theirs = [en[0], en[1].model_copy(update={"text": "How's it going?"}), en[2]]
+    v = view(conflicted(mine, theirs))
+    assert v["differences"] == {"en": {"cues": [
+        {"start_ms": 3600, "end_ms": 6600, "texts": ["How are you doing?", "How's it going?"]},
+        {"start_ms": 7200, "end_ms": 10200, "texts": [None, ENGLISH[2]]},
+    ], "more": 0}}
+    assert view(episode())["differences"] == {}
+
+
+def test_a_cue_whose_time_alone_differs_is_listed_and_the_list_stops_at_fifty():
+    source = source_cues(60)
+    en = translation_cues(source)
+    moved = [en[0].model_copy(update={"end_ms": 2000})] + en[1:]
+    assert view(conflicted(en, moved, source))["differences"]["en"]["cues"] == [
+        {"start_ms": 0, "end_ms": 3000, "texts": ["Line 0", "Line 0"]}]
+    changed = [c.model_copy(update={"text": c.text + "!"}) for c in en]
+    found = view(conflicted(en, changed, source))["differences"]["en"]
+    assert len(found["cues"]) == 50 and found["more"] == 10
+    assert [c["texts"] for c in found["cues"][:2]] == [["Line 0", "Line 0!"], ["Line 1", "Line 1!"]]
+
+
+```
+
+  `frontend/src/components/ConflictPicker.test.ts`:
+
+```ts
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import type { EpisodeView } from "@/types";
+
+import { ConflictPicker } from "./ConflictPicker";
+
+const episode = {
+  tracks: [{ key: "en", label: "English", role: "translation", head_by: null, in_conflict: true, all_stale: false }],
+  conflicts: { en: [
+    { rendition: "r_0000000000000001", by: "editor", at: null, cue_count: 2 },
+    { rendition: "r_0000000000000002", by: "external", at: null, cue_count: 3 },
+  ] },
+  differences: { en: { cues: [
+    { start_ms: 3600, end_ms: 6600, texts: ["<img src=x onerror=alert(1)>", "How's it going?"] },
+    { start_ms: 7200, end_ms: 10200, texts: [null, "Yes, I'm fine"] },
+  ], more: 12 } },
+} as unknown as EpisodeView;
+
+describe("the conflict picker (spec §14.4, S32)", () => {
+  it("numbers the versions and shows each one's text where they differ, as text", () => {
+    const html = renderToStaticMarkup(createElement(ConflictPicker, { episode, open: false, onClose: () => {}, onPick: () => {} }));
+    expect(html).toContain("Version 1: Saved in the editor: 2 cues");
+    expect(html).toContain("Version 2: Edited outside vid2sub: 3 cues");
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).not.toContain("<img");
+    expect(html).toContain("(not in this version)");
+    expect(html).toContain("and 12 more cues differ");
+  });
+});
+```
+
+  In `tests/e2e/test_saving.py`, in
+  `test_two_tabs_saving_one_episode_end_in_a_conflict_the_second_sees_and_picks_from`, replace
+
+```python
+    assert all(re.match(r"^Saved in the editor, .+: 4 cues$", v)
+               for v in versions.all_inner_texts())
+```
+
+  with
+
+```python
+    assert [re.sub(r", .+:", ":", v) for v in versions.all_inner_texts()] == [
+        "Version 1: Saved in the editor: 4 cues", "Version 2: Saved in the editor: 4 cues"]
+    # §14.4, S32: the editor shows both: the cue they differ in, each version's text beside it.
+    difference = b.get_by_test_id("difference")
+    expect(difference).to_have_count(1)
+    expect(difference.locator("td")).to_have_text(["0:03.820", "occasion!", "occasion?"])
+```
+
+- [ ] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_views.py -q -k 'differ or
+  fifty'`. Expected: `2 failed, 22 deselected`, each `KeyError: 'differences'`. `cd frontend &&
+  npx vitest run src/components/ConflictPicker.test.ts`. Expected: `AssertionError: expected
+  '<dialog aria-labelledby="_R_0_" class…' to contain 'Version 1: Saved in the editor: 2 cues'`.
+  `uv run pytest -m e2e tests/e2e/test_saving.py -q -k two_tabs`. Expected: `AssertionError:
+  assert ['Saved in th...itor: 4 cues'] == ['Version 1: ...itor: 4 cues']`.
+- [ ] **Step 13: Write the code.** `src/vid2sub/web/views.py`: in the module docstring, replace
+  everything from `formats Save writes: ASS too where one was written before (§15.2). The top
+  bar's` to the line before the closing `"""` with
+
+```python
+formats Save writes: ASS too where one was written before (§15.2). A track in conflict lists its
+versions, and the cues where they differ, so the person can tell which holds what (§14.4, S32).
+The top bar's views are here too (§19.2): the backend's capabilities, and the engine's status, which
+gives each endpoint's key by presence only, never its value, and its reach only for local endpoints:
+a cloud endpoint is never contacted (as `vid2sub doctor` decides). The server runs in Pages too
+(§21), so this module imports only pure packages and `web.episode` at its top; the status views'
+config and keys are the local engine's, imported only where they are used (Task 14 round 14a).
+```
+
+  below `from vid2sub.subs.model import Cue` add
+  `from vid2sub.subs.rendition import cues_from_body`; below `_SCRIPTS = {...}` add
+
+```python
+DIFFERENCES_SHOWN = 50  # cues where a conflicted track's versions differ, before "and N more"
+```
+
+  in `episode_view`, below `"conflicts": _conflicts(ep),`, add
+  `"differences": _differences(ep),`; and above `def _formats` add
+
+```python
+def _differences(ep: Episode) -> dict[str, dict[str, Any]]:
+    """For each track in conflict, the cues where its versions differ (spec §14.4, S32): each
+    cue's time (from the first version that has it) and its text in each version, in the order
+    `_conflicts` lists them, or None where a version lacks it; cues are matched by id, which a
+    text or time edit keeps. At most DIFFERENCES_SHOWN, in time order, with a count of the rest.
+    Worked out once per view, from the versions' cues."""
+    renditions = ep.sidecar.renditions()
+    out: dict[str, dict[str, Any]] = {}
+    for track, leaves in ep.conflicts.items():
+        versions = [{c.id: c for c in cues_from_body(renditions[rid].body)}
+                    if rid in renditions else {} for rid in leaves]
+        found = []
+        for cid in dict.fromkeys(cid for v in versions for cid in v):
+            cues = [v.get(cid) for v in versions]
+            if None not in cues and len({(c.start_ms, c.end_ms, c.text) for c in cues}) == 1:
+                continue
+            first = next(c for c in cues if c is not None)
+            found.append({"start_ms": first.start_ms, "end_ms": first.end_ms,
+                          "texts": [c.text if c is not None else None for c in cues]})
+        found.sort(key=lambda d: (d["start_ms"], d["end_ms"]))
+        out[track] = {"cues": found[:DIFFERENCES_SHOWN],
+                      "more": max(0, len(found) - DIFFERENCES_SHOWN)}
+    return out
+
+
+```
+
+  `frontend/src/types.ts`: below the `Version` type add
+
+```ts
+
+/** A cue where a conflicted track's versions differ: its time, and its text in each version (in
+ * `conflicts`' order), or null where a version lacks it (spec §14.4, S32). */
+export type Difference = { start_ms: number; end_ms: number; texts: (string | null)[] };
+```
+
+  and in `EpisodeView`, below `conflicts: Record<string, Version[]>;`, add
+
+```ts
+  differences: Record<string, { cues: Difference[]; more: number }>; // at most 50 per track
+```
+
+  `frontend/src/components/ConflictPicker.tsx`, in full:
+
+```tsx
+import { useState } from "react";
+
+import { formatTime } from "@/lib/cues";
+import type { EpisodeView, Version } from "@/types";
+
+import { Dialog } from "./ui/dialog";
+
+const BY: Record<string, string> = {
+  editor: "saved in the editor",
+  external: "edited outside vid2sub",
+  auto: "made by vid2sub",
+  import: "imported",
+  user: "picked by you",
+};
+
+/** A version in words: who made it, when, and how many cues it has. */
+export function versionLabel(v: Version): string {
+  const who = v.by ? (BY[v.by] ?? v.by) : "saved";
+  const when = v.at ? `, ${new Date(v.at).toLocaleString()}` : "";
+  return `${who[0].toUpperCase()}${who.slice(1)}${when}: ${v.cue_count} ${v.cue_count === 1 ? "cue" : "cues"}`;
+}
+
+/** The conflict picker (spec §14.4, S32): a track whose versions diverged (two tabs, or a tab
+ * and a CLI run or an outside edit) shows each version, numbered, and the cues where they differ
+ * side by side, as plain text (§6.3), so the person can tell which holds their work; they keep
+ * one, which the server's `resolve` makes the head and writes. The native <dialog> (Decision 13):
+ * modal, the page behind inert, Esc closes it, focus comes back. */
+export function ConflictPicker({ episode, open, onClose, onPick }: {
+  episode: EpisodeView;
+  open: boolean;
+  onClose: () => void;
+  onPick: (track: string, rendition: string) => void;
+}) {
+  const tracks = episode.tracks.filter((t) => t.in_conflict && episode.conflicts[t.key]?.length);
+  const [chosen, setChosen] = useState<Record<string, string>>({});
+  return (
+    <Dialog open={open} onClose={onClose} title="Pick a version" className="w-[32rem] max-w-[calc(100vw-2rem)]">
+      <div className="flex flex-col gap-4 text-sm" data-testid="conflict-picker">
+        <p>
+          These tracks were saved twice from the same version, by another tab, a command or an edit outside vid2sub.
+          Both versions are kept in the sidecar; pick the one to keep editing and write.
+        </p>
+        {tracks.map((t) => (
+          <fieldset key={t.key} className="flex flex-col gap-2 rounded-md border border-border p-3">
+            <legend className="px-1 font-bold">{t.label}</legend>
+            {episode.conflicts[t.key].map((v, k) => (
+              <label key={v.rendition} className="flex items-center gap-2" data-testid="version">
+                <input
+                  type="radio"
+                  name={`version-${t.key}`}
+                  value={v.rendition}
+                  checked={chosen[t.key] === v.rendition}
+                  onChange={() => setChosen({ ...chosen, [t.key]: v.rendition })}
+                  className="size-4 accent-(--primary)"
+                />
+                {`Version ${k + 1}: ${versionLabel(v)}`}
+              </label>
+            ))}
+            <Differences versions={episode.conflicts[t.key].length} found={episode.differences[t.key]} />
+            <button
+              type="button"
+              className="self-start rounded-md bg-primary px-3 py-1 font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
+              disabled={!chosen[t.key]}
+              onClick={() => onPick(t.key, chosen[t.key])}
+              data-testid={`keep-${t.key}`}
+            >
+              Keep this version
+            </button>
+          </fieldset>
+        ))}
+        <button type="button" className="self-end rounded-md border border-input px-3 py-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" onClick={onClose} data-testid="picker-close">
+          Not now
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
+/** Where the versions differ: one row per cue, its time and each version's text. */
+function Differences({ versions, found }: { versions: number; found?: EpisodeView["differences"][string] }) {
+  if (!found || !found.cues.length) return <p className="text-muted-foreground">Their cues are the same.</p>;
+  return (
+    <div className="max-h-64 overflow-auto rounded-sm border border-border">
+      <table className="w-full text-left text-xs" aria-label="Where the versions differ">
+        <thead className="sticky top-0 bg-popover">
+          <tr>
+            <th scope="col" className="px-2 py-1">Time</th>
+            {Array.from({ length: versions }, (_, k) => <th key={k} scope="col" className="px-2 py-1">Version {k + 1}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {found.cues.map((d) => (
+            <tr key={`${d.start_ms}-${d.end_ms}-${d.texts.join("|")}`} className="border-t border-border align-top" data-testid="difference">
+              <td className="px-2 py-1 font-mono whitespace-nowrap">{formatTime(d.start_ms)}</td>
+              {d.texts.map((text, k) => (
+                <td key={k} className={`px-2 py-1 whitespace-pre-line ${text === null ? "text-muted-foreground italic" : ""}`}>
+                  {text ?? "(not in this version)"}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {found.more > 0 && <p className="px-2 py-1 text-muted-foreground">and {found.more} more {found.more === 1 ? "cue differs" : "cues differ"}</p>}
+    </div>
+  );
+}
+```
+
+- [ ] **Step 14: Run the checks; they pass.** `make check`. Expected: `960 passed, 2 skipped, 28
+  deselected` (twice), `Test Files  14 passed (14)`, `Tests  63 passed (63)`, `All checks
+  passed!`, `no leaks found`. Then `make e2e`. Expected: `24 passed`. (A view of a 2,000-cue track
+  whose every cue differs took 0.012 s where this was built.)
+- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the conflict picker shows the cues where two versions differ, side by side, so a person can tell which holds their work
+
+Spec §14.4: "the track is in conflict; the editor shows both and the user picks"; S32: "a track
+that diverged shows both versions for the user to pick". Two tabs saving a minute apart gave two
+rows reading "Saved in the editor, …: 120 cues", and nothing to tell them apart.
+
+- views.episode_view gains "differences": for each track in conflict, the cues where its versions
+  differ, matched by id (a text or time edit keeps it): each cue's time and its text in each
+  version, in `conflicts`' order, or null where a version lacks it; at most 50, in time order,
+  with "more" counting the rest. Worked out once per view (about 0.012 s for a 2,000-cue track
+  whose every cue differs), in the pure views module.
+- ConflictPicker numbers the versions ("Version 1: Saved in the editor, …") and shows a table of
+  the differing cues, time and each version's text, as plain text (§6.3), with "(not in this
+  version)" and "and N more cues differ".
+
+The new tests failed first with:
+  KeyError: 'differences'
+  AssertionError: expected '<dialog aria-labelledby="_R_0_" class…' to contain 'Version 1: Saved
+  in the editor: 2 cues'
+  AssertionError: assert ['Saved in th...itor: 4 cues'] == ['Version 1: ...itor: 4 cues']
+
+Docs read: spec §14.4 and S32; vid2sub.subs.rendition.cues_from_body and Sidecar.renditions.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 16
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/views.py tests/test_views.py tests/e2e/test_saving.py
+  frontend/src/components/ConflictPicker.tsx frontend/src/components/ConflictPicker.test.ts
+  frontend/src/types.ts`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that an edit sent during a Save lands on
+  the saved episode and is never lost; that a second tab's Save sees the conflict, and nothing is
+  written over the other tab's version until a person picks; that a file vid2sub didn't write is
+  left alone and said so; that `save_result` and every notice carry file names and track keys
+  only; that the draft is keyed by the heads it was made on, never offered on other versions,
+  cleared by a Save and carried by a pick that leaves edits unsaved, and that no storage call can
+  throw; that `beforeunload` is added only while there are unsaved edits; that the picker is the
+  native `<dialog>` with zero CSP violations, focus in, Tab never on the page behind, Esc closing
+  it and focus back on the opener; that the picker's differences are right (matched by id, a cue
+  missing from one version shown as missing, at most 50) and plain text. The forward review over
+  Tasks 17, 18, 19, 22 and 23 (Task 17's retranslation is an undo step but not a draft step: a
+  draft replays edits only, so a restored draft never asks a model again (record it if that
+  changes); Task 18's settings drawer
+  is `Dialog` with `side="right"`, and its per-session formats default feeds `SaveBar`'s
+  `formats`; Task 19's "Open in editor" opens through the `open` input; Task 22's README says
+  Save writes SRT, ASS when ticked, and leaves someone else's files alone; Task 23's Steps 4 and
+  6 expect these notices). The docs this task made untrue: spec §14.5's "a warning on close" now
+  has its mechanism, nothing to change. Then the close, its own commit, holding this plan with
+  this task's boxes ticked and **Now** set to `Task 17: Retranslating, open.`, and the spec's
+  S29, S31 and S34 set to `built` (S29's Proof: `tests/test_backend_save.py;
+  tests/e2e/test_saving.py; the exit test`; S31's:
+  `tests/test_backend_open.py::test_an_outside_edit_comes_back_as_the_head_and_the_editor_says_so;
+  tests/e2e/test_saving.py; the exit test`; S34's: `tests/e2e/test_saving.py`), and S32, built
+  at Task 6, with `tests/e2e/test_saving.py` added to its Proof, with the message in
+  `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 16: Saving
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 16
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -18546,7 +25365,9 @@ vid2sub serve
   same link for opening by hand.
 - [ ] **Step 3: [Dan] Open an M1 episode (S27, S43):** type the path of an episode Task 1 made.
   Note whether it played as video or through the playback audio, and in which browser (try
-  Chrome, and Safari or Firefox if you use them: the codec matrix, §29).
+  Chrome, and Safari or Firefox if you use them: the codec matrix, §29). If a file that browser
+  plays elsewhere came up as sound only, say so: its `canPlayType` answered "" for it
+  (Decision 15), and the codec table in `frontend/src/lib/playable.ts` needs that entry.
 - [ ] **Step 4: [Dan] Fix lines and save (S29):** go through the first five minutes cue by cue
   and fix every start, end and line (this is the hand-corrected stretch Step 8 measures); split
   one cue and merge two; correct two translations; then Save. Expected: the subtitle files are

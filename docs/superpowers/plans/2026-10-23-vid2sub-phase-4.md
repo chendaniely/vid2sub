@@ -88,8 +88,11 @@ plus:
 - Consumes: Phase 2's Pages-safe server (Phase 2 Task 14, round 14a): `vid2sub.web.server` and
   `views` import only what the bundle has; the types they share are in `vid2sub.web.episode`; the
   local runtime is configured, not imported, and `runtime.blocking` is the one place blocking
-  calls run, so Pages configures a `Runtime` holding a `BrowserBackend` and an inline `blocking`
-  before importing the server, as `recordings`' `pages/app.py` does.
+  calls run. `blocking` already runs inline when `runtime.INLINE` (`sys.platform ==
+  "emscripten"`), which Phase 2 couldn't check in Pyodide; this task checks it first. So Pages
+  configures a `Runtime` holding a `BrowserBackend` before importing the server, as
+  `recordings`' `pages/app.py` does. Two `Runtime` methods are local-only: `media_for` (Pages
+  plays a blob URL) and `reachable`. This task says what each does in the browser.
 
 <!-- steps: written in the next pass -->
 
