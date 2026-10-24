@@ -10624,7 +10624,8 @@ Co-Authored-By: <the model's own line>
   pages on other ports out. The forward review over Tasks 11, 12 and 13 (Task 11 prints
   `auth_url(port, token)` to the terminal only, opens `write_redirect(…)` with `webbrowser`,
   removes its folder at exit, and turns uvicorn's access log off; Task 12's page shows
-  `SIGN_IN_AGAIN` instead of reconnecting when the websocket closes with 1008, Review Focus 5;
+  `SIGN_IN_AGAIN` instead of reconnecting when the websocket is refused, Review Focus 5: the
+  refusal comes before accept, so the browser sees an HTTP 403 (close code 1006), never 1008;
   Task 13's `page` fixture signs in through `/auth#t=<token>`). The docs this task made untrue:
   none expected. Then the close, its own commit, holding this plan with this task's boxes ticked
   and **Now** set to `Task 10: Media tokens and \`/media/{token}\`, open.`, and the spec's
