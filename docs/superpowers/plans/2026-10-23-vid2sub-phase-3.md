@@ -1872,8 +1872,9 @@ Co-Authored-By: <the model's own line>
     to the session's loop (it runs on the sampling thread, as Task 4's listeners do) and a
     `cancelled` that turns true when the person leaves Review or adds again; `choose`,
     `apply_to_all`, `set_allow_cloud` and `problems` on the loop (pure, fast); `start` with the
-    runtime's `Queue` and its job `RunContext` (the one Phase 2 Task 19's runner wraps
-    `run_one` with). The view of a row is Task 4's (never `path`; `detection.votes`,
+    runtime's `Queue` and its job `RunContext`, `Runtime.job_context` (the one Phase 2 Task
+    19's `runtime.job_runner(ctx, session)` wraps `run_one` with; in the demo it is the canned
+    context, and its runner runs only the demo's own clip; Pages offers no Review). The view of a row is Task 4's (never `path`; `detection.votes`,
     `detection.confidence`, `warning`, `hint`, `inherited`, `ask_zh_yue`); the box is drawn
     from `Review.allow_cloud` and never from settings.
 
@@ -3073,9 +3074,10 @@ Co-Authored-By: <the model's own line>
   runs on the sampling thread, so the server hops to the session's loop and merges with
   `with_row`; `cancelled` turns true when the person leaves Review. `choose`, `apply_to_all`,
   `set_allow_cloud` and `problems` are pure and run on the loop. Start calls
-  `review.start(review, queue, job_ctx)`, `job_ctx` being the `RunContext` Phase 2 Task 19's
-  runner wraps. The view never includes `Row.path`; the Allow cloud box is drawn only from
-  `Review.allow_cloud`.
+  `review.start(review, queue, runtime.job_context)`, the `RunContext` Phase 2 Task 19's
+  `runtime.job_runner` wraps. The view never includes `Row.path`; the Allow cloud box is drawn
+  only from `Review.allow_cloud`. Add and Review show only where `capabilities.generate` is true
+  (Phase 2 Decision 23).
 
 <!-- steps: written in the next pass -->
 
@@ -3094,7 +3096,10 @@ Co-Authored-By: <the model's own line>
   `run_one` once a connection error or a Spark refusal outlasts `RunOptions.wait_on_connection_s`),
   `pipeline.Cancelled`, `pipeline.run_one` and `RunContext.chunk_cache` (shared by every
   `dataclasses.replace` copy, so a resumed job's finished chunks are kept, spec §8.9);
-  `awake.keep_awake` (M1); Task 3's `Queue.submit(…, runner=)`.
+  `awake.keep_awake` (M1); Task 3's `Queue.submit(…, runner=)`; Phase 2 Task 19's
+  `Queue.on_change(fn) -> stop` and `JobView.stopping` (set when Cancel is asked of the running
+  job, cleared when it ends). Pause and Resume tell the same listeners; `stopping` is Cancel's
+  alone, so Pause leaves it false and a requeued job always has it false.
 - Produces (`vid2sub.jobs`):
   - `QueueState = Literal["running", "paused"]`; `Awake = Callable[[],
     contextlib.AbstractContextManager]`
