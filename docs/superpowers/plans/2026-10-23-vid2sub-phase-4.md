@@ -51,7 +51,20 @@ plus:
 
 ## Review Focus
 
-<!-- written with the listings -->
+1. **The folder's permission revoked, or the folder moved or renamed, while an episode is open
+   in Chrome:** Save writes nothing half-way, says what happened, and asks for the folder again;
+   the edits stay in the tab and its draft. (Task 3's tests.)
+2. **A multi-gigabyte video:** opening it reads only what the quick hash needs, and the video
+   plays from a blob URL; its bytes never reach Python, and the tab's memory stays flat.
+   (Task 3's tests.)
+3. **A visitor whose browser cached the previous deploy's Shinylive assets:** after a new deploy
+   the page loads one consistent version, or says to reload, and never mixes old and new files.
+   (Task 2's and Task 7's tests.)
+4. **`release.yml` run again for a tag that already has a release** (a re-run, or the same tag
+   pushed again): it fails rather than replacing a published wheel or sdist, since a release
+   asset is never overwritten. (Task 8's tests.)
+5. **A release with no wheel, or a deleted one:** the index skips it and never links a file that
+   isn't there; an install still gets the newest good release. (Task 9's tests.)
 
 ***
 
