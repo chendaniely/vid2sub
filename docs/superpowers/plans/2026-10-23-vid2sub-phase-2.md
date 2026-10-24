@@ -9247,8 +9247,8 @@ dev = [
   is covered.
 
 - [ ] **Step 2: Run the checks; they pass.** `make check`. Expected: the suite's line, twice,
-  `N passed, 2 skipped, 4 deselected` with nothing failed (N was 465 when this listing was built,
-  before Tasks 2–7's tests), then `All checks passed!` and `no leaks found`.
+  `715 passed, 2 skipped, 4 deselected`, as at Task 7's close (no test is new yet), then
+  `All checks passed!` and `no leaks found`.
 
 - [ ] **Step 3: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -9837,9 +9837,8 @@ class WriteGuard:
 ```
 
 - [ ] **Step 7: Run the checks; they pass.** `uv run pytest tests/test_web_guards.py -q`.
-  Expected: `55 passed`. Then `make check`. Expected: the suite's line, twice, with nothing failed
-  (`520 passed, 2 skipped, 4 deselected` when this listing was built without Tasks 2–7's tests),
-  `All checks passed!`, `no leaks found`. Ruff's default rules leave out line length, so also
+  Expected: `55 passed`. Then `make check`. Expected: `770 passed, 2 skipped, 4 deselected`
+  twice, `All checks passed!`, `no leaks found`. Ruff's default rules leave out line length, so also
   check it: `uv run python -c "import sys; [print(f, i) for f in sys.argv[1:] for i, l in
   enumerate(open(f, encoding='utf-8'), 1) if len(l.rstrip()) > 100]"
   src/vid2sub/web/guards.py tests/test_web_guards.py` prints nothing.
@@ -10600,9 +10599,8 @@ class TokenGuard:
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_auth.py -q`.
-  Expected: `62 passed`. Then `make check`. Expected: the suite's line, twice, with nothing failed
-  (`582 passed, 2 skipped, 4 deselected` when this listing was built without Tasks 2–7's tests),
-  `All checks passed!`, `no leaks found`. Line length, which ruff's default rules leave out:
+  Expected: `62 passed`. Then `make check`. Expected: `832 passed, 2 skipped, 4 deselected`
+  twice, `All checks passed!`, `no leaks found`. Line length, which ruff's default rules leave out:
   `uv run python -c "import sys; [print(f, i) for f in sys.argv[1:] for i, l in
   enumerate(open(f, encoding='utf-8'), 1) if len(l.rstrip()) > 100]" src/vid2sub/web/auth.py
   src/vid2sub/web/static/auth.js tests/test_web_auth.py` prints nothing. The wheel carries the
@@ -11175,10 +11173,9 @@ def route(tokens: MediaTokens) -> BaseRoute:
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_media.py -q`.
-  Expected: `41 passed`. Then `make check`. Expected: the suite's line, twice, with nothing failed
-  (`623 passed, 2 skipped, 4 deselected` when this listing was built without Tasks 2–7's tests),
-  `All checks passed!`, `no leaks found`. Line length: `uv run python -c "import sys; [print(f,
-  i) for f in sys.argv[1:] for i, l in enumerate(open(f, encoding='utf-8'), 1) if
+  Expected: `41 passed`. Then `make check`. Expected: `873 passed, 2 skipped, 4 deselected`
+  twice, `All checks passed!`, `no leaks found`. Line length: `uv run python -c "import sys;
+  [print(f, i) for f in sys.argv[1:] for i, l in enumerate(open(f, encoding='utf-8'), 1) if
   len(l.rstrip()) > 100]" src/vid2sub/web/media.py tests/test_web_media.py` prints nothing.
 
 - [ ] **Step 5: Each guard fails its tests without its fix.** `git add src/vid2sub/web/media.py
@@ -31872,9 +31869,8 @@ the words to `parse_qwen`, as the Mac's engine does, and the engine sends Qwen's
   - The starter's commented `[models.spark-qwen]`: `catalog = "qwen3-asr-1.7b"`,
     `endpoint = "spark"`, `model = "qwen3-asr-1.7b"`, `parser = "qwen3-asr"`, `local = true`.
 
-The `make check` counts below come from a clone without Tasks 2–19, which add their own tests;
-yours are higher by those. What matters is no failure, ruff's `All checks passed!` and
-gitleaks' `no leaks found`.
+The `make check` counts below are the branch's with Tasks 2–19 closed. What matters is no
+failure, ruff's `All checks passed!` and gitleaks' `no leaks found`.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1 [Dan]: Record the Spark's answers.** On Dan's Mac, with local-ai's `make tunnel`
@@ -32101,8 +32097,9 @@ def attach_punctuation(text: str, units: Sequence[tuple[str, int | None, int | N
     return fill_untimed(raw, start_ms)
 ```
 
-- [ ] **Step 5: Run the checks; they pass.** `make check`. Expected: `467 passed, 2 skipped,
-  4 deselected` twice (here; yours is your base's count plus 2), `All checks passed!`,
+- [ ] **Step 5: Run the checks; they pass.** `make check`. Expected: `1000 passed, 2 skipped,
+  35 deselected` twice (Task 19's close plus 2), `Test Files  19 passed (19)`,
+  `Tests  88 passed (88)`, `All checks passed!`,
   `no leaks found`. Commit: write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -32444,8 +32441,9 @@ def parse_qwen_endpoint(data: Any, *, duration_ms: int) -> ParsedChunk:
                       duration_ms=duration_ms)
 ```
 
-- [ ] **Step 9: Run the checks; they pass.** `make check`. Expected: `490 passed, 2 skipped,
-  4 deselected` twice (23 more), `All checks passed!`, `no leaks found`. Commit:
+- [ ] **Step 9: Run the checks; they pass.** `make check`. Expected: `1023 passed, 2 skipped,
+  35 deselected` twice (23 more), `Test Files  19 passed (19)`, `Tests  88 passed (88)`,
+  `All checks passed!`, `no leaks found`. Commit:
 
 ```text
 feat(parse): 🤖 a Qwen3-ASR server's verbose_json becomes timed words with the text's punctuation
@@ -32561,12 +32559,10 @@ def test_a_qwen_answer_of_the_wrong_shape_is_a_bad_response():
 ```
 
   In `tests/test_config.py`, insert before the line
-  `def test_a_key_over_plain_http_to_the_lan_is_refused(tmp_path):`:
+  `def test_a_key_over_plain_http_to_the_lan_is_refused(tmp_path):` (two blank lines follow the
+  block):
 
 ```python
-        c.load_config(write(tmp_path, text))
-
-
 def test_a_qwen3_asr_parser_is_accepted_for_a_local_endpoint_model(tmp_path):
     text = ('[endpoints.spark]\nbase_url = "http://127.0.0.1:9100/v1"\nkey_env = "SPARK_API_KEY"\n'
             '[models.spark-qwen]\ncatalog = "qwen3-asr-1.7b"\nendpoint = "spark"\n'
@@ -32580,10 +32576,13 @@ def test_a_transcription_model_without_a_parser_is_told_the_three_it_can_have(tm
     text = ('[endpoints.spark]\nbase_url = "http://127.0.0.1:9100/v1"\n'
             '[models.q]\nendpoint = "spark"\nmodel = "qwen3-asr-1.7b"\n')
     with pytest.raises(c.ConfigError, match="whisper.cpp, openai or qwen3-asr"):
+        c.load_config(write(tmp_path, text))
+
+
 ```
 
   In `tests/test_pipeline.py`, insert before the line
-  `# final review 4: --dry-run never downloads`:
+  `# final review 4: --dry-run never downloads` (two blank lines follow the block):
 
 ```python
 def test_an_unreachable_spark_qwen_never_falls_back_to_the_macs_qwen_or_the_cloud(clip,
@@ -32601,6 +32600,8 @@ def test_an_unreachable_spark_qwen_never_falls_back_to_the_macs_qwen_or_the_clou
         pipeline.run_one(str(clip), ctx)
     assert ctx.sleeps
     assert not [c for c in engine.calls if c[0] == "transcribe"]
+
+
 ```
 
 - [ ] **Step 11: Run them; watch them fail.**
@@ -32747,8 +32748,9 @@ class EndpointEngine:
         self._client.close()
 ```
 
-- [ ] **Step 13: Run the checks; they pass.** `make check`. Expected: `500 passed, 2 skipped,
-  4 deselected` twice (10 more), `All checks passed!`, `no leaks found`. Commit:
+- [ ] **Step 13: Run the checks; they pass.** `make check`. Expected: `1033 passed, 2 skipped,
+  35 deselected` twice (10 more), `Test Files  19 passed (19)`, `Tests  88 passed (88)`,
+  `All checks passed!`, `no leaks found`. Commit:
 
 ```text
 feat(engines): 🤖 a parser = "qwen3-asr" model transcribes through the endpoint engine
@@ -32893,8 +32895,9 @@ def test_doctor_asks_the_spark_for_its_models_and_says_how_many_it_serves(tmp_pa
 ```
 
   Then `cmp src/vid2sub/example.toml vid2sub.example.toml` prints nothing.
-- [ ] **Step 17: Run the checks; they pass.** `make check`. Expected: `504 passed, 2 skipped,
-  4 deselected` twice (4 more), `All checks passed!`, `no leaks found`. Commit:
+- [ ] **Step 17: Run the checks; they pass.** `make check`. Expected: `1037 passed, 2 skipped,
+  35 deselected` twice (4 more), `Test Files  19 passed (19)`, `Tests  88 passed (88)`,
+  `All checks passed!`, `no leaks found`. Commit:
 
 ```text
 feat(config): 🤖 the starter config carries a commented spark-qwen entry that routes first for Cantonese and Mandarin
@@ -32989,7 +32992,8 @@ def test_gemma_translates_a_batch_in_the_required_shape():
 - [ ] **Step 19: Run it and the checks.** `uv run pytest -m live tests/test_live_spark.py -q -rs`.
   Expected: `3 skipped`, each `needs VID2SUB_LIVE_SPARK=1`. Never run it here with
   `VID2SUB_LIVE_SPARK=1`: that reaches the real Spark with Dan's key. `make check`. Expected:
-  `504 passed, 2 skipped, 5 deselected` twice, `All checks passed!`, `no leaks found`. Commit:
+  `1037 passed, 2 skipped, 36 deselected` twice, `Test Files  19 passed (19)`,
+  `Tests  88 passed (88)`, `All checks passed!`, `no leaks found`. Commit:
 
 ```text
 test(live): 🤖 the opt-in Spark test checks Qwen3-ASR's timed, punctuated words and detection
@@ -33374,9 +33378,9 @@ Spec §23.2's `frontend` and `e2e` jobs, hardened as §23.1 asks, in the idiom o
     7 and 8 check their workflows with it.
   - `make help` lists every target, `e2e` included.
 
-The `make check` counts below come from a clone with Tasks 2–16 only; Tasks 17–20 add their own
-tests, so yours are higher. What matters is no failure, ruff's `All checks passed!` and gitleaks'
-`no leaks found`.
+The counts below are the branch's with Tasks 2–20 (Task 20's Steps 2–20); if Task 20's Step 22
+committed the Spark's recorded answers, the suite's are higher by 4 (6 with the Cantonese answer).
+What matters is no failure, ruff's `All checks passed!` and gitleaks' `no leaks found`.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: Check that the python job needs no built frontend.** CI's python job never builds
@@ -33388,12 +33392,11 @@ rm -f src/vid2sub/web/www/ui.js src/vid2sub/web/www/ui.css
 make check
 ```
 
-  Expected: `955 passed, 2 skipped, 26 deselected` (twice), `Test Files  12 passed (12)`,
-  `Tests  52 passed | 3 skipped (55)` (the built-bundle checks skip with no `ui.js`),
-  `All checks passed!`, `no leaks found`. If a test Tasks 17–20 added fails for want of
-  `www/ui.js`, that is drift: give that test a stand-in `ui.js`, as `tests/test_cli_serve.py`
-  does, rather than building the frontend in the python job's six runners, with a "Built
-  differently" note.
+  Expected: `1037 passed, 2 skipped, 36 deselected` (twice), `Test Files  19 passed (19)`,
+  `Tests  85 passed | 3 skipped (88)` (the built-bundle checks skip with no `ui.js`),
+  `All checks passed!`, `no leaks found`. If a test fails for want of `www/ui.js`, that is drift:
+  give that test a stand-in `ui.js`, as `tests/test_cli_serve.py` does, rather than building the
+  frontend in the python job's six runners, with a "Built differently" note.
 - [ ] **Step 2: Add the two jobs.** In `.github/workflows/ci.yml`, insert above the line
   `  leaks:`:
 
@@ -33519,9 +33522,9 @@ mv src/vid2sub/web/www/ui.js .git/ui.js.held
 unset CI
 ```
 
-  Expected: the build writes `../src/vid2sub/web/www/ui.css` and `ui.js`; `Test Files  12 passed
-  (12)`, `Tests  55 passed (55)`. With no venv, as the job has none: `Tests  54 passed | 1
-  skipped (55)` (`src/build.test.ts (4 tests | 1 skipped)`). With no `ui.js`: `FAIL
+  Expected: the build writes `../src/vid2sub/web/www/ui.css` and `ui.js`; `Test Files  19 passed
+  (19)`, `Tests  88 passed (88)`. With no venv, as the job has none: `Tests  87 passed | 1
+  skipped (88)` (`src/build.test.ts (4 tests | 1 skipped)`). With no `ui.js`: `FAIL
   src/build.test.ts > the built bundle > exists (CI builds before it tests)` and
   `ui.js is missing: run npm run build first`, which is why the job builds first.
 - [ ] **Step 7: Run the e2e job's steps here,** from the repository's root (on a Mac, `ffmpeg
@@ -33541,12 +33544,12 @@ rm -rf e2e-tmp
 unset UV_FROZEN CI PYTEST_ADDOPTS
 ```
 
-  Expected: `Tests  4 passed (4)` for `build.test.ts`; `22 passed, 961 deselected` for `make e2e`
-  (higher with Tasks 17–20's browser tests); `23` server logs (one per server the tests
-  started), the files the upload's glob takes on a failure; `git status` shows no `e2e-tmp/`
-  (it is ignored).
-- [ ] **Step 8: Run the checks; they pass.** `make check`. Expected: `955 passed, 2 skipped, 26
-  deselected` (twice), `Test Files  12 passed (12)`, `Tests  55 passed (55)`,
+  Expected: `Tests  4 passed (4)` for `build.test.ts`; `31 passed, 1044 deselected` for `make e2e`
+  (Tasks 17–19's `test_retranslate.py`, `test_settings.py` and `test_jobs.py` among them);
+  `32` server logs (one per server the tests started), the files the upload's glob takes
+  on a failure; `git status` shows no `e2e-tmp/` (it is ignored).
+- [ ] **Step 8: Run the checks; they pass.** `make check`. Expected: `1037 passed, 2 skipped,
+  36 deselected` (twice), `Test Files  19 passed (19)`, `Tests  88 passed (88)`,
   `All checks passed!`, `no leaks found`.
 - [ ] **Step 9: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -33562,14 +33565,14 @@ UV_FROZEN=1, and Node from frontend/.nvmrc.
 - frontend: npm ci, typecheck, build, Vitest, as recordings' frontend job (8deb039): build
   first, since build.test.ts checks the built ui.js and CI=true fails a missing one (shown
   locally: "ui.js is missing: run npm run build first"). It has no venv, so build.test.ts's
-  React major.minor check skips there (54 passed, 1 skipped, run locally without .venv).
+  React major.minor check skips there (87 passed, 1 skipped, run locally without .venv).
 - e2e: Ubuntu 24.04's apt ffmpeg (6.1.1-3ubuntu5; libavcodec60 depends on libvpx9 and libopus0,
   read from the noble archive's Packages index) for the demo's VP9 and Opus; uv sync; Playwright's
   Chromium with its system packages (`uv run playwright install --with-deps chromium`); make
   build; build.test.ts with VID2SUB_REQUIRE_SHINYREACT=1 (the venv holds shinyreact.js here); make
   e2e. Its server logs go under e2e-tmp/ (PYTEST_ADDOPTS=--basetemp=e2e-tmp) and are uploaded
   only when the job fails, as recordings' e2e job does; e2e-tmp/ is git-ignored.
-- The python job needs no built frontend: make check with no www/ui.js passed (<N> passed, 2
+- The python job needs no built frontend: make check with no www/ui.js passed (1037 passed, 2
   skipped), since tests/test_cli_serve.py and tests/test_demo_guard.py write their own stand-in
   ui.js. So it is unchanged.
 - make actionlint (actionlint-py 1.7.12.25 through uvx; shellcheck on run steps where installed)
@@ -33580,8 +33583,8 @@ UV_FROZEN=1, and Node from frontend/.nvmrc.
   no Node installed and `default` aliased to system (runner-images' install-nvm.sh), so
   `nvm use 22` fails quietly and setup-node's Node runs. The comment says so now.
 
-Run locally: each job's steps in order; Vitest 55 passed; build.test.ts with the venv 4 passed;
-make e2e <E> passed, with the server.log files under e2e-tmp/ for the upload glob.
+Run locally: each job's steps in order; Vitest 88 passed; build.test.ts with the venv 4 passed;
+make e2e 31 passed, with the server.log files under e2e-tmp/ for the upload glob.
 
 Docs read: actions/setup-node v7.1.0 README (node-version-file, cache, cache-dependency-path;
 v6's automatic npm caching applies only with a packageManager field, which package.json lacks);
@@ -33661,7 +33664,564 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 3
 
-<!-- steps: written in the next pass -->
+Phase 2 built the editor, and the docs still said it was being planned: the README's status line,
+its Develop list (none of Phase 2's `make` targets), `tests/README.md` (no Vitest, no browser
+tests, and `uv run pytest` said to run the e2e tests it deselects), and `docs/architecture.md`
+(the browser and `vid2sub serve` dashed, as planned parts are). This task writes what was built,
+from the code: spec §23.5's README parts for the editor, the tests and their opt-in variables,
+and the web app's parts as built, solid.
+
+**Why it is built this way** (read 2026-10-24):
+- **Task 20's Step 23 may or may not have run.** It runs `make readme` (the model table's Qwen3-ASR
+  rows) and draws the Spark's Qwen3-ASR solid in `docs/architecture.md`, once local-ai serves it.
+  So no edit here touches the model table or the Spark's nodes, and the diagram's class line is
+  edited by its prefix (`  class browser,web,fw,`), which both versions of the line start with.
+  The listing applies whether Step 23 came first or not.
+- **Plain npm commands, one a line,** for the frontend build: spec §23.5 has the README give uv
+  and npm commands so Windows works without make, and an inline `#` comment would reach npm as
+  arguments under cmd.exe. Node 22 or later, as `frontend/scripts/check-node.mjs` demands;
+  nvm's README says `nvm install` and `nvm use` read the nearest `.nvmrc`. Homebrew's ffmpeg
+  depends on libvpx and opus (`brew deps ffmpeg`), as Ubuntu 24.04's does (Task 21).
+- **The cue rules are "shown, not yet changeable",** which stays true whichever way Decision 21
+  goes.
+- **Built solid, planned dashed** (`AGENTS.md`, *Docs and security*). The Pages-safe line is drawn
+  as two subgraphs, not a dashed line, since dashed means planned on that page. Every name the
+  new section uses is checked against the code in Step 6.
+- **Left alone:** the CHANGELOG (the phase end's step 7), the spec's status line (the phase end's)
+  and its scenario rows (each task's close sets its own).
+
+**Files:**
+- Modify: `README.md` (the status line; the frontend build under Install; `vid2sub cache clear`
+  and `vid2sub serve` under Use; a new section, The editor; Develop), `tests/README.md` (`make
+  test` and `make check`; the frontend's tests; the browser tests), `docs/architecture.md` (the
+  browser and `vid2sub serve` solid; a new section, The local web app)
+
+**Interfaces:**
+- Consumes: `make readme` (it changes nothing: in Phase 2 only Task 20's Step 23 changes the
+  catalog, and it runs `make readme` itself); the targets `make help` lists after Task 21; the
+  names Tasks 3–21 built, as the code has them (`vid2sub serve`'s options, the editor's labels
+  and `frontend/src/lib/keys.ts`, `web.settings`, `web.runtime`, `jobs.Queue`, the guards).
+- Produces: none (docs only).
+
+The `make check` counts below come from a clone with Tasks 2–21 and Task 20's Steps 2–20 only;
+if Task 20's Step 22 committed the Spark's recorded answers, yours are higher by 4 (6 with the
+Cantonese answer). What matters is no failure, ruff's `All checks passed!` and gitleaks'
+`no leaks found`.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: The README.** Five edits, each anchor once in the file. Replace the status line
+
+```markdown
+Status: Phase 1 (M1, the command line) is built; Phase 2 (M2, the web editor) is being planned.
+```
+
+  with
+
+```markdown
+Status: Phase 1 (M1, the command line) and Phase 2 (M2, the web editor) are built; the spec's
+status line says which have merged.
+```
+
+  After the line
+  ``environment instead: `uv sync --extra mac` and `uv run vid2sub …`.`` (the end of Install),
+  insert:
+
+````markdown
+
+The editor (`vid2sub serve`) also needs its frontend built, once, and again whenever it
+changes; release wheels will carry it built (M4). Without it, `vid2sub serve` says to build it
+first. The build needs Node 22 or later, such as Homebrew's `node`, or nvm's: `nvm install` in
+`frontend/` reads its `.nvmrc`. In your clone, in any shell:
+
+```bash
+cd frontend
+npm ci
+npm run build
+cd ..
+```
+
+The build writes `src/vid2sub/web/www/ui.js` and `ui.css`; with make, `make setup` and
+`make build` do the same. The editor's playback audio needs ffmpeg, as the CLI does, and its demo
+needs an ffmpeg built with libvpx and libopus (Homebrew's and Ubuntu 24.04's are).
+````
+
+  After the line
+  `vid2sub models                                        # what can run on this machine now`,
+  insert (each `#` in column 54, as the lines above):
+
+```bash
+vid2sub cache clear                                   # empty the cache of playback audio
+vid2sub serve                                         # the editor, in your browser (below)
+```
+
+  After the line ``(run the same command with `--skip-existing`); 78 a settings problem.`` (the
+  end of Use), insert:
+
+````markdown
+
+## The editor
+
+```bash
+vid2sub serve            # the editor, in your browser
+vid2sub serve --demo     # the same, on a fresh copy of a 14-second demo episode
+```
+
+`vid2sub serve` runs the editor on `127.0.0.1` only, on port 8765 (`[server] port` in
+`vid2sub.toml`, or `--port N`; `--port 0` takes any free port), and opens your browser through a
+sign-in link made for this launch. In a terminal it prints the link too, for opening by hand;
+when its output goes to a file or a pipe, it prints the path of a private file to open in a
+browser instead, so the link never lands in a log. `--no-browser` only prints. The link works
+until vid2sub stops (Ctrl-C); started again, vid2sub makes a new link, and a tab left open says
+to open that one.
+
+`--demo` (or `make demo`, which builds the frontend first) serves a fresh copy of the demo: 14 s
+of "JFK at Rice University", in the public domain, with English and Japanese subtitles and a
+canned engine. It reads no `vid2sub.toml` and no key, touches nothing outside its copy, and
+deletes the copy when it stops.
+
+**Open** an episode by typing the full path of a video vid2sub has made subtitles for (it has a
+`.vid2sub.jsonl` beside it). The video plays with its captions (source, translation or both);
+the cue list follows playback, marks the current cue and highlights the word being spoken. When
+the browser can't play the video's sound (AC-3, E-AC-3, DTS or TrueHD), or says it can't play
+the video, the editor plays the playback audio instead, with no picture: an AAC copy of the
+sound, made on demand and kept in vid2sub's cache (`[defaults] cache_max_gb` caps it; `vid2sub
+cache clear` empties it).
+
+Keys on the cue list (navigate mode, the default):
+
+| Key | What it does |
+|---|---|
+| Space | play or pause |
+| J, K, L | back 2 seconds, pause, play |
+| ↑, ↓ | select the previous or next cue; with Shift, grow the selection that way |
+| ←, → | choose the source or the translation cell |
+| `[`, `]` | set the cue's start or end to the playhead |
+| Alt+←, Alt+→ | move the cue 100 ms earlier or later (500 ms with Shift) |
+| Enter | edit the selected cell |
+| Ctrl/⌘+Z | undo |
+| Ctrl/⌘+Shift+Z, or Ctrl+Y | redo |
+
+While a cell is being edited, typing goes to the text and only these act:
+
+| Key | What it does |
+|---|---|
+| Ctrl/⌘+Enter | keep the text |
+| Ctrl/⌘+Shift+S | split the cue at the caret |
+| Ctrl/⌘+M | merge with the next cue |
+| Esc | stop editing, leaving the text as it was |
+
+A key pressed while a Japanese or Chinese input method is composing never acts, so Enter commits
+the candidate and nothing else. The buttons above the cue list do the same, plus **Insert** (a
+cue reading "…" at the playhead, opened for editing), **Delete**, and **Find and replace** across
+tracks, with **Add to glossary**. Beside the player: which captions show, the speed (0.75×, 1×,
+1.25×), **Loop this cue** and **Follow playback**.
+
+**Retranslate** asks the translation model again. **Retranslate this cue**, or **Retranslate N
+cues** for a run selected with Shift+↑/↓, replaces those translations, even ones you edited;
+**Retranslate stale** redoes every stale or untranslated cue of the translation shown, and never
+one you edited. It uses the translation model your configuration's route picks. **Allow cloud
+models** starts unticked and unticks itself after every request, so a cloud model is used only
+for the request you ticked it for.
+
+**Save** writes a version of each changed track into the sidecar, then the subtitle files: SRT
+always, and ASS too when **ASS too** is ticked (it starts ticked where the episode had ASS files,
+or where the session's defaults ask for them). Glossary terms you added are written to the
+`vid2sub.glossary.toml` beside the video. Save rewrites only the files vid2sub wrote: a file
+someone else wrote, or changed since, is left alone, and the editor names it.
+
+If another tab, or a `vid2sub` command, saved the same track while you edited it, nothing is
+lost: both versions are kept, and the track says it has two. **Pick a version** shows them, with
+the cues where they differ, and keeps the one you pick; while the source track has two versions,
+the cue list stays empty until you pick. A subtitle file edited in another program comes back as
+a version of its own when you open the episode again, and the editor says it kept your outside
+edit. Unsaved edits are kept in the browser too: after a crash, opening the episode offers them
+back (**Restore them** or **Discard**), and closing the tab with unsaved edits asks first.
+
+**Settings**, in the top bar, shows the endpoints and models `vid2sub.toml` declares, read-only
+(change them in the file), with each endpoint's key shown only as set or not. **Test** asks an
+endpoint which models it serves (its `/v1/models`), sending only that endpoint's key and no
+subtitle text. An endpoint declared with `allow_typed_key = true` (the starter's `openai` is)
+also takes a key typed in: 8 to 1,024 characters of letters, digits and `. _ ~ + / = : -`.
+vid2sub keeps a typed key in memory for this launch only, never writes or logs it, and shows it
+back only as "key entered for this session"; **Forget** drops it sooner. **Defaults for this
+session** (the languages to translate to, and ASS too) are used by jobs, and by Save in an
+episode opened afterwards. They are never written to `vid2sub.toml`, but **Copy settings** gives
+them as a `[defaults]` table to paste there. The cue rules (line width, lines, reading speed,
+durations) are shown, not yet changeable.
+
+**Jobs**, beside **Editor** under the top bar, makes subtitles for videos already on this
+machine, as `vid2sub run` does: type their full paths, one a line, then **Start**. Jobs run one
+at a time, with the session's languages and formats and never a cloud model, and each shows its
+stage and chunk ("transcribing 7/11"). **Cancel** takes a waiting job out, or stops the running
+one before its next chunk or translation batch. The jobs belong to the engine, so every tab
+shows them and closing a tab cancels nothing; **Open in editor** opens a finished one. In the
+demo, jobs run only on the demo's own clip.
+
+Retranslate, Settings and Jobs need an engine that makes subtitles, so the Pages editor
+(Phase 4) leaves them out.
+````
+
+  Under `## Develop`, replace the block
+
+````markdown
+```bash
+make help     # list the targets
+make setup    # uv sync --group dev
+make test     # pytest (media tests need ffmpeg)
+make check    # everything CI checks: the suite, again under UTC, lint, the leak scan
+make lint
+make live     # opt-in tests against real models; see tests/README.md
+make readme   # refresh the model table above from the catalog
+```
+````
+
+  with
+
+````markdown
+```bash
+make help          # list the targets
+make setup         # uv sync --group dev, then the frontend's packages (npm ci)
+make build         # build the frontend into src/vid2sub/web/www/ (vid2sub serve needs it)
+make test          # pytest, without the live and browser tests (media tests need ffmpeg)
+make test-utc      # the same under TZ=UTC, as on CI's Ubuntu runners
+make test-js       # typecheck the frontend and run its Vitest tests
+make e2e           # build, then the browser tests in Playwright's Chromium
+make check         # everything CI checks: the suite, again under UTC, the frontend's tests,
+                   # lint, the leak scan
+make lint          # ruff
+make actionlint    # lint the GitHub workflows
+make leaks         # gitleaks over the whole history
+make demo          # build, then vid2sub serve --demo
+make demo-sidecar  # remake demo/'s canned sidecar and subtitles with the pipeline
+make brand         # regenerate frontend/src/theme.css from _brand.yml
+make skills        # install the shinyreact and shadcn agent skills (never committed)
+make hooks         # install the git hooks (none are built yet)
+make live          # opt-in tests against real models; see tests/README.md
+make readme        # refresh the model table above from the catalog
+```
+
+`make readme` keeps the model table in step with `src/vid2sub/catalog.py`: run it whenever the
+catalog changes (`make check` fails while the table is stale). The tests, and the variables that
+opt into more of them, are in [`tests/README.md`](tests/README.md). CI runs the suite on Ubuntu,
+macOS and Windows, typechecks, tests and builds the frontend, and runs the browser tests in
+Chromium.
+````
+
+- [ ] **Step 2: Check it.** The model table and the targets:
+
+```bash
+cp README.md .git/README.edited && make readme && cmp README.md .git/README.edited && echo "model table unchanged"
+diff <(grep -oE '^make [a-z0-9-]+' README.md | cut -d' ' -f2 | sort) <(make help | awk '{print $1}' | sort) && echo "every target named"
+```
+
+  Expected: `model table unchanged` and `every target named` (the README names each target
+  `make help` lists, and no other). Then `make check`. Expected:
+  `1037 passed, 2 skipped, 36 deselected` twice, `Test Files  19 passed (19)`,
+  `Tests  88 passed (88)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 3: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+docs(readme): 🤖 the README says how to build and run the editor, what its keys and screens do, and every make target
+
+Phase 2 built `vid2sub serve`, and the README still said the editor was
+being planned. It now says, from what was built:
+
+- Install: the frontend is built once from a clone with Node 22 or
+  later: npm ci and npm run build in frontend/, one command a line, so
+  they run in any shell and Windows needs no make (spec 23.5); or make
+  setup and make build. serve asks for the build when it is missing.
+  The demo's video needs an ffmpeg with libvpx and libopus.
+- Use: vid2sub cache clear and vid2sub serve join the command list.
+- The editor: serve on 127.0.0.1, its port, the sign-in link printed
+  only to a terminal (else the private redirect file's path,
+  Decision 12) and --no-browser; --demo; opening an episode and the
+  playback audio; every key, from frontend/src/lib/keys.ts (Task 15,
+  Decision 16); Retranslate (Decision 8, the cloud box unticked after
+  every request, the route's model, Decision 26); Save, conflicts and
+  the picker (Decision 20), outside edits and the crash draft; the
+  settings drawer (typed keys only for allow_typed_key, 8 to 1,024
+  characters, Decision 25, never written; Copy settings; the cue rules
+  "shown, not yet changeable", which stays true whichever way Decision
+  21 goes); the Jobs page (full paths, one at a time, never a cloud
+  model, Cancel between chunks; in the demo only its own clip); and
+  that Retranslate, Settings and Jobs stay out of the Pages editor
+  (Decision 23).
+- Develop: every target make help lists, make readme's job, and what
+  CI runs.
+
+Checked: make check; make readme leaves README.md unchanged; every
+`make X` the README names is a target make help lists, and the other
+way round. Each claim was read from the code it describes (serve.py,
+the components' labels, keys.ts, settings.py, runtime.py, jobs.py,
+backend.py). Docs read: nvm's README (nvm install and nvm use read the
+nearest .nvmrc); Homebrew's ffmpeg formula (brew deps ffmpeg lists
+libvpx and opus).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 22
+Co-Authored-By: <the model's own line>
+```
+
+  `git add README.md`, `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'`
+  shows `Plan:`.
+
+- [ ] **Step 4: `tests/README.md`.** Replace its first item
+
+```markdown
+- `uv run pytest` runs everything except live tests. Tests marked `media` need ffmpeg and
+  ffprobe; they skip without them unless `VID2SUB_REQUIRE_FFMPEG=1` (CI sets it).
+```
+
+  with
+
+```markdown
+- `uv run pytest` (`make test`) runs everything except the live and browser tests: `addopts` in
+  `pyproject.toml` deselects the `live` and `e2e` markers. Tests marked `media` need ffmpeg and
+  ffprobe; they skip without them unless `VID2SUB_REQUIRE_FFMPEG=1` (`make check` and CI set it).
+- `make check` is what CI checks: the suite, again under `TZ=UTC`, the frontend's tests, ruff and
+  gitleaks. It runs no browser or live test.
+```
+
+  and above its last line,
+  ``- Fixtures are synthetic or public domain (`tests/fixtures/CREDITS.md`).``, insert (the live
+  tests' list above stays as it is; Phase 3's Task 9 adds to it):
+
+```markdown
+- The frontend's tests (`make test-js`: `npm run typecheck`, then Vitest's `npm test`, in
+  `frontend/`) cover its pure logic, in `frontend/src/**/*.test.ts`. `src/build.test.ts` also
+  checks the built `www/ui.js`: it skips without one unless `CI` is set (GitHub Actions sets
+  it), and compares the bundle's React with the venv's `shinyreact.js`, skipping without it
+  unless `VID2SUB_REQUIRE_SHINYREACT=1` (`make test-js` sets it, as CI's e2e job does).
+- Browser tests (`make e2e`, marked `e2e`) drive Playwright's Chromium against a real
+  `vid2sub serve` (`tests/e2e/conftest.py`): the demo, or a `vid2sub.toml` whose endpoints are
+  fake servers on this machine. Each test starts its own server on a free port, with its own
+  `TMPDIR` and none of your `VID2SUB_` variables, and signs in through the launch link as a
+  person's browser does. A test fails on any console error or CSP violation its page reports,
+  unless it checks for them itself.
+  `make e2e` builds the frontend and installs Chromium first (`uv run playwright install
+  chromium`; on Linux, `uv run playwright install --with-deps chromium` adds the system
+  packages, as CI does). The demo's video needs an ffmpeg built with libvpx and libopus:
+  `ffmpeg -hide_banner -encoders | grep -E 'libvpx-vp9|libopus'` lists both. Each server's output
+  is `server.log` in its test's temporary folder; CI sets `PYTEST_ADDOPTS=--basetemp=e2e-tmp`
+  and keeps them when the job fails.
+```
+
+- [ ] **Step 5: `docs/architecture.md`.** In the first diagram, the browser and `vid2sub serve`
+  are built: replace
+
+```text
+    browser["Browser<br/>React UI<br/>(Phase 2)"]
+    web["vid2sub serve<br/>FastAPI + Shiny on 127.0.0.1<br/>(Phase 2)"]
+```
+
+  with
+
+```text
+    browser["Browser<br/>React UI"]
+    web["vid2sub serve<br/>FastAPI + Shiny on 127.0.0.1"]
+```
+
+  replace
+
+```text
+  browser -.->|"websocket + token cookie"| web
+  web -.-> core
+```
+
+  with
+
+```text
+  browser -->|"websocket + token cookie"| web
+  web --> core
+```
+
+  and in the line that starts `  class browser,web,fw,` (it ends `sparkqwen,pages planned`, or
+  `pages planned` once Task 20's Step 23 has run), replace that start with `  class fw,`, so
+  only the planned parts stay dashed. Then at the end of the file, after the first diagram's
+  closing fence, append, one blank line first:
+
+````markdown
+## The local web app
+
+`vid2sub serve` makes one engine per launch, on `127.0.0.1` only (spec §19, Phase 2). Every
+request, the websocket's handshake included, passes the three guards first (`web.guards`,
+`web.auth`); the FastAPI shell's own routes win, and the Shiny app, mounted at `/` last, serves
+the page and runs the editor and the Jobs page. With `--demo`, `web.demo.runtime_for` builds the
+same parts around a `DemoBackend` that opens only its copy's episode, with a canned engine and
+translation, and `isolate()`'s audit hook refuses any write outside the copy and any connection
+beyond this machine.
+
+```mermaid
+flowchart LR
+  browser["Browser<br/>React UI (www/ui.js)"]
+  subgraph engine["vid2sub serve on 127.0.0.1 (web.app.create_app)"]
+    host["HostGuard<br/>Host, and the websocket's Origin"]
+    write["WriteGuard<br/>same-origin JSON writes only;<br/>the CSP on every response"]
+    token["TokenGuard<br/>the launch cookie"]
+    subgraph api["FastAPI shell"]
+      auth["/auth<br/>launch token → HttpOnly cookie"]
+      healthz["/healthz"]
+      media["/media/{token}<br/>video or playback audio,<br/>never a path (MediaTokens)"]
+      shiny["Shiny app at /<br/>web.server"]
+    end
+  end
+  browser -->|"page, websocket, /media/"| host --> write --> token
+  token --> auth & healthz & media & shiny
+```
+
+Inside the Shiny app is the Pages-safe line: `web.server` and `web.views` import, at their top,
+only the pure packages, shiny, shinyreact, htmltools, pydantic and `web.episode`, `web.ops`,
+`web.views`, `web.runtime` and `web.settings`, since Phase 4 runs them in Pyodide
+(`tests/test_pages_imports.py` pins it). Everything local is made by `runtime.build()` and
+reached through the launch's `Runtime`, and every call that blocks goes through
+`runtime.blocking`: a worker thread here, inline in Pyodide. Each tab's `Editor` runs that
+tab's requests one at a time, in order; the job queue is the engine's, shared by every tab.
+
+```mermaid
+flowchart TB
+  subgraph pagesafe["Pages-safe"]
+    server["web.server<br/>a session per tab: outputs, inputs, send_message"]
+    editor["Editor, per tab<br/>open, edit, undo, redo, save,<br/>resolve, retranslate: in order"]
+    views["web.views<br/>episode_view · jobs_view: plain JSON"]
+    ops["web.ops.parse_op<br/>every edit checked at the door"]
+    settings["web.settings<br/>settings_view · Session's defaults"]
+    runtime["web.runtime<br/>Runtime · blocking"]
+    pure["vid2sub.subs · parse · catalog · web.episode"]
+  end
+  subgraph local["Local only"]
+    backend["web.backend.LocalBackend<br/>open · apply · save · resolve · retranslate"]
+    queue["jobs.Queue<br/>one worker thread, one job at a time"]
+    tokens["web.media.MediaTokens"]
+    keys["engines.clients.KeyRing<br/>keys from the environment;<br/>typed keys, this launch only"]
+  end
+  core["vid2sub core<br/>store · translate · pipeline.run_one · media · engines"]
+  files[("Video folder<br/>video · .vid2sub.jsonl · .xx.srt")]
+  server --> editor
+  server --> views
+  server --> settings
+  editor --> ops
+  views --> pure
+  editor -->|"rt.backend · runtime.blocking"| runtime
+  server -->|"jobs_submit · job_cancel"| runtime
+  runtime --> backend & queue & tokens & keys
+  backend --> core
+  queue -->|"runtime.job_runner"| core
+  core <--> files
+```
+````
+
+- [ ] **Step 6: Check it.** Every name the new section uses is in the code:
+
+```bash
+uv run python - <<'PY'
+import importlib, re
+from pathlib import Path
+text = Path("docs/architecture.md").read_text(encoding="utf-8").split("## The local web app")[1]
+missing = []
+for name in sorted(set(re.findall(r"\b(?:web|jobs|engines|pipeline|runtime)(?:\.\w+)+", text))):
+    parts = (["web"] if name.startswith("runtime.") else []) + name.split(".")
+    for i in range(len(parts), 0, -1):
+        try:
+            obj = importlib.import_module("vid2sub." + ".".join(parts[:i]))
+        except ImportError:
+            continue
+        for attr in parts[i:]:
+            obj = getattr(obj, attr, None)
+        break
+    else:
+        obj = None
+    if obj is None:
+        missing.append(name)
+src = "\n".join(p.read_text(encoding="utf-8") for p in Path("src/vid2sub").rglob("*.py"))
+missing += [w for w in ("HostGuard", "WriteGuard", "TokenGuard", "class Editor", "def isolate",
+                        "jobs_submit", "job_cancel", '"/healthz"', "/media/{token}")
+            if w not in src]
+print("missing:", missing)
+PY
+grep -c -- '-\.->' docs/architecture.md
+```
+
+  Expected: `missing: []` (with a name misspelt, say `jobs.Queues`, it prints
+  `missing: ['jobs.Queues']`), then `3`, the dashed arrows to faster-whisper, the Spark's
+  Qwen3-ASR and Pages (`2` once Task 20's Step 23 has drawn the Spark's Qwen3-ASR solid). The
+  diagrams render on GitHub's view of the file; this listing's were rendered with mermaid 11.4.1
+  in Chromium. Then `make check`. Expected: as in Step 2.
+- [ ] **Step 7: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+docs: 🤖 the tests README covers Vitest and the browser tests, and the architecture page draws the web app as built
+
+tests/README.md said `uv run pytest` runs everything but the live tests;
+pyproject's addopts deselects the e2e marker too, so it says so now. It
+gains make check's parts; the frontend's tests (make test-js, and
+build.test.ts's CI and VID2SUB_REQUIRE_SHINYREACT switches); and the
+browser tests (make e2e: a real vid2sub serve per test, the demo or a
+vid2sub.toml with fake servers, no VID2SUB_ variables passed on,
+failing on any console error or CSP violation; Playwright's Chromium,
+--with-deps on Linux as CI does; ffmpeg with libvpx and libopus; each
+server's server.log, which CI keeps from e2e-tmp/ on a failure). The
+live tests' list is unchanged.
+
+docs/architecture.md: the browser and vid2sub serve are built, so
+they and their arrows are solid now (AGENTS.md: built solid, planned
+dashed). The class line loses only browser and web, so the Spark's
+Qwen3-ASR, faster-whisper and Pages stay dashed. A new section, The
+local web app, draws the engine as built: HostGuard, WriteGuard and
+TokenGuard in front of the FastAPI shell's /auth, /healthz and
+/media/{token} and the Shiny app at /; then the Pages-safe line, with
+web.server, the per-tab Editor, web.views, web.ops, web.settings and
+web.runtime on one side and what runtime.build() makes on the other
+(LocalBackend, jobs.Queue, MediaTokens, KeyRing), and the demo's
+DemoBackend and isolate().
+
+Checked: make check; every dotted name, class, route and input the new
+section names exists in src/vid2sub (a script importing each, and a
+grep); all three diagrams render in Chromium with mermaid 11.4.1,
+with only the three planned edges dotted.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 22
+Co-Authored-By: <the model's own line>
+```
+
+  `git add tests/README.md docs/architecture.md`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 8: Review, look forward, close.** The Tier 3 self-review from
+  `$(cat .git/TASK_BASE)` (*Standards*, *Spec*) plus `make check`. Worth checking: each claim
+  against the code it describes (a label, a key, a limit); no edit inside the model table or the
+  Spark's nodes; every `make` target named; British spelling. Grep `README.md`, `tests/README.md`,
+  `docs/architecture.md`, `AGENTS.md` and `tests/fixtures/` for `being planned`, `(Phase 2`,
+  `not yet`, `planned` and `unverified`: what is left is the cue rules' "not yet changeable", the
+  page's own legend and the Spark's Qwen3-ASR (dashed until Task 20's Step 23). The forward
+  review over Task 23 (its Step 2 builds the frontend as the README says), Task 24 (its step 4
+  checks that Phase 2's parts in `docs/architecture.md`, solid since this task, still match the
+  code), Phase 3's Task 9 (its `tests/README.md` anchor, the `VID2SUB_LIVE_SPARK=1` item, is
+  unchanged) and Task 11, and Phase 4's Task 10 (the README's install from the index sits beside
+  the editor's build from a clone). The docs this task didn't touch but Phase 2 left short:
+  `AGENTS.md`'s Layout names neither `src/vid2sub/web/` nor `frontend/`, its Commands name none of
+  `make build`, `test-js`, `e2e` or `demo`, and its check-the-docs table has none of FastAPI,
+  shiny, shinyreact, Playwright, React, Vite, Tailwind or shadcn (spec §24 asks for them there).
+  `AGENTS.md` is the workflow's own file, so it waits for the phase end, on the Phase-end list's
+  `Task 22 (planning)` row. Then the close, its own commit, holding this plan with this task's
+  boxes ticked and **Now** set to `Task 23: The M2 exit test (with Dan), open.`, with the
+  message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 22: The docs
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 3
+Rounds: self-review (Standards, Spec); make check
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 22
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md`, `git commit -F
+  .git/CLOSE_MSG`.
 
 ***
 
@@ -33805,7 +34365,8 @@ merge waits for Dan, as every push does.
   the code before Dan sees it; each finding a severity and a decision.
 - [ ] **4. The phase-end list worked through:** each row of this plan's Phase-end list fixed in
   its own commit at the tier of what it touches, or moved to the spec's Later with a reason.
-  Missing docs are written now; in `docs/architecture.md`, Phase 2's parts turn solid.
+  Missing docs are written now; `docs/architecture.md` has drawn Phase 2's parts solid since
+  Task 22, so check each name there still matches the code.
 - [ ] **5. The forward look:** the Phase 3 and Phase 4 plans rewritten to fit what was built
   (every listing that consumes a Phase 2 interface checked against the code).
 - [ ] **6. The retro:** `docs/superpowers/plans/2026-10-23-vid2sub-phase-2-retro.md`, in four
@@ -33861,3 +34422,4 @@ fi
 | Task 12 (planning) | Minor | `frontend/package.json` | `npm install` reports 8 audit findings in the pinned dev dependencies (the same pins as `recordings`); none is triaged yet, so Task 21 or the phase end checks whether any reaches the built `ui.js` | open |
 | Task 2 (planning) | Minor | `.github/workflows/ci.yml` | The floor job's hand-kept test list lacks `tests/test_edit.py` (Task 2) and `tests/test_hostile_fixtures.py` (Task 13), both pure; it could pick its files by their imports, as Phase 4 Task 6's `tests/pyodide_run.py` does (found writing Phase 4 Task 6) | open |
 | Task 18 (planning) | Minor | `src/vid2sub/engines/clients.py` | The drawer's Test has httpx's per-read timeout but no overall deadline or size cap, so a server that trickles its `/v1/models` answer holds that Test open (found by the security review of Task 18's listing) | open |
+| Task 22 (planning) | Minor | `AGENTS.md` | Missing docs: Layout names neither `src/vid2sub/web/` nor `frontend/`; Commands name none of `make build`, `test-js`, `e2e` or `demo`; the check-the-docs table lacks FastAPI, shiny, shinyreact, Playwright, React, Vite, Tailwind and shadcn (spec §24). `AGENTS.md` is the workflow's own file, so its change waits for the phase end (found writing Task 22) | open |
