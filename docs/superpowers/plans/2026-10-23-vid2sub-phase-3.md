@@ -4182,7 +4182,1293 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 2 · **Scenarios:** S45
 
-<!-- steps: written in the next pass -->
+**Files:**
+- Create: `src/vid2sub/parse/fasterwhisper.py`, `src/vid2sub/engines/faster_whisper.py`
+- Modify: `src/vid2sub/config.py` (`engine = "faster-whisper"`), `src/vid2sub/engines/registry.py`,
+  `src/vid2sub/catalog.py` (the Whisper entries' `default_model`, `runs_on` and `install`;
+  English's route in §11.2's order, now that this machine can run turbo),
+  `src/vid2sub/detect.py` (`whisper_available`, the engine's candidates),
+  `src/vid2sub/commands/doctor.py` (faster-whisper and the GPU's libraries), `pyproject.toml`
+  and `uv.lock` (the `whisper` and `nvidia` extras), `src/vid2sub/example.toml` and
+  `vid2sub.example.toml` (a commented entry), `README.md` (`make readme`), `tests/README.md`
+  (`VID2SUB_LIVE_WHISPER`), `.github/workflows/ci.yml` (the floor job runs the new parser's
+  tests)
+- Test: `tests/test_parse_fasterwhisper.py`, `tests/test_faster_whisper_engine.py`,
+  `tests/test_catalog.py`, `tests/test_detect.py`, `tests/test_doctor_config.py`
+
+**Interfaces:**
+- Consumes: the Engine protocol (`engines.base.Engine`, `Chunk.float32`, `ChunkResult`,
+  `EngineError`, `ModelStamp`); `parse.ParsedChunk`, `ParseError`, `parse.words.ms`,
+  `tokens_to_words`; `subs.langs.LANGS`; `catalog.CATALOG`; `config.ModelEntry`,
+  `is_local`; `detect.candidates`; `commands.doctor.Check`. From faster-whisper 1.2.1:
+  `WhisperModel(model_size_or_path, device=, compute_type=)`, `WhisperModel.transcribe(audio,
+  language=, initial_prompt=, word_timestamps=, vad_filter=) -> (generator of Segment,
+  TranscriptionInfo)`, `WhisperModel.detect_language(audio) -> (language, probability,
+  [(language, probability), …])`, `faster_whisper.utils.download_model(size_or_id,
+  local_files_only=True)`; `ctranslate2.get_cuda_device_count()`.
+- Produces:
+  - `vid2sub.parse.fasterwhisper.parse_faster_whisper(data: Any) -> ParsedChunk` (pure): `data`
+    is `{"language", "language_probability", "all_language_probs", "segments": [{"start",
+    "end", "text", "avg_logprob", "compression_ratio", "no_speech_prob", "words": [{"start",
+    "end", "word", "probability"}]}]}` (times in seconds); `ParseError` for any other shape
+  - `vid2sub.engines.faster_whisper`: `CUDA_LIBRARIES = ("cublas64_12.dll", "cudnn64_9.dll")`;
+    `missing_cuda_libraries(environ=os.environ, *, windows=os.name == "nt") -> list[str]` (the
+    DLLs no PATH folder holds; always `[]` off Windows); `cuda_devices() -> int`;
+    `device_for(devices: int, missing: Sequence[str]) -> tuple[str, str]` (`("cuda",
+    "float16")` or `("cpu", "int8")`); `hf_revision(model: str) -> str`;
+    `class FasterWhisperEngine: __init__(self, name: str, entry: ModelEntry, *,
+    model_factory: Callable[..., Any] | None = None)`, `name = "faster-whisper"`,
+    `supports_prompt = True`, `max_chunk_s` from the catalog (300), `model_id` (the entry's
+    `model`, else the catalog's `default_model`: `large-v3` or `large-v3-turbo`), and the
+    protocol's `transcribe`, `detect_language`, `stamp`, `close`
+  - `config.ModelEntry.engine: Literal["mlx-qwen3-asr", "faster-whisper"] | None`; a
+    faster-whisper entry's catalog must be a local Whisper model; it is local (in-process)
+  - `catalog.CatalogEntry.default_model` for `whisper-large-v3` (`"large-v3"`) and
+    `whisper-large-v3-turbo` (`"large-v3-turbo"`)
+  - `catalog.Step = str | tuple[str, Literal["endpoint", "in-process"]]`: a route step is a
+    catalog id (anywhere, endpoints first, as before) or a catalog id and where it runs.
+    English's route is turbo on an endpoint (the Spark) → `qwen3-asr-1.7b` (the Mac) → turbo
+    in-process (faster-whisper) → `whisper-large-v3` → `qwen3-asr-0.6b` → OpenAI, §11.2's
+    order on every system; the other rows are M1's, which already follow §11.2
+  - `detect.whisper_available() -> bool`; `detect.candidates` gives a faster-whisper model as
+    an `in-process` candidate, unavailable with "install vid2sub[whisper] (vid2sub[nvidia] for
+    an NVIDIA GPU)" without the extra
+  - `commands.doctor._whisper(environ, *, platform: str = sys.platform) -> list[Check]`:
+    `faster-whisper` (installed, else how to install; not shown on a Mac without it),
+    `NVIDIA GPU` (none seen: the CPU) or `cuBLAS 12` (on Windows, the DLLs on PATH or how to
+    fix it; on Linux, the GPUs seen and the LD_LIBRARY_PATH note); every one a warning
+  - Extras: `whisper = ["faster-whisper>=1.2.1"]`; `nvidia` adds `nvidia-cublas-cu12>=12.4` and
+    `nvidia-cudnn-cu12>=9,<10` on Windows and Linux
+  - What Task 10 needs: a CI job on Windows and Linux that runs `uv sync --group dev --extra
+    whisper` (so the field check against the real library runs, not skips) and the suite; the
+    real model stays out of CI (`VID2SUB_LIVE_WHISPER=1` is opt-in, about 1.6 GB on first run).
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing test,** `tests/test_parse_fasterwhisper.py`:
+
+```python
+"""faster-whisper's segments, as the engine hands them over, into vid2sub's words (spec §9.2).
+
+Shaped like faster-whisper 1.2.1's Segment, Word and TranscriptionInfo (transcribe.py): times in
+seconds, each word's text with Whisper's leading space, `all_language_probs` only when the
+language was detected.
+"""
+
+import pytest
+
+from vid2sub.parse import ParseError
+from vid2sub.parse.fasterwhisper import parse_faster_whisper
+
+
+def word(text, start, end, p=0.9):
+    return {"word": text, "start": start, "end": end, "probability": p}
+
+
+def segment(text, start, end, words):
+    return {"start": start, "end": end, "text": text, "avg_logprob": -0.2,
+            "compression_ratio": 1.3, "no_speech_prob": 0.01, "words": words}
+
+
+EN = {"language": "en", "language_probability": 0.98,
+      "all_language_probs": [["en", 0.98], ["de", 0.01]],
+      "segments": [segment(" Hello, world.", 0.0, 2.0,
+                           [word(" Hello,", 0.0, 0.42, 0.95), word(" world.", 0.5, 0.95)])]}
+
+
+def test_segments_become_words_in_milliseconds_with_whispers_leading_spaces():
+    parsed = parse_faster_whisper(EN)
+    assert (parsed.language, parsed.language_probs) == ("en", {"en": 0.98, "de": 0.01})
+    (seg,) = parsed.segments
+    assert [(w.text, w.start_ms, w.end_ms, w.prob) for w in seg.words] == [
+        (" Hello,", 0, 420, 0.95), (" world.", 500, 950, 0.9)]
+    assert (seg.text, seg.start_ms, seg.end_ms) == (" Hello, world.", 0, 2000)
+    assert (seg.avg_logprob, seg.compression_ratio, seg.no_speech_prob) == (-0.2, 1.3, 0.01)
+
+
+def test_cjk_words_stand_alone_and_closing_punctuation_joins_the_word_before():
+    data = {"language": "ja", "language_probability": 1.0, "all_language_probs": None,
+            "segments": [segment("こんにちは。", 0.0, 1.2,
+                                 [word("こん", 0.0, 0.4), word("にちは", 0.4, 1.0),
+                                  word("。", 1.0, 1.1)])]}
+    (seg,) = parse_faster_whisper(data).segments
+    assert [w.text for w in seg.words] == ["こん", "にちは。"]
+    assert seg.text == "".join(w.text for w in seg.words) == "こんにちは。"
+
+
+def test_a_language_given_to_the_model_has_only_its_own_probability():
+    data = {**EN, "language": "ja", "language_probability": 1, "all_language_probs": None}
+    assert parse_faster_whisper(data).language_probs == {"ja": 1.0}
+
+
+def test_a_language_vid2sub_does_not_know_is_no_language_but_its_votes_are_kept():
+    data = {**EN, "language": "fr", "all_language_probs": [["fr", 0.9], ["en", 0.1]]}
+    parsed = parse_faster_whisper(data)
+    assert parsed.language is None and parsed.language_probs == {"fr": 0.9, "en": 0.1}
+
+
+def test_times_are_rounded_once_to_whole_milliseconds():
+    data = {**EN, "segments": [segment(" Hi.", 0.1 + 0.2, 1.0000000000000002,
+                                       [word(" Hi.", 0.30000000000000004, 0.7004)])]}
+    (seg,) = parse_faster_whisper(data).segments
+    assert (seg.start_ms, seg.end_ms, seg.words[0].start_ms, seg.words[0].end_ms) == (
+        300, 1000, 300, 700)
+
+
+@pytest.mark.parametrize("words", [None, []])
+def test_a_segment_without_words_is_unaligned_and_keeps_its_text(words):
+    data = {**EN, "segments": [segment(" Music.", 3.0, 5.0, words)]}
+    (seg,) = parse_faster_whisper(data).segments
+    assert (seg.words, seg.text, seg.start_ms, seg.end_ms) == ((), " Music.", 3000, 5000)
+
+
+def test_a_word_with_a_broken_character_makes_its_segment_unaligned():
+    data = {**EN, "segments": [segment("你好", 0.0, 1.0, [word("�", 0.0, 0.5),
+                                                          word("好", 0.5, 1.0)])]}
+    (seg,) = parse_faster_whisper(data).segments
+    assert seg.words == () and seg.text == "你好"
+
+
+def test_a_word_with_no_time_sits_at_the_previous_words_end():
+    data = {**EN, "segments": [segment(" Hello, world.", 0.0, 2.0,
+                                       [word(" Hello,", 0.0, 0.42), word(" world.", None, None)])]}
+    (seg,) = parse_faster_whisper(data).segments
+    assert [(w.start_ms, w.end_ms, w.timed) for w in seg.words] == [(0, 420, True),
+                                                                   (420, 420, False)]
+
+
+def test_a_segment_ending_before_it_starts_ends_where_it_starts():
+    data = {**EN, "segments": [segment(" Hi.", 2.0, 1.5, [word(" Hi.", 2.0, 2.0)])]}
+    (seg,) = parse_faster_whisper(data).segments
+    assert (seg.start_ms, seg.end_ms) == (2000, 2000)
+
+
+def test_no_speech_is_no_segments():
+    data = {**EN, "segments": []}
+    assert parse_faster_whisper(data).segments == ()
+
+
+@pytest.mark.parametrize("data", [
+    None, [], {"language": "en"}, {"segments": "nope"}, {"segments": ["nope"]},
+    {**EN, "all_language_probs": "nope"}, {**EN, "all_language_probs": [["en"]]},
+    {**EN, "all_language_probs": [["en", "high"]]}])
+def test_anything_else_is_refused_as_not_faster_whispers(data):
+    with pytest.raises(ParseError):
+        parse_faster_whisper(data)
+```
+
+- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_parse_fasterwhisper.py -q`.
+  Expected: `E   ModuleNotFoundError: No module named 'vid2sub.parse.fasterwhisper'` and
+  `1 error`.
+- [ ] **Step 3: Write the code,** `src/vid2sub/parse/fasterwhisper.py`:
+
+```python
+"""faster-whisper's segments → a ParsedChunk (spec §9.2, §9.5).
+
+The engine hands over plain data, read from faster-whisper 1.2.1's Segment, Word and
+TranscriptionInfo: each segment's start, end, text, avg_logprob, compression_ratio and
+no_speech_prob, and its words (`word`, `start`, `end`, `probability`; `word_timestamps=True`),
+times in seconds; with the run's `language` and, only when the model detected it,
+`all_language_probs` (each language and its probability). A word keeps Whisper's leading space;
+the words are merged as whisper.cpp's are (`tokens_to_words`), so a CJK character stands alone and
+closing punctuation joins the word before it. A segment the model gave no words, or one with
+U+FFFD in a word, is unaligned rather than wrong. Pure, like every parser (spec §3.2).
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Mapping
+from typing import Any
+
+from vid2sub.parse import ParsedChunk, ParseError
+from vid2sub.parse.words import ms, tokens_to_words
+from vid2sub.subs import langs
+from vid2sub.subs.model import Segment
+
+
+def _probabilities(data: Mapping[str, Any], language: Any) -> dict[str, float]:
+    pairs = data.get("all_language_probs")
+    if pairs is None:
+        p = data.get("language_probability")
+        if isinstance(language, str) and language and isinstance(p, (int, float)) \
+                and not isinstance(p, bool) and math.isfinite(p):
+            return {language: float(p)}
+        return {}
+    if not isinstance(pairs, (list, tuple)):
+        raise ParseError("all_language_probs is not a list")
+    probs = {}
+    for pair in pairs:
+        if (not isinstance(pair, (list, tuple)) or len(pair) != 2 or not isinstance(pair[0], str)
+                or isinstance(pair[1], bool) or not isinstance(pair[1], (int, float))):
+            raise ParseError("all_language_probs holds something that isn't a language and "
+                             "its probability")
+        probs[pair[0]] = float(pair[1])
+    return probs
+
+
+def parse_faster_whisper(data: Any) -> ParsedChunk:
+    if not isinstance(data, Mapping) or not isinstance(data.get("segments"), list):
+        raise ParseError("not faster-whisper's segments")
+    raw = data.get("language")
+    probs = _probabilities(data, raw)
+    language = raw if raw in langs.LANGS else None
+    segments = []
+    for seg in data["segments"]:
+        if not isinstance(seg, Mapping):
+            raise ParseError("a faster-whisper segment is not an object")
+        s_start = ms(seg.get("start")) or 0
+        s_end = ms(seg.get("end"))
+        s_end = s_start if s_end is None or s_end < s_start else s_end
+        tokens = [(str(w.get("word", "")), ms(w.get("start")), ms(w.get("end")),
+                   w.get("probability"))
+                  for w in seg.get("words") or [] if isinstance(w, Mapping)]
+        words = tokens_to_words(tokens, start_ms=s_start)
+        if any("�" in w.text for w in words):
+            words = []
+        text = "".join(w.text for w in words) if words else str(seg.get("text", ""))
+        segments.append(Segment(text=text, start_ms=s_start, end_ms=s_end, words=tuple(words),
+                                avg_logprob=seg.get("avg_logprob"),
+                                no_speech_prob=seg.get("no_speech_prob"),
+                                compression_ratio=seg.get("compression_ratio")))
+    return ParsedChunk(tuple(segments), language, probs)
+```
+
+  In `.github/workflows/ci.yml`'s `floor` job, replace the line
+  `tests/test_parse_openai_qwen.py tests/test_catalog.py` with the two lines
+  `tests/test_parse_openai_qwen.py tests/test_parse_fasterwhisper.py` and
+  `tests/test_catalog.py` (same indentation).
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_parse_fasterwhisper.py
+  tests/test_purity.py -q` first (`20 passed`), then the guard checks, then `make check`.
+  **Guard checks**, each reverted and restored: add `import threading` below `import math` in
+  the parser (`uv run pytest tests/test_purity.py -q`: `FAILED
+  …test_pure_modules_import_only_the_standard_library_pydantic_and_subtitle_libraries`);
+  replace `if any("�" in w.text for w in words):` with `if False:` (`FAILED
+  …test_a_word_with_a_broken_character_makes_its_segment_unaligned`). `make check`. Expected:
+  `843 passed, 5 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(parse): 🤖 faster-whisper's segments and words parse into vid2sub's words, purely
+
+vid2sub.parse.fasterwhisper.parse_faster_whisper (spec §9.2, §9.5) takes
+the plain data the engine will hand over, read from faster-whisper
+1.2.1's Segment (start, end, text, avg_logprob, compression_ratio,
+no_speech_prob, words), Word (start, end, word, probability) and
+TranscriptionInfo (language, language_probability, all_language_probs,
+the last only when the language was detected). Times in seconds become
+integer milliseconds rounded once; words keep Whisper's leading space and
+are merged as whisper.cpp's are, so CJK characters stand alone and
+closing punctuation joins the word before; a segment with no words, or a
+U+FFFD in a word, is unaligned. A language vid2sub doesn't know is no
+language, but its probabilities are kept. CI's floor job (Python 3.12,
+pydantic 2.10.5) runs the new tests with the other pure ones.
+
+The new tests failed first with: ModuleNotFoundError: No module named
+'vid2sub.parse.fasterwhisper'. With `import threading` added to the
+parser, test_purity fails; without the U+FFFD rule, its test fails.
+
+Docs read: faster-whisper 1.2.1 on PyPI (released 2025-10-31; needs
+ctranslate2>=4,<5) and its source, faster_whisper/transcribe.py at the
+v1.2.1 tag (the Word, Segment and TranscriptionInfo dataclasses; transcribe
+returns a generator of segments and the info) and README.md (word.word,
+word.start, word.end; the generator runs the model as it is read).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 9
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/parse/fasterwhisper.py tests/test_parse_fasterwhisper.py
+  .github/workflows/ci.yml`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 6: Write the failing tests,** `tests/test_faster_whisper_engine.py`:
+
+```python
+"""faster-whisper in-process (spec §9.5, S45), against a fake model shaped like 1.2.1's.
+
+No test here downloads a model: the WhisperModel is a fake whose segments, words and info have
+faster-whisper 1.2.1's fields (faster_whisper/transcribe.py), and a test checks those fields
+against the real library when the `whisper` extra is installed.
+"""
+
+import dataclasses
+import os
+import sys
+from dataclasses import dataclass
+from typing import ClassVar
+
+import numpy as np
+import pytest
+
+from vid2sub.config import Config, ConfigError, Endpoint, ModelEntry, is_local, load_config
+from vid2sub.engines import faster_whisper as fw
+from vid2sub.engines.base import Chunk, EngineError
+from vid2sub.engines.clients import KeyRing, RunPolicy
+from vid2sub.engines.registry import make_engine
+
+TURBO = ModelEntry(catalog="whisper-large-v3-turbo", engine="faster-whisper")
+
+
+@dataclass
+class Word:
+    start: float
+    end: float
+    word: str
+    probability: float
+
+
+@dataclass
+class Segment:
+    id: int
+    seek: int
+    start: float
+    end: float
+    text: str
+    tokens: list
+    avg_logprob: float
+    compression_ratio: float
+    no_speech_prob: float
+    words: list | None
+    temperature: float | None
+
+
+@dataclass
+class TranscriptionInfo:
+    language: str
+    language_probability: float
+    duration: float
+    duration_after_vad: float
+    all_language_probs: list | None
+    transcription_options: object
+    vad_options: object
+
+
+def hello(start=0.0):
+    return Segment(0, 0, start, start + 1.0, " Hello, world.", [50364], -0.2, 1.3, 0.01,
+                   [Word(start, start + 0.42, " Hello,", 0.95),
+                    Word(start + 0.5, start + 0.95, " world.", 0.9)], 0.0)
+
+
+class FakeModel:
+    """Records what the engine asks; its segments are a generator, as faster-whisper's are."""
+
+    made: ClassVar[list[tuple[tuple, dict]]] = []
+
+    def __init__(self, *args, **kwargs):
+        FakeModel.made.append((args, kwargs))
+        self.calls: list[tuple[np.ndarray, dict]] = []
+        self.read = 0
+
+    def transcribe(self, audio, **kwargs):
+        self.calls.append((audio, kwargs))
+
+        def segments():
+            self.read += 1
+            yield hello()
+
+        probs = None if kwargs.get("language") else [("ja", 0.97), ("zh", 0.02)]
+        return segments(), TranscriptionInfo(kwargs.get("language") or "ja", 1.0, 1.0, 1.0,
+                                             probs, None, None)
+
+    def detect_language(self, audio=None, **kwargs):
+        self.calls.append((audio, kwargs))
+        return "ja", 0.97, [("ja", 0.97), ("zh", 0.02), ("en", 0.01)]
+
+
+@pytest.fixture(autouse=True)
+def no_gpu(monkeypatch):
+    FakeModel.made = []
+    monkeypatch.setattr(fw, "cuda_devices", lambda: 0)
+    monkeypatch.setattr(fw, "hf_revision", lambda model: "0123456789abcdef")
+
+
+def chunk(seconds=1.0):
+    return Chunk(index=0, samples=np.zeros(int(16_000 * seconds), dtype=np.int16),
+                 encode=lambda s: b"")
+
+
+def engine(entry=TURBO):
+    return fw.FasterWhisperEngine("local-turbo", entry, model_factory=FakeModel)
+
+
+def test_the_engine_asks_for_words_with_no_vad_and_gives_the_language_and_the_prompt():
+    e = engine()
+    result = e.transcribe(chunk(), language="ja", prompt="工藤新一.")
+    (model,) = [e._model]
+    ((audio, kwargs),) = model.calls
+    assert kwargs == {"language": "ja", "initial_prompt": "工藤新一.", "word_timestamps": True,
+                      "vad_filter": False}
+    assert audio.dtype == np.float32 and audio.shape == (16_000,)
+    assert model.read == 1  # the generator was read: that is when faster-whisper transcribes
+    (seg,) = result.parsed.segments
+    assert [w.text for w in seg.words] == [" Hello,", " world."] and seg.end_ms == 1000
+    assert result.parsed.language == "ja" and result.parsed.language_probs == {"ja": 1.0}
+
+
+def test_no_prompt_is_no_initial_prompt_and_no_language_is_detected_by_the_model():
+    e = engine()
+    result = e.transcribe(chunk(), language=None, prompt="")
+    assert e._model.calls[0][1]["initial_prompt"] is None
+    assert e._model.calls[0][1]["language"] is None
+    assert result.parsed.language_probs == {"ja": 0.97, "zh": 0.02}
+
+
+def test_detecting_the_language_gives_every_languages_probability():
+    e = engine()
+    assert e.detect_language(chunk()) == {"ja": 0.97, "zh": 0.02, "en": 0.01}
+    assert e._model.calls[0][0].dtype == np.float32
+
+
+def test_the_catalog_entry_picks_the_ctranslate2_conversion_unless_the_entry_names_one():
+    assert engine(ModelEntry(catalog="whisper-large-v3", engine="faster-whisper")).model_id \
+        == "large-v3"
+    assert engine(TURBO).model_id == "large-v3-turbo"
+    assert engine(ModelEntry(engine="faster-whisper")).model_id == "large-v3-turbo"
+    named = ModelEntry(catalog="whisper-large-v3", engine="faster-whisper",
+                       model="Systran/faster-whisper-large-v3")
+    assert engine(named).model_id == "Systran/faster-whisper-large-v3"
+
+
+def test_on_the_cpu_the_model_runs_in_int8(monkeypatch):
+    engine().transcribe(chunk(), language="en", prompt="")
+    assert FakeModel.made == [(("large-v3-turbo",), {"device": "cpu", "compute_type": "int8"})]
+
+
+def test_on_an_nvidia_gpu_with_its_libraries_the_model_runs_in_float16(monkeypatch):
+    monkeypatch.setattr(fw, "cuda_devices", lambda: 1)
+    monkeypatch.setattr(fw, "missing_cuda_libraries", list)
+    engine().transcribe(chunk(), language="en", prompt="")
+    assert FakeModel.made[0][1] == {"device": "cuda", "compute_type": "float16"}
+
+
+def test_an_nvidia_gpu_without_cublas_on_path_leaves_the_model_on_the_cpu(monkeypatch):
+    monkeypatch.setattr(fw, "cuda_devices", lambda: 1)
+    monkeypatch.setattr(fw, "missing_cuda_libraries", lambda: ["cublas64_12.dll"])
+    engine().transcribe(chunk(), language="en", prompt="")
+    assert FakeModel.made[0][1] == {"device": "cpu", "compute_type": "int8"}
+
+
+def test_cuda_libraries_are_looked_for_on_path_and_only_on_windows(tmp_path):
+    first, second = tmp_path / "a", tmp_path / "b"
+    first.mkdir()
+    second.mkdir()
+    environ = {"PATH": os.pathsep.join([str(first), "", str(second)])}
+    assert fw.missing_cuda_libraries(environ, windows=True) == ["cublas64_12.dll",
+                                                                "cudnn64_9.dll"]
+    (second / "cublas64_12.dll").write_bytes(b"")
+    (first / "cudnn64_9.dll").write_bytes(b"")
+    assert fw.missing_cuda_libraries(environ, windows=True) == []
+    assert fw.missing_cuda_libraries({"PATH": ""}, windows=False) == []
+
+
+def test_the_model_is_loaded_once_and_released_on_close():
+    e = engine()
+    e.transcribe(chunk(), language="en", prompt="")
+    e.detect_language(chunk())
+    assert len(FakeModel.made) == 1
+    e.close()
+    e.transcribe(chunk(), language="en", prompt="")
+    assert len(FakeModel.made) == 2
+
+
+def test_the_stamp_names_the_model_and_its_snapshot():
+    stamp = engine().stamp()
+    assert (stamp.engine, stamp.model, stamp.label) == ("faster-whisper", "large-v3-turbo",
+                                                       "large-v3-turbo@0123456789ab")
+
+
+def test_without_the_whisper_extra_the_engine_says_how_to_install_it(monkeypatch):
+    monkeypatch.setitem(sys.modules, "faster_whisper", None)
+    with pytest.raises(EngineError) as err:
+        fw.FasterWhisperEngine("w", TURBO).transcribe(chunk(), language="en", prompt="")
+    assert err.value.kind == "unavailable" and "vid2sub[whisper]" in err.value.hint
+
+
+def test_a_model_that_cannot_load_is_unavailable_and_names_no_path():
+    def broken(*args, **kwargs):
+        raise OSError("disk full at /private/models")
+
+    e = fw.FasterWhisperEngine("w", TURBO, model_factory=broken)
+    with pytest.raises(EngineError) as err:
+        e.transcribe(chunk(), language="en", prompt="")
+    assert err.value.kind == "unavailable" and "/private" not in str(err.value)
+
+
+def test_a_model_that_fails_on_a_chunk_fails_it_without_its_message():
+    class Failing(FakeModel):
+        def transcribe(self, audio, **kwargs):
+            raise RuntimeError("Library cublas64_12.dll is not found in C:\\Users\\someone")
+
+    e = fw.FasterWhisperEngine("w", TURBO, model_factory=Failing)
+    with pytest.raises(EngineError) as err:
+        e.transcribe(chunk(), language="en", prompt="")
+    assert err.value.kind == "unavailable" and "someone" not in str(err.value)
+    assert "vid2sub doctor" in err.value.hint
+
+
+def test_engines_are_built_from_the_config_entry():
+    cfg = Config(endpoints={"spark": Endpoint(base_url="http://127.0.0.1:9/v1")},
+                 models={"local-turbo": TURBO})
+    built = make_engine("local-turbo", cfg, RunPolicy(), KeyRing())
+    assert isinstance(built, fw.FasterWhisperEngine) and built.name == "faster-whisper"
+    assert built.max_chunk_s == 300.0 and built.supports_prompt
+
+
+def test_a_faster_whisper_model_in_vid2sub_toml_is_local_and_in_process(tmp_path):
+    path = tmp_path / "vid2sub.toml"
+    path.write_text('[models.local-turbo]\ncatalog = "whisper-large-v3-turbo"\n'
+                    'engine = "faster-whisper"\n', encoding="utf-8")
+    config = load_config(path)
+    assert config.models["local-turbo"] == TURBO and is_local(TURBO, config)
+
+
+@pytest.mark.parametrize("catalog", ["qwen3-asr-1.7b", "openai-whisper-1"])
+def test_faster_whisper_runs_only_the_local_whisper_models(tmp_path, catalog):
+    path = tmp_path / "vid2sub.toml"
+    path.write_text(f'[models.x]\ncatalog = "{catalog}"\nengine = "faster-whisper"\n',
+                    encoding="utf-8")
+    with pytest.raises(ConfigError, match="faster-whisper"):
+        load_config(path)
+
+
+def test_the_fakes_have_the_fields_of_the_installed_faster_whisper():
+    transcribe = pytest.importorskip("faster_whisper.transcribe")
+    for fake, real in ((Word, transcribe.Word), (Segment, transcribe.Segment),
+                       (TranscriptionInfo, transcribe.TranscriptionInfo)):
+        assert [f.name for f in dataclasses.fields(fake)] == [
+            f.name for f in dataclasses.fields(real)]
+
+
+@pytest.mark.live
+@pytest.mark.skipif(os.environ.get("VID2SUB_LIVE_WHISPER") != "1",
+                    reason="needs VID2SUB_LIVE_WHISPER=1 and the whisper extra")
+def test_faster_whisper_transcribes_real_speech_with_word_times():
+    from helpers import SPEECH
+
+    from vid2sub.media.decode import read_wav
+    samples = read_wav(SPEECH)
+    result = fw.FasterWhisperEngine("w", TURBO).transcribe(
+        Chunk(index=0, samples=samples, encode=lambda s: b""), language="en", prompt="")
+    words = [w for s in result.parsed.segments for w in s.words]
+    assert len(words) > 10 and words[-1].end_ms > 5000
+```
+
+  Append to `tests/test_catalog.py`, after two blank lines:
+
+```python
+# Phase 3, Task 9: spec §11.2's order on every system, faster-whisper included
+
+
+def machine(*, mac: bool, spark: bool, large: bool = True):
+    """The Spark's turbo, faster-whisper's large-v3 (when `large`) and turbo on this machine,
+    and the Mac's Qwen3-ASR when `mac`."""
+    found = [cand("spark-turbo", "whisper-large-v3-turbo", available=spark,
+                  reason="" if spark else "couldn't reach the server"),
+             cand("local-turbo", "whisper-large-v3-turbo", kind="in-process")]
+    if large:
+        found.append(cand("local-large", "whisper-large-v3", kind="in-process"))
+    if mac:
+        found.append(cand("mac-qwen", "qwen3-asr-1.7b", kind="in-process"))
+    return found
+
+
+@pytest.mark.parametrize("lang, mac, spark, large, picked", [
+    pytest.param("en", True, False, True, "mac-qwen", id="english-on-a-mac-with-the-spark-down"),
+    pytest.param("en", True, True, True, "spark-turbo", id="english-with-the-spark-up"),
+    pytest.param("en", False, False, True, "local-turbo", id="english-on-windows-or-linux"),
+    pytest.param("yue", True, False, True, "mac-qwen", id="cantonese-on-a-mac"),
+    pytest.param("yue", False, False, True, "local-large", id="cantonese-on-windows-or-linux"),
+    pytest.param("zh", True, False, True, "mac-qwen", id="mandarin-on-a-mac"),
+    pytest.param("zh", False, False, True, "local-large", id="mandarin-on-windows-or-linux"),
+    pytest.param("zh", False, True, False, "spark-turbo", id="mandarin-turbo-on-the-spark"),
+    pytest.param("zh", False, False, False, "local-turbo", id="mandarin-turbo-on-this-machine"),
+    pytest.param("ja", True, False, True, "local-large", id="japanese-large-v3-first"),
+    pytest.param("ja", True, False, False, "mac-qwen", id="japanese-then-qwen"),
+    pytest.param("ja", False, True, False, "spark-turbo", id="japanese-turbo-on-the-spark"),
+    pytest.param("ja", False, False, False, "local-turbo", id="japanese-turbo-on-this-machine"),
+])
+def test_the_routes_follow_the_spec_on_every_system(lang, mac, spark, large, picked):
+    found = suggest(lang, machine(mac=mac, spark=spark, large=large), "transcribe",
+                    allow_cloud=False)
+    assert found.model == picked
+```
+
+  Append to `tests/test_detect.py`, after two blank lines:
+
+```python
+def test_faster_whisper_can_run_here_only_with_its_extra(monkeypatch):
+    cfg = Config(models={"local-turbo": ModelEntry(catalog="whisper-large-v3-turbo",
+                                                   engine="faster-whisper")})
+    monkeypatch.setattr(d, "whisper_available", lambda: False)
+    (cand,) = d.candidates(cfg, KeyRing(environ={}))
+    assert (cand.kind, cand.available, cand.cloud) == ("in-process", False, False)
+    assert "vid2sub[whisper]" in cand.reason
+    monkeypatch.setattr(d, "whisper_available", lambda: True)
+    assert d.candidates(cfg, KeyRing(environ={}))[0].available
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_faster_whisper_engine.py
+  -q`. Expected: `E   ImportError: cannot import name 'faster_whisper' from 'vid2sub.engines'
+  (…/src/vid2sub/engines/__init__.py)` and `1 error`. `uv run pytest tests/test_detect.py -q`.
+  Expected: `pydantic_core._pydantic_core.ValidationError: 1 validation error for ModelEntry`
+  (`Input should be 'mlx-qwen3-asr'`) and `1 failed, 11 passed`. `uv run pytest
+  tests/test_catalog.py -q`. Expected: `FAILED tests/test_catalog.py::
+  test_the_routes_follow_the_spec_on_every_system[english-on-a-mac-with-the-spark-down]`,
+  `E       AssertionError: assert 'local-turbo' == 'mac-qwen'` and `1 failed, 25 passed` (the
+  other twelve cases, every §11.2 row on a Mac and on Windows or Linux, pass already).
+- [ ] **Step 8: Write the code.** In `pyproject.toml`, below the `mac = [...]` line in
+  `[project.optional-dependencies]`, add:
+
+```toml
+# Whisper large-v3 and large-v3-turbo in-process through faster-whisper, on the CPU (spec §9.5).
+whisper = ["faster-whisper>=1.2.1"]
+# The same on an NVIDIA GPU: the CUDA 12 cuBLAS and cuDNN 9 runtime wheels faster-whisper's README
+# names (Windows and Linux; their folders must be on PATH, or LD_LIBRARY_PATH, as doctor says).
+nvidia = [
+    "faster-whisper>=1.2.1",
+    "nvidia-cublas-cu12>=12.4; sys_platform == 'win32' or sys_platform == 'linux'",
+    "nvidia-cudnn-cu12>=9,<10; sys_platform == 'win32' or sys_platform == 'linux'",
+]
+```
+
+  then `uv lock` (expected, among its lines: `Added faster-whisper v1.2.1`, `Added
+  nvidia-cublas-cu12 v12.9.2.10`, `Added nvidia-cudnn-cu12 v9.27.0.42`; ctranslate2 4.8.3; the
+  lock file has `win_amd64` wheels for both NVIDIA packages). `uv sync --group dev` installs
+  none of them: CI and `make check` run without the extras.
+
+  `src/vid2sub/engines/faster_whisper.py`:
+
+```python
+"""Whisper in-process through faster-whisper, for Windows and Linux (spec §9.5, S45).
+
+CTranslate2 conversions of Whisper large-v3 and large-v3-turbo: faster-whisper's `large-v3` and
+`large-v3-turbo` from the catalog entry, or the converted model's Hugging Face id in the entry's
+`model`. Words come from `word_timestamps=True`; `vad_filter=False`, since vid2sub's own VAD has
+already chosen the speech (§8.6). On an NVIDIA GPU the model runs in float16, and otherwise on the
+CPU in int8 (§9.5). CUDA on Windows needs the cuBLAS 12 DLLs on PATH (and cuDNN 9, which
+faster-whisper's README names too): without them the GPU isn't used, and `vid2sub doctor` says
+how to fix it. The import is lazy and the model is loaded once, on first use, and released by
+`close` (§9.1; mlx imports cost seconds, an audio-router lesson). The revision in the version
+stamp is the model's Hugging Face snapshot, read from the local cache only (§9.6). A failure is
+named only by kind: the library's message can hold a path (§6.8).
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
+from typing import Any
+
+from vid2sub.catalog import CATALOG
+from vid2sub.config import ModelEntry
+from vid2sub.engines.base import Chunk, ChunkResult, EngineError, ModelStamp
+from vid2sub.parse.fasterwhisper import parse_faster_whisper
+
+CUDA_LIBRARIES = ("cublas64_12.dll", "cudnn64_9.dll")  # what CTranslate2 loads on Windows
+DEFAULT_CATALOG = "whisper-large-v3-turbo"
+INSTALL = "install vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA GPU)"
+DOCTOR = "`vid2sub doctor` checks the model's files and the GPU's libraries"
+
+
+def missing_cuda_libraries(environ: Mapping[str, str] = os.environ, *,
+                           windows: bool = os.name == "nt") -> list[str]:
+    """The CUDA DLLs CTranslate2 needs that no folder on PATH holds: Windows only, where the
+    DLLs must be on PATH; elsewhere the loader finds them, or fails at load, so none here."""
+    if not windows:
+        return []
+    folders = [f for f in environ.get("PATH", "").split(os.pathsep) if f]
+    return [lib for lib in CUDA_LIBRARIES
+            if not any(os.path.isfile(os.path.join(f, lib)) for f in folders)]
+
+
+def cuda_devices() -> int:
+    """How many NVIDIA GPUs CTranslate2 sees (0 without the extra or a GPU)."""
+    try:
+        import ctranslate2
+    except ImportError:
+        return 0
+    try:
+        return int(ctranslate2.get_cuda_device_count())
+    except Exception:  # noqa: BLE001 - no driver is no GPU
+        return 0
+
+
+def device_for(devices: int, missing: Sequence[str]) -> tuple[str, str]:
+    """The device and compute type: an NVIDIA GPU in float16 when CTranslate2 sees one and its
+    libraries are there, else the CPU in int8 (spec §9.5)."""
+    return ("cuda", "float16") if devices > 0 and not missing else ("cpu", "int8")
+
+
+def hf_revision(model: str) -> str:
+    """The cached snapshot's hash, so a model update changes the version (§9.6), as the Qwen
+    engine's hf_revision does; faster-whisper's own download_model maps a size to its repo."""
+    try:
+        from faster_whisper.utils import download_model
+
+        path = Path(download_model(model, local_files_only=True))
+        return path.name[:12] if path.name else "unknown"
+    except Exception:  # noqa: BLE001 - an unstamped rendition beats a failed one
+        return "unknown"
+
+
+def _plain(segments: Any, info: Any) -> dict[str, Any]:
+    """faster-whisper's Segment, Word and TranscriptionInfo as the parser's plain data. Reading
+    `segments` runs the model: it is a generator."""
+    return {
+        "language": getattr(info, "language", None),
+        "language_probability": getattr(info, "language_probability", None),
+        "all_language_probs": getattr(info, "all_language_probs", None),
+        "segments": [{"start": s.start, "end": s.end, "text": s.text,
+                      "avg_logprob": s.avg_logprob, "compression_ratio": s.compression_ratio,
+                      "no_speech_prob": s.no_speech_prob,
+                      "words": [{"start": w.start, "end": w.end, "word": w.word,
+                                 "probability": w.probability} for w in s.words or []]}
+                     for s in segments],
+    }
+
+
+class FasterWhisperEngine:
+    """One caller at a time: the model isn't documented as thread-safe."""
+
+    name = "faster-whisper"
+    supports_prompt = True
+
+    def __init__(self, name: str, entry: ModelEntry, *,
+                 model_factory: Callable[..., Any] | None = None):
+        catalog = CATALOG.get(entry.catalog or DEFAULT_CATALOG)
+        self.model_name = name
+        self.model_id = (entry.model or (catalog.default_model if catalog else None)
+                         or "large-v3-turbo")
+        self.max_chunk_s = catalog.max_chunk_s if catalog else 300.0
+        self._factory = model_factory
+        self._model: Any = None
+
+    def _load(self) -> Any:
+        if self._model is None:
+            factory = self._factory
+            if factory is None:
+                try:
+                    from faster_whisper import WhisperModel
+                except ImportError:
+                    raise EngineError("unavailable", "faster-whisper isn't installed",
+                                      hint=INSTALL) from None
+                factory = WhisperModel
+            device, compute = device_for(cuda_devices(), missing_cuda_libraries())
+            try:
+                self._model = factory(self.model_id, device=device, compute_type=compute)
+            except Exception as err:  # noqa: BLE001 - any load failure: the model can't run
+                raise EngineError(
+                    "unavailable", f"faster-whisper couldn't load its model ({type(err).__name__})",
+                    hint="check the network for the first download and free disk space; "
+                         + DOCTOR) from None
+        return self._model
+
+    def transcribe(self, chunk: Chunk, *, language: str | None, prompt: str) -> ChunkResult:
+        model = self._load()
+        try:
+            segments, info = model.transcribe(chunk.float32, language=language,
+                                              initial_prompt=prompt or None,
+                                              word_timestamps=True, vad_filter=False)
+            data = _plain(segments, info)
+        except Exception as err:  # noqa: BLE001 - CTranslate2 raises RuntimeError and others
+            raise EngineError("unavailable",
+                              f"faster-whisper failed on this chunk ({type(err).__name__})",
+                              hint=DOCTOR) from None
+        return ChunkResult(parse_faster_whisper(data))
+
+    def detect_language(self, chunk: Chunk) -> dict[str, float]:
+        model = self._load()
+        try:
+            language, probability, every = model.detect_language(chunk.float32)
+        except Exception as err:  # noqa: BLE001 - as transcribe
+            raise EngineError("unavailable",
+                              f"faster-whisper couldn't detect the language ({type(err).__name__})",
+                              hint=DOCTOR) from None
+        return {str(code): float(p) for code, p in (every or [(language, probability)])}
+
+    def stamp(self) -> ModelStamp:
+        return ModelStamp(self.name, self.model_id, hf_revision(self.model_id))
+
+    def close(self) -> None:
+        self._model = None
+```
+
+  In `src/vid2sub/config.py`, replace
+  `engine: Literal["mlx-qwen3-asr"] | None = None` with
+  `engine: Literal["mlx-qwen3-asr", "faster-whisper"] | None = None`, and in `_validate`
+  replace
+
+```python
+        if m.engine is not None:
+            if m.task != "transcribe":
+                raise ConfigError(f"{where}: in-process engines only transcribe")
+            continue
+```
+
+  with
+
+```python
+        if m.engine is not None:
+            if m.task != "transcribe":
+                raise ConfigError(f"{where}: in-process engines only transcribe")
+            if m.engine == "faster-whisper" and m.catalog is not None and (
+                    CATALOG[m.catalog].family != "whisper" or CATALOG[m.catalog].cloud):
+                raise ConfigError(f"{where}: faster-whisper runs whisper-large-v3 or "
+                                  "whisper-large-v3-turbo")
+            continue
+```
+
+  In `src/vid2sub/engines/registry.py`, below `from vid2sub.engines.endpoint import
+  EndpointEngine`, add `from vid2sub.engines.faster_whisper import FasterWhisperEngine`, and
+  below `return QwenMLXEngine(name, entry)`, add:
+
+```python
+    if entry.engine == "faster-whisper":
+        return FasterWhisperEngine(name, entry)
+```
+
+  In `src/vid2sub/catalog.py`, in `class CatalogEntry`, replace
+  `default_model: str | None = None` with
+
+```python
+    default_model: str | None = None  # an in-process engine's model when the entry names none
+```
+
+  In the `whisper-large-v3` entry, replace
+
+```python
+        runs_on="Windows/Linux (faster-whisper, M3); the Spark if local-ai adds it",
+        install="a whisper.cpp server, or vid2sub[whisper] from M3",
+        languages=("ja", "en", "zh", "ko", "yue")),
+```
+
+  with
+
+```python
+        runs_on="Windows/Linux (faster-whisper); the Spark if local-ai adds it",
+        install="a whisper.cpp server, or vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA GPU)",
+        languages=("ja", "en", "zh", "ko", "yue"), default_model="large-v3"),
+```
+
+  and in the `whisper-large-v3-turbo` entry, replace
+
+```python
+        runs_on="the Spark (always loaded); Windows/Linux from M3",
+        install="the Spark's endpoint, or vid2sub[whisper] from M3",
+        languages=("en", "ja", "zh", "ko")),
+```
+
+  with
+
+```python
+        runs_on="the Spark (always loaded); Windows/Linux (faster-whisper)",
+        install="the Spark's endpoint, or vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA GPU)",
+        languages=("en", "ja", "zh", "ko"), default_model="large-v3-turbo"),
+```
+
+  In the module docstring, replace
+
+```python
+`[models.*]` entries point at catalog ids. Routing is an ordered preference per source language:
+the first model available now wins, and among equals the Spark's (an endpoint) wins over the
+Mac's (in-process). The Spark's translation default is Gemma 4, resident with two slots; the only
+Qwen chat model there is Dan's coder (council, 2026-10-14). Pure.
+```
+
+  with
+
+```python
+`[models.*]` entries point at catalog ids. Routing is an ordered preference per source language:
+the first model available now wins, and among equals the Spark's (an endpoint) wins over this
+machine's (in-process). A step can name where its model runs: English takes turbo on the Spark,
+then the Mac's Qwen3-ASR, then turbo through faster-whisper on this machine, as §11.2 orders it.
+The Spark's translation default is Gemma 4, resident with two slots; the only Qwen chat model
+there is Dan's coder (council, 2026-10-14). Pure.
+```
+
+  Replace `TRANSCRIBE_ROUTES: dict[str, tuple[str, ...]] = {` with the two lines
+
+```python
+Step = str | tuple[str, Literal["endpoint", "in-process"]]  # a catalog id, anywhere or there only
+TRANSCRIBE_ROUTES: dict[str, tuple[Step, ...]] = {
+```
+
+  replace English's route,
+
+```python
+    "en": ("whisper-large-v3-turbo", "qwen3-asr-1.7b", "whisper-large-v3", "qwen3-asr-0.6b",
+           "openai-whisper-1"),
+```
+
+  with
+
+```python
+    "en": (("whisper-large-v3-turbo", "endpoint"), "qwen3-asr-1.7b",
+           ("whisper-large-v3-turbo", "in-process"), "whisper-large-v3", "qwen3-asr-0.6b",
+           "openai-whisper-1"),
+```
+
+  replace `TRANSLATE_ROUTE: tuple[str, ...] = (` with `TRANSLATE_ROUTE: tuple[Step, ...] = (`,
+  and in `suggest`, replace
+
+```python
+    considered: list[tuple[str, str]] = []
+    off_route = tuple(
+        (o.name, f"not in the {task} route for {lang}; choose it with --model")
+        for o in candidates if o.catalog not in route)
+    for cid in route:
+        matches = sorted((c for c in candidates if c.catalog == cid),
+                         key=lambda c: 0 if c.kind == "endpoint" else 1)
+```
+
+  with
+
+```python
+    considered: list[tuple[str, str]] = []
+    steps = [(s, None) if isinstance(s, str) else s for s in route]
+    off_route = tuple(
+        (o.name, f"not in the {task} route for {lang}; choose it with --model")
+        for o in candidates if o.catalog not in {cid for cid, _ in steps})
+    for cid, where in steps:
+        matches = sorted((c for c in candidates
+                          if c.catalog == cid and where in (None, c.kind)),
+                         key=lambda c: 0 if c.kind == "endpoint" else 1)
+```
+
+  then `make readme` (the README's model table follows). In `src/vid2sub/detect.py`, above
+  `def mlx_available() -> bool:`, add:
+
+```python
+def whisper_available() -> bool:
+    return importlib.util.find_spec("faster_whisper") is not None
+
+
+```
+
+  and in `candidates`, below the `mlx-qwen3-asr` branch's `continue`, add:
+
+```python
+        if m.engine == "faster-whisper":
+            ok = whisper_available()
+            out.append(Candidate(name, m.catalog, "in-process", ok,
+                                 "" if ok else "install vid2sub[whisper] (vid2sub[nvidia] for "
+                                               "an NVIDIA GPU)"))
+            continue
+```
+
+  In both `src/vid2sub/example.toml` and `vid2sub.example.toml` (they stay identical), below
+  the `[models.mac-qwen]` entry's `engine = "mlx-qwen3-asr"` line, add:
+
+```toml
+
+# Whisper on this machine (Windows, Linux): install vid2sub[whisper], or vid2sub[nvidia] for an
+# NVIDIA GPU. catalog = "whisper-large-v3" for Japanese; turbo for English.
+# [models.local-whisper]
+# catalog = "whisper-large-v3-turbo"
+# engine = "faster-whisper"
+```
+
+  In `tests/README.md`, above the `VID2SUB_LIVE_SPARK=1` item, add:
+
+```markdown
+  - `VID2SUB_LIVE_WHISPER=1` with `uv sync --extra whisper`: faster-whisper's large-v3-turbo on
+    the speech fixture, on the CPU or an NVIDIA GPU (downloads about 1.6 GB on first run).
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_faster_whisper_engine.py
+  tests/test_detect.py tests/test_config.py tests/test_catalog.py tests/test_readme.py
+  tests/test_qwen_engine.py -q` first (`88 passed, 1 skipped, 2 deselected`: the field check
+  skips without the extra). Then once with the extra: `uv sync --group dev --extra whisper`,
+  `uv run --no-sync pytest tests/test_faster_whisper_engine.py -q` (`18 passed, 1 deselected`:
+  the fakes have faster-whisper 1.2.1's fields), then `uv sync --group dev` to go back. Then the
+  guard checks, each reverted and restored, each with `uv run pytest
+  tests/test_faster_whisper_engine.py -q`: in `config._validate`, replace `if m.engine ==
+  "faster-whisper" and m.catalog is not None and (` with `if False and (` (a Qwen or a cloud
+  catalog entry runs on faster-whisper: `2 failed`); in `device_for`, replace
+  `if devices > 0 and not missing else` with `if devices > 0 else` (`FAILED
+  …test_an_nvidia_gpu_without_cublas_on_path_leaves_the_model_on_the_cpu`); replace
+  `vad_filter=False)` with `vad_filter=True)` (`FAILED
+  …test_the_engine_asks_for_words_with_no_vad_and_gives_the_language_and_the_prompt`); put
+  English's M1 route back (`uv run pytest tests/test_catalog.py -q`: `FAILED
+  …[english-on-a-mac-with-the-spark-down]`). `make check`. Expected:
+  `874 passed, 6 skipped, 5 deselected` twice, `All checks passed!` and
+  `no leaks found`. The live test isn't run here: `VID2SUB_LIVE_WHISPER=1 make live` on a
+  machine with the extra, which Task 12's manual run covers.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(engines): 🤖 faster-whisper transcribes in-process with word times, on the CPU in int8 or an NVIDIA GPU
+
+vid2sub.engines.faster_whisper (spec §9.5, S45): FasterWhisperEngine is
+the third in-process engine behind the Engine protocol, named
+"faster-whisper". It loads faster-whisper's WhisperModel once, lazily,
+with the catalog entry's CTranslate2 conversion (large-v3 or
+large-v3-turbo, catalog.default_model) unless the entry's `model` names
+one; transcribes each chunk's 16 kHz float32 samples with
+word_timestamps=True, vad_filter=False, the language and the glossary
+prompt as initial_prompt; reads the segment generator into plain data for
+parse_faster_whisper; detects the language with every language's
+probability; and stamps model@<snapshot>, read from the local Hugging
+Face cache only (§9.6). It runs on an NVIDIA GPU in float16 when
+CTranslate2 sees one and, on Windows, cuBLAS 12 and cuDNN 9 are on PATH,
+and otherwise on the CPU in int8; a failure is named by kind only, with
+doctor in its hint. vid2sub.toml takes `engine = "faster-whisper"` for
+the local Whisper catalog models only; detect.candidates says it can run
+when faster-whisper is installed, else "install vid2sub[whisper]". The
+`whisper` extra is faster-whisper>=1.2.1; `nvidia` adds the CUDA 12
+cuBLAS and cuDNN 9 runtime wheels on Windows and Linux (uv lock:
+faster-whisper 1.2.1, ctranslate2 4.8.3, nvidia-cublas-cu12 12.9.2.10,
+nvidia-cudnn-cu12 9.27.0.42, each with Windows and Linux wheels). The
+catalog's Whisper entries and the README's table say so; the starter
+vid2sub.toml shows the entry; tests/README names VID2SUB_LIVE_WHISPER=1.
+
+With turbo now on this machine too, English's route follows §11.2:
+turbo on the Spark, then the Mac's Qwen3-ASR, then faster-whisper's
+turbo. The route named turbo once, so this machine's turbo came before
+Qwen; a step can now name where its model runs (catalog.Step). The other
+rows already follow §11.2: Cantonese and Mandarin take Qwen (the Spark,
+then the Mac) before large-v3 and turbo; Japanese takes large-v3, then
+Qwen, then turbo (the Spark's, then this machine's).
+
+No test downloads a model: a fake WhisperModel has 1.2.1's Segment, Word
+and TranscriptionInfo fields, and with the whisper extra installed
+(uv sync --extra whisper) a test checked them against the real dataclasses
+and passed. The live test, VID2SUB_LIVE_WHISPER=1, was not run here.
+
+The new tests failed first with: ImportError: cannot import name
+'faster_whisper' from 'vid2sub.engines', and test_the_routes_follow_the_
+spec_on_every_system[english-on-a-mac-with-the-spark-down] with
+AssertionError: assert 'local-turbo' == 'mac-qwen'. Guard checks, each
+reverted and restored: without the config's rule a Qwen or cloud catalog
+entry runs on faster-whisper; a GPU taken without its libraries;
+vad_filter=True; English's M1 route: each makes its test fail.
+
+Docs read: faster-whisper 1.2.1's transcribe.py (WhisperModel's
+__init__(model_size_or_path, device, compute_type, …) and transcribe(audio,
+language, initial_prompt, word_timestamps, vad_filter, …) signatures;
+detect_language returns the language, its probability and every
+language's; audio is a 16 kHz float array), utils.py (_MODELS: large-v3 is
+Systran/faster-whisper-large-v3, large-v3-turbo is
+mobiuslabsgmbh/faster-whisper-large-v3-turbo; download_model with
+local_files_only=True returns the cached snapshot) and README.md (GPU:
+cuBLAS for CUDA 12 and cuDNN 9; on Windows the libraries go in a folder on
+PATH; the pip wheels nvidia-cublas-cu12 and nvidia-cudnn-cu12==9.*; CPU in
+int8); CTranslate2 4.8 docs (get_cuda_device_count() returns the visible
+GPUs; the Windows and Linux wheels run on the GPU with CUDA 12); spec
+§11.2's routing table.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 9
+Co-Authored-By: <the model's own line>
+```
+
+  `git add README.md pyproject.toml uv.lock src/vid2sub/catalog.py src/vid2sub/config.py
+  src/vid2sub/detect.py src/vid2sub/engines/registry.py src/vid2sub/engines/faster_whisper.py
+  src/vid2sub/example.toml vid2sub.example.toml tests/README.md tests/test_catalog.py
+  tests/test_detect.py tests/test_faster_whisper_engine.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 11: Write the failing test.** Append to `tests/test_doctor_config.py`, after two
+  blank lines:
+
+```python
+# Phase 3, Task 9: faster-whisper, and the GPU's libraries on Windows (spec §9.5, S45)
+
+
+@pytest.fixture
+def whisper(monkeypatch):
+    """faster-whisper installed, and as many NVIDIA GPUs as the test says."""
+    from vid2sub import detect
+    from vid2sub.engines import faster_whisper as fw
+
+    def set_up(installed=True, gpus=0):
+        monkeypatch.setattr(detect, "whisper_available", lambda: installed)
+        monkeypatch.setattr(fw, "cuda_devices", lambda: gpus)
+    return set_up
+
+
+def by_name(checks):
+    return {c.name: c for c in checks}
+
+
+def test_doctor_says_how_to_install_faster_whisper_on_windows_and_linux(whisper):
+    whisper(installed=False)
+    for platform in ("win32", "linux"):
+        (check,) = doctor._whisper({}, platform=platform)
+        assert (check.name, check.ok, check.essential) == ("faster-whisper", False, False)
+        assert "vid2sub[whisper]" in check.hint and "vid2sub[nvidia]" in check.hint
+    assert doctor._whisper({}, platform="darwin") == []  # a Mac has Qwen3-ASR (vid2sub[mac])
+
+
+def test_without_an_nvidia_gpu_doctor_says_faster_whisper_runs_on_the_cpu(whisper):
+    whisper(gpus=0)
+    checks = by_name(doctor._whisper({}, platform="win32"))
+    assert checks["faster-whisper"].ok and checks["NVIDIA GPU"].ok
+    assert "CPU" in checks["NVIDIA GPU"].detail
+
+
+def test_a_windows_gpu_without_cublas_on_path_is_a_warning_that_says_how_to_fix_it(whisper,
+                                                                                  tmp_path):
+    whisper(gpus=1)
+    checks = by_name(doctor._whisper({"PATH": str(tmp_path)}, platform="win32"))
+    cublas = checks["cuBLAS 12"]
+    assert (cublas.ok, cublas.essential) == (False, False)
+    assert "cublas64_12.dll" in cublas.detail and "CPU" in cublas.detail
+    assert "PATH" in cublas.hint and "vid2sub[nvidia]" in cublas.hint
+    for dll in ("cublas64_12.dll", "cudnn64_9.dll"):
+        (tmp_path / dll).write_bytes(b"")
+    assert by_name(doctor._whisper({"PATH": str(tmp_path)}, platform="win32"))["cuBLAS 12"].ok
+
+
+def test_on_linux_the_gpu_is_reported_without_a_path_check(whisper):
+    whisper(gpus=2)
+    checks = by_name(doctor._whisper({"PATH": ""}, platform="linux"))
+    assert checks["cuBLAS 12"].ok and "2 NVIDIA GPU" in checks["cuBLAS 12"].detail
+```
+
+- [ ] **Step 12: Run it; watch it fail.** `uv run pytest tests/test_doctor_config.py -q`.
+  Expected: `E       AttributeError: module 'vid2sub.commands.doctor' has no attribute
+  '_whisper'` (four times) and `4 failed, 7 passed`.
+- [ ] **Step 13: Write the code,** in `src/vid2sub/commands/doctor.py`. In the module docstring,
+  replace
+
+```python
+Python, ffmpeg and ffprobe are essential; deno (YouTube), yt-dlp's age and the Mac extra are
+warnings. Endpoints serving local models are asked for their model list (not with --offline);
+cloud endpoints are never contacted. Keys are reported by presence only, never their values. A
+check's hint is its fix, shown only when it fails; a note is advice shown either way (final
+review: a passing Python printed "needs Python 3.12 or later"). The cache's size is shown
+against its cap, never its path (spec §18.1, §6.8).
+```
+
+  with
+
+```python
+Python, ffmpeg and ffprobe are essential; deno (YouTube), yt-dlp's age, the Mac extra and, on
+Windows and Linux, faster-whisper and the NVIDIA GPU's libraries are warnings: CUDA on Windows
+needs the cuBLAS 12 DLLs on PATH, and without them faster-whisper runs on the CPU (spec §9.5).
+Endpoints serving local models are asked for their model list (not with --offline); cloud
+endpoints are never contacted. Keys are reported by presence only, never their values. A check's
+hint is its fix, shown only when it fails; a note is advice shown either way (final review: a
+passing Python printed "needs Python 3.12 or later"). The cache's size is shown against its cap,
+never its path (spec §18.1, §6.8).
+```
+
+  Below `from vid2sub.engines import clients`, add
+  `from vid2sub.engines import faster_whisper as fw`. In `checks`, below the `if sys.platform ==
+  "darwin":` block (the `mlx-qwen3-asr` check), add `    out += _whisper(environ)` at the
+  block's own indentation. Above `def _cache(config: Config) -> Check:`, add:
+
+```python
+CUDA_FIX = ("put the CUDA 12 cuBLAS and cuDNN 9 DLLs on PATH: install vid2sub[nvidia] and add "
+            "the bin folders of its nvidia-cublas-cu12 and nvidia-cudnn-cu12 packages to PATH, "
+            "or install NVIDIA's CUDA 12 toolkit and cuDNN 9; then start vid2sub again")
+
+
+def _whisper(environ: Mapping[str, str], *, platform: str = sys.platform) -> list[Check]:
+    """faster-whisper, on Windows and Linux (anywhere it's installed), and the GPU it would use."""
+    installed = detecting.whisper_available()
+    if not installed:
+        if platform == "darwin":
+            return []
+        return [Check("faster-whisper", False, "not installed",
+                      "for Whisper on this machine: install vid2sub[whisper] (vid2sub[nvidia] "
+                      "for an NVIDIA GPU)", essential=False)]
+    out = [Check("faster-whisper", True, "installed", essential=False)]
+    gpus = fw.cuda_devices()
+    if gpus == 0:
+        out.append(Check("NVIDIA GPU", True, "none seen: faster-whisper runs on the CPU (int8)",
+                         essential=False))
+        return out
+    missing = fw.missing_cuda_libraries(environ, windows=platform == "win32")
+    if missing:
+        out.append(Check("cuBLAS 12", False, f"{', '.join(missing)} not on PATH: faster-whisper "
+                         "runs on the CPU", CUDA_FIX, essential=False))
+    else:
+        out.append(Check(
+            "cuBLAS 12", True, f"{gpus} NVIDIA GPU(s) seen", essential=False,
+            note="" if platform == "win32" else "CTranslate2 loads cuBLAS 12 and cuDNN 9 from "
+                 "LD_LIBRARY_PATH, which must be set before vid2sub starts"))
+    return out
+
+
+```
+
+- [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_doctor_config.py -q`
+  first (`11 passed`), then the guard check, then `make check`. **Guard check:** in `_whisper`,
+  replace `missing = fw.missing_cuda_libraries(environ, windows=platform == "win32")` with
+  `missing = []`; `FAILED
+  …test_a_windows_gpu_without_cublas_on_path_is_a_warning_that_says_how_to_fix_it`; restore it.
+  `make check`. Expected: `878 passed, 6 skipped, 5 deselected` twice, `All checks passed!` and
+  `no leaks found`.
+- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(cli): 🤖 vid2sub doctor checks faster-whisper and, on Windows, that cuBLAS 12 is on PATH for the GPU
+
+doctor (spec §9.5, §18.1) gains, on Windows and Linux (and anywhere
+faster-whisper is installed): whether faster-whisper is installed (else
+"install vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA GPU)"); with no
+NVIDIA GPU, that it runs on the CPU in int8; with one on Windows, whether
+cublas64_12.dll and cudnn64_9.dll are in a folder on PATH, and if not, a
+warning that it runs on the CPU and how to fix it (the [nvidia] wheels'
+bin folders on PATH, or NVIDIA's CUDA 12 toolkit and cuDNN 9, then a
+restart); on Linux, the GPUs seen, with a note that CTranslate2 reads
+LD_LIBRARY_PATH, set before vid2sub starts. Every one is a warning, never
+essential. The check runs on the same functions the engine uses to pick
+its device (faster_whisper.cuda_devices and missing_cuda_libraries).
+
+The new tests failed first with: AttributeError: module
+'vid2sub.commands.doctor' has no attribute '_whisper'. With the PATH check
+taken out, the Windows test fails.
+
+Docs read: faster-whisper 1.2.1's README (on Windows the cuBLAS and cuDNN
+libraries go in a folder on PATH; on Linux the pip wheels need
+LD_LIBRARY_PATH set before Python starts).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 9
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/commands/doctor.py tests/test_doctor_config.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that the fakes match the real library
+  (the field check, run with the extra); that a GPU without its libraries means the CPU, never
+  a crash or a silent wrong device; that no failure message carries a path (§6.8); that the
+  parser stays pure. The forward review over Tasks 8, 10, 11 and 12: Task 8's Models page shows
+  the faster-whisper candidates and their install reason; Task 10's CI job installs the
+  `whisper` extra on Windows and Linux, runs the suite (the field check then runs) and keeps the
+  real model out; Task 11's README gains the per-OS install and the Windows NVIDIA notes
+  (cuBLAS 12 and cuDNN 9 on PATH, §23.5); Task 12's manual run uses `VID2SUB_LIVE_WHISPER=1` or a
+  real season. The docs this task made untrue: the spec's §4.2 says `[nvidia]` adds "the CUDA 12
+  cuBLAS runtime wheels" and §9.5 names only cuBLAS 12; the extra and doctor also need cuDNN 9,
+  as faster-whisper's README says. That changes the spec, so it waits on Dan (the plan's
+  Decisions list it); once approved, §4.2 and §9.5 name cuDNN 9 in this close, and if not, it is
+  the fifth stop (`AGENTS.md`, *Stops*). Then the close, its own commit,
+  holding this plan with this task's boxes ticked and **Now** set to `Task 10: CI on Windows and
+  Linux for faster-whisper, open.`, and the spec's S45 row with "Phase and task" set to
+  `Phase 3, Tasks 9–10, 12`; S45 stays `planned` (its proof is CI and one manual run). The
+  message, in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 9: The faster-whisper engine
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: none
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 9
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
