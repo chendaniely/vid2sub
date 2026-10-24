@@ -66,7 +66,25 @@ plus:
 
 ## Review Focus
 
-<!-- written with the listings -->
+Each line's test joins its task's listing when the listings are rebuilt on the finished Phase 2,
+before this plan goes to Dan for approval.
+
+1. **A season on a NAS share that has gone to sleep, or drops mid-listing:** Browse waits off the
+   event loop and says it's waiting for the share; other tabs stay responsive; a listing that
+   fails says so and lists nothing stale. (Task 1's and Task 2's tests.)
+2. **A row changed on the Review screen while sampling is still running:** the person's choice
+   stands when that file's sample arrives; only rows they haven't touched take the suggestion or
+   inherit. (Task 3's and Task 4's tests.)
+3. **The laptop sleeps, or the tunnel drops, mid-chunk:** the chunk in flight counts as a
+   connection error, so the whole queue pauses rather than failing the job, and Resume after
+   waking carries on from that chunk; Pause pressed as a chunk finishes leaves one state, with no
+   chunk run twice or lost. (Task 5's tests.)
+4. **Sampling windows that land on an intro song, music or silence:** windows with no speech
+   don't vote; when too few remain, the row says the language is uncertain rather than guessing
+   with confidence. (Task 3's tests.)
+5. **faster-whisper's first run with no network, or on an NVIDIA machine without cuDNN 9:** the
+   error names the cause and `vid2sub doctor` in its hint, the run doesn't hang on the download,
+   and nothing falls back to another model or the cloud (spec §17.4). (Task 9's tests.)
 
 ***
 
