@@ -5497,15 +5497,195 @@ Co-Authored-By: <the model's own line>
 
 ### Task 12: The M3 exit test (with Dan)
 
-**Tier:** 3 · **Scenarios:** S38, S40, S41, S45 · **[Dan]**
+**Tier:** 3 · **Scenarios:** S38, S40, S41, S42, S45 · **[Dan]**, on Dan's Mac and one Windows or
+Linux machine
 
-<!-- steps: written in the next pass -->
+Spec §25's M3 exit test ("add a season folder, review it, run it unattended; the Windows and Linux
+path passes CI and one manual run"), plus §29's M3 check (CUDA's libraries for faster-whisper on
+Windows). The implementer prepares and records; Dan runs every step on his media and machines.
+
+**Files:**
+- Modify: `docs/superpowers/specs/2026-10-14-vid2sub-design.md` (§29's M3 results, the Scenarios
+  rows, Open items)
+
+**Interfaces:** none (no code).
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: List the [Dan] steps** (2 to 7 below), one line each, with the count, then present
+  Step 2. Set **Now** to `waiting on Dan: Task 12, Step 2` in a wip commit
+  (`chore(plan): 🤖 wip Task 12: waiting on Dan for the M3 exit test`; `Done so far:` the list,
+  `Stopped at:` Step 2, `Tests:` `make check` and `make e2e` green at the base).
+- [ ] **Step 2: [Dan] Start the app on the Mac:**
+
+```bash
+uv tool install --editable '.[mac]'
+(cd frontend && npm ci && npm run build)
+vid2sub serve
+```
+
+  Expected: the browser opens on the app through the launch link.
+- [ ] **Step 3: [Dan] Add a season folder through Browse (S38):** pick a season on a mounted
+  volume (the NAS share under `/Volumes`), not one typed into the box. Expected: the browser
+  starts at home and the mounted volumes; it shows only folders, videos and subtitles; no dotfile
+  or credential folder appears in home; the season's episodes are listed in `SxxEyy` order.
+- [ ] **Step 4: [Dan] Review it (S40):** expected: the first two files are sampled, each row shows
+  a detected language with its confidence and a suggested transcription and translation model,
+  and the rest of the folder inherits their choices where they agree. Change one row's target and
+  use **Apply to all**. **Allow cloud models for this run** is unticked; leave it so. Start.
+- [ ] **Step 5: [Dan] Drop the connection once (S41):** while an episode is transcribing on the
+  Spark, stop the tunnel to it (local-ai's), wait a minute, then start it again. Turning the Wi-Fi
+  off would also drop the NAS share, which is a different failure. Expected: the whole queue
+  pauses with a banner giving the reason and **Resume**, and no job is marked failed. After
+  **Resume**, the job carries on from the chunk that failed (its progress doesn't start again at
+  1), and the queue moves on.
+- [ ] **Step 6: [Dan] Leave it running overnight (S42):** before leaving it, run
+  `pmset -g assertions | grep -i caffeinate`. Expected: a `PreventUserIdleSystemSleep` line. In
+  the morning: every episode has its subtitles next to it, and the same command prints nothing
+  once the queue has finished.
+- [ ] **Step 7: [Dan] One manual run on Windows or Linux (S45),** on whichever machine you have.
+  Note its OS, and whether it has an NVIDIA GPU. In a checkout of the `phase-3` branch:
+
+```bash
+uv tool install --editable '.[whisper]'      # '.[nvidia]' instead on a machine with an NVIDIA GPU
+vid2sub doctor
+vid2sub config path
+```
+
+  Then put a `vid2sub.toml` where `config path` says. It needs the commented
+  `[models.local-whisper]` entry from `vid2sub config init`, with its three lines uncommented.
+  Then:
+
+```bash
+vid2sub run <a short English video> --from en --to none --model local-whisper
+```
+
+  Expected: `doctor` says faster-whisper runs on the CPU, or, with an NVIDIA GPU, that it found
+  cuBLAS 12 and cuDNN 9 (or says how to install them). The run writes the `.en.srt` next to the
+  video; the first run downloads the model (about 1.6 GB). Note what `doctor` printed, and how
+  long the run took.
+- [ ] **Step 8: Check CI's Windows and Linux path:** the newest run on `phase-3` has Task 10's
+  Windows and Linux faster-whisper jobs green, and every other job too:
+
+```bash
+gh run list --branch phase-3 --workflow ci.yml --limit 3
+gh run view "$(gh run list --branch phase-3 --workflow ci.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+  Expected: the newest run's conclusion is `success`, and its job list includes Task 10's jobs.
+- [ ] **Step 9: Record the results in the spec.** §29's M3 bullet gets Step 7's result, dated:
+  the OS, CPU or NVIDIA, and what `doctor` said about cuBLAS (and cuDNN). Set S38, S40, S41, S42
+  and S45 to `verified` where they passed. A failure caused by a bug is a new task, proposed to
+  Dan; a result that would change the spec is the fifth stop.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+docs(spec): 🤖 M3's exit test results: <what passed, in one line>
+
+<each result in a line: the browse, the review, the pause and resume, the night's run, the
+Windows or Linux run and what doctor said, CI; the rows set to verified; anything still pending
+and why>
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 12
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/COMMIT_MSG`,
+  then `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 11: Review, look forward, close.** The Tier 3 self-review from
+  `$(cat .git/TASK_BASE)` (*Standards*, *Spec*) plus `make check`; the forward review over the
+  Phase 4 plan (Step 7's install steps are what Phase 4's install index and README describe).
+  Then the close, its own commit, holding this plan with this task's boxes ticked and **Now** set
+  to `Phase end, step 1: The final whole-branch review.`, with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 12: The M3 exit test (with Dan)
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 3
+Rounds: self-review (Standards, Spec); make check
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 12
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
 ### Task 13: Phase end
 
-<!-- steps: written in the next pass -->
+Each box is one step of plan-driven-development's phase end, run as its `references/phase-end.md`
+gives it, in the project's root folder on `phase-3`. A step ends with its commit
+(`docs(plan): 🤖 phase end step K: <what it did>`, trailer
+`Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Phase end`), which ticks its box and
+sets **Now** to `Phase end, step K+1: <its title>.` After a crash, resume at the first unticked
+box; never re-run a ticked one.
+
+If the hooks and `scripts/leakcheck.py` still don't exist by then (`AGENTS.md`'s interim line),
+two steps differ: step 8's text scans run `gitleaks stdin` only, and the merge waits for Dan, as
+every push does.
+
+- [ ] **1. The final whole-branch review:** Matt Pocock's two-axis `code-review` from
+  `git merge-base main HEAD`; then one fix dispatch and one scoped re-review (`AGENTS.md`,
+  *Reviews*), with a ruling on whatever is left. Each fix is its own commit.
+- [ ] **2. The rest of the ledger copied into the plan:** whatever
+  `.superpowers/sdd/2026-10-23-vid2sub-phase-3/progress.md` holds that no closing commit carries,
+  under the task it belongs to.
+- [ ] **3. The phase-end council:** four read-only reviewers (goal fit and scenarios,
+  reliability, security, simplicity) on the whole branch; their reports committed first, in
+  `docs/superpowers/plans/2026-10-23-vid2sub-phase-3-end-council.md`; each claim checked against
+  the code before Dan sees it; each finding a severity and a decision.
+- [ ] **4. The phase-end list worked through:** each row of this plan's Phase-end list fixed in
+  its own commit at the tier of what it touches, or moved to the spec's Later with a reason.
+  Missing docs are written now; in `docs/architecture.md`, Phase 3's parts turn solid.
+- [ ] **5. The forward look:** the Phase 4 plan rewritten to fit what was built (every listing
+  that consumes a Phase 2 or Phase 3 interface checked against the code).
+- [ ] **6. The retro:** `docs/superpowers/plans/2026-10-23-vid2sub-phase-3-retro.md`, in four
+  parts (departures from the plan, items carried forward, metrics per tier, starting over), from
+  the closing commits:
+
+```bash
+base=$(git merge-base main HEAD)
+git log --format='%h %s%n%b' --grep='close Task' "$base..HEAD"
+git log --format='%h %s' --grep='reopen Task' --grep='escaped from Task' "$base..HEAD"
+```
+
+  Then the retuning rules set Phase 4's tiers, written into its plan and the retro.
+- [ ] **7. A dated `CHANGELOG.md` entry** for Phase 3, and the spec's status line set to
+  `Phase 3 (M3) PR open (#N)`, its number filled in once step 8 opens the PR.
+- [ ] **8. The PR:** superpowers:finishing-a-development-branch, its PR option. The title is
+  `chore(repo): 🤖 merge Phase 3: adding, reviewing, and every platform`; the body summarises what
+  each task built, the council's findings and what became of them, links the retro, lists every
+  file no scan can read for Dan to check by eye, and ends with
+  `Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Phase end`. The files no scan can
+  read:
+
+```bash
+git log --format= --numstat origin/main..HEAD |
+  awk '$1 == "-" { print "not scanned, check by eye: " $3 }'
+```
+
+  With the title in `.git/PR_TITLE` and the body in `.git/PR_BODY.md`, then, after Dan's OK to
+  push and open it:
+
+```bash
+if cat .git/PR_TITLE .git/PR_BODY.md |
+     gitleaks stdin --redact --no-banner --config .gitleaks.toml; then
+  gh pr create --base main --head phase-3 \
+    --title "$(cat .git/PR_TITLE)" --body-file .git/PR_BODY.md
+else
+  echo "STOP: the PR text has a finding; tell Dan its kind and where, never the matched text"
+fi
+```
+
+  Attended: the PR waits for Dan's merge (a merge commit, never squash or rebase).
+- [ ] **9. After the merge:** the Pages site arrives in Phase 4, so there is still no live site to
+  check; the status line's `merged` entry comes with Phase 4's start.
 
 ***
 
