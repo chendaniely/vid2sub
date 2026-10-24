@@ -90,6 +90,18 @@ ffmpeg ≥6 for the playback audio.
 20. **The conflict picker numbers the versions and shows the cues where they differ,** side by
     side as plain text: at most 50, then how many more. While the source track itself is in
     conflict, the cue list stays empty until a version is picked (Task 16, round 16c).
+21. **The settings drawer shows the cue rules read-only;** its per-session defaults are targets
+    and formats only (Task 18). Spec §19.2 lists cue rules among the drawer's defaults, and
+    §12.2's heading calls them "user-adjustable". But `vid2sub.toml` has no key for them (§5.1),
+    and M1 built no flag or key, so Copy settings (§5.4) couldn't give TOML that loads. The
+    alternative is a `[rules.<lang>]` table (line width, lines, reading speed, durations), used
+    by `vid2sub run`, jobs, the editor's lint and translation limits, each with §5.2's test that
+    the value reaches the code. That is a new config interface touching M1's pipeline, and a
+    task of its own. **This changes the spec** (§19.2, and §12.2's "user-adjustable" moves to
+    Later or to a phase Dan names), so it waits for Dan's yes at approval.
+22. **Per session means the engine's launch:** the drawer's defaults and typed keys are shared by
+    every tab on one launch, held in memory, never written, and dropped on exit (spec §5.3,
+    §5.4). A job reads the targets and formats when it starts (Tasks 18, 19).
 
 ## Global Constraints
 
