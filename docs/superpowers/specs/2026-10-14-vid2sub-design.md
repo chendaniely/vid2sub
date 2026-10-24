@@ -1,8 +1,13 @@
 # vid2sub: design
 
-Status: written 2026-10-14 from a brainstorming session with Dan and a five-reviewer design
-council the same day (§27). Every decision is dated and attributed in the decision log (§28).
-Things that could not be verified while designing are listed in §29; each one is checked in the
+**Status:** spec written 2026-10-14; plan-driven-development kickoff in progress on `phase-2`
+(2026-10-23) · Phase 1 (M1) merged `95ebb90` 2026-10-15 · Phase 2 (M2) planned · Phase 3 (M3)
+planned · Phase 4 (M4) planned
+
+Written 2026-10-14 from a brainstorming session with Dan and a five-reviewer design council the
+same day (§27). Every decision up to the adoption of plan-driven-development is dated and
+attributed in the decision log (§28); Dan's decisions since are under Revisions, below. Things
+that could not be verified while designing are listed in §29; each one is checked in the
 milestone that first depends on it.
 
 vid2sub turns a video, a local file or a YouTube URL, into subtitle files: it extracts the
@@ -11,7 +16,137 @@ writes SRT (and optionally ASS) next to the video. A browser UI plays the video 
 subtitles and edits them. All the work runs on the user's own machine, or on models the user
 runs themselves, such as Dan's DGX Spark; OpenAI is an opt-in fallback.
 
+## Outline
+
+Each milestone of §25 is a phase (Dan, 2026-10-23, [Q&A item 6](2026-10-14-vid2sub-qa.md)).
+
+| Phase | Goal | Done means |
+|---|---|---|
+| 1 (M1): the CLI, end to end | `vid2sub run` turns a video, a folder or a YouTube link into subtitles next to it, in its language and in English | merged `95ebb90` 2026-10-15; its exit test (S01–S05) runs as Phase 2's first task ([Q&A item 7](2026-10-14-vid2sub-qa.md)) |
+| 2 (M2): the editor | `vid2sub serve` with every web security rule, and an editor to fix, retranslate and save | M1's exit test has passed; an M1 episode is opened, fixed, retranslated where stale and saved; an SRT edited in another editor comes back as an external version |
+| 3 (M3): adding, reviewing, every platform | add, review and run seasons from the app, on macOS, Windows and Linux | a season folder is added, reviewed and run unattended; the Windows and Linux path passes CI and one manual run |
+| 4 (M4): Pages and releases | the no-install editor on Pages, releases, and the install index | on Pages in Chrome, a local folder is opened, edited and saved next to the video; in Safari, edited and downloaded; vid2sub installs from the index on a clean machine |
+
+The diagrams are in [`docs/architecture.md`](../../architecture.md).
+
+## Scenarios
+
+Status: **planned**, not built yet; **built**, its task closed and its proof passes; **verified**,
+checked for real, by Dan or a live test. Phase 1 was built before this table existed, so its rows
+cite the M1 plan's tasks (`docs/superpowers/plans/2026-10-14-vid2sub-m1-cli.md`). Later phases'
+task numbers are filled in when their plans are written.
+
+| ID | Situation | Expected | Phase and task | Proof | Status |
+|---|---|---|---|---|---|
+| S01 | `vid2sub run` on a Cantonese episode with `--from yue --to en` | `.zh-HK.srt` in Traditional characters and `.en.srt` next to the video; the English is watchable in Plex | Phase 1, Tasks 31–32; checked in Phase 2's first task | `tests/test_pipeline.py::test_cantonese_is_written_in_traditional_characters_as_zh_hk`; the exit test | built |
+| S02 | `vid2sub run` on a Japanese episode with detection on and `--to en` | `.ja.srt`, `.en.srt` and a sidecar next to the video; the English is watchable in Plex | Phase 1, Tasks 31–32; checked in Phase 2's first task | `tests/test_pipeline.py::test_a_japanese_episode_gets_japanese_and_english_subtitles_and_a_sidecar`; the exit test | built |
+| S03 | `vid2sub run` on an English YouTube link with `--to none` | the download and its `.en.srt` land in the YouTube folder under a safe name | Phase 1, Tasks 24, 32; checked in Phase 2's first task | `tests/test_youtube.py`; the exit test | built |
+| S04 | `vid2sub run` on a season folder, then the same command with `--skip-existing` | every episode is done unattended; the second run does nothing and exits 0 | Phase 1, Tasks 31–32; checked in Phase 2's first task | `tests/test_pipeline.py::test_a_second_run_with_skip_existing_does_nothing`; the exit test | built |
+| S05 | `.zh-CN`, `.zh-TW`, `.zh-HK`, `.ja` and `.en` subtitles next to a video | Plex and Jellyfin each show the right language | Phase 1, Task 8; checked in Phase 2's first task | `tests/test_naming.py`; the exit test | built |
+| S06 | a key value pasted into `vid2sub.toml` | refused at load, naming the field and never echoing the value | Phase 1, Task 17 | `tests/test_config.py::test_a_key_value_is_refused_without_echoing_it` | built |
+| S07 | a run that would use a cloud model, without `--allow-cloud` | refused before anything is sent | Phase 1, Task 25 | `tests/test_clients.py::test_a_cloud_model_is_refused_unless_the_run_allows_it` | built |
+| S08 | the Spark becomes unreachable during a run | vid2sub waits and carries on, never falling back to another model or the cloud; still down after `--wait-on-connection`, it exits 75 and says how to resume | Phase 1, Tasks 31–32 | `tests/test_pipeline.py::test_an_unreachable_spark_never_falls_back_to_the_cloud_even_when_allowed`; `tests/test_cli_run.py::test_a_connection_that_stays_down_exits_75_and_says_how_to_resume` | built |
+| S09 | an endpoint answers with a redirect | it isn't followed: no audio or key goes to another origin | Phase 1, Task 26 | `tests/test_endpoint_engine.py::test_a_redirect_is_never_followed` | built |
+| S10 | a video whose title is in its metadata | each upload is `chunk-NNNN.flac` with no metadata tags | Phase 1, Tasks 21, 25 | `tests/test_decode.py::test_an_encoded_chunk_is_flac_with_no_metadata_even_when_the_video_has_a_title`; `tests/test_clients.py::test_a_chunk_names_its_upload_and_encodes_once` | built |
+| S11 | an MKV whose audio starts after its video | cue times are on the player's timeline | Phase 1, Tasks 19, 31 | `tests/test_pipeline.py::test_cues_follow_an_audio_delay` | built |
+| S12 | a subtitle file vid2sub didn't write, or one edited since it did | never overwritten; the CLI needs `--overwrite-foreign` | Phase 1, Task 28 | `tests/test_store.py::test_someone_elses_subtitle_file_is_never_overwritten` | built |
+| S13 | two writers append to one sidecar at once | both writers' records are kept | Phase 1, Task 28 | `tests/test_store.py::test_a_concurrent_writer_is_merged_not_lost` | built |
+| S14 | a sidecar with a line vid2sub can't parse, other than a truncated last line | the write stops, the file is left alone, and the user is told | Phase 1, Tasks 9, 28 | `tests/test_store.py::test_a_sidecar_vid2sub_cant_read_is_never_overwritten` | built |
+| S15 | `vid2sub import` of an SRT in GBK, Big5 or Shift-JIS | it becomes the source track and can be translated | Phase 1, Tasks 7, 33 | `tests/test_store.py::test_importing_a_legacy_encoded_srt_makes_it_the_source` | built |
+| S16 | `vid2sub translate --stale-only` after the source track changed | only the stale cues are translated again; an edited translation is kept | Phase 1, Task 33 | `tests/test_cli_more.py::test_translate_stale_only_redoes_only_what_changed` | built |
+| S17 | `vid2sub run --json`, or any log line | never a title, path, token or key | Phase 1, Tasks 16, 32 | `tests/test_cli_run.py::test_run_json_reports_progress_and_results_without_titles` | built |
+| S18 | Whisper writes a known closing phrase over music | the cue is flagged `halluc`, never deleted | Phase 1, Task 6 | `tests/test_build.py::test_a_known_hallucination_is_flagged_not_deleted` | built |
+| S19 | Whisper hears `zh` in a Chinese episode | detection asks "Mandarin or Cantonese?"; unattended, `--on-uncertain` decides | Phase 1, Task 30 | `tests/test_detect.py::test_whisper_hearing_chinese_asks_mandarin_or_cantonese` | built |
+| S20 | `vid2sub doctor` | tools, versions and endpoints, with keys by presence only | Phase 1, Task 34 | `tests/test_doctor_config.py::test_doctor_reports_keys_by_presence_only` | built |
+| S21 | the real Spark's whisper.cpp and Gemma 4 | whisper.cpp's words parse with times; Gemma answers the batch schema with the batch's ids | Phase 1, Task 36 | `tests/test_live_spark.py`, passed 2026-10-15 (§29) | verified |
+| S22 | a Cantonese episode through the Spark's Qwen3-ASR and forced aligner, once local-ai serves them | timed words with the text's punctuation attached; when the Spark is down, no fallback | Phase 2 | a fixture recorded from the Spark; `VID2SUB_LIVE_SPARK=1` | planned |
+| S23 | `vid2sub serve` | binds `127.0.0.1` only and opens the browser through the token redirect; the token never reaches a log or `ps` | Phase 2 | `tests/test_web_auth.py` | planned |
+| S24 | a page on another local port calls the app or opens its websocket | refused: no cookie, no access; a wrong Host gets 400; a wrong Origin closes the websocket with 1008 | Phase 2 | `tests/test_web_guards.py` | planned |
+| S25 | a GET request, or a write that isn't same-origin JSON | a GET never writes anything or starts a process; the write is refused | Phase 2 | `tests/test_web_guards.py` | planned |
+| S26 | a subtitle with `<script>` or ASS overrides, or a hostile file name or YouTube title | shown as plain text; the CSP blocks any script; the caption overlay renders `<i>` only | Phase 2 | Playwright with hostile fixtures | planned |
+| S27 | an M1 episode opened in the editor | the video plays with captions; the cue list follows playback; the spoken word is highlighted | Phase 2 | Playwright against `vid2sub serve --demo`; the exit test | planned |
+| S28 | a source cue edited, split, merged, nudged, inserted or deleted, then undone | the pure `subs.edit` rules apply; translations re-point and are flagged (§13.5) | Phase 2 | `tests/test_edit.py`; Playwright | planned |
+| S29 | Save | an editor rendition, a head and projection records are appended, then only vid2sub's files are rewritten | Phase 2 | `tests/test_save.py`; the exit test | planned |
+| S30 | Retranslate stale, from the editor | only the stale cues change; edited translations are kept | Phase 2 | Playwright; the exit test | planned |
+| S31 | the SRT edited in another editor, then the episode reopened | the change comes back as an `external` version and becomes the head, and the editor says so | Phase 2 | `tests/test_external.py`; the exit test | planned |
+| S32 | two tabs, or a tab and a CLI job, save the same episode | nothing is lost; a track that diverged shows both versions for the user to pick | Phase 2 | `tests/test_save.py` | planned |
+| S33 | Enter pressed to commit a Japanese or Chinese IME candidate | the candidate is committed and no editor action fires | Phase 2 | Playwright | planned |
+| S34 | the tab crashes with unsaved edits | the `localStorage` draft is offered back; closing with unsaved edits warns first | Phase 2 | Playwright | planned |
+| S35 | the settings drawer | endpoints and models read-only, with Test; a typed key only for an `allow_typed_key` endpoint, shown back only as "key entered for this session" | Phase 2 | `tests/test_settings.py`; Playwright | planned |
+| S36 | the minimal Jobs page, paths typed into a box | per-stage and per-chunk progress; Cancel stops between chunks | Phase 2 | Playwright | planned |
+| S37 | the editor by keyboard alone, or with a screen reader | every action reachable, focus visible, `aria-current` on the current cue, job progress announced politely | Phase 2 | Playwright | planned |
+| S38 | Add, through the in-app file browser | home and mounted volumes; folders, videos and subtitles only; dotfiles and credential folders hidden; a season sorted by `SxxEyy` | Phase 3 | `tests/test_browse.py` | planned |
+| S39 | Add, with a YouTube link and **keep video** ticked | the whole video lands in the YouTube folder | Phase 3 | Playwright | planned |
+| S40 | Review after adding a season | the first two files are sampled; each row suggests models; "apply to all" works; **Allow cloud** starts unticked every time | Phase 3 | `tests/test_review.py`; Playwright | planned |
+| S41 | the tunnel drops while the queue runs | the whole queue pauses with Resume, which restarts from the failed chunk | Phase 3 | `tests/test_jobs.py` | planned |
+| S42 | the queue runs overnight | the machine stays awake until the queue finishes | Phase 3 | `tests/test_awake.py` | planned |
+| S43 | an MKV with AC-3 audio opened in the editor | the playback audio plays straight away; **Make preview copy** makes an H.264 480p copy | Phase 3 | `tests/test_preview.py`; Playwright | planned |
+| S44 | the Models page | the catalog, each model marked usable now or why not | Phase 3 | Playwright | planned |
+| S45 | `faster-whisper` on Windows and Linux | transcribes on CPU, or on NVIDIA with cuBLAS 12; CI passes on all three systems | Phase 3 | CI; one manual run | planned |
+| S46 | `vid2sub cache clear`, or the cache past `cache_max_gb` | cleared; the least recently used goes first | Phase 3 | `tests/test_cache.py` | planned |
+| S47 | Pages in Chrome: a local folder opened, edited and saved | saved next to the video through File System Access, the sidecar re-read first | Phase 4 | the Pages Playwright test; the exit test | planned |
+| S48 | Pages in Safari | edited, then the subtitle files and the sidecar downloaded | Phase 4 | the exit test | planned |
+| S49 | the Pages editor put inside a frame, or reaching for the network | it refuses to run in a frame and requests nothing outside its own files | Phase 4 | the Pages Playwright test (`Watch`) | planned |
+| S50 | the demo on Pages | the public-domain clip plays with its canned sidecar and its translation | Phase 4 | the Pages Playwright test | planned |
+| S51 | `uv tool install 'vid2sub[mac]' --index https://chendaniely.github.io/vid2sub/simple/` on a clean machine | the latest release installs, frontend included | Phase 4 | the post-deploy smoke job; the exit test | planned |
+| S52 | a `v*` tag pushed | a GitHub Release with the wheel and sdist (`www/` inside) and attestations; the index lists it with `#sha256=` | Phase 4 | the `release.yml` and `pages.yml` runs | planned |
+| S53 | the `subs/` tests run inside Pyodide 0.27.7 | they pass | Phase 4 | CI's `pyodide` job | planned |
+
+### Later
+
+| ID | Situation | Expected | Kind | Why it waits |
+|---|---|---|---|---|
+| S54 | the Pages UI drives the local engine ("B") | pairing approved on the local machine, its own origin, the versioned JSON API (§3.3, §6.10) | end | Dan wants it if it can be made to work; not in v1 |
+| S55 | `vid2sub compare` against an episode corrected in the editor | each model scored against the corrected cues | optional | needs the editor (Phase 2) and corrected episodes |
+| S56 | a dedicated translation model (TranslateGemma, HY-MT), per cue | used in place of Gemma 4 where it scores better | optional | waits on local-ai's comparison (§26.1, item 9) |
+| S57 | `mlx-whisper`, Parakeet, or local Qwen3-ASR on CUDA, in-process | each usable as an engine | optional | not in v1 (§1) |
+| S58 | an MKV with embedded subtitle tracks | a track imported as with an SRT | optional | not in v1 (§15.4) |
+| S59 | YouTube's player in the editor | plays a YouTube video without keeping it | optional | needs a CSP exception (§6.3); **keep video** instead |
+| S60 | speaker labels | cues name who speaks | optional | not in v1 |
+| S61 | the version history of a track | earlier versions listed and restorable | optional | the data is kept from Phase 2's Save on (§20) |
+| S62 | a sidecar after many saves | compacted without losing a head or a projection | optional | about 50 KB per saved version (§14.7) |
+
+## Open items and risks
+
+- **M1's pending checks** (§29): the Plex and Jellyfin codes, whisper.cpp's cue timing without DTW
+  against a hand-corrected episode, Qwen3-ASR's speed on an idle Mac, a real YouTube download
+  (deno isn't installed on Dan's Mac yet), and whether ffmpeg 6.0 is the right floor. All run in
+  Phase 2's first task.
+- **Japanese reading speed:** at 4 characters per second Gemma condenses heavily (§29); revisit
+  against real episodes in that task.
+- **Japanese routing:** `whisper-large-v3` comes first for Japanese (§11.2) but isn't on the
+  Spark, so Japanese runs on the Mac's Qwen3-ASR unless `--model` says otherwise. A comparison
+  with turbo and Qwen settles the order.
+- **Qwen3-ASR on the Spark** (Dan, 2026-10-23: 1.7B and 0.6B being installed): timings need
+  `Qwen3-ForcedAligner-0.6B` too; vLLM serves the text but no words (§26.1, item 7). vid2sub has
+  no parser for a Qwen endpoint yet (M1 plan, decision 3). Proposed as a Phase 2 task (S22), its
+  first step recording a real response.
+- **Playback in Phase 2's editor:** the playback audio and preview copy are Phase 3 (§25, §8.8),
+  so in Phase 2 an episode whose audio the browser can't play (AC-3, E-AC-3, DTS, TrueHD) has no
+  sound in the editor. Many TV episodes are such files, and Phase 2's exit test opens one. For
+  Dan to decide with the plans.
+- **The CSP Shiny and shinyreact need** (§29, M2): if it needs more than the spec allows, that is
+  a spec change, for Dan.
+- **local-ai's Phase 3** (§17.4): role aliases, `x-spark-model`, inline refusals. Until then a
+  refused load is a plain error.
+- **Open for Dan since 2026-10-14** (§28): no embedded YouTube player in v1; Intel Macs
+  unsupported.
+- **The workflow's own gaps:** plan-driven-development hasn't built its git hooks, its leak check
+  (the denylist) or its CI templates yet. Until it does, every push waits for Dan's OK after
+  `make leaks` passes.
+
+## Revisions
+
+- 2026-10-23: plan-driven-development adopted: large, public, the Pages editor as the live demo
+  with the docs read on GitHub, on GitHub as now, attended
+  ([Q&A items 1–5](2026-10-14-vid2sub-qa.md)) (`a05066a`).
+- 2026-10-23: M1 is Phase 1 and M2–M4 are Phases 2–4; M1's exit test opens Phase 2; the spec
+  gains these parts in place; all three plans are written in full before approval
+  ([Q&A items 6–9](2026-10-14-vid2sub-qa.md)) (`a05066a`).
+
 ## Contents
+
+Above: the Outline, the Scenarios (with Later), Open items and risks, and Revisions.
 
 1. Purpose and scope
 2. Users, languages and platforms
@@ -43,7 +178,7 @@ runs themselves, such as Dan's DGX Spark; OpenAI is an opt-in fallback.
 28. Decision log
 29. Verify during the build
 
----
+***
 
 ## 1. Purpose and scope
 
@@ -107,30 +242,8 @@ and still ships Pyodide's 3.12); the pure core is tested on 3.12 and 3.14 (§22)
 
 ### 3.1 Three ways to run it
 
-```mermaid
-flowchart LR
-  subgraph user["User's machine"]
-    term["Terminal<br/>vid2sub run · detect · translate"]
-    browser["Browser<br/>React UI"]
-    web["vid2sub serve<br/>FastAPI + Shiny on 127.0.0.1"]
-    core["vid2sub core library<br/>media · engines · subs · translate"]
-    tools["ffmpeg · ffprobe · yt-dlp + deno"]
-    local["In-process engines<br/>mlx-qwen3-asr · faster-whisper"]
-    files[("Video folder<br/>video · .vid2sub.jsonl · .xx.srt")]
-  end
-  spark["DGX Spark via SSH tunnel<br/>127.0.0.1:9100/v1<br/>whisper.cpp · Gemma 4"]
-  cloud["OpenAI<br/>opt-in per run"]
-  pages["GitHub Pages<br/>Shinylive editor"]
-  term --> core
-  browser <-->|"websocket + token cookie"| web
-  web --> core
-  core --> tools
-  core --> local
-  core <--> files
-  core -->|"chunks, cue text"| spark
-  core -.->|"only with allow_cloud"| cloud
-  pages -->|"File System Access"| files
-```
+The diagram: [Three ways to run it](../../architecture.md#three-ways-to-run-it), in
+`docs/architecture.md`.
 
 - **The CLI** (`vid2sub run`, `detect`, `translate`, …; §18): a Python command-line application
   for the terminal and for batch work, such as a season, a folder tree, a list of files, a script
@@ -1364,7 +1477,8 @@ and `deploy-pages`. No `gh-pages` branch.
 
 ## 25. Milestones (Dan, 2026-10-14: the council's re-phasing)
 
-Each milestone ends with something Dan uses.
+Each milestone ends with something Dan uses. Each is also a phase of plan-driven-development (M1
+is Phase 1, M2 Phase 2, and so on); the Outline at the top tracks them.
 
 **M1: the CLI, end to end.**
 - The Python CLI application, installable as a uv tool and editable from a clone (§23.5), with
@@ -1525,7 +1639,8 @@ Each is checked in the milestone that first depends on it; the result goes into 
   hand-corrected episode; whether ffmpeg ≥6.0 is the right floor.
 
   **M1 results so far (2026-10-15, during the build).** The items marked *pending* need Dan's
-  episodes, Plex and Jellyfin (the plan's Task 36 exit test).
+  episodes, Plex and Jellyfin (the M1 plan's Task 36 exit test, run as Phase 2's first task:
+  Dan, 2026-10-23, [Q&A item 7](2026-10-14-vid2sub-qa.md)).
 
   - *ffmpeg.* Built and tested against ffmpeg 9.0.2 (Homebrew). An MKV made with
     `-itsoffset 2.0` reports the audio stream's `start_time` as 2.000 and the video's as 0.000,
