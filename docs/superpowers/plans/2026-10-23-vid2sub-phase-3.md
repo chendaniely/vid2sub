@@ -95,6 +95,13 @@ listings are run and revised at its phase start.)
     `ADMIN$`, `IPC$`) are refused, while a person's own `name$` media share is not (Task 1).
 25. **Review ends with Discard, a new Add, Start, or closing the tab** (Task 4); switching screens
     keeps it.
+26. **One list for the Models page, Review's pickers and `vid2sub models`** (Task 8):
+    `review.models`. The CLI prints from it, grouped by task, and gives a catalog entry no model
+    points at §11.1's reason, "add it to vid2sub.toml", instead of M1's "not in vid2sub.toml";
+    its JSON fields are unchanged.
+27. **The Models page checks when it opens and on Check again, never on a timer** (Task 8): a
+    check asks each local server, so it isn't polled; an ask while one runs is dropped, and a
+    failed check says "couldn't check the models; see the log", never the error's own text.
 
 ## Global Constraints
 
@@ -2014,7 +2021,8 @@ def test_with_no_roots_given_a_path_on_a_volume_looks_at_that_volume_alone(tmp_p
 ```
 
 - [ ] **Step 21: Run them; watch them fail.** `uv run pytest tests/test_browse.py -q`. Expected:
-  the volume's `Users/someone` listed as `['AppData', 'Library', 'Videos']`,
+  the volume's `Users/someone` still listing `AppData` and `Library`
+  (`E       AssertionError: assert ['AppData', '...ry', 'Videos'] == ['Videos']`, three times),
   `E       Failed: DID NOT RAISE BrowseError` seven times (the profiles typed, the hidden shares,
   `COM¹`, `CONIN$`, `lpt³`, the linked root added), `has no attribute '_volume_parents'`, the
   listing of home seen scanning `/Volumes`, `/media` and `/mnt`, and `12 failed, 56 passed,
@@ -9117,8 +9125,10 @@ def test_the_apps_jobs_retry_a_dropped_connection_for_half_a_minute_then_pause(t
 
 - [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_jobs.py -q`.
   Expected: `E       TypeError: jobs_view() takes 1 positional argument but 2 were given`,
-  `E       KeyError: 'queue'` (twice), the job context's wait still `600.0`, and
-  `5 failed, 8 passed`.
+  `E       KeyError: 'queue'` (twice), the view without its queue (`Right contains 1 more
+  item:` `{'queue': {'hint': None, 'kind': None, 'reason': None, 'state': 'running'}}`),
+  `E           AttributeError: module 'vid2sub.web.runtime' has no attribute 'APP_WAIT_S'`
+  (the half-minute wait isn't there yet), and `5 failed, 8 passed`.
 - [ ] **Step 3: Write the code.** In `src/vid2sub/web/runtime.py`, in the module docstring,
   below `` (§8.9). Nothing here presets `allow_cloud` (§7.2): a job never uses a cloud model in Phase 2. ``,
   add:
@@ -9812,8 +9822,8 @@ with its picture through `/media/` (§6.3).
 - Test: `tests/test_tools.py`, `tests/test_views.py`, `tests/test_web_server.py`,
   `frontend/src/lib/playable.test.ts`
 - Modify at the close: this plan; the spec (S63)
-- Shared with Tasks 1–6 at replay: `server.py`, `App.tsx`, `types.ts` (Tasks 2, 4 and 6 add their
-  screens there); the anchors below are in Phase 2's code, which those tasks leave in place.
+- Shared with Tasks 1–6: `episode.py`, `runtime.py`, `server.py`, `App.tsx` and `types.ts`
+  (Tasks 2, 4 and 6 add their screens there); the anchors below are as those tasks leave them.
 
 **Interfaces:**
 - Consumes: Phase 2's `media.preview.playback_audio`, `cache.Cache` (`folder`, `evict`),
@@ -9859,9 +9869,7 @@ with its picture through `/media/` (§6.3).
   - For Phase 4: the Pages editor's view has `preview_url` and `preview_encoder` null, and
     `generate` is false there, so it never offers the button.
 
-The counts below are this build's, on Phase 2's finished code; with Tasks 1–6 in, the suite's
-are higher. What matters is no failure, ruff's `All checks passed!` and gitleaks'
-`no leaks found`.
+The counts below are the assembled Phase 3's, with Tasks 1–6 in before this task.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
@@ -10511,8 +10519,8 @@ def stream_tool(args: Sequence[str], *, cwd: Path, timeout: float,
   `if name in listed), None)` (`2 failed`: the two choice tests); in `preview_copy`, replace
   `            continue` with `            raise` (`FAILED
   …test_a_hardware_encoder_that_fails_on_the_file_falls_back_to_libx264`, `ToolFailed: ffmpeg
-  failed (exit 8)`). `make check`. Expected: `1059 passed, 2 skipped, 36 deselected` twice,
-  `Test Files  19 passed (19)`, `Tests  88 passed (88)`, `All checks passed!` and
+  failed (exit 8)`). `make check`. Expected: `1218 passed, 7 skipped, 41 deselected` twice,
+  `Test Files  21 passed (21)`, `Tests  100 passed (100)`, `All checks passed!` and
   `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -10778,7 +10786,8 @@ class PreviewError(Exception):
   In `src/vid2sub/web/runtime.py`, replace
 
 ```python
-`Runtime` (`reachable`, `media_for`, `retranslate`, `endpoint_models`). Every call that blocks goes through
+`Runtime` (`reachable`, `media_for`, `retranslate`, `endpoint_models`, the browser's and
+Review's). Every call that blocks goes through
 `blocking`, never a thread or an executor of the server's own: a worker thread here, inline in
 Pyodide, which has no threads (Task 14 round 14a, decided with the coordinator 2026-10-24).
 """
@@ -10787,16 +10796,17 @@ Pyodide, which has no threads (Task 14 round 14a, decided with the coordinator 2
   with
 
 ```python
-`Runtime` (`reachable`, `media_for`, `make_preview`, `retranslate`, `endpoint_models`). Every call
-that blocks goes through `blocking`, never a thread or an executor of the server's own: a worker
-thread here, inline in Pyodide, which has no threads (Task 14 round 14a, decided with the
-coordinator 2026-10-24). The preview copy (spec §8.8, Phase 3 Task 7) is made into the cache, as
-the playback audio is, and an episode whose copy is there already gets it with the playback audio.
+`Runtime` (`reachable`, `media_for`, `make_preview`, `retranslate`, `endpoint_models`, the
+browser's and Review's). Every call that blocks goes through `blocking`, never a thread or an
+executor of the server's own: a worker thread here, inline in Pyodide, which has no threads (Task
+14 round 14a, decided with the coordinator 2026-10-24). The preview copy (spec §8.8, Phase 3 Task
+7) is made into the cache, as the playback audio is, and an episode whose copy is there already
+gets it with the playback audio.
 """
 ```
 
-  (in the module docstring); below `from dataclasses import dataclass, field` add
-  `from pathlib import Path`; and below the `PLAYBACK_TIMEOUT = 3600.0 …` line add:
+  (in the module docstring; `from pathlib import Path` is already imported, for Task 2's
+  browser); and below the `APP_WAIT_S = 30.0 …` line (Task 6's) add:
 
 ```python
 PREVIEW_TIMEOUT = 4 * 3600.0  # seconds: a two-hour episode's picture, through libx264, likewise
@@ -10955,20 +10965,20 @@ The settings drawer (§19.2, S35) is `web.settings`'s:
   replace
 
 ```python
-from vid2sub.web.episode import Episode, OpenError, RetranslateError, SaveError, SaveResult
+    AddError,
+    Episode,
+    OpenError,
+    RetranslateError,
 ```
 
   with
 
 ```python
-from vid2sub.web.episode import (
+    AddError,
     Episode,
     OpenError,
     PreviewError,
     RetranslateError,
-    SaveError,
-    SaveResult,
-)
 ```
 
   replace
@@ -11202,8 +11212,8 @@ from vid2sub.web.episode import (
   …test_closing_the_tab_mid_encode_stops_it_and_a_second_ask_meanwhile_is_ignored`: `where False
   = wait(10)`); in `_preview`, take out `or not self.rt.backend.capabilities().generate` (`FAILED
   …test_a_copy_is_made_only_while_the_sound_plays_alone_and_only_where_jobs_can_run`: `asked`
-  holds the episode's id). `make check`. Expected: `1066 passed, 2 skipped, 36 deselected`
-  twice, `Test Files  19 passed (19)`, `Tests  88 passed (88)`, `All checks passed!` and
+  holds the episode's id). `make check`. Expected: `1225 passed, 7 skipped, 41 deselected`
+  twice, `Test Files  21 passed (21)`, `Tests  100 passed (100)`, `All checks passed!` and
   `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -11807,13 +11817,13 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
   replace
 
 ```tsx
-import type { Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
+import type { AddResultMessage, BrowseResult, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, Progress, RetranslateResultMessage, QueueState, ReviewOutput, ReviewStartedMessage, SaveResultMessage, SettingsView, Status } from "@/types";
 ```
 
   with
 
 ```tsx
-import type { Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, PreviewProgress, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
+import type { AddResultMessage, BrowseResult, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, PreviewProgress, Progress, RetranslateResultMessage, QueueState, ReviewOutput, ReviewStartedMessage, SaveResultMessage, SettingsView, Status } from "@/types";
 ```
 
   replace
@@ -11912,14 +11922,15 @@ goes in the same cache, and is reused the next time the episode is opened.
 ```
 
 - [ ] **Step 14: Run the checks; they pass.** `cd frontend && npm run typecheck && npx vitest
-  run` first (`Test Files  20 passed (20)`, `Tests  96 passed (96)`), then the guard check, then
+  run` first (`Test Files  22 passed (22)`, `Tests  108 passed (108)`), then the guard check, then
   `make build`, `make check` and `make e2e`. **Guard check**, reverted and restored: in
   `Player.tsx`, replace `const offer = generate && copyPlays` with `const offer = copyPlays`
   (`npx vitest run src/components/Player.test.ts`: `× … isn't offered without generate, to a
   browser that can't play H.264, or with no picture to copy`, `Tests  1 failed | 4 passed (5)`).
-  `make check`. Expected: `1066 passed, 2 skipped, 38 deselected` twice, `Test Files  20 passed
-  (20)`, `Tests  96 passed (96)`, `All checks passed!` and `no leaks found`. `make e2e`.
-  Expected: `33 passed`; in a Chromium with no H.264 the picture test skips (`this Chromium plays
+  `make check`. Expected: `1225 passed, 7 skipped, 43 deselected` twice,
+  `Test Files  22 passed (22)`, `Tests  108 passed (108)`, `All checks passed!` and
+  `no leaks found`. `make e2e`.
+  Expected: `38 passed`; in a Chromium with no H.264 the picture test skips (`this Chromium plays
   no H.264, so it is offered no preview copy`).
 - [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -12012,14 +12023,1262 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 2 · **Scenarios:** S44
 
-**Interfaces:**
-- Consumes: Task 3's `review.model_choices(config, candidates, task)` and the frontend's
-  `choiceLabel` (Task 4); the demo's candidates carry catalog ids, so its titles name Whisper
-  turbo and Gemma 4 (Decision 22). Task 9's `faster-whisper` candidate: `in-process`, and
-  without the extra unavailable with "install vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA
-  GPU)".
+Spec §11.1, §19.2 and S44: the Models page shows the catalog, each model marked usable on this
+machine now or why not; catalog models with no configured entry are shown greyed with "add it to
+vid2sub.toml".
 
-<!-- steps: written in the next pass -->
+**Why it is built this way** (read 2026-10-24):
+- **One list for the page and the CLI.** `vid2sub models` (M1) already reported these facts: each
+  configured model usable now or why not, then the catalog's other entries. `review.models` now
+  holds them, on Task 3's `model_choices`, so the Models page, Review's pickers and the CLI say
+  the same thing; the CLI prints from it, grouped by task. §11.1's words for an entry no model
+  points at, "add it to vid2sub.toml", replace M1's "not in vid2sub.toml". `ModelChoice` stays as
+  Task 3 made it (Task 3's tests compare it whole), so the CLI takes each model's catalog id from
+  its candidate.
+- **The candidates** are the job context's own where it has them: the demo's canned models, under
+  the catalog entries they stand in for, so the demo's page names Whisper large-v3-turbo and
+  Gemma 4 (Decision 22). Otherwise `detect.candidates` checks each configured model now: each
+  local server is asked for its model list, a cloud one is only checked for its key, and an
+  in-process engine for its extra. Task 9's `faster-whisper` candidate comes the same way,
+  `in-process`, and without the extra unavailable with "install vid2sub[whisper]
+  (vid2sub[nvidia] for an NVIDIA GPU)"; nothing here changes for it, and this task's Vitest
+  names that reason as data.
+- **Asked for, not polled.** A check asks each local server, so the page asks when it opens and
+  on **Check again** (`models_check`), and the server runs the check as the tab's extended task
+  through `runtime.blocking`, off the event loop (shiny's `ExtendedTask` queues a call made while
+  one runs, so the server drops an ask while a check runs). The page keeps the last lists while
+  the next check runs. A check that fails says "couldn't check the models; see the log", never
+  the error's own text.
+- **Only where the engine makes things** (`capabilities.generate`, Phase 2 Decision 23), like
+  Add, Review and Jobs: the Pages editor has no Models page, and its `models` output is null.
+- **Nothing on it names a path, a token or a key** (§6.8): models go by their names in
+  vid2sub.toml and the catalog's titles; a reason names at most a key's environment variable,
+  as the top bar does. Usable or not is said in words, not by colour alone (§19.3).
+
+**Files:**
+- Modify: `src/vid2sub/review.py` (`NOT_CONFIGURED`, `CatalogModel`, `Models`, `models`),
+  `src/vid2sub/commands/models.py` (prints from `review.models`), `src/vid2sub/web/runtime.py`
+  (`Runtime.models`), `src/vid2sub/web/views.py` (`models_view`), `src/vid2sub/web/server.py`
+  (the `models_check` input and the `models` output), `frontend/src/types.ts`,
+  `frontend/src/App.tsx`
+- Create: `tests/test_models.py`, `tests/test_web_models.py`, `frontend/src/lib/models.ts`,
+  `frontend/src/lib/models.test.ts`, `frontend/src/components/ModelsPage.tsx`,
+  `frontend/src/components/ModelsPage.test.ts`, `tests/e2e/test_models.py`
+- Modify at the close: this plan; the spec (S44)
+
+**Interfaces:**
+- Consumes: Task 3's `review.model_choices(config, candidates, task)` and `ModelChoice`;
+  `catalog.CATALOG` (`title`, `task`, `good_for`, `install`, `cloud`) and `Candidate`;
+  `detect.candidates(config, keys)`; `RunContext.candidates` (the demo's `CANNED_MODELS`,
+  Decision 22); `runtime.blocking`; `Capabilities.generate`; the frontend's `choiceLabel` and
+  `ModelChoice` (Task 4); App.tsx's `sent` and `pace`; `tests/fakes.FakeServer`,
+  `test_web_review.client_for`, `test_web_settings.Browser`; the e2e `page`, `server`, `launch`
+  and `open_page` fixtures. Task 9's `faster-whisper` candidate, once Task 9 adds it: `in-process`,
+  and without the extra unavailable with "install vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA
+  GPU)".
+- Produces:
+  - `vid2sub.review`: `NOT_CONFIGURED = "add it to vid2sub.toml"`;
+    `CatalogModel(id, title, task, good_for, install, cloud, reason=NOT_CONFIGURED)` (frozen);
+    `Models(transcribers: tuple[ModelChoice, ...], translators: tuple[ModelChoice, ...],
+    unconfigured: tuple[CatalogModel, ...])` (frozen); `models(config, candidates) -> Models`.
+  - `vid2sub models` prints from `review.models`: configured models grouped by task, then the
+    catalog's other entries with reason "add it to vid2sub.toml"; its JSON events keep their
+    fields (`name`, `catalog`, `task`, `available`, `reason`, `cloud`).
+  - `web.runtime.Runtime.models() -> Models` (blocks; through `blocking`).
+  - `web.views.models_view(found: Models | None, *, checking: bool, error: str | None = None)
+    -> dict`: `{checking, error, transcribers, translators, unconfigured}`, each configured model
+    as Review's pickers have it, each unconfigured entry `{id, title, task, good_for, install,
+    cloud, reason}`.
+  - `web.server`: the `models_check` input (`{n}`), the `models` output (null until asked, and
+    in Pages), `MODELS_FAILED = "couldn't check the models; see the log"`.
+  - Frontend: `types.ts`'s `CatalogModel` and `ModelsView`; `lib/models.ts`'s `why`, `Section`,
+    `sections` and `summary`; `components/ModelsPage.tsx`'s `ModelsPage({ models, onCheck })`;
+    App's `models` screen (`nav-models`), which sends `models_check` each time it opens. Test
+    ids: `models-page`, `models-status`, `models-check`, `models-error`, `models-transcribe`,
+    `models-translate`, `model` (with `data-usable`), `model-label`, `model-why`,
+    `catalog-model`, `catalog-title`, `catalog-why`.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing tests,** `tests/test_models.py`:
+
+```python
+"""The models as the Models page and `vid2sub models` both list them (spec §11.1, §18.1, §19.2;
+S44): every configured model by task, in vid2sub.toml's order, with whether it can run now and
+why not, then each catalog entry no model points at, greyed with "add it to vid2sub.toml". One
+function, `review.models`, gives both, so the page and the CLI can't disagree."""
+
+import json
+
+import pytest
+
+from vid2sub import detect as detecting
+from vid2sub import review
+from vid2sub.catalog import CATALOG, Candidate
+from vid2sub.cli import main
+from vid2sub.config import Config
+
+CONFIG = Config.model_validate({
+    "endpoints": {"spark": {"base_url": "http://127.0.0.1:9/v1"},
+                  "openai": {"base_url": "https://api.openai.com/v1",
+                             "key_env": "OPENAI_TEST_KEY"}},
+    "models": {
+        "spark-turbo": {"catalog": "whisper-large-v3-turbo", "endpoint": "spark",
+                        "model": "turbo", "parser": "whisper.cpp", "local": True},
+        "mac-qwen": {"catalog": "qwen3-asr-1.7b", "engine": "mlx-qwen3-asr"},
+        "openai-whisper": {"catalog": "openai-whisper-1", "endpoint": "openai",
+                           "model": "whisper-1", "parser": "openai"},
+        "spark-gemma": {"catalog": "gemma-4-26b-a4b", "endpoint": "spark", "model": "gemma",
+                        "task": "translate", "local": True},
+        "lan-llm": {"endpoint": "spark", "model": "llama", "task": "translate", "local": True},
+    },
+})
+DOWN = "couldn't connect to the server (is `make tunnel` running?)"
+CANDIDATES = [
+    Candidate("spark-turbo", "whisper-large-v3-turbo", "endpoint", False, DOWN, unreachable=True),
+    Candidate("mac-qwen", "qwen3-asr-1.7b", "in-process", False,
+              "install vid2sub[mac] on an Apple Silicon Mac"),
+    Candidate("openai-whisper", "openai-whisper-1", "endpoint", False,
+              "OPENAI_TEST_KEY isn't set", cloud=True),
+    Candidate("spark-gemma", "gemma-4-26b-a4b", "endpoint", True),
+    Candidate("lan-llm", None, "endpoint", True),
+]
+UNCONFIGURED = ["qwen3-asr-0.6b", "whisper-large-v3", "qwen3.8-27b", "local-llm", "openai-gpt"]
+
+
+def test_each_configured_model_is_listed_by_task_with_whether_it_can_run_now_and_why_not():
+    found = review.models(CONFIG, CANDIDATES)
+    assert [(m.name, m.title, m.available, m.reason, m.cloud) for m in found.transcribers] == [
+        ("spark-turbo", "Whisper large-v3-turbo", False, DOWN, False),
+        ("mac-qwen", "Qwen3-ASR 1.7B + ForcedAligner 0.6B", False,
+         "install vid2sub[mac] on an Apple Silicon Mac", False),
+        ("openai-whisper", "OpenAI whisper-1", False, "OPENAI_TEST_KEY isn't set", True)]
+    # a model the catalog doesn't know goes by its own name
+    assert [(m.name, m.title, m.available) for m in found.translators] == [
+        ("spark-gemma", "Gemma 4 26B-A4B", True), ("lan-llm", "lan-llm", True)]
+    assert found.transcribers == review.model_choices(CONFIG, CANDIDATES, "transcribe")
+
+
+def test_each_catalog_entry_no_model_points_at_is_greyed_with_add_it_to_vid2sub_toml():
+    found = review.models(CONFIG, CANDIDATES)
+    assert [e.id for e in found.unconfigured] == UNCONFIGURED  # the catalog's own order
+    for e in found.unconfigured:
+        entry = CATALOG[e.id]
+        assert (e.title, e.task, e.good_for, e.install, e.cloud) == (
+            entry.title, entry.task, entry.good_for, entry.install, entry.cloud)
+        assert e.reason == review.NOT_CONFIGURED == "add it to vid2sub.toml"
+
+
+@pytest.fixture
+def toml(tmp_path, monkeypatch):
+    cfg = tmp_path / "vid2sub.toml"
+    cfg.write_text("""
+[endpoints.spark]
+base_url = "http://127.0.0.1:9/v1"
+
+[models.spark-turbo]
+catalog = "whisper-large-v3-turbo"
+endpoint = "spark"
+model = "turbo"
+parser = "whisper.cpp"
+local = true
+
+[models.spark-gemma]
+catalog = "gemma-4-26b-a4b"
+endpoint = "spark"
+model = "gemma"
+task = "translate"
+local = true
+""", encoding="utf-8")
+    monkeypatch.setattr(detecting, "candidates", lambda config, keys, **kw: [
+        Candidate("spark-turbo", "whisper-large-v3-turbo", "endpoint", False, DOWN),
+        Candidate("spark-gemma", "gemma-4-26b-a4b", "endpoint", True)])
+    return cfg
+
+
+def test_vid2sub_models_lists_what_review_models_finds_in_its_order(toml, capsys):
+    assert main(["models", "--config", str(toml), "--json"]) == 0
+    rows = [e for e in map(json.loads, capsys.readouterr().out.splitlines())
+            if e.get("event") == "model"]
+    assert [(r["name"], r["catalog"], r["task"], r["available"], r["reason"]) for r in rows] == [
+        ("spark-turbo", "whisper-large-v3-turbo", "transcribe", False, DOWN),
+        ("spark-gemma", "gemma-4-26b-a4b", "translate", True, ""),
+        *((None, cid, CATALOG[cid].task, False, "add it to vid2sub.toml")
+          for cid in ["qwen3-asr-1.7b", "qwen3-asr-0.6b", "whisper-large-v3",
+                      "openai-whisper-1", "qwen3.8-27b", "local-llm", "openai-gpt"])]
+
+
+def test_vid2sub_models_says_in_words_what_can_run_and_what_to_add(toml, capsys):
+    assert main(["models", "--config", str(toml)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[:2] == [f"✗ spark-turbo: Whisper large-v3-turbo (transcribe) — {DOWN}",
+                         "✓ spark-gemma: Gemma 4 26B-A4B (translate)"]
+    assert "· Whisper large-v3 (transcribe): add it to vid2sub.toml" in lines
+```
+
+  and `tests/test_web_models.py`:
+
+```python
+"""The Models page's server (spec §11.1, §19.2, §6.8; S44): the `models` output is null until the
+page asks (`models_check`, sent when the Models screen opens and by **Check again**); the check
+runs off the event loop and says so meanwhile, then lists every configured model by task, usable
+now or why not, and the catalog's other entries greyed with "add it to vid2sub.toml"; a runtime
+whose job context has its own candidates (the demo's) lists those, under the catalog titles they
+stand in for, and any other asks each local server and checks each cloud key now; nothing on the
+page names a path, a token or a key; and Pages has no Models page."""
+
+import dataclasses
+import json
+import threading
+
+import pytest
+from fakes import FakeServer
+from test_models import CANDIDATES, CONFIG, DOWN, UNCONFIGURED
+from test_web_review import client_for
+from test_web_server import (  # noqa: F401 - fresh_reactive_lock is autouse
+    TOKEN,
+    fresh_reactive_lock,
+    tab,
+)
+from test_web_settings import Browser
+
+from vid2sub import detect as detecting
+from vid2sub import review as reviewing
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.pipeline import RunContext, RunOptions
+from vid2sub.web import demo, runtime, views
+
+KEY = "k" * 40  # low entropy, plainly not a real key
+
+
+def built(tmp_path, config=CONFIG, *, candidates=None, keys=None):
+    keys = keys or KeyRing(environ={})
+    ctx = RunContext(config=config, tools=Tools.find(), keys=keys, options=RunOptions(),
+                     candidates=candidates)
+    return runtime.build(config, tools=Tools.find(), keys=keys,
+                         cache=Cache(tmp_path / "cache", max_bytes=0), job_context=ctx)
+
+
+@pytest.fixture
+def rt(tmp_path):
+    made = built(tmp_path, candidates=list(CANDIDATES))
+    runtime.configure(made)
+    yield made
+    runtime.configure(None)
+    made.queue.close()
+
+
+@pytest.fixture
+def client(rt):
+    c = client_for(rt)
+    yield c
+    c.__exit__(None, None, None)
+
+
+# ---- the runtime and the view ------------------------------------------------------------------
+
+
+def test_the_runtime_lists_its_job_contexts_own_candidates_as_review_models_does(rt):
+    assert rt.models() == reviewing.models(CONFIG, CANDIDATES)
+
+
+def test_the_demos_canned_models_go_by_the_catalog_titles_they_stand_in_for(tmp_path):
+    rt = built(tmp_path, demo.JOB_CONFIG, candidates=list(demo.CANNED_MODELS))
+    try:
+        found = rt.models()
+    finally:
+        rt.queue.close()
+    assert [(m.name, m.title, m.available) for m in found.transcribers] == [
+        ("canned", "Whisper large-v3-turbo", True)]
+    assert [(m.name, m.title, m.available) for m in found.translators] == [
+        ("canned-ja", "Gemma 4 26B-A4B", True)]
+
+
+def test_without_candidates_of_its_own_the_runtime_asks_each_server_and_checks_each_key_now(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(detecting, "mlx_available", lambda: False)
+    asked = []
+
+    def spark(req):
+        asked.append(req.path)
+        return 200, {"object": "list", "data": [
+            {"id": "turbo", "object": "model", "created": 0, "owned_by": "spark"}]}, {}
+
+    with FakeServer(responder=spark) as srv:
+        config = Config.model_validate({**CONFIG.model_dump(), "endpoints": {
+            "spark": {"base_url": srv.url},
+            "openai": {"base_url": "https://api.openai.com/v1", "key_env": "OPENAI_TEST_KEY"}}})
+        rt = built(tmp_path, config, keys=KeyRing(environ={"OPENAI_TEST_KEY": KEY}))
+        try:
+            found = rt.models()
+        finally:
+            rt.queue.close()
+    assert asked == ["/v1/models"]  # once for the endpoint; the cloud one is never contacted
+    assert [(m.name, m.available, m.reason) for m in found.transcribers] == [
+        ("spark-turbo", True, ""),
+        ("mac-qwen", False, "install vid2sub[mac] on an Apple Silicon Mac"),
+        ("openai-whisper", True, "")]
+    assert [(m.name, m.available, m.reason) for m in found.translators] == [
+        ("spark-gemma", False, "the server doesn't list gemma"),
+        ("lan-llm", False, "the server doesn't list llama")]
+    shown = json.dumps(views.models_view(found, checking=False))
+    assert KEY not in shown and "OPENAI_TEST_KEY" not in shown
+
+
+def test_the_view_lists_each_task_then_the_catalogs_other_entries_and_names_no_path(rt):
+    view = views.models_view(rt.models(), checking=False)
+    assert view["checking"] is False and view["error"] is None
+    assert view["transcribers"][0] == {
+        "name": "spark-turbo", "title": "Whisper large-v3-turbo",
+        "good_for": "English → English captions, quick drafts", "available": False,
+        "reason": DOWN, "cloud": False}
+    assert [(c["name"], c["available"], c["reason"]) for c in view["translators"]] == [
+        ("spark-gemma", True, None), ("lan-llm", True, None)]
+    assert [e["id"] for e in view["unconfigured"]] == UNCONFIGURED
+    assert view["unconfigured"][0] == {
+        "id": "qwen3-asr-0.6b", "title": "Qwen3-ASR 0.6B + ForcedAligner 0.6B",
+        "task": "transcribe", "good_for": "the same languages as the 1.7B, lighter and faster",
+        "install": "vid2sub[mac]", "cloud": False, "reason": "add it to vid2sub.toml"}
+    assert views.models_view(None, checking=True) == {
+        "checking": True, "error": None, "transcribers": [], "translators": [],
+        "unconfigured": []}
+
+
+# ---- the server --------------------------------------------------------------------------------
+
+
+def models(t) -> dict | None:
+    return t.value("models") if t.has("models") else None
+
+
+def test_the_models_output_waits_to_be_asked_then_checks_off_the_loop_and_lists_them(
+        client, rt, monkeypatch):
+    held, go, calls = threading.Event(), threading.Event(), []
+    real = reviewing.models
+
+    def slow(config, candidates):
+        calls.append(1)
+        held.set()
+        assert go.wait(20)
+        return real(config, candidates)
+
+    monkeypatch.setattr(reviewing, "models", slow)
+    with tab(client, {"models"}) as t:
+        t.until(lambda t: t.has("models"))
+        assert models(t) is None  # nothing is asked of a server until the page opens
+        t.set(models_check={"n": 1})
+        assert held.wait(20)
+        view = t.until(lambda t: (models(t) or {}).get("checking") and models(t))
+        assert view["transcribers"] == [] and view["unconfigured"] == []
+        t.set(models_check={"n": 2})  # a second ask while one runs is dropped
+        go.set()
+        view = t.until(lambda t: models(t) and not models(t)["checking"] and models(t))
+    assert calls == [1]  # the second ask, sent while the first ran, was dropped
+    assert [c["name"] for c in view["transcribers"]] == ["spark-turbo", "mac-qwen",
+                                                         "openai-whisper"]
+    assert [e["id"] for e in view["unconfigured"]] == UNCONFIGURED
+    assert TOKEN not in json.dumps(view)
+
+
+def test_check_again_asks_again_and_the_page_shows_what_it_found_then(client, rt, monkeypatch):
+    found = iter([CANDIDATES, [dataclasses.replace(c, available=True, reason="")
+                               for c in CANDIDATES]])
+    monkeypatch.setattr(reviewing, "models",
+                        lambda config, cands, real=reviewing.models: real(config, next(found)))
+    with tab(client, {"models"}) as t:
+        t.set(models_check={"n": 1})
+        first = t.until(lambda t: models(t) and not models(t)["checking"] and models(t))
+        t.set(models_check={"n": 2})
+        again = t.until(lambda t: models(t) and models(t)["transcribers"][0]["available"]
+                        and not models(t)["checking"] and models(t))
+    assert first["transcribers"][0]["reason"] == DOWN and again["transcribers"][0]["reason"] is None
+
+
+def test_a_check_that_fails_says_so_and_names_nothing(client, rt, monkeypatch):
+    def broken(config, candidates):
+        raise RuntimeError(f"{TOKEN} /Users/someone/vid2sub.toml")
+
+    monkeypatch.setattr(reviewing, "models", broken)
+    with tab(client, {"models"}) as t:
+        t.set(models_check={"n": 1})
+        view = t.until(lambda t: models(t) and models(t)["error"] and models(t))
+    assert view["error"] == "couldn't check the models; see the log"
+    assert view["checking"] is False and TOKEN not in json.dumps(view)
+    assert "/Users/someone" not in json.dumps(view)
+
+
+def test_the_pages_editor_has_no_models_page(rt, monkeypatch):
+    called = []
+    monkeypatch.setattr(reviewing, "models", lambda *args: called.append(args))
+    pages = dataclasses.replace(rt, backend=Browser(rt.backend))
+    runtime.configure(pages)
+    c = client_for(pages)
+    try:
+        with tab(c, {"models"}) as t:
+            t.until(lambda t: t.has("models"))
+            t.set(models_check={"n": 1})
+            t.set(open={"path": "/nowhere/x.mkv", "n": 2})  # something it does answer
+            t.until(lambda t: t.notices())
+            assert models(t) is None
+    finally:
+        c.__exit__(None, None, None)
+    assert called == []
+```
+
+- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_models.py
+  tests/test_web_models.py -q`. Expected: `E       AttributeError: module 'vid2sub.review' has no
+  attribute 'models'`, the same for `Runtime` and `views.models_view`, `vid2sub models` still
+  saying `not in vid2sub.toml`, and `12 failed`.
+- [ ] **Step 3: Write the code.**
+  In `src/vid2sub/review.py`, replace
+
+```python
+and nothing here logs (§6.8).
+```
+
+  with
+
+```python
+and nothing here logs (§6.8). The Models page and `vid2sub models` list the same models as the
+pickers, with the catalog's entries no model points at (`models`, §11.1; Phase 3 Task 8).
+```
+
+  Then below the line `FORMATS = ("srt", "ass")`, add:
+
+```python
+NOT_CONFIGURED = "add it to vid2sub.toml"  # a catalog entry no model points at (spec §11.1)
+```
+
+  Then below the line `cloud: bool = False`, add:
+
+```python
+
+
+@dataclass(frozen=True)
+class CatalogModel:
+    """A catalog entry that no model in vid2sub.toml points at (spec §11.1): shown greyed, with
+    what it is good for, how to install it, and `reason`."""
+
+    id: str
+    title: str
+    task: Literal["transcribe", "translate"]
+    good_for: str
+    install: str
+    cloud: bool
+    reason: str = NOT_CONFIGURED
+
+
+@dataclass(frozen=True)
+class Models:
+    """The Models page and `vid2sub models` (spec §11.1, §18.1, §19.2; S44): every configured
+    model by task, as Review's pickers list them, then the catalog's other entries."""
+
+    transcribers: tuple[ModelChoice, ...]
+    translators: tuple[ModelChoice, ...]
+    unconfigured: tuple[CatalogModel, ...]
+```
+
+  Then below the line `return tuple(out)`, add:
+
+```python
+
+
+def models(config: Config, candidates: Sequence[Candidate]) -> Models:
+    """What the Models page and `vid2sub models` list (spec §11.1, §18.1, §19.2; S44): every
+    configured model by task, in `vid2sub.toml`'s order, with whether it can run now and why not
+    (`model_choices`, so Review's pickers say the same), then each catalog entry no model points
+    at, in the catalog's order, greyed with "add it to vid2sub.toml"."""
+    configured = {c.catalog for c in candidates}
+    return Models(model_choices(config, candidates, "transcribe"),
+                  model_choices(config, candidates, "translate"),
+                  tuple(CatalogModel(e.id, e.title, e.task, e.good_for, e.install, e.cloud)
+                        for e in CATALOG.values() if e.id not in configured))
+```
+
+  Replace `src/vid2sub/commands/models.py` with:
+
+```python
+"""`vid2sub models`: the catalog, and what's usable on this machine now (spec §11, §18.1).
+
+The models come from `review.models`, as the app's Models page has them (Phase 3 Task 8), so the
+two can't disagree: every configured model by task, with whether it can run now and why not, then
+each catalog entry no model points at, with "add it to vid2sub.toml" (§11.1).
+"""
+
+from __future__ import annotations
+
+import argparse
+
+from vid2sub import detect as detecting
+from vid2sub import exitcodes, review
+from vid2sub.catalog import readme_table
+from vid2sub.commands import _common
+from vid2sub.commands._common import CommandError, Output, add_common
+from vid2sub.engines.clients import KeyRing, quiet_libraries
+
+
+def add_parser(sub) -> None:
+    p = sub.add_parser("models", help="list models and whether each can run now")
+    p.add_argument("--markdown", action="store_true", help="print the README's model table")
+    p.add_argument("--offline", action="store_true", help="don't contact any server")
+    add_common(p)
+    p.set_defaults(handler=run)
+
+
+def run(args: argparse.Namespace) -> int:
+    if args.markdown:
+        print(readme_table(), end="")
+        return exitcodes.OK
+    out = Output(args.json)
+    quiet_libraries()
+    try:
+        config = _common.load(args)
+    except CommandError as err:
+        return _common.fail(out, err)
+    cands = detecting.candidates(config, KeyRing(), probe_endpoints=not args.offline)
+    found = review.models(config, cands)
+    catalog = {c.name: c.catalog for c in cands}
+    for task, choices in (("transcribe", found.transcribers), ("translate", found.translators)):
+        for m in choices:
+            out.event("model", name=m.name, catalog=catalog[m.name], task=task,
+                      available=m.available, reason=m.reason, cloud=m.cloud)
+            mark = "✓" if m.available else "✗"
+            out.say(f"{mark} {m.name}: {m.title} ({task}{', cloud' if m.cloud else ''})"
+                    + (f" — {m.reason}" if m.reason else ""))
+    for e in found.unconfigured:
+        out.event("model", name=None, catalog=e.id, task=e.task, available=False,
+                  reason=e.reason, cloud=e.cloud)
+        out.say(f"· {e.title} ({e.task}): {e.reason}")
+    return exitcodes.OK
+```
+
+  In `src/vid2sub/web/runtime.py`, replace
+
+```python
+demo a job still runs only the demo's clip.
+```
+
+  with
+
+```python
+demo a job still runs only the demo's clip. The Models page (Phase 3 Task 8, §11.1) lists the job
+context's models through `models`, as Review's pickers and `vid2sub models` do.
+```
+
+  Then replace
+
+```python
+    from vid2sub.review import Review, Row
+```
+
+  with
+
+```python
+    from vid2sub.review import Models, Review, Row
+```
+
+  Then below these lines
+
+```python
+            return review.start(rv, self.queue, self.job_context, guard=self.job_guard)
+        except review.ReviewError as err:
+            raise ReviewRefused(str(err)) from None
+```
+
+  add:
+
+```python
+
+    def models(self) -> Models:
+        """The Models page (spec §11.1, §19.2, S44): `review.models` on the job context, as
+        Review's pickers and `vid2sub models` list them: its own candidates where it has them
+        (the demo's canned ones), else each configured model checked now, each local server
+        asked for its model list and each cloud one checked for its key only. Blocks on each
+        local server: call it through `blocking`."""
+        from vid2sub import detect, review
+
+        ctx = self.job_context
+        config, keys = (ctx.config, ctx.keys) if ctx is not None else (self.config, self.keys)
+        cands = (ctx.candidates if ctx is not None and ctx.candidates is not None
+                 else detect.candidates(config, keys))
+        return review.models(config, cands)
+```
+
+  In `src/vid2sub/web/views.py`, replace
+
+```python
+shows each row by bare name, never its path (Task 4, §10). The server runs in Pages too
+```
+
+  with
+
+```python
+shows each row by bare name, never its path (Task 4, §10); the Models page lists the models by
+name and the catalog's titles (Task 8, §11.1). The server runs in Pages too
+```
+
+  Then replace
+
+```python
+    from vid2sub.review import ModelChoice, Review
+```
+
+  with
+
+```python
+    from vid2sub.review import ModelChoice, Models, Review
+```
+
+  Then below the line `"reason": c.reason or None, "cloud": c.cloud}`, add:
+
+```python
+
+
+def models_view(found: Models | None, *, checking: bool,
+                error: str | None = None) -> dict[str, Any]:
+    """The Models page (spec §11.1, §19.2, S44): every configured model by task, as Review's
+    pickers list them, usable now or with why not, then each catalog entry no model points at,
+    with how to install it and "add it to vid2sub.toml" (`review.models`). `checking`: a check
+    is running, and the lists are the last one's (none before the first). Names, titles and
+    reasons only: never a path, a token or a key (§6.8)."""
+    return {
+        "checking": checking,
+        "error": error,
+        "transcribers": [_choice(c) for c in found.transcribers] if found else [],
+        "translators": [_choice(c) for c in found.translators] if found else [],
+        "unconfigured": [{"id": e.id, "title": e.title, "task": e.task, "good_for": e.good_for,
+                          "install": e.install, "cloud": e.cloud, "reason": e.reason}
+                         for e in found.unconfigured] if found else [],
+    }
+```
+
+  In `src/vid2sub/web/server.py`, below these lines
+
+```python
+run** is the review's own, unticked in every new review (§7.2). The view never holds a path.
+```
+
+  add:
+
+```python
+
+The Models page (§11.1, §19.2; S44; Phase 3 Task 8), the local engine's alone, is the `models`
+output: null until the page asks (`models_check`, when it opens and on **Check again**), then
+every configured model by task, usable now or why not, and the catalog's other entries, from the
+runtime's `models`, which asks each local server for its list, so it runs off the event loop as
+an extended task of the tab's own.
+```
+
+  Then below the line `PICK_A_CHOICE = "pick a file and a choice for it"`, add:
+
+```python
+MODELS_FAILED = "couldn't check the models; see the log"
+```
+
+  Then below the line `reviewer.discard()`, add:
+
+```python
+
+    # The Models page (spec §11.1, §19.2; S44), the local engine's alone: checked when the page
+    # opens and on Check again (`models_check`), as this session's extended task, off the event
+    # loop and outside Shiny's reactive lock; an ask while a check runs is dropped, since the page
+    # shows that one. The page keeps the last check's lists while the next runs.
+    checked: reactive.Value[tuple[Any, str | None]] = reactive.value((None, None))
+
+    @reactive.extended_task
+    async def check_models() -> tuple[Any, str | None]:
+        try:
+            return await runtime.blocking(rt.models), None
+        except Exception as err:  # noqa: BLE001 - a failed check must not stop the session
+            log.error("the models check failed: %s", type(err).__name__)
+            return None, MODELS_FAILED
+
+    @reactive.effect
+    @reactive.event(input.models_check)
+    def _models_check() -> None:
+        if local and check_models.status() != "running":
+            check_models.invoke()
+
+    @reactive.effect
+    def _keep_the_models() -> None:
+        if check_models.status() == "success":
+            checked.set(check_models.result())
+
+    @reactive_output
+    def models():
+        status = check_models.status()
+        if not local or status == "initial":
+            return None
+        found, error = checked()
+        return views.models_view(found, checking=status == "running", error=error)
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_models.py
+  tests/test_web_models.py tests/test_review.py tests/test_cli_more.py tests/test_spark_qwen.py
+  -q` first (`71 passed`), then the guard checks, then `make check`. **Guard checks**, each with
+  the file tools in `src/vid2sub/web/server.py`, reverted and restored, each with
+  `uv run pytest tests/test_web_models.py -q`: replace
+  `            return await runtime.blocking(rt.models), None` with
+  `            return rt.models(), None` (`FAILED
+  …test_the_models_output_waits_to_be_asked_then_checks_off_the_loop_and_lists_them`,
+  `AssertionError: timed out`: the check holds the loop, so the page never says it is checking);
+  replace `            return None, MODELS_FAILED` with `            return None, str(err)`
+  (`FAILED …test_a_check_that_fails_says_so_and_names_nothing`: the token and the path show);
+  replace `        if local and check_models.status() != "running":` with
+  `        if check_models.status() != "running":` (`FAILED
+  …test_the_pages_editor_has_no_models_page`: Pages checked the models); replace it with
+  `        if local:` (`FAILED
+  …test_the_models_output_waits_to_be_asked_then_checks_off_the_loop_and_lists_them`,
+  `Left contains one more item: 1`: a second check ran). `make check`. Expected:
+  `1237 passed, 7 skipped, 43 deselected` twice, `Test Files  22 passed (22)`,
+  `Tests  108 passed (108)`, `All checks passed!` and `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the Models page's server lists every configured model usable now or why not, and the catalog's other entries, as vid2sub models does
+
+review.models gives the Models page and vid2sub models one list (spec
+§11.1, §18.1, §19.2; S44): every configured model by task, in
+vid2sub.toml's order, through Task 3's model_choices, so Review's
+pickers say the same, then each catalog entry no model points at,
+greyed with "add it to vid2sub.toml" (§11.1's words; M1's CLI said "not
+in vid2sub.toml"). vid2sub models now prints from it, grouped by task.
+Runtime.models runs it on the job context: the demo's canned
+candidates, under the catalog titles they stand in for (Decision 22),
+else each configured model checked now. The server's models output is
+null until the page asks (models_check); the check runs as the
+session's extended task, through runtime.blocking; an ask while one
+runs is dropped; a check that fails says so without echoing its error
+(§6.8). Pages has no Models page.
+
+The new tests failed first: "AttributeError: module 'vid2sub.review'
+has no attribute 'models'" (12 failed). Guard checks, each reverted and
+restored: without runtime.blocking the check holds the loop and the
+page never says it is checking (the server test times out); with the
+error's own text the token and the path show; without `local` the
+Pages editor checks the models; without the running check a second ask
+runs a second check.
+
+Docs read: shiny 1.8.0's reactive/_extended_task.py (invoke queues a
+call made while one runs; status and result are reactive values).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 8
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/review.py src/vid2sub/commands/models.py src/vid2sub/web/runtime.py
+  src/vid2sub/web/views.py src/vid2sub/web/server.py tests/test_models.py
+  tests/test_web_models.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 6: Write the failing tests,** `frontend/src/lib/models.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { ModelChoice, ModelsView } from "@/types";
+
+import { sections, summary, why } from "./models";
+
+const TURBO: ModelChoice = { name: "spark-turbo", title: "Whisper large-v3-turbo", good_for: "English → English captions, quick drafts", available: true, reason: null, cloud: false };
+const WHISPER: ModelChoice = { name: "local-whisper", title: "Whisper large-v3-turbo", good_for: "", available: false, reason: "install vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA GPU)", cloud: false };
+const GEMMA: ModelChoice = { name: "spark-gemma", title: "Gemma 4 26B-A4B", good_for: "", available: false, reason: null, cloud: false };
+const VIEW: NonNullable<ModelsView> = {
+  checking: false,
+  error: null,
+  transcribers: [TURBO, WHISPER],
+  translators: [GEMMA],
+  unconfigured: [
+    { id: "qwen3-asr-0.6b", title: "Qwen3-ASR 0.6B + ForcedAligner 0.6B", task: "transcribe", good_for: "", install: "vid2sub[mac]", cloud: false, reason: "add it to vid2sub.toml" },
+    { id: "openai-gpt", title: "OpenAI GPT", task: "translate", good_for: "", install: "an OpenAI key", cloud: true, reason: "add it to vid2sub.toml" },
+  ],
+};
+
+describe("the Models page in words (spec §11.1, §19.2; S44)", () => {
+  it("says a model is usable now, or gives the engine's reason why not", () => {
+    expect(why(TURBO)).toBe("usable now");
+    expect(why(WHISPER)).toBe("install vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA GPU)");
+    expect(why(GEMMA)).toBe("can't run now");
+  });
+
+  it("puts each task's configured models first, then the catalog's entries for that task", () => {
+    expect(sections(VIEW).map((s) => [s.heading, s.configured.map((c) => c.name), s.unconfigured.map((e) => e.id)])).toEqual([
+      ["Transcription", ["spark-turbo", "local-whisper"], ["qwen3-asr-0.6b"]],
+      ["Translation", ["spark-gemma"], ["openai-gpt"]],
+    ]);
+  });
+
+  it("counts what can run now, and says when it is checking", () => {
+    expect(summary(VIEW)).toBe("1 of 3 configured models can run now");
+    expect(summary({ ...VIEW, transcribers: [TURBO], translators: [] })).toBe("1 of 1 configured model can run now");
+    expect(summary({ ...VIEW, transcribers: [], translators: [] })).toBe("no models in vid2sub.toml yet");
+    expect(summary({ ...VIEW, checking: true })).toBe("checking what can run now…");
+    expect(summary(null)).toBe("checking what can run now…");
+  });
+});
+```
+
+  `frontend/src/components/ModelsPage.test.ts`:
+
+```ts
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import type { ModelsView } from "@/types";
+
+import { ModelsPage } from "./ModelsPage";
+
+const VIEW: NonNullable<ModelsView> = {
+  checking: false,
+  error: null,
+  transcribers: [
+    { name: "spark-turbo", title: "Whisper large-v3-turbo", good_for: "English → English captions, quick drafts", available: true, reason: null, cloud: false },
+    { name: "<b>mine</b>", title: "<b>mine</b>", good_for: "", available: false, reason: "<img src=x> isn't answering", cloud: false },
+  ],
+  translators: [{ name: "openai", title: "OpenAI GPT", good_for: "", available: false, reason: "OPENAI_API_KEY isn't set", cloud: true }],
+  unconfigured: [{ id: "whisper-large-v3", title: "Whisper large-v3", task: "transcribe", good_for: "99 languages", install: "a whisper.cpp server", cloud: false, reason: "add it to vid2sub.toml" }],
+};
+
+function render(models: ModelsView): string {
+  return renderToStaticMarkup(createElement(ModelsPage, { models, onCheck: () => undefined }));
+}
+
+describe("the Models page (spec §11.1, §19.2; S44)", () => {
+  it("marks each configured model usable now or says why not, in words", () => {
+    const html = render(VIEW);
+    expect(html).toMatch(/data-usable="yes"[^>]*>.*spark-turbo: Whisper large-v3-turbo<\/span> — <span data-testid="model-why">usable now</);
+    expect(html).toContain("openai: OpenAI GPT (cloud), can&#x27;t run now</span> — <span data-testid=\"model-why\">OPENAI_API_KEY isn&#x27;t set<");
+    expect(html).toMatch(/role="status" aria-live="polite" data-testid="models-status">1 of 3 configured models can run now</);
+  });
+
+  it("greys each catalog entry no model points at, with how to install it and what to do", () => {
+    const html = render(VIEW);
+    expect(html).toMatch(/text-muted-foreground" data-testid="catalog-model"><span data-testid="catalog-title">Whisper large-v3<\/span> — <span data-testid="catalog-why">add it to vid2sub.toml</);
+    expect(html).toContain("99 languages. Install: a whisper.cpp server");
+  });
+
+  it("shows names and reasons as text, never markup", () => {
+    const html = render(VIEW);
+    expect(html).not.toContain("<b>");
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img src=x&gt; isn&#x27;t answering");
+  });
+
+  it("says it is checking, keeps the last lists meanwhile, and says when a check failed", () => {
+    expect(render(null)).toContain("checking what can run now…");
+    expect(render(null)).toMatch(/disabled=""[^>]*data-testid="models-check"/);
+    const checking = render({ ...VIEW, checking: true });
+    expect(checking).toContain("checking what can run now…");
+    expect(checking).toContain("spark-turbo: Whisper large-v3-turbo");
+    expect(render({ ...VIEW, error: "couldn't check the models; see the log" })).toMatch(/role="alert"[^>]*>couldn&#x27;t check the models; see the log</);
+  });
+});
+```
+
+  and `tests/e2e/test_models.py`:
+
+```python
+"""The Models page in Chromium (spec §11.1, §19.2, §6.8; S44): the catalog, each model marked usable
+now or why not. Against `vid2sub serve --demo`, whose canned models stand in for Whisper
+large-v3-turbo and Gemma 4 (the Phase 3 plan's Decision 22), and against a vid2sub.toml whose
+endpoint is a fake server on this machine serving one of its two models, beside a cloud model
+whose key isn't set: each configured model says it is usable now or why not, each catalog entry
+no model points at is greyed with "add it to vid2sub.toml", **Check again** asks again, and the
+page names no path. Run with `make e2e`."""
+
+import pytest
+from fakes import FakeServer
+from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
+
+TOML = """
+[endpoints.spark]
+base_url = "{url}"
+
+[endpoints.openai]
+base_url = "https://api.openai.com/v1"
+key_env = "VID2SUB_E2E_OPENAI_KEY"
+
+[models.spark-turbo]
+catalog = "whisper-large-v3-turbo"
+endpoint = "spark"
+model = "turbo"
+parser = "whisper.cpp"
+local = true
+
+[models.openai-whisper]
+catalog = "openai-whisper-1"
+endpoint = "openai"
+model = "whisper-1"
+parser = "openai"
+
+[models.spark-gemma]
+catalog = "gemma-4-26b-a4b"
+endpoint = "spark"
+model = "gemma"
+task = "translate"
+local = true
+"""
+
+
+def open_models(page) -> None:
+    page.get_by_test_id("nav-models").click()
+    expect(page.get_by_test_id("models-page")).to_be_visible()
+    expect(page.get_by_test_id("models-check")).to_be_enabled()  # the first check is done
+
+
+def test_the_demos_models_page_names_whisper_turbo_and_gemma_4_usable_and_greys_the_rest(
+        page, server):
+    open_models(page)
+    models = page.get_by_test_id("model")
+    expect(models.get_by_test_id("model-label")).to_have_text(
+        ["canned: Whisper large-v3-turbo", "canned-ja: Gemma 4 26B-A4B"])
+    expect(models.get_by_test_id("model-why")).to_have_text(["usable now", "usable now"])
+    expect(page.get_by_test_id("models-status")).to_have_text(
+        "2 of 2 configured models can run now")
+    others = page.get_by_test_id("catalog-model")
+    expect(others.get_by_test_id("catalog-title")).to_have_text([
+        "Qwen3-ASR 1.7B + ForcedAligner 0.6B", "Qwen3-ASR 0.6B + ForcedAligner 0.6B",
+        "Whisper large-v3", "OpenAI whisper-1 (cloud)", "Qwen3.8 27B", "A local chat model",
+        "OpenAI GPT (cloud)"])
+    expect(others.get_by_test_id("catalog-why")).to_have_text(["add it to vid2sub.toml"] * 7)
+    assert str(server.tmp) not in page.content()  # the demo's folder is nowhere on the page
+
+
+def test_each_configured_model_says_usable_now_or_why_not_and_check_again_asks_again(
+        launch, open_page, tmp_path):
+    served = ["turbo"]
+
+    def spark(req):
+        if req.path.endswith("/models"):
+            return 200, {"object": "list", "data": [
+                {"id": i, "object": "model", "created": 0, "owned_by": "test"}
+                for i in served]}, {}
+        return 404, {}, {}
+
+    with FakeServer(responder=spark) as fake:
+        server = launch(tmp_path / "server", toml=TOML.format(url=fake.url))
+        watched = open_page(server)
+        page = watched.page
+        open_models(page)
+        models = page.get_by_test_id("model")
+        expect(models.get_by_test_id("model-label")).to_have_text([
+            "spark-turbo: Whisper large-v3-turbo",
+            "openai-whisper: OpenAI whisper-1 (cloud), can't run now",
+            "spark-gemma: Gemma 4 26B-A4B, can't run now"])
+        expect(models.get_by_test_id("model-why")).to_have_text([
+            "usable now", "VID2SUB_E2E_OPENAI_KEY isn't set", "the server doesn't list gemma"])
+        expect(models.nth(0)).to_have_attribute("data-usable", "yes")
+        expect(page.get_by_test_id("models-transcribe").get_by_test_id("catalog-title")) \
+            .to_have_text(["Qwen3-ASR 1.7B + ForcedAligner 0.6B",
+                           "Qwen3-ASR 0.6B + ForcedAligner 0.6B", "Whisper large-v3"])
+        served.append("gemma")  # the server loads Gemma: Check again asks it again
+        page.get_by_test_id("models-check").click()
+        expect(models.nth(2).get_by_test_id("model-why")).to_have_text("usable now")
+        expect(page.get_by_test_id("models-status")).to_have_text(
+            "2 of 3 configured models can run now")
+        assert str(tmp_path) not in page.content()
+    assert watched.errors == [], f"console errors: {watched.errors}"
+    assert watched.violations() == []
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `make test-js`. Expected: its typecheck stops at
+  `src/components/ModelsPage.test.ts(5,15): error TS2305: Module '"@/types"' has no exported
+  member 'ModelsView'.` and `src/components/ModelsPage.test.ts(7,28): error TS2307: Cannot find
+  module './ModelsPage' or its corresponding type declarations.` (and the same two for
+  `src/lib/models.test.ts`). `make build`, then `uv run pytest tests/e2e/test_models.py -q -m
+  e2e`. Expected: `E           playwright._impl._errors.TimeoutError: Locator.click: Timeout
+  30000ms exceeded.`, waiting for `get_by_test_id("nav-models")`, and `2 failed`.
+- [ ] **Step 8: Write the code,** `frontend/src/lib/models.ts`:
+
+```ts
+// The Models page's words (spec §11.1, §19.2; S44): each configured model usable now or why not
+// (a server not answering, a key not set, an extra not installed: the engine's own reason), each
+// task's models with the catalog's entries no model points at, and how many can run now. A model
+// goes by its name in vid2sub.toml and the catalog's title, never a path.
+
+import type { CatalogModel, ModelChoice, ModelsView } from "@/types";
+
+/** "usable now", or the engine's reason it can't run. */
+export function why(c: ModelChoice): string {
+  return c.available ? "usable now" : (c.reason ?? "can't run now");
+}
+
+export type Section = { task: "transcribe" | "translate"; heading: string; configured: ModelChoice[]; unconfigured: CatalogModel[] };
+
+/** Transcription, then translation: each task's configured models in vid2sub.toml's order, then
+ * the catalog's entries for it that no model points at. */
+export function sections(view: NonNullable<ModelsView>): Section[] {
+  const others = (task: Section["task"]) => view.unconfigured.filter((e) => e.task === task);
+  return [
+    { task: "transcribe", heading: "Transcription", configured: view.transcribers, unconfigured: others("transcribe") },
+    { task: "translate", heading: "Translation", configured: view.translators, unconfigured: others("translate") },
+  ];
+}
+
+/** The page's status line: what the last check found, or that a check is running. */
+export function summary(view: ModelsView): string {
+  if (!view || view.checking) return "checking what can run now…";
+  const all = [...view.transcribers, ...view.translators];
+  if (!all.length) return "no models in vid2sub.toml yet";
+  const usable = all.filter((c) => c.available).length;
+  return `${usable} of ${all.length} configured ${all.length === 1 ? "model" : "models"} can run now`;
+}
+```
+
+  `frontend/src/components/ModelsPage.tsx`:
+
+```tsx
+import { sections, summary, why } from "@/lib/models";
+import { choiceLabel } from "@/lib/review";
+import type { ModelsView } from "@/types";
+
+const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+
+/** The Models page (spec §11.1, §19.2; S44): the catalog, each model marked usable on this machine
+ * now or why not. Every model in vid2sub.toml, by task, as Review's pickers name it, with the
+ * catalog's one-liner and either "usable now" or the engine's reason it can't run; then, greyed,
+ * each catalog entry no model points at, with how to install it and "add it to vid2sub.toml"
+ * (§11.1). The engine checks when the page opens and on **Check again**; while it does, the page
+ * says so politely and keeps the last lists. Usable or not is said in words, not by colour alone
+ * (§19.3); names, titles and reasons are plain text (§6.3), and none is a path or a key (§6.8). */
+export function ModelsPage({ models, onCheck }: { models: ModelsView; onCheck: () => void }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-4" data-testid="models-page">
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <span role="status" aria-live="polite" data-testid="models-status">{summary(models)}</span>
+        <button type="button" className={`${button} ml-auto`} onClick={onCheck} disabled={!models || models.checking} data-testid="models-check">Check again</button>
+      </div>
+      {models?.error && <p role="alert" className="text-sm text-destructive" data-testid="models-error">{models.error}</p>}
+      {models && sections(models).map((s) => (
+        <section key={s.task} aria-labelledby={`models-${s.task}`} className="flex flex-col gap-1" data-testid={`models-${s.task}`}>
+          <h2 id={`models-${s.task}`} className="text-sm font-bold">{s.heading}</h2>
+          <ul className="flex flex-col gap-1">
+            {s.configured.map((c) => (
+              <li key={c.name} className="rounded-md border border-border bg-card p-2 text-sm" data-testid="model" data-usable={c.available ? "yes" : "no"}>
+                <span aria-hidden="true">{c.available ? "✓ " : "✗ "}</span>
+                <span className="font-bold" data-testid="model-label">{choiceLabel(c)}</span>
+                {" — "}
+                <span data-testid="model-why">{why(c)}</span>
+                {c.good_for && <span className="block text-muted-foreground">{c.good_for}</span>}
+              </li>
+            ))}
+            {s.unconfigured.map((e) => (
+              <li key={e.id} className="rounded-md border border-dashed border-border p-2 text-sm text-muted-foreground" data-testid="catalog-model">
+                <span data-testid="catalog-title">{e.title}{e.cloud ? " (cloud)" : ""}</span>
+                {" — "}
+                <span data-testid="catalog-why">{e.reason}</span>
+                <span className="block">{e.good_for ? `${e.good_for}. ` : ""}Install: {e.install}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+```
+
+  In `frontend/src/types.ts`, below the line
+  `export type ReviewStartedMessage = { n: number | null; jobs: number };`, add:
+
+```ts
+
+/** A catalog entry no model in vid2sub.toml points at (views.models_view; spec §11.1): shown
+ * greyed, with how to install it and `reason`, "add it to vid2sub.toml". */
+export type CatalogModel = { id: string; title: string; task: "transcribe" | "translate"; good_for: string; install: string; cloud: boolean; reason: string };
+
+/** The `models` output (views.models_view; spec §11.1, §19.2; S44): every configured model by
+ * task, as Review's pickers list them, then the catalog's other entries; `checking` while the
+ * engine checks, with the last lists kept; null until the page first asks, and in Pages. */
+export type ModelsView = { checking: boolean; error: string | null; transcribers: ModelChoice[]; translators: ModelChoice[]; unconfigured: CatalogModel[] } | null;
+```
+
+  In `frontend/src/App.tsx`, below the line
+  `import { JobsPage } from "@/components/JobsPage";`, add:
+
+```tsx
+import { ModelsPage } from "@/components/ModelsPage";
+```
+
+  Then replace
+
+```tsx
+import type { AddResultMessage, BrowseResult, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, PreviewProgress, Progress, RetranslateResultMessage, QueueState, ReviewOutput, ReviewStartedMessage, SaveResultMessage, SettingsView, Status } from "@/types";
+```
+
+  with
+
+```tsx
+import type { AddResultMessage, BrowseResult, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, ModelsView, PreviewProgress, Progress, RetranslateResultMessage, QueueState, ReviewOutput, ReviewStartedMessage, SaveResultMessage, SettingsView, Status } from "@/types";
+```
+
+  Then replace
+
+```tsx
+const SCREENS = { editor: "Editor", add: "Add", review: "Review", jobs: "Jobs" } as const;
+```
+
+  with
+
+```tsx
+const SCREENS = { editor: "Editor", add: "Add", review: "Review", jobs: "Jobs", models: "Models" } as const;
+```
+
+  Then below the line `const reviewOut = useShinyOutputValue<ReviewOutput>("review");`, add:
+
+```tsx
+  const modelsOut = useShinyOutputValue<ModelsView>("models");
+```
+
+  Then below these lines
+
+```tsx
+  const setReviewDiscard = useSetShinyInput<{ n: number } | null>("review_discard", null, { priority: "event", debounceMs: 0 });
+```
+
+  add:
+
+```tsx
+  const setModelsCheck = useSetShinyInput<{ n: number } | null>("models_check", null, { priority: "event", debounceMs: 0 });
+```
+
+  Then replace
+
+```tsx
+  // Add, Review and the Jobs page (spec §19.2; S36, S38–S40), where the engine makes subtitles
+  // (`generate`; Pages hides them, §21). The editor stays mounted while they show, so the player
+  // keeps its place.
+```
+
+  with
+
+```tsx
+  // Add, Review, the Jobs page and Models (spec §19.2; S36, S38–S40, S44), where the engine
+  // makes subtitles (`generate`; Pages hides them, §21). The editor stays mounted while they
+  // show, so the player keeps its place.
+```
+
+  Then below these lines
+
+```tsx
+  useShinyMessageHandler("review_started", (_: ReviewStartedMessage) => setScreen("jobs"));
+```
+
+  add:
+
+```tsx
+
+  // Models (Phase 3, S44): the engine checks what can run now each time the page opens, and on
+  // Check again.
+  const checkModels = () => { const n = ++sent.current; pace(() => setModelsCheck({ n })); };
+  const show = (s: Screen) => {
+    setScreen(s);
+    if (s === "models") checkModels();
+  };
+```
+
+  Then replace
+
+```tsx
+          {(["editor", "add", "review", "jobs"] as const).map((s) => (
+            <button key={s} type="button" aria-current={screen === s ? "page" : undefined} onClick={() => setScreen(s)}
+```
+
+  with
+
+```tsx
+          {(["editor", "add", "review", "jobs", "models"] as const).map((s) => (
+            <button key={s} type="button" aria-current={screen === s ? "page" : undefined} onClick={() => show(s)}
+```
+
+  Then below these lines
+
+```tsx
+            onResume={() => { const n = ++sent.current; pace(() => setQueueResume({ n })); }} />
+        </section>
+      )}
+```
+
+  add:
+
+```tsx
+      {generate && screen === "models" && (
+        <section aria-label="Models" className="min-h-0 flex-1">
+          <ModelsPage models={modelsOut ?? null} onCheck={checkModels} />
+        </section>
+      )}
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `make check`. Expected:
+  `1237 passed, 7 skipped, 45 deselected` twice, `Test Files  24 passed (24)`,
+  `Tests  115 passed (115)`, `All checks passed!` and `no leaks found`. `make e2e`. Expected:
+  `40 passed, 1249 deselected`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(ui): 🤖 the Models page marks each configured model usable now or why not, and greys the catalog's other entries with what to add
+
+The Models screen (spec §11.1, §19.2; S44), beside Add, Review and Jobs
+where the engine makes things: each task's models as Review's pickers
+name them (choiceLabel), with the catalog's one-liner and "usable now"
+or the engine's reason, then each catalog entry no model points at,
+greyed, with how to install it and "add it to vid2sub.toml". The page
+asks each time it opens and on Check again, says so politely while the
+engine checks, keeps the last lists meanwhile, and shows a failed check
+as an alert. Usable or not is said in words, never colour alone
+(§19.3); names and reasons are plain text (§6.3).
+
+The new tests failed first: "src/components/ModelsPage.test.ts(5,15):
+error TS2305: Module '"@/types"' has no exported member 'ModelsView'."
+from make test-js, and the Playwright tests timed out waiting for
+get_by_test_id("nav-models") (2 failed).
+
+Docs read: Playwright for Python's expect (to_have_text with a list
+matches each element in order; to_be_enabled); React's
+renderToStaticMarkup (react-dom/server) for the component tests.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 8
+Co-Authored-By: <the model's own line>
+```
+
+  `git add frontend/src/lib/models.ts frontend/src/lib/models.test.ts
+  frontend/src/components/ModelsPage.tsx frontend/src/components/ModelsPage.test.ts
+  frontend/src/types.ts frontend/src/App.tsx tests/e2e/test_models.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that nothing on the page, in a reason or
+  in the failed check's notice names a path, a token or a key (§6.8); that the check never runs
+  on the event loop or in Pages; that the server still imports only what Pages has
+  (`tests/test_pages_imports.py`). The forward review over Task 9 (its candidate shows here as
+  any candidate does), Task 11 (the README's Models page; the architecture diagram's Phase 3
+  screens) and Task 12; the docs this task made untrue (no doc quotes `vid2sub models`' old "not
+  in vid2sub.toml"). Then the close, its own commit, holding this plan with this task's boxes
+  ticked and **Now** set to ``Task 9: The `faster-whisper` engine, open.``, and the spec's S44 row
+  with "Phase and task" set to `Phase 3, Task 8`, its Proof to `` `tests/test_models.py`;
+  `tests/test_web_models.py`; Playwright (`tests/e2e/test_models.py`) ``, and its status to
+  `built`. The message, in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 8: The Models page
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: none
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 8
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -12132,9 +13391,7 @@ English's route against Phase 2 Task 20's Qwen3-ASR on the Spark (Steps 21–23)
     whisper` (so the field check against the real library runs, not skips) and the suite; the
     real model stays out of CI (`VID2SUB_LIVE_WHISPER=1` is opt-in, about 1.6 GB on first run).
 
-The counts below are this build's, on Phase 2's finished code with Task 7 in; with Tasks 1–6
-too, they are higher. What matters is no failure, ruff's `All checks passed!` and gitleaks'
-`no leaks found`.
+The counts below are the assembled Phase 3's, with Tasks 1–8 in before this task.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: Write the failing test,** `tests/test_parse_fasterwhisper.py`:
@@ -12337,8 +13594,8 @@ def parse_faster_whisper(data: Any) -> ParsedChunk:
   …test_pure_modules_import_only_the_standard_library_pydantic_and_subtitle_libraries`);
   replace `if any("�" in w.text for w in words):` with `if False:` (`FAILED
   …test_a_word_with_a_broken_character_makes_its_segment_unaligned`). `make check`. Expected:
-  `1085 passed, 2 skipped, 38 deselected` twice, `Test Files  20 passed (20)`,
-  `Tests  96 passed (96)`, `All checks passed!` and `no leaks found`.
+  `1256 passed, 7 skipped, 45 deselected` twice, `Test Files  24 passed (24)`,
+  `Tests  115 passed (115)`, `All checks passed!` and `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -13090,8 +14347,8 @@ def whisper_available() -> bool:
   …test_the_engine_asks_for_words_with_no_vad_and_gives_the_language_and_the_prompt`); put
   English's M1 route back (`uv run pytest tests/test_catalog.py -q`: `FAILED
   …[english-on-a-mac-with-the-spark-down]`). `make check`. Expected:
-  `1116 passed, 3 skipped, 39 deselected` twice, `Test Files  20 passed (20)`,
-  `Tests  96 passed (96)`, `All checks passed!` and `no leaks found`.
+  `1287 passed, 8 skipped, 46 deselected` twice, `Test Files  24 passed (24)`,
+  `Tests  115 passed (115)`, `All checks passed!` and `no leaks found`.
   The live test isn't run here: `VID2SUB_LIVE_WHISPER=1 make live` on a
   machine with the extra, which Task 12's manual run covers.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
@@ -13299,8 +14556,9 @@ def _whisper(environ: Mapping[str, str], *, platform: str = sys.platform) -> lis
   replace `missing = fw.missing_cuda_libraries(environ, windows=platform == "win32")` with
   `missing = []`; `FAILED
   …test_a_windows_gpu_without_cublas_on_path_is_a_warning_that_says_how_to_fix_it`; restore it.
-  `make check`. Expected: `1120 passed, 3 skipped, 39 deselected` twice, `Test Files  20 passed
-  (20)`, `Tests  96 passed (96)`, `All checks passed!` and `no leaks found`.
+  `make check`. Expected:
+  `1291 passed, 8 skipped, 46 deselected` twice, `Test Files  24 passed (24)`,
+  `Tests  115 passed (115)`, `All checks passed!` and `no leaks found`.
 - [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -13880,8 +15138,8 @@ LINUX_CUDA_FIX = ("install vid2sub[nvidia] and set LD_LIBRARY_PATH to the lib fo
   …test_cuda_libraries_on_linux_are_those_the_loader_can_open`); in `_load`, pass
   `self.model_id` instead of `downloaded or self.model_id` (`FAILED
   …test_a_downloaded_model_loads_from_its_folder_without_asking_the_network`). `make check`.
-  Expected: `1130 passed, 3 skipped, 39 deselected` twice, `Test Files  20 passed (20)`,
-  `Tests  96 passed (96)`, `All checks passed!` and `no leaks found`.
+  Expected: `1301 passed, 8 skipped, 46 deselected` twice, `Test Files  24 passed (24)`,
+  `Tests  115 passed (115)`, `All checks passed!` and `no leaks found`.
 - [ ] **Step 20: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -14104,9 +15362,7 @@ faster-whisper there instead of skipping.
 - For Task 12's Step 8: the run's job list shows `whisper (ubuntu-24.04)` and
   `whisper (windows-2022)`.
 
-The counts below are this build's, on Phase 2's finished code with Tasks 7 and 9 in; with Tasks
-1–6 too, the suite's are higher. What matters is no failure, ruff's `All checks passed!` and
-gitleaks' `no leaks found`.
+The counts below are the assembled Phase 3's, with Tasks 1–9 in before this task.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: Write the failing test,** `tests/test_ci_workflow.py`:
@@ -14329,15 +15585,16 @@ Python 3.12, with the `whisper` extra, so faster-whisper's field check runs inst
   tests/test_faster_whisper_engine.py -q` first (`35 passed, 2 skipped, 1 deselected`), then
   `make actionlint` (no output, exit 0), then the job's own commands with the extra:
   `uv sync --group dev --extra whisper`, then `VID2SUB_REQUIRE_FFMPEG=1
-  VID2SUB_REQUIRE_WHISPER=1 UV_FROZEN=1 uv run --extra whisper pytest -q` (`1143 passed, 2
-  skipped, 39 deselected` here on macOS: both checks run), then `uv sync --group dev` to go
+  VID2SUB_REQUIRE_WHISPER=1 UV_FROZEN=1 uv run --extra whisper pytest -q`
+  (`1314 passed, 7 skipped, 46 deselected` here on macOS: both checks run), then
+  `uv sync --group dev` to go
   back. **Guard checks**, each reverted and restored, each with `uv run pytest
   tests/test_ci_workflow.py -q`: take the job's `VID2SUB_REQUIRE_WHISPER: "1"` line out (`FAILED
   …test_the_whisper_job_fails_where_the_field_check_would_skip`); make its sync
   `--extra nvidia` (`FAILED
   …test_the_whisper_job_installs_the_whisper_extra_and_never_the_nvidia_one`). `make check`.
-  Expected: `1141 passed, 4 skipped, 39 deselected` twice, `Test Files  20 passed (20)`,
-  `Tests  96 passed (96)`, `All checks passed!` and `no leaks found`.
+  Expected: `1312 passed, 9 skipped, 46 deselected` twice, `Test Files  24 passed (24)`,
+  `Tests  115 passed (115)`, `All checks passed!` and `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -14419,16 +15676,445 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 3
 
+The README, `tests/README.md` and `docs/architecture.md` brought up to what Phase 3 built (spec
+§23.5's README contents; AGENTS.md, *Docs and security*). The CHANGELOG is the phase end's (its
+step 7), so it is left alone.
+
+**Why it is written this way** (read 2026-10-24):
+- **Decision 10 waits on Dan.** faster-whisper's README asks for cuBLAS for CUDA 12 and cuDNN 9
+  for CUDA 12; the spec (§4.2, §9.5, S45) names cuBLAS 12 only. The README's GPU paragraph says
+  what the code does (Task 9: `[nvidia]` installs both; doctor's **CUDA libraries** check looks
+  for both, on `PATH` on Windows and through the loader, `LD_LIBRARY_PATH`, on Linux) and names
+  the Decision, so it reads true once Dan says yes; a no changes the code and this paragraph
+  together.
+- **The README names what a person sees**, not the plan: Add's places and what the browser hides
+  (Decisions 1–3 and 24), Review's sampling, suggestions and choices (Decisions 4–7 and 25), the
+  queue's Pause and Resume, its banner and the 30-second wait (Decisions 8, 9 and 23), the Models
+  page, and the demo's one place and canned suggestions (Decisions 21 and 22). Only Decision 10
+  is cited by number, since it may still change.
+- **Task 7 wrote the Make preview copy sentence and the `cache clear` line, and Tasks 9 and 10
+  `tests/README.md`'s `VID2SUB_LIVE_WHISPER` and `VID2SUB_REQUIRE_WHISPER`;** this task checks
+  them and adds what is still missing: Add's YouTube test fakes yt-dlp, and which browser tests
+  run on one system only.
+- **The diagrams draw Phase 3's parts solid**, and a script checks every name they use against
+  the code, as Phase 2 Task 22's did, now over the whole page.
+
+**Files:**
+- Modify: `README.md`, `tests/README.md`, `docs/architecture.md`
+- Modify at the close: this plan
+
 **Interfaces:**
 - Consumes: Task 7's README sentence on **Make preview copy** and its `cache clear` line, already
   written; Task 9's NVIDIA notes, which the README still needs (cuBLAS 12 and cuDNN 9, Decision
-  10: on `PATH` on Windows, through `LD_LIBRARY_PATH` on Linux; §23.5). From Tasks 1–6, the
-  README documents: Add (the browser's places, and what it hides: Decisions 1–3 and 24); Review
-  (Discard, **Apply to all**, and **Allow cloud models for this run** unticked every time);
-  Pause, Resume, the banner and the 30-second wait (Decision 23); the demo's one place and its
-  canned suggestions (Decisions 21 and 22).
+  10: on `PATH` on Windows, through `LD_LIBRARY_PATH` on Linux; §23.5), the `whisper` and
+  `nvidia` extras, the starter's `[models.local-whisper]` and doctor's **CUDA libraries** check;
+  Task 8's Models page; Task 10's `whisper` job. From Tasks 1–6, the README documents: Add (the
+  browser's places, and what it hides: Decisions 1–3 and 24); Review (Discard, **Apply to all**,
+  and **Allow cloud models for this run** unticked every time); Pause, Resume, the banner and the
+  30-second wait (Decision 23); the demo's one place and its canned suggestions (Decisions 21 and
+  22).
+- Produces: none (docs only).
 
-<!-- steps: written in the next pass -->
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: The README.**
+  In `README.md`, replace
+
+```markdown
+Status: Phase 1 (M1, the command line) and Phase 2 (M2, the web editor) are built; the spec's
+status line says which have merged.
+```
+
+  with
+
+```markdown
+Status: Phase 1 (M1, the command line), Phase 2 (M2, the web editor) and Phase 3 (M3: adding
+and reviewing seasons in the app, and Windows and Linux) are built; the spec's status line says
+which have merged.
+```
+
+  Then replace
+
+```markdown
+uv tool install --editable '.[mac]'   # on a Mac: Qwen3-ASR in-process
+uv tool install --editable .          # elsewhere
+```
+
+  with
+
+```markdown
+uv tool install --editable '.[mac]'      # on a Mac: Qwen3-ASR in-process
+uv tool install --editable '.[whisper]'  # on Windows or Linux: Whisper in-process
+uv tool install --editable '.[nvidia]'   # the same, on an NVIDIA GPU
+uv tool install --editable .             # only your own servers (the Spark, OpenAI)
+```
+
+  Then replace
+
+```markdown
+environment instead: `uv sync --extra mac` and `uv run vid2sub …`.
+```
+
+  with
+
+```markdown
+environment instead: `uv sync --extra mac` (or `--extra whisper`, `--extra nvidia`) and
+`uv run vid2sub …`.
+
+**Whisper on Windows and Linux** (`[whisper]`) runs Whisper large-v3 or large-v3-turbo through
+faster-whisper, on the CPU (int8) or, with `[nvidia]`, on an NVIDIA GPU (float16). The GPU needs
+CUDA 12's cuBLAS and cuDNN 9 (the Phase 3 plan's Decision 10): `[nvidia]` installs both as Python
+packages, and they must be where faster-whisper finds them before vid2sub starts, their `bin`
+folders on `PATH` on Windows and their `lib` folders in `LD_LIBRARY_PATH` on Linux, as
+faster-whisper's README shows; NVIDIA's CUDA 12 toolkit and cuDNN 9 serve as well. Without them
+vid2sub runs on the CPU and says what is missing, and `vid2sub doctor`'s **CUDA libraries** check
+names it and the fix. The first run downloads the model from Hugging Face (1.6 GB for
+large-v3-turbo, 3.1 GB for large-v3); with no network then, the episode fails at once, naming the
+download, and later runs load the model from its cache.
+```
+
+  Then below these lines
+
+```markdown
+  the starter's `[models.spark-qwen]`: Cantonese and Mandarin then go to the Spark first.
+```
+
+  add:
+
+```markdown
+- **Whisper on this machine** (Windows, Linux, with `[whisper]` or `[nvidia]`): uncomment the
+  starter's `[models.local-whisper]` (`engine = "faster-whisper"`); its `catalog` is turbo, for
+  English, and `whisper-large-v3` suits Japanese.
+```
+
+  Then replace
+
+```markdown
+**Jobs**, beside **Editor** under the top bar, makes subtitles for videos already on this
+machine, as `vid2sub run` does: type their full paths, one a line, then **Start**. Jobs run one
+at a time, with the session's languages and formats and never a cloud model, and each shows its
+stage and chunk ("transcribing 7/11"). **Cancel** takes a waiting job out, or stops the running
+one before its next chunk or translation batch. The jobs belong to the engine, so every tab
+shows them and closing a tab cancels nothing; **Open in editor** opens a finished one. In the
+demo, jobs run only on the demo's own clip.
+```
+
+  with
+
+```markdown
+**Add**, beside **Editor** under the top bar, takes what to make subtitles for: videos and
+folders picked in its file browser, full paths typed in, or a YouTube link, with **keep video**
+to keep the whole video rather than its audio (in `[defaults] youtube_dir`, else a `vid2sub`
+folder in your Videos folder). The browser starts at your home folder and the mounted volumes
+(`/Volumes` on a Mac, the drive letters on Windows, `/media`, `/run/media/<you>` and `/mnt` on
+Linux) and shows only folders, videos and subtitle files, a season in `SxxEyy` order. It hides
+dotfiles, the folders that hold credentials (`.ssh`, `.aws`, `.gnupg`, `.config/gh` …),
+`Library` and `AppData` in every user's folder, and folders the system marks hidden. It never
+lists or follows a link, so a media folder linked into your home is added by its real path
+(under `/Volumes`, say) or from the CLI. It reaches only your home, the volumes and a Windows
+network path (`\\server\share`) you type; a library elsewhere, such as `/srv`, is added from the
+CLI. A folder adds its own videos, not its subfolders'. A sleeping network share can take a few
+seconds to answer, and the browser says it is waiting.
+```
+
+  Then replace
+
+```markdown
+Retranslate, Settings and Jobs need an engine that makes subtitles, so the Pages editor
+(Phase 4) leaves them out.
+```
+
+  with
+
+```markdown
+**Review** then shows a row per file. The first two files of each folder are sampled in the
+background: three 20-second windows of speech give the language and how sure ("Mandarin or
+Cantonese?" when Whisper heard Chinese), and a transcription and a translation model are
+suggested as `vid2sub run` would pick them, never a cloud one. The rest of the folder takes the
+sampled files' choices when they agree. Change any row's language, audio track, models,
+languages to translate to, formats or script; **Apply to all** copies that choice to every row.
+A row whose language is uncertain can still start, with its warning; only "Mandarin or
+Cantonese?" or a row with no language waits for you. **Allow cloud models for this run** starts
+unticked in every review, and a cloud model is only ever your own pick. **Start** queues every
+row and opens **Jobs**; **Discard** drops the review, which otherwise stays while you switch
+screens, until a new Add, Start or closing the tab. A YouTube link isn't sampled: its language
+and models are decided when it runs.
+
+**Jobs** runs them one at a time, each with its row's choices; it also takes full paths typed
+into its box, one a line, which run as `vid2sub run` would, with the session's languages and
+formats and never a cloud model. Each job shows its stage and chunk ("transcribing 7/11").
+**Cancel** takes a waiting job out, or stops the running one before its next chunk or
+translation batch. **Pause** stops the running job at its next chunk and starts nothing until
+**Resume**. When a server stops answering (the Spark's tunnel down, the laptop asleep), the job
+retries for 30 seconds, then the whole queue pauses, with a banner saying why and how to fix it,
+rather than failing every remaining episode in turn (the CLI waits ten minutes); **Resume**
+carries on from the chunk that failed. While the queue has work and isn't paused, vid2sub keeps
+the computer awake; paused or idle, it lets it sleep. The jobs belong to the engine, so every tab
+shows them and closing a tab cancels nothing; **Open in editor** opens a finished one.
+
+**Models** shows the catalog, each model in `vid2sub.toml` marked usable on this machine now or
+why not (a server not answering, a key not set, an extra not installed), as `vid2sub models`
+says; catalog models `vid2sub.toml` doesn't name are greyed, with "add it to vid2sub.toml". It
+checks each time it opens, and on **Check again**.
+
+In the demo, Add browses only the demo's own folder, Review suggests the demo's canned models
+under the names they stand in for (Whisper large-v3-turbo and Gemma 4), and jobs run only on the
+demo's own clip.
+
+Retranslate, **Make preview copy**, Settings, Add, Review, Jobs and Models need an engine that
+makes subtitles, so the Pages editor (Phase 4) leaves them out.
+```
+
+- [ ] **Step 2: `tests/README.md`.**
+  In `tests/README.md`, replace
+
+```markdown
+  fake servers on this machine. Each test starts its own server on a free port, with its own
+```
+
+  with
+
+```markdown
+  fake servers on this machine (Add's YouTube test runs vid2sub through
+  `tests/e2e/fake_youtube.py`, which fakes yt-dlp, so no test reaches YouTube). Each test starts
+  its own server on a free port, with its own
+```
+
+  Then below the line `and keeps them when the job fails.`, add:
+
+```markdown
+- Some of the file browser's tests (`tests/test_browse.py`) run on one system only: junctions,
+  the hidden attribute, 8.3 short names and `\\?\` names on Windows; the hidden flag and the
+  other Unicode form on macOS; a name that isn't valid Unicode on Linux. CI's `python` job runs
+  the whole suite on all three, so each runs there.
+```
+
+- [ ] **Step 3: `docs/architecture.md`.**
+  In `docs/architecture.md`, replace
+
+```markdown
+the page and runs the editor and the Jobs page. With `--demo`, `web.demo.runtime_for` builds the
+same parts around a `DemoBackend` that opens only its copy's episode, with a canned engine and
+translation, and `isolate()`'s audit hook refuses any write outside the copy and any connection
+beyond this machine.
+```
+
+  with
+
+```markdown
+the page and runs the editor, Add, Review, the Jobs page and Models. With `--demo`,
+`web.demo.runtime_for` builds the same parts around a `DemoBackend` that opens only its copy's
+episode, with a canned engine and translation, and `isolate()`'s audit hook refuses any write
+outside the copy and any connection beyond this machine. Its Add browses only the copy, and its
+Review suggests the canned models.
+```
+
+  Then replace
+
+```markdown
+tab's requests one at a time, in order; the job queue is the engine's, shared by every tab.
+```
+
+  with
+
+```markdown
+tab's requests one at a time, in order; the job queue is the engine's, shared by every tab, and
+pauses and resumes as a whole. Phase 3's screens reach the core the same way: Add's file browser
+(`web.browse`, which lists only home and mounted volumes, spec §6.5), each tab's `Reviewer`
+(`vid2sub.review`: sampling, suggestions and Start, each row queued with its own runner), the
+preview copy (`media.preview`, beside the playback audio) and the Models page (`review.models`,
+as `vid2sub models` lists them). faster-whisper is an in-process engine behind the Engine
+protocol, as `mlx-qwen3-asr` is.
+```
+
+  Then replace
+
+```markdown
+    editor["Editor, per tab<br/>open, edit, undo, redo, save,<br/>resolve, retranslate: in order"]
+    views["web.views<br/>episode_view · jobs_view: plain JSON"]
+```
+
+  with
+
+```markdown
+    editor["Editor, per tab<br/>open, edit, undo, redo, save,<br/>resolve, retranslate: in order;<br/>a preview copy beside them"]
+    reviewer["Reviewer, per tab<br/>Add's videos sampled off the loop;<br/>choices, Start"]
+    views["web.views<br/>episode_view · jobs_view · browse_view ·<br/>review_view · models_view: plain JSON"]
+```
+
+  Then replace
+
+```markdown
+    queue["jobs.Queue<br/>one worker thread, one job at a time"]
+```
+
+  with
+
+```markdown
+    queue["jobs.Queue<br/>one worker thread, one job at a time;<br/>pause · resume · keep awake"]
+    browse["web.browse<br/>home and mounted volumes:<br/>folders, videos, subtitles"]
+    review["vid2sub.review<br/>prepare · sample · start · models"]
+    preview["media.preview<br/>playback audio · preview copy"]
+```
+
+  Then below the line `server --> editor`, add:
+
+```markdown
+  server --> reviewer
+```
+
+  Then replace
+
+```markdown
+  server -->|"jobs_submit · job_cancel"| runtime
+```
+
+  with
+
+```markdown
+  server -->|"jobs_submit · job_cancel ·<br/>queue_pause · queue_resume ·<br/>browse · add · models_check"| runtime
+  reviewer -->|"runtime.blocking"| runtime
+```
+
+  Then below the line `runtime --> backend & queue & tokens & keys`, add:
+
+```markdown
+  runtime --> browse & review & preview
+  review -->|"each row's own runner"| queue
+```
+
+- [ ] **Step 4: Check them.** The model table and the targets, as Phase 2 Task 22 checked them:
+
+```bash
+cp README.md .git/README.edited && make readme && cmp README.md .git/README.edited && echo "model table unchanged"
+diff <(grep -oE '^make [a-z0-9-]+' README.md | cut -d' ' -f2 | sort) <(make help | awk '{print $1}' | sort) && echo "every target named"
+```
+
+  Expected: `model table unchanged` and `every target named`. Then every name the architecture
+  page uses is in the code, the planned parts are the only dashed arrows, and no doc still says
+  what Phase 3 changed:
+
+```bash
+uv run python - <<'PY'
+import importlib, re
+from pathlib import Path
+text = Path("docs/architecture.md").read_text(encoding="utf-8")
+missing = []
+names = set(re.findall(r"\b(?:vid2sub|web|jobs|engines|pipeline|runtime|review|media)(?:\.\w+)+",
+                       text)) - {"vid2sub.jsonl"}  # the sidecar's suffix
+for name in sorted(names):
+    parts = name.split(".")
+    parts = parts[1:] if parts[0] == "vid2sub" else parts
+    parts = (["web"] if parts[0] == "runtime" else []) + parts
+    for i in range(len(parts), 0, -1):
+        try:
+            obj = importlib.import_module("vid2sub." + ".".join(parts[:i]))
+        except ImportError:
+            continue
+        for attr in parts[i:]:
+            obj = getattr(obj, attr, None)
+        break
+    else:
+        obj = None
+    if obj is None:
+        missing.append(name)
+src = "\n".join(p.read_text(encoding="utf-8") for p in Path("src/vid2sub").rglob("*.py"))
+missing += [w for w in ("HostGuard", "WriteGuard", "TokenGuard", "class Editor", "class Reviewer",
+                        "def isolate", "def browse_view", "def review_view", "def models_view",
+                        "input.jobs_submit", "input.job_cancel", "input.queue_pause",
+                        "input.queue_resume", "input.browse", "input.add", "input.models_check",
+                        "def keep_awake", "def preview_copy", "def make_preview", '"/healthz"',
+                        "/media/{token}")
+            if w not in src]
+print("missing:", missing)
+PY
+grep -c -- '-\.->' docs/architecture.md
+grep -n -e 'not in vid2sub.toml' -e 'from M3' -e '(Phase 3)' -e 'unverified' README.md \
+  tests/README.md docs/architecture.md src/vid2sub/example.toml vid2sub.example.toml
+grep -n 'not yet' README.md tests/README.md docs/architecture.md
+```
+
+  Expected: `missing: []` (with a name misspelt, say `web.browsee`, it prints
+  `missing: ['web.browsee']`), then `2` (the dashed arrows to the Spark's Qwen3-ASR and to
+  Pages), nothing from the first `grep`, and from the second only `README.md:230:durations) are
+  shown, not yet changeable.` (the cue rules, which Phase 3 didn't touch). The diagrams render on
+  GitHub's view of the file; this listing's were rendered with mermaid 11.4.1 in Chromium. Then
+  `make check`. Expected: `1312 passed, 9 skipped, 46 deselected` twice,
+  `Test Files  24 passed (24)`, `Tests  115 passed (115)`, `All checks passed!` and
+  `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+docs: 🤖 the README covers Add, Review, Pause and Resume, the Models page and Whisper on Windows and Linux, and the diagrams draw Phase 3's parts
+
+README.md: the status line names Phase 3; Install adds the whisper and
+nvidia extras, and what the GPU needs: CUDA 12's cuBLAS and cuDNN 9
+(the Phase 3 plan's Decision 10, which waits on Dan), on PATH on Windows
+and in LD_LIBRARY_PATH on Linux, as doctor's CUDA libraries check says,
+with the CPU otherwise and the first run's download (spec §9.5, §23.5);
+Configure adds the starter's [models.local-whisper]. The editor section
+adds Add (the browser's places, what it hides, links never followed,
+roots only: Decisions 1-3 and 24), Review (sampling, local suggestions,
+inheriting, Apply to all, an uncertain row still starting, Allow cloud
+unticked every time, Discard: Decisions 4-7 and 25), Jobs with Pause,
+Resume, the banner and the 30-second wait (Decisions 8, 9 and 23), the
+Models page (S44), and the demo's one place and canned suggestions
+(Decisions 21 and 22); Pages leaves all of them out. Task 7's Make
+preview copy sentence and cache clear line were already there.
+
+tests/README.md: VID2SUB_REQUIRE_WHISPER and VID2SUB_LIVE_WHISPER were
+already named (Tasks 9 and 10); it now says Add's YouTube test fakes
+yt-dlp, and which browser tests run on one system only.
+
+docs/architecture.md: Phase 3's parts drawn solid: Add's file browser
+(web.browse), each tab's Reviewer and vid2sub.review, the queue's pause,
+resume and keep-awake, the preview copy (media.preview) and the Models
+page's input; faster-whisper was already solid (Task 9). A script
+imported every dotted name on the page and found every function,
+class, input and route it names in the code (75 found, none missing);
+mermaid 11.4.1 rendered all three diagrams in Chromium (the first with
+its two planned edges dashed).
+
+Grepped README.md, tests/README.md, docs/architecture.md, AGENTS.md and
+the starter configs for the names Phase 3 changed ("not in
+vid2sub.toml", doctor's old cuBLAS check, "from M3", "(Phase 3)") and
+for "not yet", "planned", "Phase 3" and "unverified": none left where
+Phase 3 built the thing (the README's cue rules are still shown, not
+yet changeable; the CHANGELOG is the phase end's).
+
+Docs read: faster-whisper 1.2.1's README (GPU: cuBLAS for CUDA 12 and
+cuDNN 9; the pip wheels, on Linux through LD_LIBRARY_PATH; on Windows a
+folder on PATH), as Task 9's commits cite it.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 11
+Co-Authored-By: <the model's own line>
+```
+
+  `git add README.md tests/README.md docs/architecture.md`, `git commit -F .git/COMMIT_MSG`,
+  then `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 6: Review, look forward, close.** The Tier 3 self-review from
+  `$(cat .git/TASK_BASE)` (*Standards*, *Spec*) plus `make check`; the forward review over Task
+  12 (its Steps 2 and 7 install and configure as the README now says) and Phase 4 (its install
+  index and README carry the same install lines). Then the close, its own commit, holding this
+  plan with this task's boxes ticked and **Now** set to `Task 12: The M3 exit test (with Dan),
+  open.`, with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 11: The docs
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 3
+Rounds: none
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 11
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md`, `git commit -F
+  .git/CLOSE_MSG`.
 
 ***
 
@@ -14496,14 +16182,16 @@ vid2sub config path
   Then:
 
 ```bash
+vid2sub models
 vid2sub run <a short English video> --from en --to none --model local-whisper
 ```
 
   Expected: `doctor` says faster-whisper runs on the CPU, or, with an NVIDIA GPU, its `CUDA
   libraries` check says it found cuBLAS 12 and cuDNN 9 (or names what is missing and how to
-  install it). The run writes the `.en.srt` next to the
-  video; the first run downloads the model (about 1.6 GB). Note what `doctor` printed, and how
-  long the run took.
+  install it). `models` prints `✓ local-whisper: Whisper large-v3-turbo (transcribe)` (Task 8),
+  and each other catalog entry ending `add it to vid2sub.toml`. The run writes the `.en.srt` next
+  to the video; the first run downloads the model (about 1.6 GB). Note what `doctor` printed, and
+  how long the run took.
 - [ ] **Step 8: Check CI's Windows and Linux path:** the newest run on `phase-3` has Task 10's
   Windows and Linux faster-whisper jobs green, and every other job too:
 
