@@ -25334,7 +25334,340 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 3
 
-<!-- steps: written in the next pass -->
+Spec §23.2's `frontend` and `e2e` jobs, hardened as §23.1 asks, in the idiom of `recordings`'
+`ci.yml` at 8deb039 (its `frontend` and `e2e` jobs). Also the triage of the Phase-end list's
+`npm audit` row.
+
+**Why it is built this way** (read 2026-10-24):
+- **The python job needs no built frontend.** `make check` with no `www/ui.js` passes: the only
+  tests that need one (`tests/test_cli_serve.py`, `tests/test_demo_guard.py`) write their own
+  stand-in. So the python job stays as it is (Step 1 proves it again on this branch).
+- **The frontend job has no venv**, as in `recordings`, so `build.test.ts`'s React major.minor
+  check (it reads `shinyreact.js` from `.venv`) skips there, and the e2e job, which has the venv,
+  runs `build.test.ts` again with `VID2SUB_REQUIRE_SHINYREACT=1`, so a skip fails. That is why the
+  frontend job runs `npm run typecheck`, `npm run build` and `npm test`, not `make test-js`
+  (which sets `VID2SUB_REQUIRE_SHINYREACT=1` and would fail without a venv). GitHub Actions sets
+  `CI=true`, which makes `build.test.ts` fail on a missing `ui.js`, so the build comes first.
+- **ffmpeg for the demo:** Ubuntu 24.04's apt `ffmpeg` is 7:6.1.1-3ubuntu5, and its
+  `libavcodec60` depends on `libvpx9` and `libopus0` (the noble archive's `universe/binary-amd64`
+  Packages index), which the demo's VP9 and Opus need (Decision 6).
+- **Chromium:** Playwright for Python's docs install a browser with its system packages as
+  `playwright install --with-deps chromium`; run through uv, that is
+  `uv run playwright install --with-deps chromium`. `make e2e`'s own `playwright install
+  chromium` then finds it installed.
+- **nvm on the runner:** GitHub's ubuntu-24.04 image has nvm 0.40.8 with no Node installed and
+  `default` aliased to `system` (runner-images' `install-nvm.sh`), so the Makefile's `nvm use 22`
+  fails quietly there and setup-node's Node on `PATH` runs. The Makefile's comment said CI has
+  no nvm; this task corrects it.
+- **`make help`** matched only `[a-z-]+` target names, so `e2e` never appeared (escaped from Task
+  12 (Tier 2), found by this task's build); the pattern takes digits now.
+- **Pins:** checkout v7.0.1, setup-uv v10.3.0 and upload-artifact v7.0.2 are `ci.yml`'s and
+  `recordings`' pins; setup-node v7.1.0 is `recordings`'. Each SHA was checked with
+  `git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>`.
+
+**Files:**
+- Modify: `.github/workflows/ci.yml` (the `frontend` and `e2e` jobs), `Makefile` (`actionlint`;
+  `help` lists targets with digits; the nvm comment), `.gitignore` (`/e2e-tmp/`)
+- Modify at the close: this plan's Phase-end list (the `npm audit` row's Status)
+
+**Interfaces:**
+- Consumes: Task 12's `frontend/.nvmrc` (22), `frontend/package-lock.json`, the npm scripts
+  `typecheck`, `build` and `test`, `build.test.ts`'s `CI` and `VID2SUB_REQUIRE_SHINYREACT`, and
+  `make build`; Tasks 12 and 13's `make e2e` and the e2e fixtures (a server per test, its log at
+  `<basetemp>/<test>/server/server.log`); Task 13's demo (ffmpeg with libvpx and libopus).
+- Produces:
+  - CI jobs `frontend` (ubuntu-24.04, 10 minutes: `npm ci`, `npm run typecheck`, `npm run
+    build`, `npm test` in `frontend/`) and `e2e` (ubuntu-24.04, 20 minutes: apt ffmpeg, `npm ci`,
+    `uv sync --group dev`, `uv run playwright install --with-deps chromium`, `make build`,
+    `npx vitest run src/build.test.ts` with `VID2SUB_REQUIRE_SHINYREACT=1`, `make e2e`; on
+    failure, the artifact `e2e-server-logs` from `e2e-tmp/**/server.log`, kept 7 days). Both
+    `permissions: contents: read`, checkout with `persist-credentials: false`, Node from
+    `frontend/.nvmrc`; the e2e job sets `UV_FROZEN=1` and `PYTEST_ADDOPTS=--basetemp=e2e-tmp`.
+  - `make actionlint`: `uvx --from 'actionlint-py==1.7.12.25' actionlint` over
+    `.github/workflows/` (shellcheck runs on `run:` steps where it is installed). Phase 4's Tasks 6,
+    7 and 8 check their workflows with it.
+  - `make help` lists every target, `e2e` included.
+
+The `make check` counts below come from a clone with Tasks 2–16 only; Tasks 17–20 add their own
+tests, so yours are higher. What matters is no failure, ruff's `All checks passed!` and gitleaks'
+`no leaks found`.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Check that the python job needs no built frontend.** CI's python job never builds
+  it, so run the suite without it (`ui.js` and `ui.css` are build output; Step 7 builds them
+  again):
+
+```bash
+rm -f src/vid2sub/web/www/ui.js src/vid2sub/web/www/ui.css
+make check
+```
+
+  Expected: `955 passed, 2 skipped, 26 deselected` (twice), `Test Files  12 passed (12)`,
+  `Tests  52 passed | 3 skipped (55)` (the built-bundle checks skip with no `ui.js`),
+  `All checks passed!`, `no leaks found`. If a test Tasks 17–20 added fails for want of
+  `www/ui.js`, that is drift: give that test a stand-in `ui.js`, as `tests/test_cli_serve.py`
+  does, rather than building the frontend in the python job's six runners, with a "Built
+  differently" note.
+- [ ] **Step 2: Add the two jobs.** In `.github/workflows/ci.yml`, insert above the line
+  `  leaks:`:
+
+```yaml
+  frontend:
+    # Typecheck, Vitest and the build (spec §23.2), as recordings' frontend job (8deb039). There is
+    # no venv here, so build.test.ts's React major.minor check runs in the e2e job, which has one.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version-file: frontend/.nvmrc, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+      - run: npm run typecheck
+      # Build first: build.test.ts checks the built www/ui.js, and CI=true makes a missing one fail.
+      - run: npm run build
+      - run: npm test
+
+  e2e:
+    # Chromium against `vid2sub serve --demo` (spec §22.7), as recordings' e2e job (8deb039).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      UV_FROZEN: "1"
+      # Server logs land under e2e-tmp/, uploaded below when the job fails.
+      PYTEST_ADDOPTS: --basetemp=e2e-tmp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with: { version: "0.13.1" }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version-file: frontend/.nvmrc, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      # The demo muxes VP9 and Opus (Decision 6): Ubuntu 24.04's ffmpeg (6.1.1-3ubuntu5) links
+      # libvpx9 and libopus0.
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm ci
+        working-directory: frontend
+      - run: uv sync --group dev
+      - run: uv run playwright install --with-deps chromium
+      - run: make build
+      # The venv now holds shinyreact.js, so the built bundle's React major.minor check runs here
+      # (the frontend job has no venv). A skip is a failure with this set.
+      - run: npx vitest run src/build.test.ts
+        working-directory: frontend
+        env: { VID2SUB_REQUIRE_SHINYREACT: "1" }
+      - run: make e2e
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-server-logs
+          path: e2e-tmp/**/server.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+```
+
+- [ ] **Step 3: The Makefile.** Three edits:
+  - In the `.PHONY:` line, add `actionlint` after `lint`.
+  - Replace the comment above `NVM :=`:
+
+```make
+# Each recipe line runs in its own shell, so nvm is loaded per line when it is there, and switched
+# to the Node in frontend/.nvmrc (as recordings' Makefile does). Without nvm (CI), whatever Node is
+# on PATH runs, and frontend/scripts/check-node.mjs refuses one older than 22.
+```
+
+    with:
+
+```make
+# Each recipe line runs in its own shell, so nvm is loaded per line when it is there, and switched
+# to the Node in frontend/.nvmrc (as recordings' Makefile does). Without nvm, or where nvm has no
+# Node 22 (GitHub's ubuntu-24.04 image has nvm with none installed, so `nvm use` fails quietly), the
+# Node on PATH runs (CI's, from setup-node), and frontend/scripts/check-node.mjs refuses one older
+# than 22.
+```
+
+  - Below the `lint:` target's recipe (`	uv run ruff check src tests`), add (the recipe line starts
+    with a tab):
+
+```make
+
+actionlint: ## Lint the GitHub workflows (actionlint, and shellcheck on run steps where installed)
+	uvx --from 'actionlint-py==1.7.12.25' actionlint
+```
+
+  - In the `help:` recipe, replace `/^[a-z-]+:.*## /` with `/^[a-z0-9-]+:.*## /`, so the line
+    reads:
+
+```make
+	@awk 'BEGIN {FS = ":.*## "} /^[a-z0-9-]+:.*## / {printf "  %-9s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+```
+
+- [ ] **Step 4: `.gitignore`.** Below the line `/.cache/` in the `# vid2sub` block, add:
+
+```gitignore
+# CI's e2e job keeps its server logs here (PYTEST_ADDOPTS=--basetemp=e2e-tmp).
+/e2e-tmp/
+```
+
+- [ ] **Step 5: Lint the workflows.** `make actionlint`, then `make help | grep -E
+  'e2e|actionlint'`. Expected: actionlint prints only its command line,
+  `uvx --from 'actionlint-py==1.7.12.25' actionlint`, and exits 0 (no findings); `make help`
+  shows `e2e       The browser tests against vid2sub serve (installs Playwright's Chromium
+  first)` and `actionlint Lint the GitHub workflows (actionlint, and shellcheck on run steps
+  where installed)`.
+- [ ] **Step 6: Run the frontend job's steps here.** With Node 22 (`nvm use 22`) and `CI=true`,
+  as Actions sets it:
+
+```bash
+cd frontend && export CI=true
+npm ci && npm run typecheck && npm run build && npm test
+cd .. && mv .venv .venv.off; (cd frontend && CI=true npm test); mv .venv.off .venv
+mv src/vid2sub/web/www/ui.js .git/ui.js.held
+(cd frontend && CI=true npx vitest run src/build.test.ts); mv .git/ui.js.held src/vid2sub/web/www/ui.js
+unset CI
+```
+
+  Expected: the build writes `../src/vid2sub/web/www/ui.css` and `ui.js`; `Test Files  12 passed
+  (12)`, `Tests  55 passed (55)`. With no venv, as the job has none: `Tests  54 passed | 1
+  skipped (55)` (`src/build.test.ts (4 tests | 1 skipped)`). With no `ui.js`: `FAIL
+  src/build.test.ts > the built bundle > exists (CI builds before it tests)` and
+  `ui.js is missing: run npm run build first`, which is why the job builds first.
+- [ ] **Step 7: Run the e2e job's steps here,** from the repository's root (on a Mac, `ffmpeg
+  -hide_banner -encoders | grep -E 'libvpx-vp9|libopus'` should list both, as Ubuntu's does):
+
+```bash
+export UV_FROZEN=1 CI=true PYTEST_ADDOPTS=--basetemp=e2e-tmp
+(cd frontend && npm ci)
+uv sync --group dev
+uv run playwright install --with-deps chromium
+make build
+(cd frontend && VID2SUB_REQUIRE_SHINYREACT=1 npx vitest run src/build.test.ts)
+make e2e
+find e2e-tmp -name server.log | wc -l
+git status --short
+rm -rf e2e-tmp
+unset UV_FROZEN CI PYTEST_ADDOPTS
+```
+
+  Expected: `Tests  4 passed (4)` for `build.test.ts`; `22 passed, 961 deselected` for `make e2e`
+  (higher with Tasks 17–20's browser tests); `23` server logs (one per server the tests
+  started), the files the upload's glob takes on a failure; `git status` shows no `e2e-tmp/`
+  (it is ignored).
+- [ ] **Step 8: Run the checks; they pass.** `make check`. Expected: `955 passed, 2 skipped, 26
+  deselected` (twice), `Test Files  12 passed (12)`, `Tests  55 passed (55)`,
+  `All checks passed!`, `no leaks found`.
+- [ ] **Step 9: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+ci: 🤖 CI typechecks, tests and builds the frontend, and runs the browser tests against the demo in Chromium
+
+Spec §23.2's `frontend` and `e2e` jobs, hardened as §23.1 asks: every action pinned by SHA with
+its version comment (checkout, setup-uv and upload-artifact reuse ci.yml's and recordings' pins;
+setup-node is recordings' v7.1.0, all four checked with git ls-remote), persist-credentials off,
+per-job `permissions: contents: read` and `timeout-minutes`, ubuntu-24.04, uv 0.13.1 with
+UV_FROZEN=1, and Node from frontend/.nvmrc.
+
+- frontend: npm ci, typecheck, build, Vitest, as recordings' frontend job (8deb039): build
+  first, since build.test.ts checks the built ui.js and CI=true fails a missing one (shown
+  locally: "ui.js is missing: run npm run build first"). It has no venv, so build.test.ts's
+  React major.minor check skips there (54 passed, 1 skipped, run locally without .venv).
+- e2e: Ubuntu 24.04's apt ffmpeg (6.1.1-3ubuntu5; libavcodec60 depends on libvpx9 and libopus0,
+  read from the noble archive's Packages index) for the demo's VP9 and Opus; uv sync; Playwright's
+  Chromium with its system packages (`uv run playwright install --with-deps chromium`); make
+  build; build.test.ts with VID2SUB_REQUIRE_SHINYREACT=1 (the venv holds shinyreact.js here); make
+  e2e. Its server logs go under e2e-tmp/ (PYTEST_ADDOPTS=--basetemp=e2e-tmp) and are uploaded
+  only when the job fails, as recordings' e2e job does; e2e-tmp/ is git-ignored.
+- The python job needs no built frontend: make check with no www/ui.js passed (<N> passed, 2
+  skipped), since tests/test_cli_serve.py and tests/test_demo_guard.py write their own stand-in
+  ui.js. So it is unchanged.
+- make actionlint (actionlint-py 1.7.12.25 through uvx; shellcheck on run steps where installed)
+  lints the workflows: no findings.
+- make help listed no target with a digit, so e2e was missing: its pattern takes digits now
+  (escaped from Task 12 (Tier 2), found by Task 21's build).
+- The Makefile's nvm comment said CI has no nvm; GitHub's ubuntu-24.04 image has nvm 0.40.8 with
+  no Node installed and `default` aliased to system (runner-images' install-nvm.sh), so
+  `nvm use 22` fails quietly and setup-node's Node runs. The comment says so now.
+
+Run locally: each job's steps in order; Vitest 55 passed; build.test.ts with the venv 4 passed;
+make e2e <E> passed, with the server.log files under e2e-tmp/ for the upload glob.
+
+Docs read: actions/setup-node v7.1.0 README (node-version-file, cache, cache-dependency-path;
+v6's automatic npm caching applies only with a packageManager field, which package.json lacks);
+actions/upload-artifact v7.0.2 README (if-no-files-found, retention-days); Playwright for
+Python's CI and browsers pages (`playwright install --with-deps <browser>`); actions/runner-images'
+Ubuntu2404 readme and install-nvm.sh; recordings' ci.yml at 8deb039, whose frontend and e2e jobs
+these copy.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 21
+Co-Authored-By: <the model's own line>
+```
+
+  `git add .github/workflows/ci.yml Makefile .gitignore`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 10: Review, look forward, close.** The Tier 3 self-review from
+  `$(cat .git/TASK_BASE)` (*Standards*, *Spec*) plus `make check` and `make actionlint`. Worth
+  checking: every new action line is `uses: <owner>/<repo>@<40 hex> # v<version>`; both jobs
+  have `permissions`, `timeout-minutes` and `persist-credentials: false`; no `${{` reaches a
+  `run:` line. CI is the proof here: Step 7 of *Each task's loop* closes the task only once the
+  run on the closing commit shows `frontend` and `e2e` green (the first run of an `apt-get` or
+  `--with-deps` step is the part no local run can show). The forward review over Tasks 22–24 and
+  the Phase 3 and 4 plans (Task 22's README can say CI builds and tests the frontend; Phase 3's
+  floor-job edit sits beside these jobs; Phase 4's Task 6 adds a `pyodide` job, and Tasks 7 and 8
+  reuse these pins and `make actionlint`). The docs this task made untrue: none beyond the
+  Makefile's nvm comment, fixed in Step 3. Then the triage of the Phase-end list's `npm audit`
+  row: run `cd frontend && npm audit --json`, and for each finding check whether the built
+  bundle carries it (`grep -oE 'tinypool|vitest|esbuild|@shadcn/registry|launch-editor|ZodError'
+  src/vid2sub/web/www/ui.js` prints nothing; `frontend/src` imports none of them). Found
+  2026-10-24, all 8 dev or test tooling, none in `ui.js` or `ui.css`, so none is Important:
+  - `vitest` 3.2.7 (critical, direct): via `@vitest/mocker` and `tinypool`; the test runner.
+  - `@vitest/mocker` (moderate; GHSA-82fw-gwwq-j7x9, a path traversal through a redirect mock;
+    GHSA-qxg6-89mg-rqv8, code injection through unauthenticated manual-mock registration):
+    test time only.
+  - `tinypool` (critical; GHSA-5gmw-xhrv-c9v3 and GHSA-85c8-ppgw-ccpr, prototype pollution in
+    worker options leading to code execution): Vitest's worker pool, reachable only from code
+    already running in the test process.
+  - `vite` 5.4.21 (high, direct; eight advisories, every one in the dev server: path traversal,
+    `server.fs.deny` and `fs.allow` bypasses, launch-editor, cross-origin script through custom
+    middleware): vid2sub runs only `vite build` (and `vite build --watch`), never the dev server
+    or preview, and a library build bundles none of Vite's client.
+  - `esbuild` ≤0.24.2 (moderate; GHSA-67mh-4wv8-2f99, its dev server answering any website):
+    esbuild's serve mode, unused.
+  - `shadcn` 4.21.4 (high, direct), `@shadcn/registry` 0.1.3 (high) and `zod` 3.25.76 (high;
+    GHSA-mrhx-c7xc-m3w5, memory exhaustion validating oversized collections): the shadcn CLI and
+    its registry client (`npx shadcn add`); the bundle takes only `shadcn/tailwind.css`, a
+    stylesheet, into `ui.css`.
+
+  Set the row's Status to `triaged (Task 21): none of the 8 reaches ui.js or ui.css (dev and
+  test tooling: the test runner, Vite's dev server, esbuild's serve mode, the shadcn CLI); Minor.
+  shadcn 4.22.1 clears shadcn, @shadcn/registry and zod without a major; vite ≥6.4.4 (esbuild
+  0.25) and vitest ≥4.1.12 clear the rest, both majors over recordings' pins, so they move with
+  recordings, at the phase end or later`. Then the close, its own commit, holding this plan with
+  this task's boxes ticked, that Status, and **Now** set to `Task 22: The docs, open.`, with the
+  message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 21: CI: the frontend and end-to-end jobs
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 3
+Rounds: self-review (Standards, Spec); make check; make actionlint
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 21
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md`, `git commit -F
+  .git/CLOSE_MSG`.
 
 ***
 
@@ -25537,3 +25870,4 @@ fi
 | Task 7 (planning) | Minor | `src/vid2sub/web/backend.py` | With no model named, `retranslate` asks the route's servers which models they serve before it knows anything is stale, so a server that's down gives an error where "nothing is stale" would do | open |
 | Task 6 (planning) | Minor | `src/vid2sub/store.py` | A crash (not an exception) between a projection record and its file write leaves the record naming the new head while the file holds the old one; an outside edit to that file before the next Save would then replace the new head without a conflict | open |
 | Task 12 (planning) | Minor | `frontend/package.json` | `npm install` reports 8 audit findings in the pinned dev dependencies (the same pins as `recordings`); none is triaged yet, so Task 21 or the phase end checks whether any reaches the built `ui.js` | open |
+| Task 2 (planning) | Minor | `.github/workflows/ci.yml` | The floor job's hand-kept test list lacks `tests/test_edit.py` (Task 2) and `tests/test_hostile_fixtures.py` (Task 13), both pure; it could pick its files by their imports, as Phase 4 Task 6's `tests/pyodide_run.py` does (found writing Phase 4 Task 6) | open |
