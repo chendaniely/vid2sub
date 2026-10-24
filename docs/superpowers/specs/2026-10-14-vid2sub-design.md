@@ -144,7 +144,7 @@ task numbers are filled in when their plans are written.
   gains these parts in place; all three plans are written in full before approval
   ([Q&A items 6–9](2026-10-14-vid2sub-qa.md)) (`a05066a`).
 - 2026-10-23: the playback audio and the cache move from M3 to Phase 2; the preview copy stays in
-  Phase 3 ([Q&A item 13](2026-10-14-vid2sub-qa.md)) (this commit).
+  Phase 3 ([Q&A item 13](2026-10-14-vid2sub-qa.md)) (`12ebdce`).
 
 ## Contents
 

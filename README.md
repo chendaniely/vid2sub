@@ -6,8 +6,11 @@ optionally ASS) next to the video, named the way Plex and Jellyfin expect. It ru
 your computer, on a machine you run (such as a DGX Spark), or, only when you allow it for a run,
 on OpenAI.
 
-Status: milestone M1, the command line. The web editor arrives with M2. Design:
-[`docs/superpowers/specs/2026-10-14-vid2sub-design.md`](docs/superpowers/specs/2026-10-14-vid2sub-design.md).
+Status: Phase 1 (M1, the command line) is built; Phase 2 (M2, the web editor) is being planned.
+Design: [`docs/superpowers/specs/2026-10-14-vid2sub-design.md`](docs/superpowers/specs/2026-10-14-vid2sub-design.md),
+whose Outline and Scenarios say what is built. Diagrams:
+[`docs/architecture.md`](docs/architecture.md). How it is built: [`AGENTS.md`](AGENTS.md).
+Changes: [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Install
 
@@ -116,8 +119,10 @@ Upgrade yt-dlp when YouTube changes: `uv tool upgrade vid2sub --upgrade-package 
 ## Develop
 
 ```bash
+make help     # list the targets
 make setup    # uv sync --group dev
 make test     # pytest (media tests need ffmpeg)
+make check    # everything CI checks: the suite, again under UTC, lint, the leak scan
 make lint
 make live     # opt-in tests against real models; see tests/README.md
 make readme   # refresh the model table above from the catalog
