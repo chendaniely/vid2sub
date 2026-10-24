@@ -50,6 +50,35 @@ listings are run and revised at its phase start.)
     The `[nvidia]` extra and `doctor` check both. **This changes the spec** (§4.2, §9.5 and S45
     name cuBLAS 12 only), so it waits for Dan's yes at approval (Task 9).
 11. **float16 on CUDA,** faster-whisper's own choice; int8 on the CPU, as §9.5 says (Task 9).
+12. **The demo offers Make preview copy too** (Task 7). Its own clip plays, so only an episode
+    made inside its copy needs one, and that copy goes in the demo's own cache, inside its folder.
+13. **The preview encode runs beside the tab's serial queue, not in it** (Task 7): edits and Saves
+    carry on while a long episode encodes; only the switch to the finished copy waits its turn.
+14. **The playback audio stays playable once the copy plays** (Task 7): its media token is kept,
+    so a browser that fails on the copy after all plays the sound again.
+15. **Make preview copy shows only where it can help** (Task 7): `capabilities.generate` is true
+    (it runs ffmpeg), the video has a picture, and the browser plays H.264 and AAC in an MP4.
+16. **The copy's encoder settings** (Task 7): the hardware encoders at 1500k; libx264 at its
+    default CRF 23 with §8.8's `-preset veryfast`. A JSON file beside each copy names the encoder
+    that made it.
+17. **faster-whisper's first run with no network fails the episode at once** (Task 9), as
+    `unavailable`, naming the download, its size and `vid2sub doctor`. A `connection` error would
+    wait `wait_on_connection_s` (ten minutes, M1's) and then pause the queue (§17.3). The cost:
+    with the network down, each queued faster-whisper episode fails in turn, each at once, where
+    a pause would hold them. A model already downloaded loads from its cache folder, so later runs
+    never need the network.
+18. **An NVIDIA GPU without cuBLAS 12 or cuDNN 9 runs faster-whisper on the CPU** (Task 9), in
+    int8, with a warning naming what is missing and `vid2sub doctor`, not an error. It is the same
+    model, so §17.4's no-fallback holds, but much slower. Linux is checked through the loader, as
+    Windows is through `PATH` and `CUDA_PATH`; doctor's check is renamed `CUDA libraries`.
+19. **English's Qwen3-ASR step tries the Spark's before the Mac's** (Task 9), as Cantonese's does:
+    Phase 2 Task 20's routing already puts endpoints first, and Task 9 keeps it. **This changes
+    the spec** (§11.2's English row reads `qwen3-asr-1.7b` (Mac), written before the Spark served
+    Qwen), so it waits for Dan's yes at approval.
+20. **faster-whisper's CI is a `whisper` job of its own** (Task 10): Ubuntu and Windows, Python
+    3.12, the `whisper` extra, apart from the `python` matrix; `VID2SUB_REQUIRE_WHISPER=1` makes
+    its field check fail there rather than skip. **This changes the spec** (§23.2's job list
+    doesn't name it), so it waits for Dan's yes at approval.
 
 ## Global Constraints
 
@@ -83,8 +112,10 @@ before this plan goes to Dan for approval.
    don't vote; when too few remain, the row says the language is uncertain rather than guessing
    with confidence. (Task 3's tests.)
 5. **faster-whisper's first run with no network, or on an NVIDIA machine without cuDNN 9:** the
-   error names the cause and `vid2sub doctor` in its hint, the run doesn't hang on the download,
-   and nothing falls back to another model or the cloud (spec §17.4). (Task 9's tests.)
+   first fails the episode at once, naming the download and `vid2sub doctor` in its hint, with no
+   wait on the download; the second runs on the CPU with a warning naming what is missing and
+   doctor (Decision 18); neither falls back to another model or the cloud (spec §17.4). (Task 9's
+   tests.)
 
 ***
 
@@ -3044,7 +3075,8 @@ Co-Authored-By: <the model's own line>
   made untrue: none expected (grep `docs/` and `README.md` for "Review" and "allow cloud").
   Then the close, its own commit, holding this plan with this task's boxes ticked and **Now**
   set to `Task 4: The Review screen, open.`, and the spec's S40 row with "Phase and task" set to
-  `Phase 3, Tasks 3–4`; S40 stays `planned` (its Playwright half is Task 4's). The message, in `.git/CLOSE_MSG`:
+  `Phase 3, Tasks 3–4`; S40 stays `planned` (its Playwright half is Task 4's). The message, in
+  `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 3: Sampling and suggestions for Review
@@ -4186,7 +4218,2260 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 2 · **Scenarios:** S63
 
-<!-- steps: written in the next pass -->
+Spec §8.8 and S63: while the editor plays an episode's sound alone, **Make preview copy** makes an
+H.264 480p MP4 with AAC stereo, through a hardware encoder that works here (VideoToolbox, NVENC,
+Quick Sync), else `libx264 -preset veryfast`, into the cache (§8.9), and the player then plays it
+with its picture through `/media/` (§6.3).
+
+**Why it is built this way** (read 2026-10-24):
+- **What Phase 2 left:** the playback audio (`media.preview.playback_audio`, cached under the
+  video's `quick_sha256`) plays when the browser can't play the video (Phase 2 Decisions 2 and
+  15); `Player.tsx` said the copy with the picture was this task's.
+- **Each hardware encoder is tried for real** on three frames of a generated picture, written to
+  ffmpeg's null muxer, before it is chosen: `ffmpeg -encoders` lists `h264_videotoolbox`,
+  `h264_nvenc` or `h264_qsv` wherever ffmpeg was built with them, whether or not the machine has
+  the hardware or its driver. VideoToolbox's `-allow_sw` defaults to false (`ffmpeg -h
+  encoder=h264_videotoolbox`), so without the hardware it fails instead of encoding in software.
+  An encoder that passes its trial and then fails on the episode gives way to libx264, and
+  `preview-a<N>.json` beside the copy names the encoder that made it.
+- **The picture:** `-map 0:V:0` (capital V: never cover art, ffmpeg's stream specifiers), scaled
+  to 480 lines or fewer and never up (`scale=-2:'trunc(min(480,ih)/2)*2'`: an even height, the
+  width following the shape), 8-bit 4:2:0 (`yuv420p`, or `nv12` for VideoToolbox and Quick
+  Sync), so a 10-bit source still gives a copy every H.264 browser decodes. The hardware
+  encoders take a 1500k bit rate; libx264 its default CRF 23 at spec §8.8's `-preset veryfast`.
+  The audio, metadata and chapters are handled as the playback audio's are.
+- **Progress and stopping:** ffmpeg's `-progress pipe:1` writes `out_time_us=` lines every half
+  second. `media.tools.stream_tool` runs it as `run_tool` runs every tool (spec §6.7) and hands
+  each line on as it comes; its readers are threads of its own, so neither pipe stalls ffmpeg,
+  and it checks the caller's `cancelled` and its deadline five times a second even while ffmpeg
+  is quiet (a sleeping network share), killing ffmpeg on either. Its stdin is a pipe closed at
+  once, not `os.devnull`: Popen opens `os.devnull` for writing too, and the demo's audit hook
+  (`web.demo.isolate`) refuses that, so the demo couldn't make a copy (found by this task's
+  Playwright test). ffmpeg writes to a temporary name in the entry's folder, removed unless the
+  whole copy is renamed into place: a tab closed mid-encode leaves nothing in the cache.
+- **The encode never holds up the tab.** A long episode takes minutes, so the server runs it in
+  a task of the tab's own, through `runtime.blocking`, outside the tab's serial queue: edits and
+  Saves go on meanwhile. Only the switch to the copy waits its turn in the queue (`previewed`, a
+  step no input reaches), and the copy's media token is issued then, only if the episode is still
+  open. The task is held by the editor: asyncio keeps only a weak reference to a task.
+- **The playback audio's token stays** once the copy plays, so a browser that fails on the copy
+  after all plays the sound again. The button is offered only where the engine makes things
+  (`capabilities.generate`, Phase 2 Decision 23: it runs ffmpeg), the video has a picture, and
+  this browser plays H.264 and AAC in an MP4 (canPlayType, as Phase 2 Decision 15 asks it about
+  the video).
+- **The demo offers it too.** Its own clip (VP9 and Opus) plays, so only an episode made in its
+  copy needs a preview copy, as the browser tests make one; the copy goes in the demo's own
+  cache, inside its folder.
+- **An episode whose copy is in the cache** gets it with the playback audio, so it plays with its
+  picture the next time it is opened.
+
+**Files:**
+- Modify: `src/vid2sub/media/preview.py` (the preview copy beside the playback audio),
+  `src/vid2sub/media/tools.py` (`stream_tool`, `Cancelled`), `src/vid2sub/web/episode.py`
+  (`PreviewError`), `src/vid2sub/web/runtime.py` (`Media`'s preview fields, `Preview`,
+  `make_preview`, `media_for`), `src/vid2sub/web/views.py` (`episode_view`'s preview fields),
+  `src/vid2sub/web/server.py` (the `preview` input and output), `frontend/src/lib/playable.ts`,
+  `frontend/src/types.ts`, `frontend/src/components/Player.tsx`,
+  `frontend/src/components/Editor.tsx`, `frontend/src/App.tsx`, `README.md`,
+  `docs/architecture.md`
+- Create: `tests/test_preview.py`, `frontend/src/components/Player.test.ts`,
+  `tests/e2e/test_preview.py`
+- Test: `tests/test_tools.py`, `tests/test_views.py`, `tests/test_web_server.py`,
+  `frontend/src/lib/playable.test.ts`
+- Modify at the close: this plan; the spec (S63)
+- Shared with Tasks 1–6 at replay: `server.py`, `App.tsx`, `types.ts` (Tasks 2, 4 and 6 add their
+  screens there); the anchors below are in Phase 2's code, which those tasks leave in place.
+
+**Interfaces:**
+- Consumes: Phase 2's `media.preview.playback_audio`, `cache.Cache` (`folder`, `evict`),
+  `media.tools.run_tool`, `input_args`, `Tools`, `ToolFailed`, `ToolMissing`,
+  `security.child_env`; `web.runtime.Runtime.media_for`, `Media`, `blocking`;
+  `web.media.MediaTokens.issue` and `revoke_owner`; `server.Editor` (`submit`, `_drain`,
+  `_named`, `_close`, `_publish`) and its `playback` input; `views.episode_view`;
+  `Capabilities.generate`; `frontend/src/lib/playable.ts`'s `canPlay`; `Player.tsx`,
+  `Editor.tsx`, `App.tsx`; `tests/helpers.make_clip`, `tests/episodes.make_episode`; the e2e
+  `page`, `server` and `watch` fixtures.
+- Produces:
+  - `vid2sub.media.tools`: `class Cancelled(Exception)`; `STDERR_KEPT = 4000`;
+    `stream_tool(args, *, cwd: Path, timeout: float, on_line: Callable[[str], None],
+    cancelled: Callable[[], bool] = lambda: False) -> None` (each stdout line, stripped;
+    `Cancelled` or `ToolFailed`, the child killed first; stdin a pipe closed at once)
+  - `vid2sub.media.preview`: `HARDWARE = ("h264_videotoolbox", "h264_nvenc", "h264_qsv")`,
+    `SOFTWARE = "libx264"`, `ENCODERS: dict[str, tuple[str, tuple[str, ...]]]` (name → picture
+    format, options), `SCALE`, `TRIAL`, `TRIAL_TIMEOUT = 30.0`, `class NoEncoder(RuntimeError)`,
+    `@dataclass(frozen=True) class PreviewCopy: path: Path; encoder: str`,
+    `listed_encoders(listing: str) -> frozenset[str]`, `encoders_to_try(listed, works) ->
+    tuple[str, ...]`, `works_here(tools, name, *, cwd) -> bool`, `pick_encoders(tools, *, cwd)
+    -> tuple[str, ...]`, `cached_preview(cache, *, key, audio_index) -> PreviewCopy | None`,
+    `preview_copy(video, *, key, audio_index, tools, cache, timeout, on_progress=None,
+    cancelled=None, encoders=None) -> PreviewCopy` (`<cache>/<key>/preview-a<N>.mp4` and
+    `preview-a<N>.json`, `{"encoder": name}`); `playback_audio` unchanged
+  - `vid2sub.web.episode.PreviewError(Exception)` (pure; fit to show, naming no path)
+  - `vid2sub.web.runtime`: `PREVIEW_TIMEOUT = 4 * 3600.0`, `NO_PREVIEW`; `Media` gains
+    `preview_url: str | None = None` and `preview_encoder: str | None = None`;
+    `@dataclass(frozen=True) class Preview: path: Path; encoder: str`;
+    `Runtime.make_preview(ep, *, on_progress=None, cancelled=None) -> Preview | None` (None
+    when cancelled; `PreviewError` otherwise); `media_for(ep, audio_only=...)` adds a cached
+    copy's `preview_url` and `preview_encoder` to the playback audio
+  - `views.episode_view(ep, *, video_url, audio_url, preview_url=None, preview_encoder=None,
+    default_formats=("srt",))`: `video` gains `preview_url` and `preview_encoder`
+  - The Shiny server: input `preview` (`{"episode", "n"}`); output `preview`
+    (`{"episode", "done_ms", "of_ms"}` while a copy is made, else null); the notices
+    `the preview copy is ready (<encoder>)` and `couldn't make a preview copy: <reason>`
+  - Frontend: `types.ts`'s `EpisodeView["video"]` gains `preview_url: string | null` and
+    `preview_encoder: string | null`; `PreviewProgress = { episode: string; done_ms: number;
+    of_ms: number } | null`; `playable.ts`'s `canPlayPreview(ask)`, `previewPercent({done_ms,
+    of_ms})` and `encoderLabel(name)`; `Player` takes `generate`, `preview` and
+    `onMakePreview`; test ids `make-preview`, `preview-progress` and `preview-note`
+  - For Phase 4: the Pages editor's view has `preview_url` and `preview_encoder` null, and
+    `generate` is false there, so it never offers the button.
+
+The counts below are this build's, on Phase 2's finished code; with Tasks 1–6 in, the suite's
+are higher. What matters is no failure, ruff's `All checks passed!` and gitleaks'
+`no leaks found`.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+
+#### Round 7a: the copy, made and reused
+
+- [ ] **Step 1: Write the failing tests,** `tests/test_preview.py`:
+
+```python
+"""The preview copy (spec §8.8, S63): an H.264 480p MP4 with AAC stereo, from a hardware encoder
+when one works here, else libx264, made into the cache and reused (§8.9).
+
+The choice is tested against fake `ffmpeg -encoders` listings; the copy itself is made for real,
+with libx264 (every ffmpeg vid2sub supports has it), from short clips made with ffmpeg's lavfi.
+"""
+
+import json
+import os
+import subprocess
+
+import numpy as np
+import pytest
+from helpers import make_clip
+
+from vid2sub.cache import Cache
+from vid2sub.media import preview
+from vid2sub.media.tools import Cancelled, ToolFailed, Tools
+
+KEY = "a" * 64
+
+# `ffmpeg -hide_banner -encoders`, cut down: its legend, then one line per encoder.
+LEGEND = """Encoders:
+ V..... = Video
+ A..... = Audio
+ S..... = Subtitle
+ .F.... = Frame-level multithreading
+ ------
+"""
+LINUX = LEGEND + """\
+ V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (codec h264)
+ V....D h264_nvenc           NVIDIA NVENC H.264 encoder (codec h264)
+ V..... h264_qsv             H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (Intel Quick Sync Video acceleration) (codec h264)
+ V....D h264_vaapi           H.264/AVC (VAAPI) (codec h264)
+ A....D aac                  AAC (Advanced Audio Coding)
+"""
+MAC = LEGEND + """\
+ V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (codec h264)
+ V....D h264_videotoolbox    VideoToolbox H.264 Encoder (codec h264)
+ A....D aac                  AAC (Advanced Audio Coding)
+"""
+
+
+def test_the_video_encoders_are_read_from_ffmpegs_listing():
+    found = preview.listed_encoders(LINUX)
+    assert {"libx264", "h264_nvenc", "h264_qsv", "h264_vaapi"} <= found
+    assert "aac" not in found and "=" not in found
+
+
+def test_a_hardware_encoder_that_works_here_comes_first_then_libx264():
+    tried = []
+
+    def works(name):
+        tried.append(name)
+        return True
+
+    assert preview.encoders_to_try(preview.listed_encoders(LINUX), works) == ("h264_nvenc",
+                                                                              "libx264")
+    assert tried == ["h264_nvenc"]  # the first that works is enough; libx264 needs no trial
+    assert preview.encoders_to_try(preview.listed_encoders(MAC), works) == (
+        "h264_videotoolbox", "libx264")
+
+
+def test_a_listed_hardware_encoder_that_fails_its_trial_is_passed_over():
+    tried = []
+
+    def only_qsv(name):
+        tried.append(name)
+        return name == "h264_qsv"
+
+    listed = preview.listed_encoders(LINUX)
+    assert preview.encoders_to_try(listed, only_qsv) == ("h264_qsv", "libx264")
+    assert tried == ["h264_nvenc", "h264_qsv"]  # VAAPI isn't one spec §8.8 names
+    assert preview.encoders_to_try(listed, lambda name: False) == ("libx264",)
+
+
+def test_an_ffmpeg_with_no_h264_encoder_says_so():
+    with pytest.raises(preview.NoEncoder, match="H.264"):
+        preview.encoders_to_try(preview.listed_encoders(LEGEND), lambda name: True)
+    # a hardware encoder alone will do
+    listed = preview.listed_encoders(LEGEND + " V....D h264_nvenc  NVIDIA NVENC H.264 encoder\n")
+    assert preview.encoders_to_try(listed, lambda name: True) == ("h264_nvenc",)
+
+
+# The copy, made for real ---------------------------------------------------------------------
+
+
+def ffprobe(tools: Tools, path) -> dict:
+    return json.loads(subprocess.run(
+        [tools.ffprobe, "-v", "error", "-show_format", "-show_streams", "-show_chapters",
+         "-of", "json", str(path)], capture_output=True, check=True).stdout)
+
+
+def loudest_hz(tools: Tools, path) -> float:
+    pcm = subprocess.run([tools.ffmpeg, "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac",
+                          "1", "-ar", "16000", "-f", "s16le", "-"],
+                         capture_output=True, check=True).stdout
+    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float64)
+    spectrum = np.abs(np.fft.rfft(samples))
+    return float(np.fft.rfftfreq(len(samples), 1 / 16_000)[spectrum.argmax()])
+
+
+def hd_clip(directory, name="Show - S01E01.mkv", seconds=2.0):
+    """A 1280x720 clip with two AC-3 tracks (440 Hz, then 550 Hz), a title and a chapter."""
+    tools = Tools.find()
+    meta = directory / "chapters.ffmetadata"
+    meta.write_text(f";FFMETADATA1\ntitle=Secret Show Title\n[CHAPTER]\nTIMEBASE=1/1000\n"
+                    f"START=0\nEND={int(seconds * 1000)}\ntitle=Secret Chapter\n",
+                    encoding="utf-8")
+    out = directory / name
+    subprocess.run([tools.ffmpeg, "-nostdin", "-v", "error", "-y",
+                    "-f", "lavfi", "-i", f"testsrc=size=1280x720:rate=25:duration={seconds}",
+                    "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+                    "-f", "lavfi", "-i", f"sine=frequency=550:duration={seconds}",
+                    "-f", "ffmetadata", "-i", str(meta),
+                    "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map_metadata", "3",
+                    "-map_chapters", "3", "-c:v", "mpeg4", "-c:a", "ac3", str(out)], check=True)
+    return out
+
+
+@pytest.fixture
+def cache(tmp_path) -> Cache:
+    return Cache(tmp_path / "cache", max_bytes=10**9)
+
+
+def make(video, cache, audio_index=0, **kwargs):
+    kwargs.setdefault("encoders", ("libx264",))
+    return preview.preview_copy(video, key=KEY, audio_index=audio_index, tools=Tools.find(),
+                                cache=cache, timeout=120, **kwargs)
+
+
+@pytest.mark.media
+def test_a_video_becomes_h264_480p_with_aac_stereo_in_mp4_and_no_title_or_chapters(tmp_path,
+                                                                                  cache):
+    tools = Tools.find()
+    copy = make(hd_clip(tmp_path), cache)
+    assert copy == preview.PreviewCopy(cache.root / KEY / "preview-a0.mp4", "libx264")
+    info = ffprobe(tools, copy.path)
+    assert "mp4" in info["format"]["format_name"].split(",")
+    picture, sound = info["streams"]
+    assert (picture["codec_name"], picture["pix_fmt"]) == ("h264", "yuv420p")
+    assert (picture["width"], picture["height"]) == (854, 480)
+    assert (sound["codec_name"], sound["channels"]) == ("aac", 2)
+    assert "Secret" not in json.dumps(info) and info["chapters"] == []
+    assert sorted(p.name for p in copy.path.parent.iterdir()) == ["preview-a0.json",
+                                                                 "preview-a0.mp4"]
+
+
+@pytest.mark.media
+def test_a_small_video_is_never_scaled_up(tmp_path, cache):
+    small = make_clip(tmp_path, "Show - S01E02.mkv", seconds=2.0, audio_codec="ac3")
+    picture = ffprobe(Tools.find(), make(small, cache).path)["streams"][0]
+    assert (picture["width"], picture["height"]) == (160, 120)
+
+
+@pytest.mark.media
+def test_the_chosen_audio_track_is_the_one_kept(tmp_path, cache):
+    copy = make(hd_clip(tmp_path), cache, audio_index=1)
+    assert copy.path.name == "preview-a1.mp4"
+    assert abs(loudest_hz(Tools.find(), copy.path) - 550) < 5
+
+
+@pytest.mark.media
+def test_progress_is_reported_as_the_encode_goes_and_reaches_the_end(tmp_path, cache):
+    seen = []
+    make(hd_clip(tmp_path), cache, on_progress=seen.append)
+    assert seen and seen == sorted(seen) and all(isinstance(ms, int) for ms in seen)
+    assert 1800 <= seen[-1] <= 2100
+
+
+@pytest.mark.media
+def test_a_copy_is_made_once_then_reused_with_the_encoder_that_made_it(tmp_path, cache,
+                                                                      monkeypatch):
+    video = hd_clip(tmp_path)
+    assert preview.cached_preview(cache, key=KEY, audio_index=0) is None
+    first = make(video, cache)
+    runs = []
+    monkeypatch.setattr(preview, "stream_tool", lambda *a, **kw: runs.append(a))
+    os.utime(cache.root / KEY, (1_000, 1_000))
+    assert make(video, cache, encoders=None) == first and runs == []
+    assert preview.cached_preview(cache, key=KEY, audio_index=0) == first
+    assert (cache.root / KEY).stat().st_mtime > 1_000  # reusing it marks the entry used
+
+
+@pytest.mark.media
+def test_a_hardware_encoder_that_fails_on_the_file_falls_back_to_libx264(tmp_path, cache,
+                                                                        monkeypatch):
+    # It passed its trial, then failed on the real file: libx264 makes the copy, and says so.
+    monkeypatch.setitem(preview.ENCODERS, "h264_nvenc", ("yuv420p", ("-c:v", "no_such_encoder")))
+    copy = make(hd_clip(tmp_path), cache, encoders=("h264_nvenc", "libx264"))
+    assert copy.encoder == "libx264"
+    assert ffprobe(Tools.find(), copy.path)["streams"][0]["codec_name"] == "h264"
+    assert json.loads((copy.path.parent / "preview-a0.json").read_text(encoding="utf-8")) == {
+        "encoder": "libx264"}
+
+
+@pytest.mark.media
+def test_an_encoder_is_tried_for_real_on_a_tiny_input_before_it_is_chosen(tmp_path,
+                                                                         monkeypatch):
+    tools = Tools.find()
+    assert preview.works_here(tools, "libx264", cwd=tmp_path)
+    monkeypatch.setitem(preview.ENCODERS, "h264_nvenc", ("yuv420p", ("-c:v", "no_such_encoder")))
+    assert not preview.works_here(tools, "h264_nvenc", cwd=tmp_path)
+    assert preview.pick_encoders(tools, cwd=tmp_path)[-1] == "libx264"
+    assert list(tmp_path.iterdir()) == []  # a trial writes nothing
+
+
+@pytest.mark.media
+def test_cancelling_mid_encode_leaves_nothing_in_the_cache(tmp_path, cache):
+    stop = []
+    with pytest.raises(Cancelled):
+        make(hd_clip(tmp_path, seconds=20.0), cache, on_progress=stop.append,
+             cancelled=lambda: bool(stop))
+    assert list((cache.root / KEY).iterdir()) == []
+
+
+@pytest.mark.media
+def test_a_file_ffmpeg_cannot_read_leaves_nothing_in_the_cache(tmp_path, cache):
+    bad = tmp_path / "Show - S01E03.mkv"
+    bad.write_bytes(b"not a video")
+    with pytest.raises(ToolFailed):
+        make(bad, cache)
+    assert list((cache.root / KEY).iterdir()) == []
+
+
+@pytest.mark.media
+def test_making_one_evicts_older_entries_but_never_its_own(tmp_path):
+    cache = Cache(tmp_path / "cache", max_bytes=1)
+    old = cache.folder("b" * 64)
+    (old / "preview-a0.mp4").write_bytes(b"x" * 1000)
+    os.utime(old, (1_000, 1_000))
+    copy = make(make_clip(tmp_path, seconds=2.0), cache)
+    assert copy.path.is_file() and not old.exists()
+
+
+def test_a_record_naming_an_encoder_vid2sub_does_not_use_reads_as_unknown(cache):
+    folder = cache.folder(KEY)
+    (folder / "preview-a0.mp4").write_bytes(b"x")
+    (folder / "preview-a0.json").write_text('{"encoder": "<b>x</b>"}', encoding="utf-8")
+    assert preview.cached_preview(cache, key=KEY, audio_index=0).encoder == "unknown"
+    (folder / "preview-a0.json").write_text("not json", encoding="utf-8")
+    assert preview.cached_preview(cache, key=KEY, audio_index=0).encoder == "unknown"
+
+
+def test_a_negative_track_index_is_refused(cache, tmp_path):
+    with pytest.raises(ValueError, match="audio track"):
+        make(tmp_path / "x.mkv", cache, -1)
+```
+
+  In `tests/test_tools.py`, below `import sys` add `import time`, and append, after two blank
+  lines:
+
+```python
+# Phase 3, Task 7: a long run, read as it goes (the preview copy's progress, spec §8.8)
+
+TICKS = "import sys, time\nfor i in range(3):\n    print(f'tick={i}', flush=True)\n"
+FAILS = "import sys; sys.stderr.write('bad' * 3000); sys.exit(3)"
+
+
+def test_a_streamed_tool_hands_over_each_line_as_it_comes(tmp_path):
+    lines = []
+    t.stream_tool([sys.executable, "-c", TICKS], cwd=tmp_path, timeout=30, on_line=lines.append)
+    assert lines == ["tick=0", "tick=1", "tick=2"]
+
+
+def test_a_streamed_tool_sees_no_keys_and_no_stdin(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "should-not-leak")
+    lines = []
+    script = "import os, sys; print('OPENAI_API_KEY' in os.environ); print(repr(sys.stdin.read()))"
+    t.stream_tool([sys.executable, "-c", script], cwd=tmp_path, timeout=30,
+                  on_line=lines.append)
+    assert lines == ["False", "''"]
+
+
+def test_a_streamed_tool_that_fails_raises_with_its_stderr(tmp_path):
+    with pytest.raises(t.ToolFailed) as err:
+        t.stream_tool([sys.executable, "-c", FAILS], cwd=tmp_path, timeout=30, on_line=print)
+    assert err.value.returncode == 3 and err.value.stderr.endswith("bad")
+    assert len(err.value.stderr) <= 4000
+
+
+def test_a_streamed_tool_is_stopped_when_its_caller_cancels(tmp_path):
+    started = time.monotonic()
+    lines = []
+    with pytest.raises(t.Cancelled):
+        t.stream_tool([sys.executable, "-c", TICKS + "time.sleep(60)"], cwd=tmp_path,
+                      timeout=120, on_line=lines.append, cancelled=lambda: bool(lines))
+    assert time.monotonic() - started < 10
+
+
+def test_a_streamed_tool_that_goes_quiet_past_its_timeout_is_stopped(tmp_path):
+    started = time.monotonic()
+    with pytest.raises(t.ToolFailed, match="exit -1") as err:
+        t.stream_tool([sys.executable, "-c", "import time; time.sleep(60)"], cwd=tmp_path,
+                      timeout=1, on_line=print)
+    assert "timed out" in err.value.stderr and time.monotonic() - started < 10
+
+
+def test_a_streamed_tool_refuses_a_relative_executable(tmp_path):
+    with pytest.raises(ValueError, match="absolute"):
+        t.stream_tool(["ffmpeg", "-version"], cwd=tmp_path, timeout=5, on_line=print)
+```
+
+- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_preview.py -q`. Expected:
+  `E   ImportError: cannot import name 'Cancelled' from 'vid2sub.media.tools'
+  (…/src/vid2sub/media/tools.py)` and `1 error`. `uv run pytest tests/test_tools.py -q`.
+  Expected: `E           AttributeError: module 'vid2sub.media.tools' has no attribute
+  'stream_tool'` and `6 failed, 15 passed, 1 skipped`.
+- [ ] **Step 3: Write the code.** The hook blocks shell commands that name `src/vid2sub/media/`:
+  write and edit both files with the file tools. Replace `src/vid2sub/media/preview.py` with:
+
+```python
+"""The playback audio and the preview copy: what the editor plays when a browser can't play an
+episode itself (spec §8.8), made on demand into the cache (§8.9) and reused after that.
+
+The playback audio: a browser plays neither AC-3, E-AC-3, DTS nor TrueHD, and silent playback is
+worse than none (§8.2), so the editor plays this `.m4a` instead, the first time an episode needs
+it (Dan, 2026-10-14; Q&A item 13 brought it into Phase 2, S43). Only the chosen audio track is
+kept, with no video, subtitles, data, metadata or chapters, so the show's title never reaches the
+file, as with chunks (§7.3); `+faststart` puts the index first so playback starts before the
+whole file is read. ffmpeg writes to a temporary name in the entry's folder and the result is
+renamed into place, so a half-made file is never served, and an entry being made is never evicted.
+
+The preview copy (Phase 3 Task 7, S63), made when the person asks (**Make preview copy**), has the
+picture too: H.264 at 480 lines or fewer (never scaled up; an even height, the width following the
+picture's shape; 8-bit 4:2:0, which every browser that plays H.264 decodes) with the chosen audio
+track as AAC stereo, in an MP4, kept as bare as the playback audio. ffmpeg's hardware encoders
+come first where this ffmpeg lists them, in spec §8.8's order (VideoToolbox, NVENC, Quick Sync),
+each tried for real on a tiny generated picture first, since a listed encoder still fails on a
+machine without the hardware or its driver; else libx264 `-preset veryfast`. An encoder that
+passed its trial and then fails on the episode gives way to libx264, and a record beside the copy
+names the encoder that made it. A long episode takes minutes, so the copy reports how far ffmpeg
+has got (its `-progress` lines) and stops when its caller asks; as with the playback audio,
+ffmpeg writes to a temporary name that is removed unless the whole copy is renamed into place.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import secrets
+from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+from vid2sub.cache import Cache
+from vid2sub.media.tools import ToolFailed, Tools, input_args, run_tool, stream_tool
+
+HARDWARE = ("h264_videotoolbox", "h264_nvenc", "h264_qsv")  # spec §8.8, in its order
+SOFTWARE = "libx264"
+# Each encoder's picture format, then its options: a bit rate that suits 480p for the hardware
+# ones, and libx264 at spec §8.8's `-preset veryfast` with its default quality. Quick Sync and
+# VideoToolbox take nv12; both formats are 8-bit 4:2:0.
+ENCODERS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "h264_videotoolbox": ("nv12", ("-c:v", "h264_videotoolbox", "-b:v", "1500k")),
+    "h264_nvenc": ("yuv420p", ("-c:v", "h264_nvenc", "-preset", "p4", "-b:v", "1500k")),
+    "h264_qsv": ("nv12", ("-c:v", "h264_qsv", "-preset", "veryfast", "-b:v", "1500k")),
+    "libx264": ("yuv420p", ("-c:v", "libx264", "-preset", "veryfast", "-crf", "23")),
+}
+SCALE = "scale=-2:'trunc(min(480,ih)/2)*2'"  # 480 lines at most, never more than it has
+TRIAL = "color=c=black:s=320x240:r=10:d=0.3"  # three frames, larger than any encoder's minimum
+TRIAL_TIMEOUT = 30.0
+_LISTED = re.compile(r"^\s*V\S{5}\s+(\w+)", re.MULTILINE)  # ` V....D libx264  …`
+
+
+class NoEncoder(RuntimeError):
+    """This ffmpeg lists none of the H.264 encoders vid2sub uses."""
+
+
+@dataclass(frozen=True)
+class PreviewCopy:
+    path: Path
+    encoder: str  # a key of ENCODERS, or "unknown" when the record beside it can't be read
+
+
+def _check_track(audio_index: int) -> None:
+    if isinstance(audio_index, bool) or not isinstance(audio_index, int) or audio_index < 0:
+        raise ValueError("an audio track is a number from 0")
+
+
+def playback_audio(video: Path, *, key: str, audio_index: int, tools: Tools, cache: Cache,
+                   timeout: float) -> Path:
+    """`audio_index` counts audio tracks only (ffmpeg's `a:N`, `probe.AudioTrack.index`)."""
+    _check_track(audio_index)
+    folder = cache.folder(key)
+    out = folder / f"playback-a{audio_index}.m4a"
+    if out.is_file():
+        return out
+    tmp = folder / f".playback-a{audio_index}-{secrets.token_hex(4)}.part"
+    try:
+        run_tool([tools.need("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel", "error",
+                  *input_args(video), "-map", f"0:a:{audio_index}", "-vn", "-sn", "-dn",
+                  "-ac", "2", "-c:a", "aac", "-b:a", "160k", "-map_metadata", "-1",
+                  "-map_chapters", "-1", "-fflags", "+bitexact", "-movflags", "+faststart",
+                  "-f", "mp4", str(tmp)], cwd=folder, timeout=timeout)
+        os.replace(tmp, out)
+    finally:
+        tmp.unlink(missing_ok=True)
+    cache.evict(keep=key)
+    return out
+
+
+def listed_encoders(listing: str) -> frozenset[str]:
+    """The video encoders `ffmpeg -encoders` lists (its legend lines name none)."""
+    return frozenset(_LISTED.findall(listing))
+
+
+def encoders_to_try(listed: Collection[str], works: Callable[[str], bool]) -> tuple[str, ...]:
+    """The first listed hardware encoder that `works` here, then libx264 if listed; `works` is
+    asked about each hardware encoder in turn until one passes, never about libx264."""
+    hardware = next((name for name in HARDWARE if name in listed and works(name)), None)
+    found = tuple(name for name in (hardware, SOFTWARE) if name is not None and name in listed)
+    if not found:
+        raise NoEncoder("this ffmpeg has no H.264 encoder vid2sub can use (libx264, "
+                        "VideoToolbox, NVENC or Quick Sync)")
+    return found
+
+
+def works_here(tools: Tools, name: str, *, cwd: Path) -> bool:
+    """Whether encoder `name` encodes a tiny generated picture here, writing nothing."""
+    pix, options = ENCODERS[name]
+    try:
+        run_tool([tools.need("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel", "error",
+                  "-f", "lavfi", "-i", TRIAL, "-vf", f"format={pix}", *options,
+                  "-f", "null", "-"], cwd=cwd, timeout=TRIAL_TIMEOUT)
+    except ToolFailed:
+        return False
+    return True
+
+
+def pick_encoders(tools: Tools, *, cwd: Path) -> tuple[str, ...]:
+    """What this ffmpeg lists, each hardware encoder tried for real (`encoders_to_try`)."""
+    listing = run_tool([tools.need("ffmpeg"), "-nostdin", "-hide_banner", "-encoders"],
+                       cwd=cwd, timeout=TRIAL_TIMEOUT).stdout.decode("utf-8", errors="replace")
+    return encoders_to_try(listed_encoders(listing),
+                           lambda name: works_here(tools, name, cwd=cwd))
+
+
+def cached_preview(cache: Cache, *, key: str, audio_index: int) -> PreviewCopy | None:
+    """The copy made for this video and track, if there is one (marking its entry used)."""
+    _check_track(audio_index)
+    folder = cache.folder(key)
+    out = folder / f"preview-a{audio_index}.mp4"
+    if not out.is_file():
+        return None
+    try:
+        record = json.loads((folder / f"preview-a{audio_index}.json").read_text(
+            encoding="utf-8"))
+        encoder = record.get("encoder") if isinstance(record, dict) else None
+    except (OSError, ValueError):
+        encoder = None
+    return PreviewCopy(out, encoder if isinstance(encoder, str) and encoder in ENCODERS
+                       else "unknown")
+
+
+def _progress_lines(on_progress: Callable[[int], None] | None) -> Callable[[str], None]:
+    """Reads ffmpeg's `-progress` lines (`key=value`), handing on `out_time_us` in ms each time
+    it grows; it is "N/A" before the first frame."""
+    reached = -1
+
+    def line(text: str) -> None:
+        nonlocal reached
+        field, _, value = text.partition("=")
+        if field == "out_time_us" and value.isdigit() and on_progress is not None:
+            done = int(value) // 1000
+            if done > reached:
+                reached = done
+                on_progress(done)
+
+    return line
+
+
+def preview_copy(video: Path, *, key: str, audio_index: int, tools: Tools, cache: Cache,
+                 timeout: float, on_progress: Callable[[int], None] | None = None,
+                 cancelled: Callable[[], bool] | None = None,
+                 encoders: Sequence[str] | None = None) -> PreviewCopy:
+    """The copy for `video` and its audio track `audio_index`, made unless the cache has it.
+    `encoders`: the ones to try, in turn; by default `pick_encoders`'. `on_progress` gets how
+    far the encode has got, in ms of the episode, each time that grows; `cancelled` is asked a
+    few times a second, and its true stops the encode (`tools.Cancelled`). Blocks for minutes
+    on a long episode."""
+    found = cached_preview(cache, key=key, audio_index=audio_index)
+    if found is not None:
+        return found
+    folder = cache.folder(key)
+    ffmpeg = tools.need("ffmpeg")
+    todo = tuple(encoders) if encoders is not None else pick_encoders(tools, cwd=folder)
+    if not todo:
+        raise NoEncoder("no H.264 encoder to try")
+    failed: ToolFailed | None = None
+    for name in todo:
+        pix, options = ENCODERS[name]
+        tmp = folder / f".preview-a{audio_index}-{secrets.token_hex(4)}.part"
+        record = tmp.with_suffix(".json")
+        line = _progress_lines(on_progress)  # from 0 again for each encoder tried
+        try:
+            stream_tool([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-nostats",
+                         "-progress", "pipe:1", *input_args(video),
+                         "-map", "0:V:0", "-map", f"0:a:{audio_index}",
+                         "-vf", f"{SCALE},format={pix}", *options,
+                         "-ac", "2", "-c:a", "aac", "-b:a", "160k", "-sn", "-dn",
+                         "-map_metadata", "-1", "-map_chapters", "-1", "-fflags", "+bitexact",
+                         "-movflags", "+faststart", "-f", "mp4", str(tmp)],
+                        cwd=folder, timeout=timeout, on_line=line,
+                        cancelled=cancelled or (lambda: False))
+            record.write_text(json.dumps({"encoder": name}), encoding="utf-8")
+            os.replace(record, folder / f"preview-a{audio_index}.json")
+            os.replace(tmp, folder / f"preview-a{audio_index}.mp4")
+        except ToolFailed as err:
+            failed = err
+            continue
+        finally:
+            tmp.unlink(missing_ok=True)
+            record.unlink(missing_ok=True)
+        cache.evict(keep=key)
+        return PreviewCopy(folder / f"preview-a{audio_index}.mp4", name)
+    assert failed is not None
+    raise failed
+```
+
+  In `src/vid2sub/media/tools.py`, replace the module docstring and imports, from its first line
+  down to `from pathlib import Path`, with:
+
+```python
+"""Finding and running ffmpeg, ffprobe and deno (spec §6.7, §4.2).
+
+Every child process runs through `run_tool`, or `stream_tool` for a long run read as it goes (the
+preview copy's progress, Phase 3 Task 7): an absolute executable (never found in the current
+directory, which Windows would otherwise search first), an argument list with no shell, `cwd` set
+to the job's scratch folder, an allowlisted environment so it never inherits a key, and a
+timeout. ffmpeg and ffprobe read input only through the `file` protocol and a demuxer allowlist,
+so a playlist disguised as `.mp4` can neither fetch URLs nor read other files. Homebrew's folders
+are a fallback because launchd's PATH doesn't include them (an audio-router lesson).
+`stream_tool` reads the child's output on threads of its own, so neither pipe can fill and stall
+it, and checks its caller's `cancelled` and its deadline a few times a second even while the
+child is quiet (an episode on a sleeping network share); either one kills the child.
+"""
+
+from __future__ import annotations
+
+import os
+import queue
+import re
+import subprocess
+import threading
+import time
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+```
+
+  Below the `ToolFailed` class (its last line is
+  `        super().__init__(f"{tool} failed (exit {returncode})")`), add, after two blank lines:
+
+```python
+class Cancelled(Exception):
+    """A tool stopped because its caller asked it to (`stream_tool`'s `cancelled`)."""
+```
+
+  and above `def input_args(path: Path) -> list[str]:` add:
+
+```python
+STDERR_KEPT = 4000  # characters of a failed tool's stderr kept for its error, as run_tool keeps
+
+
+def stream_tool(args: Sequence[str], *, cwd: Path, timeout: float,
+                on_line: Callable[[str], None],
+                cancelled: Callable[[], bool] = lambda: False) -> None:
+    """Runs a tool as `run_tool` does, handing each line of its stdout to `on_line` as it comes
+    (stripped). Cancelled when `cancelled()` turns true, ToolFailed when it exits non-zero or
+    outlives `timeout`; either way the child is killed first."""
+    if not os.path.isabs(args[0]):
+        raise ValueError("stream_tool needs an absolute executable path")
+    name = Path(args[0]).name
+    # stdin is a pipe closed at once, so the child reads nothing from it; not os.devnull, which
+    # Popen opens for writing too, and the demo's audit hook refuses that (web.demo.isolate).
+    proc = subprocess.Popen(list(args), cwd=cwd, env=child_env(), stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+    proc.stdin.close()
+    lines: queue.Queue[bytes | None] = queue.Queue()
+    err = bytearray()
+
+    def read_out() -> None:
+        for line in iter(proc.stdout.readline, b""):
+            lines.put(line)
+        lines.put(None)
+
+    def read_err() -> None:
+        for chunk in iter(lambda: proc.stderr.read(4096), b""):
+            err.extend(chunk)
+            del err[:-STDERR_KEPT * 4]  # bytes: a UTF-8 character is at most four
+
+    readers = [threading.Thread(target=read_out, daemon=True),
+               threading.Thread(target=read_err, daemon=True)]
+    for r in readers:
+        r.start()
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            if cancelled():
+                raise Cancelled(f"{name} was stopped")
+            if time.monotonic() > deadline:
+                raise ToolFailed(name, -1, f"timed out after {timeout:.0f} s")
+            try:
+                line = lines.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if line is None:
+                break
+            on_line(line.decode("utf-8", errors="replace").strip())
+        try:  # its output has ended; let it finish, within the time it has left
+            proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            raise ToolFailed(name, -1, f"timed out after {timeout:.0f} s") from None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        for r in readers:  # the child's end of each pipe is closed now, so each reader ends
+            r.join(timeout=5)
+        proc.stdout.close()
+        proc.stderr.close()
+    if proc.returncode != 0:
+        raise ToolFailed(name, proc.returncode,
+                         err.decode("utf-8", errors="replace")[-STDERR_KEPT:])
+
+
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest
+  tests/test_preview.py tests/test_playback.py tests/test_tools.py -q` first (`43 passed, 1
+  skipped`; on this Mac the cancel test stops a 20 s 720p encode at its first progress line), then
+  the guard checks, then `make check`. **Guard checks**, each with the file tools, reverted and
+  restored, each with `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest tests/test_preview.py -q`: in
+  `preview_copy`'s `finally`, take out `tmp.unlink(missing_ok=True)` (`FAILED
+  …test_cancelling_mid_encode_leaves_nothing_in_the_cache`: a `.preview-a0-….part` stays); in
+  `encoders_to_try`, replace `if name in listed and works(name)), None)` with
+  `if name in listed), None)` (`2 failed`: the two choice tests); in `preview_copy`, replace
+  `            continue` with `            raise` (`FAILED
+  …test_a_hardware_encoder_that_fails_on_the_file_falls_back_to_libx264`, `ToolFailed: ffmpeg
+  failed (exit 8)`). `make check`. Expected: `1059 passed, 2 skipped, 36 deselected` twice,
+  `Test Files  19 passed (19)`, `Tests  88 passed (88)`, `All checks passed!` and
+  `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(media): 🤖 a preview copy is H.264 480p with AAC stereo, from a hardware encoder that works here, else libx264
+
+vid2sub.media.preview.preview_copy (spec §8.8, §8.9; S63) makes
+<cache>/<quick_sha256>/preview-a<N>.mp4: the first real video stream
+(0:V:0, never cover art) scaled to 480 lines or fewer, never up, at an even
+height with the width kept to its shape, 8-bit 4:2:0, and the chosen audio
+track as AAC stereo 160k, in an MP4 with +faststart and no subtitles, data,
+metadata or chapters. pick_encoders reads `ffmpeg -encoders`
+(listed_encoders) and tries each listed hardware encoder in spec §8.8's
+order (h264_videotoolbox, h264_nvenc, h264_qsv) for real on three frames of
+a generated picture written to the null muxer (works_here), since a listed
+encoder still fails without its hardware or driver; the first that works
+comes before libx264 -preset veryfast -crf 23 (encoders_to_try, which a
+fake listing tests). One that passes its trial and fails on the episode
+gives way to libx264, and preview-a<N>.json names the encoder that made the
+copy (cached_preview reads it back; a name vid2sub doesn't use reads as
+"unknown"). The copy is made once, then reused, marking its entry used.
+
+ffmpeg writes to a temporary name in the entry's folder, removed unless the
+whole copy is renamed into place, so a cancelled or failed encode leaves
+nothing in the cache. media.tools.stream_tool runs it as run_tool runs
+every tool (absolute path, no shell, allowlisted environment) and hands
+each stdout line on as it comes: the copy reports ffmpeg's -progress
+out_time_us in ms. Its readers are threads of its own,
+so neither pipe stalls the child, and it checks its caller's `cancelled`
+and its deadline five times a second even while ffmpeg is quiet; either
+kills the child (tools.Cancelled, or ToolFailed "timed out"). The
+playback audio's code is unchanged; its track check is shared.
+
+The new tests failed first with: ImportError: cannot import name
+'Cancelled' from 'vid2sub.media.tools', and AttributeError: module
+'vid2sub.media.tools' has no attribute 'stream_tool' (6 failed, 15
+passed, 1 skipped). Guard checks, each reverted and restored: without the
+finally's unlink of the temporary file, the cancelled encode leaves a
+.part in the cache (test_cancelling_mid_encode_leaves_nothing_in_the_cache
+fails); without the trial, a listed encoder that can't run is chosen (two
+choice tests fail); re-raising a failed encode instead of trying the next
+encoder fails the libx264 fallback test with ToolFailed (exit 8).
+
+Docs read: ffmpeg's codec documentation (ffmpeg-codecs.html: NVENC's
+-preset p1 to p7, default p4, -b:v; QSV's -preset veryfast…veryslow;
+libx264's -preset and -crf); `ffmpeg -h encoder=h264_videotoolbox` and
+`-h encoder=libx264` on ffmpeg 9.0.2 (Homebrew): VideoToolbox takes nv12
+or yuv420p and -allow_sw defaults to false, so without the hardware it
+fails rather than encoding in software; libx264's -preset defaults to
+medium. ffmpeg.html: -progress url ("program-friendly progress
+information", written periodically and at the end), -stats_period
+(default 0.5 s), -nostats, and the stream specifier 'V' ("only matches
+video streams which are not attached pictures, video thumbnails or cover
+arts"). The scale filter's -2 width and min(480,ih) height were checked
+on ffmpeg 9.0.2 by the tests (1280x720 becomes 854x480, 160x120 stays);
+the fetched filters page didn't reach the scale section.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 7
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/media/preview.py src/vid2sub/media/tools.py tests/test_preview.py
+  tests/test_tools.py` (when this listing was built the hook let `git add` name the path; if it
+  blocks it, say so and stop rather than rephrasing the command), `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 7b: the server makes the copy without holding up the tab
+
+- [ ] **Step 6: Write the failing tests.** In `tests/test_web_server.py`, below
+  `from vid2sub.web.backend import LocalBackend` add
+  `from vid2sub.web.episode import Capabilities, PreviewError`, and append, after two blank lines:
+
+```python
+# ---- the editor: the preview copy (Phase 3, Task 7) ---------------------------------------------
+
+
+PREVIEW_OUTPUTS = {"episode", "busy", "preview"}
+
+
+@pytest.fixture
+def libx264_only(monkeypatch):
+    """No hardware encoder is tried, so every machine makes the same copy."""
+    from vid2sub.media import preview
+
+    monkeypatch.setattr(preview, "HARDWARE", ())
+
+
+def sound_only(t: Tab, video) -> dict:
+    """Opens `video` and says, as the page does, that the browser can't play it: the episode
+    once the playback audio is in."""
+    ep = opened_in(t, video)
+    t.set(playback={"episode": ep["id"], "n": 2})
+    return t.until(lambda t: opened(t)["video"]["audio_url"] and opened(t))
+
+
+def previews_seen(t: Tab) -> list:
+    return [m["values"]["preview"] for m in t.messages if "preview" in m.get("values", {})]
+
+
+@pytest.mark.media
+def test_make_preview_copy_makes_a_copy_the_player_gets_by_a_media_token(
+        media_client, media_rt, tmp_path, libx264_only):
+    # Spec §8.8, S63: asked for while the sound plays alone; the copy goes in the cache, keyed
+    # by the video's quick hash (§8.9), and the player gets it through /media/ (§6.3).
+    video = make_episode(tmp_path / "Secret Show")
+    with tab(media_client, PREVIEW_OUTPUTS) as t:
+        ep = sound_only(t, video)
+        assert (ep["video"]["preview_url"], ep["video"]["preview_encoder"]) == (None, None)
+        t.set(preview={"episode": ep["id"], "n": 3})
+        made = t.until(lambda t: opened(t)["video"]["preview_url"] and opened(t))["video"]
+        copy = media_rt.media.resolve(made["preview_url"].removeprefix("/media/"))
+        assert copy is not None and copy.name == "preview-a0.mp4"
+        assert copy.parent.parent == tmp_path / "cache" and made["preview_encoder"] == "libx264"
+        # the sound stays playable too, for a browser that can't play the copy either
+        assert media_rt.media.resolve(made["audio_url"].removeprefix("/media/")) is not None
+        t.until(lambda t: previews_seen(t)[-1] is None and len(previews_seen(t)) > 2)
+        making = [p for p in previews_seen(t) if p is not None]
+        assert making and {p["episode"] for p in making} == {ep["id"]}
+        assert all(p["of_ms"] == opened(t)["video"]["duration_ms"] for p in making)
+        assert t.notices() == [{"kind": "info", "text": "the preview copy is ready (libx264)"}]
+        everything = json.dumps(t.messages)
+        assert "Secret Show" not in everything and str(tmp_path) not in everything
+
+
+@pytest.mark.media
+def test_an_episode_whose_copy_was_made_before_gets_it_with_the_playback_audio(
+        media_client, media_rt, tmp_path, libx264_only):
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client, PREVIEW_OUTPUTS) as t:
+        ep = sound_only(t, video)
+        t.set(preview={"episode": ep["id"], "n": 3})
+        t.until(lambda t: opened(t)["video"]["preview_url"])
+    with tab(media_client, PREVIEW_OUTPUTS) as t:
+        again = sound_only(t, video)["video"]
+        assert again["preview_encoder"] == "libx264"
+        assert media_rt.media.resolve(again["preview_url"].removeprefix("/media/")).name == (
+            "preview-a0.mp4")
+
+
+@pytest.mark.media
+def test_a_copy_is_made_only_while_the_sound_plays_alone_and_only_where_jobs_can_run(
+        media_client, media_rt, tmp_path, monkeypatch):
+    asked = []
+    monkeypatch.setattr(runtime.Runtime, "make_preview",
+                        lambda self, ep, **kwargs: asked.append(ep.id))
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client, PREVIEW_OUTPUTS) as t:
+        ep = opened_in(t, video)  # the browser plays the video itself: there is nothing to do
+        t.set(preview={"episode": ep["id"], "n": 2})
+        t.set(preview={"episode": "e" + "0" * 16, "n": 3})
+        t.set(preview="<img src=x>")
+        time.sleep(0.5)
+        monkeypatch.setattr(LocalBackend, "capabilities",
+                            lambda self: Capabilities("local", False, "disk", True))
+        t.set(playback={"episode": ep["id"], "n": 4})
+        t.until(lambda t: opened(t)["video"]["audio_url"])
+        t.set(preview={"episode": ep["id"], "n": 5})  # as in Pages, where generate is false
+        time.sleep(0.5)
+        assert asked == [] and t.notices() == [] and "<img" not in json.dumps(t.messages)
+
+
+@pytest.mark.media
+def test_closing_the_tab_mid_encode_stops_it_and_a_second_ask_meanwhile_is_ignored(
+        media_client, media_rt, tmp_path, monkeypatch):
+    asked, stopped = [], threading.Event()
+
+    def slow(self, ep, *, on_progress=None, cancelled=None):
+        asked.append(ep.id)
+        on_progress(500)
+        deadline = time.monotonic() + 20
+        while not cancelled() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if cancelled():
+            stopped.set()
+
+    monkeypatch.setattr(runtime.Runtime, "make_preview", slow)
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client, PREVIEW_OUTPUTS) as t:
+        ep = sound_only(t, video)
+        t.set(preview={"episode": ep["id"], "n": 3})
+        shown = t.until(lambda t: t.has("preview") and (t.value("preview") or {}).get("done_ms"))
+        assert shown == 500
+        t.set(preview={"episode": ep["id"], "n": 4})
+        time.sleep(0.3)
+    assert stopped.wait(10) and asked == [ep["id"]]
+
+
+@pytest.mark.media
+def test_a_copy_that_cant_be_made_is_a_notice_and_the_sound_plays_on(media_client, media_rt,
+                                                                     tmp_path, monkeypatch):
+    def fails(self, ep, **kwargs):
+        raise PreviewError("this ffmpeg has no H.264 encoder vid2sub can use")
+
+    monkeypatch.setattr(runtime.Runtime, "make_preview", fails)
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client, PREVIEW_OUTPUTS) as t:
+        ep = sound_only(t, video)
+        t.set(preview={"episode": ep["id"], "n": 3})
+        (notice,) = t.until(lambda t: t.notices())
+        assert notice == {"kind": "error", "text": "couldn't make a preview copy: this ffmpeg "
+                                                   "has no H.264 encoder vid2sub can use"}
+        t.until(lambda t: previews_seen(t) and previews_seen(t)[-1] is None)
+        assert opened(t)["video"]["audio_url"] == ep["video"]["audio_url"]
+        assert opened(t)["video"]["preview_url"] is None
+
+
+@pytest.mark.media
+def test_the_runtime_names_no_path_when_ffmpeg_fails_and_gives_nothing_when_stopped(
+        media_rt, tmp_path):
+    ep = media_rt.backend.open(str(make_episode(tmp_path / "Secret Show")))
+    ep.video.write_bytes(b"not a video any more")
+    with pytest.raises(PreviewError) as err:
+        media_rt.make_preview(ep)
+    assert str(err.value) == "ffmpeg couldn't make a preview copy of this video"
+    assert media_rt.make_preview(ep, cancelled=lambda: True) is None
+```
+
+  In `tests/test_views.py`, replace
+
+```python
+                          "audio_url": "/media/abc", "playable_audio": True, "container": "",
+                          "video_codec": None, "audio_codec": ""}
+```
+
+  with
+
+```python
+                          "audio_url": "/media/abc", "playable_audio": True, "container": "",
+                          "video_codec": None, "audio_codec": "", "preview_url": None,
+                          "preview_encoder": None}
+```
+
+  and above `def test_a_view_is_plain_json():` add:
+
+```python
+def test_the_video_carries_its_preview_copy_and_the_encoder_that_made_it():
+    # Spec §8.8 (Phase 3, Task 7): the copy by its media token, never its path in the cache.
+    video = views.episode_view(episode(), video_url=None, audio_url="/media/a",
+                               preview_url="/media/p", preview_encoder="libx264")["video"]
+    assert (video["audio_url"], video["preview_url"], video["preview_encoder"]) == (
+        "/media/a", "/media/p", "libx264")
+
+
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q`.
+  Expected: `E   ImportError: cannot import name 'PreviewError' from 'vid2sub.web.episode'
+  (…/src/vid2sub/web/episode.py)` and `1 error`. `uv run pytest tests/test_views.py -q`.
+  Expected: `E       TypeError: episode_view() got an unexpected keyword argument
+  'preview_url'` and `2 failed, 23 passed`.
+- [ ] **Step 8: Write the code.** In `src/vid2sub/web/episode.py`, above
+  `@dataclass(frozen=True)` / `class SaveResult:`, add:
+
+```python
+class PreviewError(Exception):
+    """A preview copy that couldn't be made (spec §8.8): ffmpeg missing, with no H.264 encoder,
+    or failing on the video. The reason is fit to show and names no path; the local runtime
+    makes it from ffmpeg's own errors, which the server can't import in Pages (Phase 3 Task 7)."""
+
+
+```
+
+  In `src/vid2sub/web/runtime.py`, replace
+
+```python
+`Runtime` (`reachable`, `media_for`, `retranslate`, `endpoint_models`). Every call that blocks goes through
+`blocking`, never a thread or an executor of the server's own: a worker thread here, inline in
+Pyodide, which has no threads (Task 14 round 14a, decided with the coordinator 2026-10-24).
+"""
+```
+
+  with
+
+```python
+`Runtime` (`reachable`, `media_for`, `make_preview`, `retranslate`, `endpoint_models`). Every call
+that blocks goes through `blocking`, never a thread or an executor of the server's own: a worker
+thread here, inline in Pyodide, which has no threads (Task 14 round 14a, decided with the
+coordinator 2026-10-24). The preview copy (spec §8.8, Phase 3 Task 7) is made into the cache, as
+the playback audio is, and an episode whose copy is there already gets it with the playback audio.
+"""
+```
+
+  (in the module docstring); below `from dataclasses import dataclass, field` add
+  `from pathlib import Path`; and below the `PLAYBACK_TIMEOUT = 3600.0 …` line add:
+
+```python
+PREVIEW_TIMEOUT = 4 * 3600.0  # seconds: a two-hour episode's picture, through libx264, likewise
+NO_PREVIEW = "ffmpeg couldn't make a preview copy of this video"
+```
+
+  In `src/vid2sub/web/runtime.py`, replace
+
+```python
+    video_url: str | None
+    audio_url: str | None
+    problem: str | None = None
+```
+
+  with
+
+```python
+    video_url: str | None
+    audio_url: str | None
+    problem: str | None = None
+    preview_url: str | None = None  # the preview copy, once made (spec §8.8)
+    preview_encoder: str | None = None  # the ffmpeg encoder that made it
+```
+
+  and above `@dataclass(frozen=True)` / `class Runtime:` add:
+
+```python
+@dataclass(frozen=True)
+class Preview:
+    """A preview copy `make_preview` made: the file, for a media token, and its encoder."""
+
+    path: Path
+    encoder: str
+
+
+```
+
+  In `Runtime.media_for`, replace
+
+```python
+        from vid2sub.media.preview import playback_audio
+        from vid2sub.media.tools import ToolFailed, ToolMissing
+```
+
+  with
+
+```python
+        from vid2sub.media.preview import cached_preview, playback_audio
+        from vid2sub.media.tools import ToolFailed, ToolMissing
+```
+
+  and replace
+
+```python
+            return Media(None, f"/media/{self.media.issue(audio, owner=ep.id)}")
+```
+
+  with
+
+```python
+            media = Media(None, f"/media/{self.media.issue(audio, owner=ep.id)}")
+            copy = cached_preview(self.backend.cache, key=ep.header.video.quick_sha256,
+                                  audio_index=ep.audio_index)
+            if copy is None:
+                return media
+            return dataclasses.replace(
+                media, preview_url=f"/media/{self.media.issue(copy.path, owner=ep.id)}",
+                preview_encoder=copy.encoder)
+```
+
+  Then below `media_for`'s last line (`                         "couldn't make a copy it can
+  play")`) add, after one blank line:
+
+```python
+    def make_preview(self, ep: Episode, *, on_progress: Callable[[int], None] | None = None,
+                     cancelled: Callable[[], bool] | None = None) -> Preview | None:
+        """**Make preview copy** (spec §8.8, S63): the episode's H.264 480p copy with its audio
+        track as AAC stereo, made into the cache under the video's quick hash unless it is there
+        (`media.preview.preview_copy`). Blocks on ffmpeg for minutes: call it through `blocking`;
+        `on_progress` (ms done) runs on that thread, and `cancelled` turning true stops ffmpeg
+        and gives None, leaving nothing in the cache. ffmpeg's errors become `PreviewError`,
+        naming no path (§6.8). The server issues the copy's media token itself, once it knows
+        the episode is still open."""
+        from vid2sub.media.preview import NoEncoder, preview_copy
+        from vid2sub.media.tools import Cancelled, ToolFailed, ToolMissing
+        from vid2sub.web.episode import PreviewError
+
+        try:
+            copy = preview_copy(ep.video, key=ep.header.video.quick_sha256,
+                                audio_index=ep.audio_index, tools=self.backend.tools,
+                                cache=self.backend.cache, timeout=PREVIEW_TIMEOUT,
+                                on_progress=on_progress, cancelled=cancelled)
+        except Cancelled:
+            return None
+        except (ToolMissing, NoEncoder) as err:  # their messages name a tool, never a path
+            raise PreviewError(str(err)) from None
+        except (ToolFailed, OSError, ValueError):
+            raise PreviewError(NO_PREVIEW) from None
+        return Preview(copy.path, copy.encoder)
+```
+
+  In `src/vid2sub/web/views.py`, replace
+
+```python
+def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None,
+                 default_formats: Sequence[str] = ("srt",)) -> dict[str, Any]:
+    return {
+        "id": ep.id,
+        "video": {"name": ep.video.name, "duration_ms": ep.header.video.duration_ms,
+                  "url": video_url, "audio_url": audio_url, "playable_audio": ep.playable_audio,
+                  "container": ep.streams.container, "video_codec": ep.streams.video_codec,
+                  "audio_codec": ep.streams.audio_codec},
+```
+
+  with
+
+```python
+def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None,
+                 preview_url: str | None = None, preview_encoder: str | None = None,
+                 default_formats: Sequence[str] = ("srt",)) -> dict[str, Any]:
+    """`preview_url` is the preview copy (spec §8.8), once made, and `preview_encoder` the
+    ffmpeg encoder that made it (Phase 3 Task 7)."""
+    return {
+        "id": ep.id,
+        "video": {"name": ep.video.name, "duration_ms": ep.header.video.duration_ms,
+                  "url": video_url, "audio_url": audio_url, "playable_audio": ep.playable_audio,
+                  "container": ep.streams.container, "video_codec": ep.streams.video_codec,
+                  "audio_codec": ep.streams.audio_codec, "preview_url": preview_url,
+                  "preview_encoder": preview_encoder},
+```
+
+  In `src/vid2sub/web/server.py`:
+
+  replace
+
+```python
+The settings drawer (§19.2, S35) is `web.settings`'s:
+```
+
+  with
+
+```python
+**Make preview copy** (spec §8.8, S63; Phase 3 Task 7) is offered while the sound plays alone,
+only where the engine makes things (`capabilities.generate`; the button runs ffmpeg). The encode
+takes minutes on a long episode, so it runs in a task of its own, through `runtime.blocking`, and
+never holds up the tab's other requests: edits and Saves go on meanwhile. Its progress is the
+`preview` output, handed back to the loop from the worker thread, and shown only while that
+encode runs. Once it is done, the switch to the copy waits its turn in the tab's queue, and its
+media token is issued only if the episode is still open; the playback audio's token stays, for a
+browser that can't play the copy either. Closing the tab, or opening another episode, stops the
+encode, which leaves nothing in the cache. One copy at a time per tab.
+
+The settings drawer (§19.2, S35) is `web.settings`'s:
+```
+
+  replace
+
+```python
+from vid2sub.web.episode import Episode, OpenError, RetranslateError, SaveError, SaveResult
+```
+
+  with
+
+```python
+from vid2sub.web.episode import (
+    Episode,
+    OpenError,
+    PreviewError,
+    RetranslateError,
+    SaveError,
+    SaveResult,
+)
+```
+
+  replace
+
+```python
+        self.progress: reactive.Value[dict[str, int] | None] = reactive.value(None)
+        self._retranslating: object | None = None  # the running retranslation's token
+```
+
+  with
+
+```python
+        self.progress: reactive.Value[dict[str, int] | None] = reactive.value(None)
+        self.preview: reactive.Value[dict[str, Any] | None] = reactive.value(None)
+        self._retranslating: object | None = None  # the running retranslation's token
+        self._making: tuple[str, list[bool]] | None = None  # the copy being made: episode, stop
+        self._making_task: asyncio.Task | None = None
+```
+
+  replace
+
+```python
+    def submit(self, kind: str, request: object) -> None:
+        if self._ended:
+            return
+        self._todo.append((kind, as_json(request)))
+        if self._worker is None or self._worker.done():
+            self._worker = asyncio.create_task(self._drain())
+
+    async def end(self) -> None:
+        """The tab closed: drop what waits, and close the episode once the running call ends."""
+        self._ended = True
+        self._todo.clear()
+        if self._worker is None or self._worker.done():
+            self._close(self.ep)
+```
+
+  with
+
+```python
+    def submit(self, kind: str, request: object) -> None:
+        self._queue(kind, as_json(request))
+
+    def _queue(self, kind: str, request: object) -> None:
+        """Queues the handler `_<kind>`: what the browser sent (`submit`), or the editor's own
+        next step (`previewed`), which no input reaches."""
+        if self._ended:
+            return
+        self._todo.append((kind, request))
+        if self._worker is None or self._worker.done():
+            self._worker = asyncio.create_task(self._drain())
+
+    async def end(self) -> None:
+        """The tab closed: drop what waits, stop a preview copy being made, and close the
+        episode once the running call ends."""
+        self._ended = True
+        self._todo.clear()
+        self._stop_preview(None)
+        if self._worker is None or self._worker.done():
+            self._close(self.ep)
+```
+
+  replace
+
+```python
+    def _named(self, request: object) -> Episode | None:
+```
+
+  with
+
+```python
+    async def _preview(self, request: object) -> None:
+        """**Make preview copy** (spec §8.8, S63): only while the sound plays alone (the playback
+        audio is in and no copy is yet), only where the engine makes things, and one at a time.
+        The encode runs in a task of its own, so this tab's other requests go on meanwhile."""
+        ep = self._named(request)
+        if (ep is None or self._making is not None or self.media.audio_url is None
+                or self.media.preview_url is not None
+                or not self.rt.backend.capabilities().generate):
+            return
+        making = self._making = (ep.id, [False])
+        # Held here: the event loop keeps only a weak reference to a task (asyncio's docs).
+        self._making_task = asyncio.create_task(self._make_preview(ep, making))
+
+    async def _make_preview(self, ep: Episode, making: tuple[str, list[bool]]) -> None:
+        loop = asyncio.get_running_loop()
+        of = ep.header.video.duration_ms
+        stop = making[1]
+
+        def on_progress(done: int) -> None:  # on the thread `blocking` runs it on
+            asyncio.run_coroutine_threadsafe(self._preview_progress(making, done, of), loop)
+
+        await self._preview_progress(making, 0, of)
+        problem = None
+        try:
+            made = await runtime.blocking(self.rt.make_preview, ep, on_progress=on_progress,
+                                          cancelled=lambda: stop[0])
+        except PreviewError as err:
+            made, problem = None, f"couldn't make a preview copy: {err}"
+        except Exception as err:  # noqa: BLE001 - a failed copy must not stop the tab
+            log.error("the preview copy failed: %s", type(err).__name__)
+            made, problem = None, "couldn't make a preview copy; see the log"
+        finally:
+            if self._making is making:
+                self._making = None
+        if self._ended:
+            return
+        async with reactive.lock():
+            self.preview.set(None)
+            await reactive.flush()
+        if problem and not stop[0]:
+            await notice(self.session, "error", problem)
+        elif made is not None and not stop[0]:
+            self._queue("previewed", (ep.id, made))
+
+    async def _preview_progress(self, making: tuple[str, list[bool]], done: int,
+                                of: int) -> None:
+        """How far the copy has got: shown while that encode still runs, so a late one never
+        shows after it ended."""
+        if self._making is not making or self._ended:
+            return
+        async with reactive.lock():
+            self.preview.set({"episode": making[0], "done_ms": done, "of_ms": of})
+            await reactive.flush()
+
+    async def _previewed(self, made: tuple[str, runtime.Preview]) -> None:
+        """The copy is made: the player gets it by a media token, if the episode is still the
+        one open and still plays its sound alone."""
+        episode, copy = made
+        if self.ep is None or self.ep.id != episode or self.media.audio_url is None:
+            return
+        try:
+            url = f"/media/{self.rt.media.issue(copy.path, owner=episode)}"
+        except ValueError as err:  # never the path: issue's messages name none
+            await notice(self.session, "error", f"the browser can't be given the copy: {err}")
+            return
+        self.media = runtime.Media(self.media.video_url, self.media.audio_url, self.media.problem,
+                                   url, copy.encoder)
+        await self._publish(busy=None)
+        await notice(self.session, "info", f"the preview copy is ready ({copy.encoder})")
+
+    def _stop_preview(self, episode: str | None) -> None:
+        """Stops the copy being made for `episode` (None: whichever it is)."""
+        if self._making is not None and episode in (None, self._making[0]):
+            self._making[1][0] = True
+
+    def _named(self, request: object) -> Episode | None:
+```
+
+  replace
+
+```python
+    def _close(self, ep: Episode | None) -> None:
+        if ep is not None:
+            self.rt.backend.close(ep.id)
+            self.rt.media.revoke_owner(ep.id)
+```
+
+  with
+
+```python
+    def _close(self, ep: Episode | None) -> None:
+        if ep is not None:
+            self._stop_preview(ep.id)
+            self.rt.backend.close(ep.id)
+            self.rt.media.revoke_owner(ep.id)
+```
+
+  replace
+
+```python
+    @reactive.effect
+    @reactive.event(input.edit)
+    def _edit() -> None:
+```
+
+  with
+
+```python
+    @reactive.effect
+    @reactive.event(input.preview)
+    def _preview() -> None:
+        editor.submit("preview", input.preview())
+
+    @reactive.effect
+    @reactive.event(input.edit)
+    def _edit() -> None:
+```
+
+  replace
+
+```python
+        return views.episode_view(ep, video_url=media.video_url, audio_url=media.audio_url,
+                                  default_formats=rt.session.defaults().formats)
+```
+
+  with
+
+```python
+        return views.episode_view(ep, video_url=media.video_url, audio_url=media.audio_url,
+                                  preview_url=media.preview_url,
+                                  preview_encoder=media.preview_encoder,
+                                  default_formats=rt.session.defaults().formats)
+```
+
+  replace
+
+```python
+    @reactive_output
+    def progress():
+        return editor.progress()
+```
+
+  with
+
+```python
+    @reactive_output
+    def progress():
+        return editor.progress()
+
+    @reactive_output
+    def preview():
+        return editor.preview()
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest
+  tests/test_web_server.py tests/test_views.py tests/test_pages_imports.py -q` first (`66
+  passed`), then the guard checks, then `make check`. **Guard checks**, each reverted and
+  restored, each with `uv run pytest tests/test_web_server.py -q`: take out both
+  `self._stop_preview(…)` lines (in `end` and `_close`) (`FAILED
+  …test_closing_the_tab_mid_encode_stops_it_and_a_second_ask_meanwhile_is_ignored`: `where False
+  = wait(10)`); in `_preview`, take out `or not self.rt.backend.capabilities().generate` (`FAILED
+  …test_a_copy_is_made_only_while_the_sound_plays_alone_and_only_where_jobs_can_run`: `asked`
+  holds the episode's id). `make check`. Expected: `1066 passed, 2 skipped, 36 deselected`
+  twice, `Test Files  19 passed (19)`, `Tests  88 passed (88)`, `All checks passed!` and
+  `no leaks found`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the editor makes a preview copy when asked, without holding up the tab, and the player gets it by a media token
+
+The `preview` input ({"episode", "n"}) asks for **Make preview copy**
+(spec §8.8, §20; S63). Editor._preview takes it only while the sound plays
+alone (the playback audio is in and no copy is yet), only where the engine
+makes things (capabilities.generate, Phase 2 Decision 23: the button runs
+ffmpeg), and one copy at a time per tab; anything else is ignored, echoing
+nothing. The encode runs in a task of the tab's own, held by the editor
+(asyncio keeps only a weak reference to a task), through runtime.blocking,
+so the tab's edits and Saves go on meanwhile. Runtime.make_preview runs
+media.preview.preview_copy into the cache under the video's quick hash
+(§8.9) and turns ffmpeg's errors into the pure web.episode.PreviewError,
+naming no path (§6.8); cancelled, it gives None. Its progress is the new
+`preview` output ({"episode", "done_ms", "of_ms"}, else null), handed back
+to the loop from the worker thread (run_coroutine_threadsafe) and shown
+only while that encode runs. Once made, the switch waits its turn in the
+tab's queue (`previewed`, a step no input reaches), the copy's media token
+is issued only if the episode is still open, and a notice says it is ready
+and which encoder made it; the playback audio's token stays, for a browser
+that can't play the copy either. Closing the tab or opening another episode
+stops the encode, which leaves nothing in the cache. An episode whose copy
+is in the cache gets it with the playback audio (Runtime.media_for).
+runtime.Media gains preview_url and preview_encoder; episode_view's video
+gains the same two fields.
+
+The new tests failed first with: ImportError: cannot import name
+'PreviewError' from 'vid2sub.web.episode'. Guard checks, each reverted
+and restored: with both _stop_preview calls taken out, closing the tab
+leaves the encode running (the closing-tab test fails: the stop never
+comes); without the capabilities.generate check, a copy is asked for
+where generate is false (the only-while test fails with the episode's id
+in `asked`).
+
+Docs read: Python 3.14's asyncio docs (create_task: "Save a reference to
+the result of this function, to avoid a task disappearing
+mid-execution"; run_coroutine_threadsafe: "Submit a coroutine to the
+given event loop. Thread-safe"); the Phase 2 server's own patterns for
+both (Tasks 17 and 19).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 7
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/episode.py src/vid2sub/web/runtime.py src/vid2sub/web/server.py
+  src/vid2sub/web/views.py tests/test_views.py tests/test_web_server.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 7c: Make preview copy in the player
+
+- [ ] **Step 11: Write the failing tests.** In `frontend/src/lib/playable.test.ts`, replace
+  `import { canPlay, mediaTypes } from "./playable";` with
+  `import { canPlay, canPlayPreview, encoderLabel, mediaTypes, previewPercent } from "./playable";`
+  and append:
+
+```ts
+describe("the preview copy (spec §8.8, S63)", () => {
+  it("is offered only to a browser that plays H.264 and AAC in an MP4", () => {
+    expect(canPlayPreview(browser("video/mp4", 'video/mp4; codecs="avc1.640028"', 'audio/mp4; codecs="mp4a.40.2"'))).toBe(true);
+    expect(canPlayPreview(browser("video/mp4", 'audio/mp4; codecs="mp4a.40.2"'))).toBe(false); // no H.264
+    expect(canPlayPreview(browser("video/mp4", 'video/mp4; codecs="avc1.640028"'))).toBe(false); // no AAC
+  });
+
+  it("counts how far it has got in whole percent, never past 100", () => {
+    expect(previewPercent({ done_ms: 0, of_ms: 2000 })).toBe(0);
+    expect(previewPercent({ done_ms: 999, of_ms: 2000 })).toBe(49);
+    expect(previewPercent({ done_ms: 2100, of_ms: 2000 })).toBe(100);
+    expect(previewPercent({ done_ms: 500, of_ms: 0 })).toBe(0);
+  });
+
+  it("names the encoder that made it in words", () => {
+    expect(encoderLabel("h264_videotoolbox")).toBe("VideoToolbox");
+    expect(encoderLabel("h264_nvenc")).toBe("NVENC");
+    expect(encoderLabel("h264_qsv")).toBe("Quick Sync");
+    expect(encoderLabel("libx264")).toBe("libx264");
+    expect(encoderLabel("unknown")).toBe("an unknown encoder");
+    expect(encoderLabel(null)).toBe("an unknown encoder");
+  });
+});
+```
+
+  `frontend/src/components/Player.test.ts`:
+
+```ts
+import { createElement, createRef } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { EpisodeView, PreviewProgress } from "@/types";
+
+import { Player } from "./Player";
+
+const SOUND_ONLY: EpisodeView["video"] = {
+  name: "Clip.mp4", duration_ms: 2000, url: null, audio_url: "/media/a", playable_audio: true,
+  container: "mov,mp4,m4a,3gp,3g2,mj2", video_codec: "mpeg4", audio_codec: "opus",
+  preview_url: null, preview_encoder: null,
+};
+
+/** The browser's answer to canPlayType: "probably" for everything, or "" for H.264. */
+function browser(h264: boolean) {
+  vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockImplementation(
+    (type: string) => (!h264 && type.includes("avc1") ? "" : "probably") as CanPlayTypeResult);
+}
+
+function player(video: EpisodeView["video"], { generate = true, preview = null as PreviewProgress } = {}) {
+  return renderToStaticMarkup(createElement(Player, {
+    video, mediaRef: createRef<HTMLVideoElement | HTMLAudioElement>(), lines: [], busy: null,
+    generate, preview, onTime: () => undefined, onCantPlay: () => undefined, onMakePreview: () => undefined,
+  }));
+}
+
+afterEach(() => vi.restoreAllMocks());
+
+describe("Make preview copy in the player (spec §8.8, §20; S63)", () => {
+  it("is offered while the sound plays alone, where the engine makes things and the browser plays H.264", () => {
+    browser(true);
+    const html = player(SOUND_ONLY);
+    expect(html).toContain('data-testid="make-preview"');
+    expect(html).toContain("Make preview copy");
+  });
+
+  it("isn't offered without generate, to a browser that can't play H.264, or with no picture to copy", () => {
+    browser(true);
+    expect(player(SOUND_ONLY, { generate: false })).not.toContain("make-preview");
+    expect(player({ ...SOUND_ONLY, video_codec: null })).not.toContain("make-preview");
+    vi.restoreAllMocks();
+    browser(false);
+    expect(player(SOUND_ONLY)).not.toContain("make-preview");
+  });
+
+  it("shows how far the copy has got while it is made", () => {
+    browser(true);
+    const html = player(SOUND_ONLY, { preview: { episode: "e1", done_ms: 500, of_ms: 2000 } });
+    expect(html).toContain('data-testid="preview-progress"');
+    expect(html).toContain("Making a preview copy… 25%");
+    expect(html).not.toContain("make-preview");
+  });
+
+  it("plays the copy once it is made, naming the encoder that made it", () => {
+    browser(true);
+    const html = player({ ...SOUND_ONLY, preview_url: "/media/p", preview_encoder: "h264_videotoolbox" });
+    expect(html).toMatch(/<video[^>]*src="\/media\/p"/);
+    expect(html).toContain("Preview copy, made with VideoToolbox");
+    expect(html).not.toContain("make-preview");
+  });
+
+  it("keeps the sound for a browser that can't play the copy either", () => {
+    browser(false);
+    const html = player({ ...SOUND_ONLY, preview_url: "/media/p", preview_encoder: "libx264" });
+    expect(html).toMatch(/<audio[^>]*src="\/media\/a"/);
+  });
+});
+```
+
+  and `tests/e2e/test_preview.py`:
+
+```python
+"""Make preview copy in Chromium, against `vid2sub serve --demo` (spec §8.8, §20; S63): a video the
+browser can't decode plays its sound alone, the person asks for a preview copy, and the copy
+plays with its picture, by a media token, from the demo's own cache. The demo offers the button
+too: its own clip plays, so only an episode made in its copy needs it, and the copy is written in
+the demo's folder (Phase 3 Task 7). Run with `make e2e`."""
+
+import re
+from pathlib import Path
+
+import pytest
+from episodes import make_episode
+from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
+
+H264 = 'video/mp4; codecs="avc1.640028"'
+NO_H264 = """
+const ask = HTMLMediaElement.prototype.canPlayType;
+HTMLMediaElement.prototype.canPlayType = function (type) {
+  return type.includes("avc1") ? "" : ask.call(this, type);
+};
+"""
+
+
+def demo_copy(server) -> Path:
+    return next(server.tmp.glob("vid2sub-demo-*/demo"))
+
+
+def sound_only(page, server):
+    """Opens an MP4 of MPEG-4 Part 2, which Chromium can't decode, with Opus, which it plays."""
+    video = make_episode(demo_copy(server) / "mpeg4", name="Clip.mp4", audio_codec="libopus")
+    page.get_by_test_id("open-path").fill(str(video))
+    page.get_by_test_id("open-button").click()
+    expect(page.get_by_test_id("audio-only")).to_have_text(
+        "Playing the sound only: this browser can't play the video itself.")
+
+
+def test_make_preview_copy_plays_the_episode_with_its_picture(page, server, watch):
+    if page.evaluate(f"() => document.createElement('video').canPlayType('{H264}')") == "":
+        pytest.skip("this Chromium plays no H.264, so it is offered no preview copy")
+    sound_only(page, server)
+    page.get_by_test_id("make-preview").click()
+    expect(page.get_by_test_id("preview-note")).to_have_text(
+        re.compile(r"^Preview copy, made with (VideoToolbox|NVENC|Quick Sync|libx264)$"),
+        timeout=60_000)
+    media = page.get_by_test_id("media")
+    assert media.evaluate("m => m.tagName") == "VIDEO"
+    expect(media).to_have_attribute("src", re.compile(r"^/media/[A-Za-z0-9_-]{43}$"))
+    media.evaluate("m => { m.muted = true; return m.play(); }")
+    page.wait_for_function(
+        "() => document.querySelector('[data-testid=media]').currentTime > 0.3")
+    assert media.evaluate("m => m.videoWidth") == 160  # the picture, never scaled up
+    expect(page.get_by_test_id("make-preview")).to_have_count(0)
+    (copy,) = (demo_copy(server).parent / "cache").glob("*/preview-a0.mp4")
+    assert copy.stat().st_size > 0
+    expect(page.get_by_role("status").get_by_text("the preview copy is ready")).to_be_visible()
+
+
+def test_a_browser_that_plays_no_h264_is_offered_no_copy(page, server):
+    page.add_init_script(script=NO_H264)
+    page.reload()
+    sound_only(page, server)
+    expect(page.get_by_test_id("media")).to_have_attribute("src", re.compile("^/media/"))
+    expect(page.get_by_test_id("make-preview")).to_have_count(0)
+```
+
+- [ ] **Step 12: Run them; watch them fail.** `cd frontend && npx vitest run
+  src/lib/playable.test.ts src/components/Player.test.ts`. Expected: `→ canPlayPreview is not a
+  function` (and `previewPercent`, `encoderLabel`), `AssertionError: expected '<div
+  class="relative flex min-h-48 fl…' to contain 'data-testid="make-preview"'`, and
+  `Tests  6 failed | 9 passed (15)`.
+- [ ] **Step 13: Write the code.** Append to `frontend/src/lib/playable.ts`:
+
+```ts
+// The preview copy (spec §8.8, S63; Phase 3 Task 7): H.264 and AAC in an MP4, as ffprobe names
+// them, so it is asked about as the video is. A browser that can't play it is offered no copy.
+const PREVIEW: Video = { name: "preview.mp4", container: "mov,mp4,m4a,3gp,3g2,mj2", video_codec: "h264", audio_codec: "aac" };
+
+/** Whether this browser would play a preview copy. */
+export function canPlayPreview(ask: Ask): boolean {
+  return canPlay(ask, PREVIEW);
+}
+
+/** How far a copy being made has got, in whole percent of the episode (0 to 100). */
+export function previewPercent(p: { done_ms: number; of_ms: number }): number {
+  return p.of_ms > 0 ? Math.min(100, Math.floor((p.done_ms * 100) / p.of_ms)) : 0;
+}
+
+const ENCODERS: Record<string, string> = {
+  h264_videotoolbox: "VideoToolbox",
+  h264_nvenc: "NVENC",
+  h264_qsv: "Quick Sync",
+  libx264: "libx264",
+};
+
+/** The ffmpeg encoder that made a copy, in words. */
+export function encoderLabel(name: string | null): string {
+  return (name && ENCODERS[name]) || "an unknown encoder";
+}
+```
+
+  In `frontend/src/types.ts`, replace
+
+```ts
+/** The `episode` output: views.episode_view. `video.url` plays the video; `audio_url` the
+ * playback audio when the browser can't play the video's audio (Decision 2), or the video itself
+ * (spec §8.2: asked with canPlayType about ffprobe's container and codec names). No path, ever. */
+```
+
+  with
+
+```ts
+/** The `episode` output: views.episode_view. `video.url` plays the video; `audio_url` the
+ * playback audio when the browser can't play the video's audio (Decision 2), or the video itself
+ * (spec §8.2: asked with canPlayType about ffprobe's container and codec names); `preview_url`
+ * the preview copy once made (§8.8), with the ffmpeg encoder that made it. No path, ever. */
+```
+
+  and in it replace
+
+```ts
+    video_codec: string | null;
+    audio_codec: string;
+  };
+  source: string;
+```
+
+  with
+
+```ts
+    video_codec: string | null;
+    audio_codec: string;
+    preview_url: string | null;
+    preview_encoder: string | null;
+  };
+  source: string;
+```
+
+  and below `export type Progress = { done: number; of: number } | null;` add:
+
+```ts
+
+/** The `preview` output: how far the preview copy being made has got, in ms of the episode's
+ * `of_ms` (spec §8.8), or null when none is being made. */
+export type PreviewProgress = { episode: string; done_ms: number; of_ms: number } | null;
+```
+
+  Replace `frontend/src/components/Player.tsx` with:
+
+```tsx
+import { type RefObject, useEffect, useRef, useState } from "react";
+
+import { canPlay, canPlayPreview, encoderLabel, previewPercent } from "@/lib/playable";
+import type { Busy, EpisodeView, PreviewProgress } from "@/types";
+
+import { CaptionOverlay } from "./CaptionOverlay";
+
+/** The player (spec §20): the video by its media token when the browser can play it, else the
+ * playback audio with no picture (§8.8; Decision 2), with the caption overlay over it. Whether it
+ * can is the browser's to say (§8.2): canPlayType is asked about the probe's container and codecs
+ * before the video loads, and a MEDIA_ERR_DECODE or MEDIA_ERR_SRC_NOT_SUPPORTED, or a picture
+ * with no size once its metadata is in, says so too; then `onCantPlay` asks the server for the
+ * playback audio, once. While the sound plays alone, **Make preview copy** (S63; Phase 3 Task 7)
+ * asks for an H.264 copy with the picture, offered only where the engine makes things
+ * (`generate`), the video has a picture and this browser plays H.264 and AAC; `preview` says how
+ * far it has got. Once made, the copy plays from where the sound was, and if the browser fails on
+ * it after all, the sound plays again. While it plays it reports the time every frame, so the cue
+ * list, the spoken word and the captions keep up; paused, it reports each seek. */
+export function Player({ video, mediaRef, lines, busy, generate, preview, onTime, onCantPlay, onMakePreview }: {
+  video: EpisodeView["video"];
+  mediaRef: RefObject<HTMLVideoElement | HTMLAudioElement | null>;
+  lines: string[];
+  busy: Busy;
+  generate: boolean;
+  preview: PreviewProgress;
+  onTime: (ms: number) => void;
+  onCantPlay: () => void;
+  onMakePreview: () => void;
+}) {
+  const report = useRef(onTime);
+  report.current = onTime;
+  const at = useRef(0); // seconds: where playback is, so the copy can start from there
+  const [failed, setFailed] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const asked = useRef(false);
+  const cantPlay = () => {
+    if (asked.current) return;
+    asked.current = true;
+    onCantPlay();
+  };
+  const ask = (t: string) => document.createElement("video").canPlayType(t);
+  // Asked once per video URL, before anything loads.
+  const [plays] = useState(() => !video.url || canPlay(ask, video));
+  const [copyPlays] = useState(() => canPlayPreview(ask));
+  const showVideo = video.url !== null && plays;
+  const showCopy = !showVideo && video.preview_url !== null && copyPlays && !copyFailed;
+  const src = showVideo ? video.url : showCopy ? video.preview_url : video.audio_url;
+  const offer = generate && copyPlays && video.video_codec !== null && video.preview_url === null;
+
+  useEffect(() => {
+    if (video.url && !plays) cantPlay();
+  }, [video.url, plays]);
+
+  useEffect(() => {
+    const media = mediaRef.current;
+    if (!media) return;
+    let frame = 0;
+    const now = () => {
+      at.current = media.currentTime;
+      report.current(media.currentTime * 1000);
+    };
+    const tick = () => {
+      now();
+      if (!media.paused && !media.ended) frame = requestAnimationFrame(tick);
+    };
+    const play = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(tick);
+    };
+    const events = ["seeked", "timeupdate", "loadedmetadata", "pause"] as const;
+    media.addEventListener("play", play);
+    for (const e of events) media.addEventListener(e, now);
+    return () => {
+      cancelAnimationFrame(frame);
+      media.removeEventListener("play", play);
+      for (const e of events) media.removeEventListener(e, now);
+    };
+  }, [mediaRef, src]);
+
+  const onVideoError = (e: { currentTarget: HTMLVideoElement }) => {
+    const code = e.currentTarget.error?.code;
+    if (code === MediaError.MEDIA_ERR_DECODE || code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) cantPlay();
+    else setFailed(true);
+  };
+  const onVideoMetadata = (e: { currentTarget: HTMLVideoElement }) => {
+    // A picture the browser can't decode can still leave the sound playing, with no error.
+    if (video.video_codec && e.currentTarget.videoWidth === 0) cantPlay();
+  };
+  const onCopyMetadata = (e: { currentTarget: HTMLVideoElement }) => {
+    if (e.currentTarget.videoWidth === 0) setCopyFailed(true);
+    else if (at.current > 0) e.currentTarget.currentTime = at.current; // where the sound was
+  };
+
+  const box = "relative flex min-h-48 flex-1 items-center justify-center overflow-hidden rounded-lg bg-black";
+  if (!src) {
+    const making = busy === "playback" || (video.url !== null && !plays);
+    return (
+      <div className={box} data-testid="player">
+        <p className="p-4 text-center text-white/80" data-testid="audio-only">
+          {making ? "This browser can't play the video itself, so vid2sub is making a copy of its sound…" : "Nothing to play."}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className={box} data-testid="player">
+      {showVideo || showCopy ? (
+        <video
+          key={src}
+          ref={mediaRef as RefObject<HTMLVideoElement>}
+          src={src ?? undefined}
+          controls
+          playsInline
+          preload="metadata"
+          className="max-h-full w-full"
+          data-testid="media"
+          onError={showCopy ? () => setCopyFailed(true) : onVideoError}
+          onLoadedMetadata={showCopy ? onCopyMetadata : onVideoMetadata}
+        />
+      ) : (
+        <div className="flex w-full flex-col items-center gap-3 p-4">
+          <p className="text-center text-sm text-white/80" data-testid="audio-only">
+            {video.playable_audio
+              ? "Playing the sound only: this browser can't play the video itself."
+              : "Playing the sound only: the browser can't play this video's own audio track."}
+          </p>
+          <audio ref={mediaRef as RefObject<HTMLAudioElement>} src={video.audio_url ?? undefined} controls preload="metadata" className="w-full" data-testid="media" onError={() => setFailed(true)} />
+          {offer && (preview ? (
+            <div className="flex w-full flex-col items-center gap-1 text-sm text-white/80">
+              <progress className="w-full" value={preview.done_ms} max={Math.max(preview.of_ms, 1)} aria-label="Making a preview copy" data-testid="preview-progress" />
+              <span>{`Making a preview copy… ${previewPercent(preview)}%`}</span>
+            </div>
+          ) : (
+            <button type="button" onClick={onMakePreview} data-testid="make-preview"
+              className="rounded-md bg-primary px-3 py-1 text-sm font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+              Make preview copy
+            </button>
+          ))}
+        </div>
+      )}
+      {showCopy && (
+        <p className="absolute top-2 left-2 rounded bg-black/60 px-2 py-0.5 text-xs text-white/80" data-testid="preview-note">
+          {`Preview copy, made with ${encoderLabel(video.preview_encoder)}`}
+        </p>
+      )}
+      {failed && (
+        <p role="alert" className="absolute inset-x-0 top-0 bg-card px-3 py-2 text-sm text-destructive" data-testid="media-error">
+          The browser can't play this file.
+        </p>
+      )}
+      <CaptionOverlay lines={lines} />
+    </div>
+  );
+}
+```
+
+  In `frontend/src/components/Editor.tsx`, make six replacements:
+
+  replace
+
+```tsx
+import type { Busy, EditOp, EpisodeView, Progress } from "@/types";
+```
+
+  with
+
+```tsx
+import type { Busy, EditOp, EpisodeView, PreviewProgress, Progress } from "@/types";
+```
+
+  replace
+
+```tsx
+/** The editor (spec §20): the path box, then, once an episode is open, the player on the left
+ * and the cue list on the right, with the edit bar, Retranslate (where the engine has models:
+ * `generate`) and find and replace. */
+export function Editor({ episode, busy, progress, pathInput, generate, onOpen, onCantPlay, requests, saving }: {
+  episode: EpisodeView | null;
+  busy: Busy;
+  progress: Progress;
+  pathInput: boolean;
+  generate: boolean;
+  onOpen: (path: string) => void;
+  onCantPlay: () => void;
+  requests: Requests;
+  saving: Saving;
+}) {
+```
+
+  with
+
+```tsx
+/** The editor (spec §20): the path box, then, once an episode is open, the player on the left
+ * and the cue list on the right, with the edit bar, Retranslate and Make preview copy (where the
+ * engine makes things: `generate`) and find and replace. */
+export function Editor({ episode, busy, progress, preview, pathInput, generate, onOpen, onCantPlay, onMakePreview, requests, saving }: {
+  episode: EpisodeView | null;
+  busy: Busy;
+  progress: Progress;
+  preview: PreviewProgress;
+  pathInput: boolean;
+  generate: boolean;
+  onOpen: (path: string) => void;
+  onCantPlay: () => void;
+  onMakePreview: () => void;
+  requests: Requests;
+  saving: Saving;
+}) {
+```
+
+  replace
+
+```tsx
+        <EpisodeEditor key={episode.id} episode={episode} busy={busy} progress={progress} generate={generate} requests={requests} saving={saving} onCantPlay={onCantPlay} />
+```
+
+  with
+
+```tsx
+        <EpisodeEditor key={episode.id} episode={episode} busy={busy} progress={progress} generate={generate} requests={requests} saving={saving} onCantPlay={onCantPlay}
+          preview={preview?.episode === episode.id ? preview : null} onMakePreview={onMakePreview} />
+```
+
+  replace
+
+```tsx
+function EpisodeEditor({ episode, busy, progress, generate, requests, saving, onCantPlay }: {
+  episode: EpisodeView;
+  busy: Busy;
+  progress: Progress;
+  generate: boolean;
+  requests: Requests;
+  saving: Saving;
+  onCantPlay: () => void;
+}) {
+```
+
+  with
+
+```tsx
+function EpisodeEditor({ episode, busy, progress, generate, requests, saving, onCantPlay, preview, onMakePreview }: {
+  episode: EpisodeView;
+  busy: Busy;
+  progress: Progress;
+  generate: boolean;
+  requests: Requests;
+  saving: Saving;
+  onCantPlay: () => void;
+  preview: PreviewProgress;
+  onMakePreview: () => void;
+}) {
+```
+
+  replace
+
+```tsx
+  const changeRate = (value: number) => {
+    setRate(value);
+    if (media.current) media.current.playbackRate = value;
+  };
+```
+
+  with
+
+```tsx
+  const changeRate = (value: number) => {
+    setRate(value);
+    if (media.current) media.current.playbackRate = value;
+  };
+  // The preview copy plays in a new element (spec §8.8), which starts at 1×: keep the rate chosen.
+  useEffect(() => {
+    if (media.current) media.current.playbackRate = rate;
+  }, [episode.video.preview_url]);
+```
+
+  replace
+
+```tsx
+          <Player video={episode.video} mediaRef={media} lines={lines} busy={busy} onTime={onTime} onCantPlay={onCantPlay} />
+```
+
+  with
+
+```tsx
+          <Player video={episode.video} mediaRef={media} lines={lines} busy={busy} generate={generate} preview={preview}
+            onTime={onTime} onCantPlay={onCantPlay} onMakePreview={onMakePreview} />
+```
+
+  In `frontend/src/App.tsx`, make five replacements:
+
+  replace
+
+```tsx
+import type { Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
+```
+
+  with
+
+```tsx
+import type { Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, PreviewProgress, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
+```
+
+  replace
+
+```tsx
+  const progress = useShinyOutputValue<Progress>("progress");
+```
+
+  with
+
+```tsx
+  const progress = useShinyOutputValue<Progress>("progress");
+  const preview = useShinyOutputValue<PreviewProgress>("preview");
+```
+
+  replace
+
+```tsx
+  const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
+```
+
+  with
+
+```tsx
+  const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
+  const setPreview = useSetShinyInput<{ episode: string; n: number } | null>("preview", null, { priority: "event", debounceMs: 0 });
+```
+
+  replace
+
+```tsx
+          progress={progress ?? null}
+```
+
+  with
+
+```tsx
+          progress={progress ?? null}
+          preview={preview ?? null}
+```
+
+  replace
+
+```tsx
+          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+```
+
+  with
+
+```tsx
+          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+          onMakePreview={() => episode && setPreview({ episode: episode.id, n: ++sent.current })}
+```
+
+  In `README.md`, replace
+
+```bash
+vid2sub cache clear                                   # empty the cache of playback audio
+```
+
+  with
+
+```bash
+vid2sub cache clear                                   # empty the cache of playback audio and preview copies
+```
+
+  and replace
+
+```markdown
+the video, the editor plays the playback audio instead, with no picture: an AAC copy of the
+sound, made on demand and kept in vid2sub's cache (`[defaults] cache_max_gb` caps it; `vid2sub
+cache clear` empties it).
+```
+
+  with
+
+```markdown
+the video, the editor plays the playback audio instead, with no picture: an AAC copy of the
+sound, made on demand and kept in vid2sub's cache (`[defaults] cache_max_gb` caps it; `vid2sub
+cache clear` empties it). **Make preview copy**, under it, makes a copy with the picture too
+(H.264 at 480p with AAC, through VideoToolbox, NVENC or Quick Sync where the machine has one,
+else libx264), which plays from where the sound was; it takes a few minutes for a long episode,
+goes in the same cache, and is reused the next time the episode is opened.
+```
+
+  In `docs/architecture.md`, replace
+
+```text
+      media["/media/{token}<br/>video or playback audio,<br/>never a path (MediaTokens)"]
+```
+
+  with
+
+```text
+      media["/media/{token}<br/>video, playback audio or preview copy,<br/>never a path (MediaTokens)"]
+```
+
+- [ ] **Step 14: Run the checks; they pass.** `cd frontend && npm run typecheck && npx vitest
+  run` first (`Test Files  20 passed (20)`, `Tests  96 passed (96)`), then the guard check, then
+  `make build`, `make check` and `make e2e`. **Guard check**, reverted and restored: in
+  `Player.tsx`, replace `const offer = generate && copyPlays` with `const offer = copyPlays`
+  (`npx vitest run src/components/Player.test.ts`: `× … isn't offered without generate, to a
+  browser that can't play H.264, or with no picture to copy`, `Tests  1 failed | 4 passed (5)`).
+  `make check`. Expected: `1066 passed, 2 skipped, 38 deselected` twice, `Test Files  20 passed
+  (20)`, `Tests  96 passed (96)`, `All checks passed!` and `no leaks found`. `make e2e`.
+  Expected: `33 passed`; in a Chromium with no H.264 the picture test skips (`this Chromium plays
+  no H.264, so it is offered no preview copy`).
+- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(frontend): 🤖 Make preview copy plays the episode with its picture where the browser can't play the video
+
+The player (spec §8.8, §20; S63), while it plays the sound alone, offers
+**Make preview copy**: only where the engine makes things (`generate`), the
+video has a picture, and this browser plays H.264 and AAC in an MP4
+(playable.canPlayPreview asks canPlayType about the copy as the video is
+asked about, Phase 2 Decision 15). Pressed, it sends the `preview` input;
+while the copy is made, a <progress> and "Making a preview copy… N%"
+(playable.previewPercent) replace it, from the `preview` output, which App
+subscribes like every output (shinyreact 0.1.0). Once the episode has
+`preview_url`, the copy plays in a <video>, from where the sound was, with
+"Preview copy, made with <encoder>" (playable.encoderLabel: VideoToolbox,
+NVENC, Quick Sync, libx264); if the browser fails on it after all (an
+error, or a picture with no size), the sound plays again. The editor keeps
+the chosen playback rate on the new element. The demo offers the button
+too: its own VP9 clip plays, so only an episode made in its copy needs it,
+and the copy is written in the demo's own cache, inside its folder.
+
+The README says what Make preview copy does and that `vid2sub cache clear`
+empties preview copies too; docs/architecture.md's /media/ node serves the
+preview copy as well.
+
+The new tests failed first with: TypeError: canPlayPreview is not a
+function (and previewPercent, encoderLabel), and AssertionError: expected
+'<div class="relative flex min-h-48 fl…' to contain
+'data-testid="make-preview"'. Guard check, reverted and restored: with
+`generate &&` taken out of the offer, the Vitest test that a Pages editor
+is offered no button fails. In Playwright 1.64's Chromium on macOS the
+copy (made with VideoToolbox here) plays with its 160-pixel picture; a
+Chromium that plays no H.264 is offered no copy (canPlayType stubbed),
+and the picture test skips in one.
+
+Docs read: MDN's HTMLMediaElement.canPlayType ("" means "The media
+cannot be played on the current device") and HTMLVideoElement.videoWidth
+(0 while readyState is HAVE_NOTHING); RFC 6381's codecs parameter
+(avc1.640028, mp4a.40.2), as Phase 2's playable.ts names them.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 7
+Co-Authored-By: <the model's own line>
+```
+
+  `git add frontend/src/App.tsx frontend/src/components/Editor.tsx
+  frontend/src/components/Player.tsx frontend/src/components/Player.test.ts
+  frontend/src/lib/playable.ts frontend/src/lib/playable.test.ts frontend/src/types.ts
+  tests/e2e/test_preview.py README.md docs/architecture.md`, `git commit -F .git/COMMIT_MSG`,
+  then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that a tab closed, or another episode
+  opened, mid-encode stops ffmpeg and leaves nothing in the cache; that no error, notice or log
+  line names a path (§6.8); that the copy is served only by a token issued while its episode is
+  open (§6.3, §6.5); that the server still imports only what Pages has and starts no thread
+  itself (`tests/test_pages_imports.py`); that the demo still writes only inside its folder. The
+  forward review over Task 11 (the README's editor section names Make preview copy; this task
+  wrote its sentence), Task 12 (S63 isn't among its rows) and Phase 4's Tasks 1–4 (the browser
+  backend's view carries `preview_url` and `preview_encoder` as null; `generate` is false there,
+  so no button). The docs this task made untrue: `Player.tsx`'s comment (rewritten here), the
+  README's cache line and `docs/architecture.md`'s `/media/` node (both above). Two tabs asking
+  for one episode's copy at once is already a planning row on the Phase-end list. Then the close,
+  its own commit, holding this plan with this task's boxes ticked and **Now** set to `Task 8: The
+  Models page, open.`, and the spec's S63 row with "Phase and task" set to `Phase 3, Task 7`, its
+  Proof to `` `tests/test_preview.py`; Playwright (`tests/e2e/test_preview.py`) ``, and its status
+  to `built`. The message, in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 7: The preview copy
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: none
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 7
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -4196,7 +6481,8 @@ Co-Authored-By: <the model's own line>
 
 **Interfaces:**
 - Consumes: Task 3's `review.model_choices(config, candidates, task)` and Task 9's
-  `faster-whisper` candidate with its install reason.
+  `faster-whisper` candidate: `in-process`, and without the extra unavailable with "install
+  vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA GPU)".
 
 <!-- steps: written in the next pass -->
 
@@ -4205,6 +6491,35 @@ Co-Authored-By: <the model's own line>
 ### Task 9: The `faster-whisper` engine
 
 **Tier:** 2 · **Scenarios:** S45
+
+Rebuilt on the finished Phase 2 (2026-10-24): the listing below replayed as written, with its
+counts and lock lines as run there, then Review Focus 5's round (Steps 16–20) and a pin of
+English's route against Phase 2 Task 20's Qwen3-ASR on the Spark (Steps 21–23).
+
+**Why it is built this way** (read 2026-10-24):
+- **No test downloads a model:** the WhisperModel is a fake whose Segment, Word and
+  TranscriptionInfo have faster-whisper 1.2.1's fields (`faster_whisper/transcribe.py` at the
+  v1.2.1 tag, still PyPI's newest, released 2025-10-31); with the `whisper` extra installed, a
+  test checks them against the real dataclasses.
+- **A first run with no network fails at once, and fails the episode.** faster-whisper 1.2.1's
+  `download_model` calls `huggingface_hub.snapshot_download` and catches nothing; with no
+  network huggingface_hub 2.2 gives up through its own timeouts (10 s, `HF_HUB_ETAG_TIMEOUT`)
+  with `LocalEntryNotFoundError`, a `FileNotFoundError`. The engine turns that into an
+  `unavailable` error naming the download, its size and `vid2sub doctor`: a `connection` error
+  would make the pipeline wait `wait_on_connection_s` (ten minutes) and then pause the queue.
+  A model already downloaded is loaded from its cache folder, so later runs never ask the
+  network (`WhisperModel` takes a directory as it is).
+- **The GPU's libraries are looked for before the GPU is chosen,** on Linux too: CTranslate2
+  loads cuBLAS through `dlopen("libcublas.so.12")` (`LoadLibraryA("cublas64_12.dll")` on Windows,
+  after `CUDA_PATH`'s `bin`), and links cuDNN's `libcudnn.so` shim, which loads its parts only
+  when first used. So a GPU without them runs on the CPU in int8, with a warning naming what is
+  missing and `vid2sub doctor`, rather than failing in the library mid-episode; a library that
+  fails anyway is named, never its message, which can hold a path.
+- **English keeps a plain `qwen3-asr-1.7b` step,** so the Spark's Qwen3-ASR (Phase 2 Task 20,
+  `parser = "qwen3-asr"`) comes before the Mac's, as §11.2 has it for Cantonese; English's
+  "(Mac)" in §11.2 predates the Spark serving it (Decision 19, a spec change).
+- **Not checked here:** no NVIDIA GPU, so the Linux and Windows library names are from the
+  sources above, not a real load; Task 12's manual run checks them.
 
 **Files:**
 - Create: `src/vid2sub/parse/fasterwhisper.py`, `src/vid2sub/engines/faster_whisper.py`
@@ -4219,12 +6534,15 @@ Co-Authored-By: <the model's own line>
   tests)
 - Test: `tests/test_parse_fasterwhisper.py`, `tests/test_faster_whisper_engine.py`,
   `tests/test_catalog.py`, `tests/test_detect.py`, `tests/test_doctor_config.py`
+- Modify at the close: this plan; the spec (S45's "Phase and task"); `docs/architecture.md`
+  (faster-whisper drawn as built)
 
 **Interfaces:**
 - Consumes: the Engine protocol (`engines.base.Engine`, `Chunk.float32`, `ChunkResult`,
   `EngineError`, `ModelStamp`); `parse.ParsedChunk`, `ParseError`, `parse.words.ms`,
   `tokens_to_words`; `subs.langs.LANGS`; `catalog.CATALOG`; `config.ModelEntry`,
-  `is_local`; `detect.candidates`; `commands.doctor.Check`. From faster-whisper 1.2.1:
+  `is_local`; `detect.candidates`; `commands.doctor.Check`; `pipeline.run_one`,
+  `RunContext`, `RunOptions` (the no-fallback test). From faster-whisper 1.2.1:
   `WhisperModel(model_size_or_path, device=, compute_type=)`, `WhisperModel.transcribe(audio,
   language=, initial_prompt=, word_timestamps=, vad_filter=) -> (generator of Segment,
   TranscriptionInfo)`, `WhisperModel.detect_language(audio) -> (language, probability,
@@ -4235,37 +6553,52 @@ Co-Authored-By: <the model's own line>
     is `{"language", "language_probability", "all_language_probs", "segments": [{"start",
     "end", "text", "avg_logprob", "compression_ratio", "no_speech_prob", "words": [{"start",
     "end", "word", "probability"}]}]}` (times in seconds); `ParseError` for any other shape
-  - `vid2sub.engines.faster_whisper`: `CUDA_LIBRARIES = ("cublas64_12.dll", "cudnn64_9.dll")`;
-    `missing_cuda_libraries(environ=os.environ, *, windows=os.name == "nt") -> list[str]` (the
-    DLLs no PATH folder holds; always `[]` off Windows); `cuda_devices() -> int`;
+  - `vid2sub.engines.faster_whisper` (as Step 18 leaves it): `WINDOWS_LIBRARIES =
+    ("cublas64_12.dll", "cudnn64_9.dll")`, `LINUX_LIBRARIES = ("libcublas.so.12",
+    "libcudnn_ops.so.9", "libcudnn_cnn.so.9")`; `can_load(library: str) -> bool` (ctypes);
+    `missing_cuda_libraries(environ=os.environ, *, platform=sys.platform) -> list[str]` (on
+    Windows the DLLs no folder on PATH or `CUDA_PATH`'s `bin` holds; on Linux the libraries
+    the loader can't open; elsewhere `[]`); `cuda_devices() -> int`;
     `device_for(devices: int, missing: Sequence[str]) -> tuple[str, str]` (`("cuda",
-    "float16")` or `("cpu", "int8")`); `hf_revision(model: str) -> str`;
+    "float16")` or `("cpu", "int8")`); `model_path(model: str) -> str | None` (the cached
+    snapshot's folder, never the network); `hf_revision(model: str) -> str`; `FIRST_RUN`,
+    `GPU_FIX`, `DOCTOR`, `INSTALL`;
     `class FasterWhisperEngine: __init__(self, name: str, entry: ModelEntry, *,
     model_factory: Callable[..., Any] | None = None)`, `name = "faster-whisper"`,
     `supports_prompt = True`, `max_chunk_s` from the catalog (300), `model_id` (the entry's
     `model`, else the catalog's `default_model`: `large-v3` or `large-v3-turbo`), and the
-    protocol's `transcribe`, `detect_language`, `stamp`, `close`
+    protocol's `transcribe`, `detect_language`, `stamp`, `close`; `device` (`"cuda"` or
+    `"cpu"` once loaded). Every failure is an `EngineError("unavailable", …)`: "faster-whisper
+    couldn't download its model, which its first run needs" (hint `FIRST_RUN`), "faster-whisper
+    couldn't load the GPU's cuDNN 9 library" (or cuBLAS 12; hint `GPU_FIX`), else what failed
+    and the exception's type (hint `DOCTOR`)
   - `config.ModelEntry.engine: Literal["mlx-qwen3-asr", "faster-whisper"] | None`; a
     faster-whisper entry's catalog must be a local Whisper model; it is local (in-process)
   - `catalog.CatalogEntry.default_model` for `whisper-large-v3` (`"large-v3"`) and
     `whisper-large-v3-turbo` (`"large-v3-turbo"`)
   - `catalog.Step = str | tuple[str, Literal["endpoint", "in-process"]]`: a route step is a
     catalog id (anywhere, endpoints first, as before) or a catalog id and where it runs.
-    English's route is turbo on an endpoint (the Spark) → `qwen3-asr-1.7b` (the Mac) → turbo
-    in-process (faster-whisper) → `whisper-large-v3` → `qwen3-asr-0.6b` → OpenAI, §11.2's
-    order on every system; the other rows are M1's, which already follow §11.2
+    English's route is turbo on an endpoint (the Spark) → `qwen3-asr-1.7b` (anywhere,
+    endpoints first: the Spark's, then the Mac's; Decision 19) → turbo in-process (faster-whisper) →
+    `whisper-large-v3` → `qwen3-asr-0.6b` → OpenAI, §11.2's order on every system; the other rows
+    are M1's, which already follow §11.2
   - `detect.whisper_available() -> bool`; `detect.candidates` gives a faster-whisper model as
     an `in-process` candidate, unavailable with "install vid2sub[whisper] (vid2sub[nvidia] for
     an NVIDIA GPU)" without the extra
   - `commands.doctor._whisper(environ, *, platform: str = sys.platform) -> list[Check]`:
     `faster-whisper` (installed, else how to install; not shown on a Mac without it),
-    `NVIDIA GPU` (none seen: the CPU) or `cuBLAS 12` (on Windows, the DLLs on PATH or how to
-    fix it; on Linux, the GPUs seen and the LD_LIBRARY_PATH note); every one a warning
+    `NVIDIA GPU` (none seen: the CPU) or `CUDA libraries` (as Step 18 names it: "cuBLAS 12 and
+    cuDNN 9 found; N NVIDIA GPU(s) seen", or the missing libraries with `CUDA_FIX` on Windows
+    or `LINUX_CUDA_FIX`, and the LD_LIBRARY_PATH note on Linux); every one a warning
   - Extras: `whisper = ["faster-whisper>=1.2.1"]`; `nvidia` adds `nvidia-cublas-cu12>=12.4` and
     `nvidia-cudnn-cu12>=9,<10` on Windows and Linux
   - What Task 10 needs: a CI job on Windows and Linux that runs `uv sync --group dev --extra
     whisper` (so the field check against the real library runs, not skips) and the suite; the
     real model stays out of CI (`VID2SUB_LIVE_WHISPER=1` is opt-in, about 1.6 GB on first run).
+
+The counts below are this build's, on Phase 2's finished code with Task 7 in; with Tasks 1–6
+too, they are higher. What matters is no failure, ruff's `All checks passed!` and gitleaks'
+`no leaks found`.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: Write the failing test,** `tests/test_parse_fasterwhisper.py`:
@@ -4468,7 +6801,8 @@ def parse_faster_whisper(data: Any) -> ParsedChunk:
   …test_pure_modules_import_only_the_standard_library_pydantic_and_subtitle_libraries`);
   replace `if any("�" in w.text for w in words):` with `if False:` (`FAILED
   …test_a_word_with_a_broken_character_makes_its_segment_unaligned`). `make check`. Expected:
-  `843 passed, 5 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
+  `1085 passed, 2 skipped, 38 deselected` twice, `Test Files  20 passed (20)`,
+  `Tests  96 passed (96)`, `All checks passed!` and `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -4855,10 +7189,12 @@ nvidia = [
 ]
 ```
 
-  then `uv lock` (expected, among its lines: `Added faster-whisper v1.2.1`, `Added
-  nvidia-cublas-cu12 v12.9.2.10`, `Added nvidia-cudnn-cu12 v9.27.0.42`; ctranslate2 4.8.3; the
-  lock file has `win_amd64` wheels for both NVIDIA packages). `uv sync --group dev` installs
-  none of them: CI and `make check` run without the extras.
+  then `uv lock` (expected: `Added av v19.0.2`, `Added ctranslate2 v4.8.3`, `Added
+  faster-whisper v1.2.1`, `Added nvidia-cublas-cu12 v12.9.2.10`, `Added nvidia-cuda-nvrtc-cu12
+  v12.9.86`, `Added nvidia-cudnn-cu12 v9.27.0.42`, `Added tokenizers v0.23.3`; the lock file has
+  `win_amd64` and `manylinux_2_27_x86_64` wheels for both NVIDIA packages, 553 MB and 743 MB on
+  Windows). `uv sync --group dev` installs none of them: CI and `make check` run without the
+  extras.
 
   `src/vid2sub/engines/faster_whisper.py`:
 
@@ -5202,10 +7538,12 @@ def whisper_available() -> bool:
 
 - [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_faster_whisper_engine.py
   tests/test_detect.py tests/test_config.py tests/test_catalog.py tests/test_readme.py
-  tests/test_qwen_engine.py -q` first (`88 passed, 1 skipped, 2 deselected`: the field check
-  skips without the extra). Then once with the extra: `uv sync --group dev --extra whisper`,
-  `uv run --no-sync pytest tests/test_faster_whisper_engine.py -q` (`18 passed, 1 deselected`:
-  the fakes have faster-whisper 1.2.1's fields), then `uv sync --group dev` to go back. Then the
+  tests/test_qwen_engine.py -q` first (`90 passed, 1 skipped, 2 deselected`: the field check
+  skips without the extra). Then once with the extra: `uv sync --group dev --extra whisper`
+  (it installs faster-whisper 1.2.1, ctranslate2 4.8.3 and huggingface-hub 2.2.0, among
+  others), `uv run --no-sync pytest tests/test_faster_whisper_engine.py -q` (`18 passed, 1
+  deselected`: the fakes have faster-whisper 1.2.1's fields), then `uv sync --group dev` to go
+  back. Then the
   guard checks, each reverted and restored, each with `uv run pytest
   tests/test_faster_whisper_engine.py -q`: in `config._validate`, replace `if m.engine ==
   "faster-whisper" and m.catalog is not None and (` with `if False and (` (a Qwen or a cloud
@@ -5216,8 +7554,9 @@ def whisper_available() -> bool:
   …test_the_engine_asks_for_words_with_no_vad_and_gives_the_language_and_the_prompt`); put
   English's M1 route back (`uv run pytest tests/test_catalog.py -q`: `FAILED
   …[english-on-a-mac-with-the-spark-down]`). `make check`. Expected:
-  `874 passed, 6 skipped, 5 deselected` twice, `All checks passed!` and
-  `no leaks found`. The live test isn't run here: `VID2SUB_LIVE_WHISPER=1 make live` on a
+  `1116 passed, 3 skipped, 39 deselected` twice, `Test Files  20 passed (20)`,
+  `Tests  96 passed (96)`, `All checks passed!` and `no leaks found`.
+  The live test isn't run here: `VID2SUB_LIVE_WHISPER=1 make live` on a
   machine with the extra, which Task 12's manual run covers.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -5243,7 +7582,8 @@ when faster-whisper is installed, else "install vid2sub[whisper]". The
 `whisper` extra is faster-whisper>=1.2.1; `nvidia` adds the CUDA 12
 cuBLAS and cuDNN 9 runtime wheels on Windows and Linux (uv lock:
 faster-whisper 1.2.1, ctranslate2 4.8.3, nvidia-cublas-cu12 12.9.2.10,
-nvidia-cudnn-cu12 9.27.0.42, each with Windows and Linux wheels). The
+nvidia-cudnn-cu12 9.27.0.42 and its nvidia-cuda-nvrtc-cu12 12.9.86, each
+with Windows and Linux wheels; huggingface-hub resolves to 2.2.0). The
 catalog's Whisper entries and the README's table say so; the starter
 vid2sub.toml shows the entry; tests/README names VID2SUB_LIVE_WHISPER=1.
 
@@ -5423,8 +7763,8 @@ def _whisper(environ: Mapping[str, str], *, platform: str = sys.platform) -> lis
   replace `missing = fw.missing_cuda_libraries(environ, windows=platform == "win32")` with
   `missing = []`; `FAILED
   …test_a_windows_gpu_without_cublas_on_path_is_a_warning_that_says_how_to_fix_it`; restore it.
-  `make check`. Expected: `878 passed, 6 skipped, 5 deselected` twice, `All checks passed!` and
-  `no leaks found`.
+  `make check`. Expected: `1120 passed, 3 skipped, 39 deselected` twice, `Test Files  20 passed
+  (20)`, `Tests  96 passed (96)`, `All checks passed!` and `no leaks found`.
 - [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -5457,23 +7797,695 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/commands/doctor.py tests/test_doctor_config.py`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+#### Round 9d: Review Focus 5, a first run with no network or a GPU without cuDNN 9
+
+- [ ] **Step 16: Write the failing tests.** In `tests/test_faster_whisper_engine.py`, replace
+  `import dataclasses` (its first import) with the two lines `import ctypes.util` and
+  `import dataclasses`; in the `no_gpu` fixture, below its
+  `monkeypatch.setattr(fw, "hf_revision", lambda model: "0123456789abcdef")` line, add:
+
+```python
+    monkeypatch.setattr(fw, "model_path", lambda model: None)  # not downloaded yet
+```
+
+  replace
+
+```python
+def test_cuda_libraries_are_looked_for_on_path_and_only_on_windows(tmp_path):
+    first, second = tmp_path / "a", tmp_path / "b"
+    first.mkdir()
+    second.mkdir()
+    environ = {"PATH": os.pathsep.join([str(first), "", str(second)])}
+    assert fw.missing_cuda_libraries(environ, windows=True) == ["cublas64_12.dll",
+                                                                "cudnn64_9.dll"]
+    (second / "cublas64_12.dll").write_bytes(b"")
+    (first / "cudnn64_9.dll").write_bytes(b"")
+    assert fw.missing_cuda_libraries(environ, windows=True) == []
+    assert fw.missing_cuda_libraries({"PATH": ""}, windows=False) == []
+```
+
+  with
+
+```python
+def test_cuda_libraries_on_windows_are_looked_for_on_path_and_in_cuda_path(tmp_path):
+    first, second, toolkit = tmp_path / "a", tmp_path / "b", tmp_path / "CUDA" / "v12.9"
+    for folder in (first, second, toolkit / "bin"):
+        folder.mkdir(parents=True)
+    environ = {"PATH": os.pathsep.join([str(first), "", str(second)])}
+    assert fw.missing_cuda_libraries(environ, platform="win32") == ["cublas64_12.dll",
+                                                                    "cudnn64_9.dll"]
+    (toolkit / "bin" / "cublas64_12.dll").write_bytes(b"")  # where CTranslate2 looks too
+    (first / "cudnn64_9.dll").write_bytes(b"")
+    assert fw.missing_cuda_libraries(environ, platform="win32") == ["cublas64_12.dll"]
+    assert fw.missing_cuda_libraries({**environ, "CUDA_PATH": str(toolkit)},
+                                     platform="win32") == []
+    assert fw.missing_cuda_libraries({"PATH": ""}, platform="darwin") == []
+```
+
+  and append, after two blank lines:
+
+```python
+# Review Focus 5: a first run with no network, or an NVIDIA GPU without cuDNN 9 (spec §17.4)
+
+
+def no_network(*args, **kwargs):
+    """What WhisperModel raises on a first run with no network: huggingface_hub 2.2's
+    LocalEntryNotFoundError, a FileNotFoundError, whose message can name the cache's folder."""
+    raise FileNotFoundError("An error happened while trying to locate the files on the Hub and we "
+                            "cannot find the appropriate snapshot folder on the local disk "
+                            "(/home/someone/.cache/huggingface)")
+
+
+def test_a_first_run_with_no_network_fails_at_once_naming_the_download_and_doctor():
+    tries = []
+
+    def offline(*args, **kwargs):
+        tries.append(args)
+        no_network()
+
+    e = fw.FasterWhisperEngine("w", TURBO, model_factory=offline)
+    with pytest.raises(EngineError) as err:
+        e.transcribe(chunk(), language="en", prompt="")
+    # "unavailable" fails the episode: a "connection" error would wait up to ten minutes.
+    assert err.value.kind == "unavailable" and len(tries) == 1
+    assert str(err.value) == ("faster-whisper couldn't download its model, which its first run "
+                              "needs")
+    assert "1.6 GB" in err.value.hint and "vid2sub doctor" in err.value.hint
+    assert "someone" not in str(err.value) + err.value.hint
+
+
+def test_a_downloaded_model_loads_from_its_folder_without_asking_the_network(monkeypatch):
+    monkeypatch.setattr(fw, "model_path", lambda model: "/hf/snapshots/0123456789abcdef")
+    engine().transcribe(chunk(), language="en", prompt="")
+    assert FakeModel.made[0][0] == ("/hf/snapshots/0123456789abcdef",)
+
+
+def test_a_downloaded_model_that_cannot_load_says_so_and_never_blames_the_network(monkeypatch):
+    monkeypatch.setattr(fw, "model_path", lambda model: "/hf/snapshots/0123456789abcdef")
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("Unable to open file 'model.bin' in model '/hf/snapshots/0123'")
+
+    with pytest.raises(EngineError) as err:
+        fw.FasterWhisperEngine("w", TURBO, model_factory=broken).transcribe(
+            chunk(), language="en", prompt="")
+    assert str(err.value) == "faster-whisper couldn't load its model (RuntimeError)"
+    assert "vid2sub doctor" in err.value.hint and "/hf" not in err.value.hint
+
+
+def test_cuda_libraries_on_linux_are_those_the_loader_can_open(monkeypatch):
+    asked = []
+
+    def can_load(library):
+        asked.append(library)
+        return library == "libcublas.so.12"
+
+    monkeypatch.setattr(fw, "can_load", can_load)
+    assert fw.missing_cuda_libraries({}, platform="linux") == ["libcudnn_ops.so.9",
+                                                               "libcudnn_cnn.so.9"]
+    assert asked == list(fw.LINUX_LIBRARIES)
+    monkeypatch.setattr(fw, "can_load", lambda library: True)
+    assert fw.missing_cuda_libraries({}, platform="linux") == []
+
+
+def test_the_loader_check_opens_a_real_library_and_refuses_a_missing_one():
+    assert not fw.can_load("libvid2sub-no-such-library.so.1")
+    found = ctypes.util.find_library("c") or ctypes.util.find_library("msvcrt")
+    if found is None:
+        pytest.skip("no C library the loader can name here")
+    assert fw.can_load(found)
+
+
+def test_an_nvidia_gpu_without_cudnn_9_runs_on_the_cpu_and_says_why(monkeypatch, caplog):
+    monkeypatch.setattr(fw, "cuda_devices", lambda: 1)
+    monkeypatch.setattr(fw, "missing_cuda_libraries", lambda: ["libcudnn_ops.so.9"])
+    with caplog.at_level("WARNING", logger="vid2sub.engines.faster_whisper"):
+        e = engine()
+        e.transcribe(chunk(), language="en", prompt="")
+    assert FakeModel.made[0][1] == {"device": "cpu", "compute_type": "int8"} and e.device == "cpu"
+    assert "libcudnn_ops.so.9" in caplog.text and "vid2sub doctor" in caplog.text
+
+
+def test_without_an_nvidia_gpu_its_libraries_are_never_looked_for(monkeypatch):
+    def looked():
+        raise AssertionError("looked for CUDA's libraries with no GPU")
+
+    monkeypatch.setattr(fw, "missing_cuda_libraries", looked)
+    engine().transcribe(chunk(), language="en", prompt="")
+
+
+@pytest.mark.parametrize("message, library", [
+    ("Unable to load any of {libcudnn_ops.so.9.1.0, libcudnn_ops.so.9} (/home/someone)",
+     "cuDNN 9"),
+    ("Library cublas64_12.dll is not found or cannot be loaded (C:\\Users\\someone)",
+     "cuBLAS 12")])
+def test_a_gpu_library_that_fails_names_the_library_and_doctor_never_the_message(message,
+                                                                               library):
+    class Failing(FakeModel):
+        def transcribe(self, audio, **kwargs):
+            raise RuntimeError(message)
+
+    with pytest.raises(EngineError) as err:
+        fw.FasterWhisperEngine("w", TURBO, model_factory=Failing).transcribe(
+            chunk(), language="en", prompt="")
+    assert err.value.kind == "unavailable"
+    assert str(err.value) == f"faster-whisper couldn't load the GPU's {library} library"
+    assert "vid2sub doctor" in err.value.hint and "someone" not in err.value.hint
+
+
+@pytest.mark.media
+def test_a_first_run_with_no_network_fails_the_episode_and_nothing_falls_back(tmp_path,
+                                                                              monkeypatch):
+    # Spec §17.4: the episode fails at once, saying why and naming doctor; no other model is
+    # tried, the cloud included, though this run allows it, and nothing waits.
+    from fakes import FakeEngine
+    from helpers import SPEECH, make_clip
+
+    from vid2sub import detect, pipeline
+    from vid2sub.media.tools import Tools
+
+    clip = make_clip(tmp_path, "Show - S01E01.mkv", seconds=14, speech=SPEECH)
+    cfg = Config(endpoints={"openai": Endpoint(base_url="https://api.openai.com/v1",
+                                               key_env="OPENAI_TEST_KEY")},
+                 models={"local-turbo": TURBO,
+                         "cloud": ModelEntry(catalog="openai-whisper-1", endpoint="openai",
+                                             model="whisper-1", parser="openai")})
+    monkeypatch.setattr(detect, "whisper_available", lambda: True)
+    sleeps, cloud = [], FakeEngine(name="openai", language="en")
+    ctx = pipeline.RunContext(config=cfg, tools=Tools.find(),
+                              keys=KeyRing(environ={"OPENAI_TEST_KEY": "k" * 40}),
+                              options=pipeline.RunOptions(source_lang="en", targets=[],
+                                                          allow_cloud=True),
+                              sleep=sleeps.append)
+    ctx.engines.update({"local-turbo": fw.FasterWhisperEngine("local-turbo", TURBO,
+                                                              model_factory=no_network),
+                        "cloud": cloud})
+    result = pipeline.run_one(str(clip), ctx)
+    assert (result.status, result.kind) == ("failed", "unavailable")
+    assert "download" in result.reason and "vid2sub doctor" in result.hint
+    assert cloud.calls == [] and sleeps == []
+    assert not clip.with_name("Show - S01E01.en.srt").exists()
+```
+
+  In `tests/test_doctor_config.py`, replace
+
+```python
+    cublas = checks["cuBLAS 12"]
+    assert (cublas.ok, cublas.essential) == (False, False)
+    assert "cublas64_12.dll" in cublas.detail and "CPU" in cublas.detail
+    assert "PATH" in cublas.hint and "vid2sub[nvidia]" in cublas.hint
+    for dll in ("cublas64_12.dll", "cudnn64_9.dll"):
+        (tmp_path / dll).write_bytes(b"")
+    assert by_name(doctor._whisper({"PATH": str(tmp_path)}, platform="win32"))["cuBLAS 12"].ok
+```
+
+  with
+
+```python
+    cuda = checks["CUDA libraries"]
+    assert (cuda.ok, cuda.essential) == (False, False)
+    assert "cublas64_12.dll" in cuda.detail and "CPU" in cuda.detail
+    assert "PATH" in cuda.hint and "vid2sub[nvidia]" in cuda.hint
+    for dll in ("cublas64_12.dll", "cudnn64_9.dll"):
+        (tmp_path / dll).write_bytes(b"")
+    found = by_name(doctor._whisper({"PATH": str(tmp_path)}, platform="win32"))["CUDA libraries"]
+    assert found.ok and "cuBLAS 12 and cuDNN 9 found" in found.detail
+```
+
+  and replace
+
+```python
+def test_on_linux_the_gpu_is_reported_without_a_path_check(whisper):
+    whisper(gpus=2)
+    checks = by_name(doctor._whisper({"PATH": ""}, platform="linux"))
+    assert checks["cuBLAS 12"].ok and "2 NVIDIA GPU" in checks["cuBLAS 12"].detail
+```
+
+  with
+
+```python
+def test_on_linux_the_libraries_are_those_the_loader_can_open(whisper, monkeypatch):
+    # Review Focus 5: a GPU without cuDNN 9 is a warning that says how to fix it.
+    from vid2sub.engines import faster_whisper as fw
+
+    whisper(gpus=2)
+    monkeypatch.setattr(fw, "can_load", lambda library: True)
+    cuda = by_name(doctor._whisper({"PATH": ""}, platform="linux"))["CUDA libraries"]
+    assert cuda.ok and "2 NVIDIA GPU" in cuda.detail and "LD_LIBRARY_PATH" in cuda.note
+    monkeypatch.setattr(fw, "can_load", lambda library: library == "libcublas.so.12")
+    cuda = by_name(doctor._whisper({"PATH": ""}, platform="linux"))["CUDA libraries"]
+    assert (cuda.ok, cuda.essential) == (False, False)
+    assert "libcudnn_ops.so.9" in cuda.detail and "CPU" in cuda.detail
+    assert "LD_LIBRARY_PATH" in cuda.hint and "vid2sub[nvidia]" in cuda.hint
+```
+
+- [ ] **Step 17: Run them; watch them fail.** `uv run pytest tests/test_faster_whisper_engine.py
+  -q`. Expected: `E       AttributeError: <module 'vid2sub.engines.faster_whisper' from
+  '…/src/vid2sub/engines/faster_whisper.py'> has no attribute 'model_path'` (in the fixture,
+  so every test) and `1 deselected, 28 errors`. `uv run pytest tests/test_doctor_config.py -q`.
+  Expected: `E       KeyError: 'CUDA libraries'` and `2 failed, 9 passed`.
+- [ ] **Step 18: Write the code.** Replace `src/vid2sub/engines/faster_whisper.py` with:
+
+```python
+"""Whisper in-process through faster-whisper, for Windows and Linux (spec §9.5, S45).
+
+CTranslate2 conversions of Whisper large-v3 and large-v3-turbo: faster-whisper's `large-v3` and
+`large-v3-turbo` from the catalog entry, or the converted model's Hugging Face id in the entry's
+`model`. Words come from `word_timestamps=True`; `vad_filter=False`, since vid2sub's own VAD has
+already chosen the speech (§8.6). On an NVIDIA GPU the model runs in float16, and otherwise on the
+CPU in int8 (§9.5). CUDA needs the cuBLAS 12 and cuDNN 9 libraries, as faster-whisper's README
+says: on Windows in a folder on PATH (or CUDA_PATH's `bin`, where CTranslate2 also looks for
+cuBLAS), on Linux where the loader finds them (LD_LIBRARY_PATH). They are looked for before the
+GPU is chosen, so a GPU without them runs on the CPU, with a warning that names what is missing
+and `vid2sub doctor`, rather than failing mid-episode in the library (Review Focus 5). The import
+is lazy and the model is loaded once, on first use, and released by `close` (§9.1; mlx imports
+cost seconds, an audio-router lesson). A model already in the local Hugging Face cache is loaded
+from its folder, never asking the network; the first run downloads it (1.6 GB for turbo, 3.1 GB
+for large-v3), and with no network that fails at once, through huggingface_hub's own timeouts,
+as an `unavailable` error that fails the episode: never a `connection` error, which would wait
+for ten minutes, and never another model or the cloud (§17.4). The revision in the version stamp
+is the model's Hugging Face snapshot, read from the local cache only (§9.6). A failure is named by
+its cause (the download, a GPU library, the model) and never by the library's message, which can
+hold a path (§6.8).
+"""
+
+from __future__ import annotations
+
+import ctypes
+import logging
+import os
+import sys
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
+from typing import Any
+
+from vid2sub.catalog import CATALOG
+from vid2sub.config import ModelEntry
+from vid2sub.engines.base import Chunk, ChunkResult, EngineError, ModelStamp
+from vid2sub.parse.fasterwhisper import parse_faster_whisper
+
+log = logging.getLogger("vid2sub.engines.faster_whisper")
+
+WINDOWS_LIBRARIES = ("cublas64_12.dll", "cudnn64_9.dll")  # what CTranslate2 loads on Windows
+# On Linux: cuBLAS 12, and the cuDNN 9 parts Whisper's convolutions need, which cuDNN's own
+# libcudnn.so.9 loads only when they are first used.
+LINUX_LIBRARIES = ("libcublas.so.12", "libcudnn_ops.so.9", "libcudnn_cnn.so.9")
+DEFAULT_CATALOG = "whisper-large-v3-turbo"
+INSTALL = "install vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA GPU)"
+DOCTOR = "`vid2sub doctor` checks the model's files and the GPU's libraries"
+FIRST_RUN = ("its first run downloads the model from Hugging Face (1.6 GB for large-v3-turbo, "
+             "3.1 GB for large-v3): check the network and the free disk space, then run again; "
+             + DOCTOR)
+GPU_FIX = ("`vid2sub doctor` says how to put the CUDA 12 cuBLAS and cuDNN 9 libraries where "
+           "faster-whisper finds them")
+_GPU_LIBRARIES = (("cudnn", "cuDNN 9"), ("cublas", "cuBLAS 12"))
+
+
+def can_load(library: str) -> bool:
+    """Whether the dynamic loader finds and opens `library` by its name, as CTranslate2's own
+    dlopen does (LD_LIBRARY_PATH, then the loader's cache)."""
+    try:
+        ctypes.CDLL(library)
+    except OSError:
+        return False
+    return True
+
+
+def missing_cuda_libraries(environ: Mapping[str, str] = os.environ, *,
+                           platform: str = sys.platform) -> list[str]:
+    """The CUDA libraries CTranslate2 needs that it wouldn't find: on Windows, those no folder
+    on PATH or CUDA_PATH's `bin` holds (`environ`'s); on Linux, those the loader can't open in
+    this process; elsewhere none (no CUDA)."""
+    if platform == "win32":
+        folders = [f for f in environ.get("PATH", "").split(os.pathsep) if f]
+        if environ.get("CUDA_PATH"):
+            folders.append(os.path.join(environ["CUDA_PATH"], "bin"))
+        return [lib for lib in WINDOWS_LIBRARIES
+                if not any(os.path.isfile(os.path.join(f, lib)) for f in folders)]
+    if platform.startswith("linux"):
+        return [lib for lib in LINUX_LIBRARIES if not can_load(lib)]
+    return []
+
+
+def cuda_devices() -> int:
+    """How many NVIDIA GPUs CTranslate2 sees (0 without the extra or a GPU)."""
+    try:
+        import ctranslate2
+    except ImportError:
+        return 0
+    try:
+        return int(ctranslate2.get_cuda_device_count())
+    except Exception:  # noqa: BLE001 - no driver is no GPU
+        return 0
+
+
+def device_for(devices: int, missing: Sequence[str]) -> tuple[str, str]:
+    """The device and compute type: an NVIDIA GPU in float16 when CTranslate2 sees one and its
+    libraries are there, else the CPU in int8 (spec §9.5)."""
+    return ("cuda", "float16") if devices > 0 and not missing else ("cpu", "int8")
+
+
+def model_path(model: str) -> str | None:
+    """The model's folder in the local Hugging Face cache, if it has been downloaded; never asks
+    the network. faster-whisper's own download_model maps a size to its repo."""
+    try:
+        from faster_whisper.utils import download_model
+
+        return str(download_model(model, local_files_only=True))
+    except Exception:  # noqa: BLE001 - not installed, not downloaded, or not a model's name
+        return None
+
+
+def hf_revision(model: str) -> str:
+    """The cached snapshot's hash, so a model update changes the version (§9.6), as the Qwen
+    engine's hf_revision does."""
+    path = model_path(model)
+    name = Path(path).name if path else ""
+    return name[:12] if name else "unknown"
+
+
+def _plain(segments: Any, info: Any) -> dict[str, Any]:
+    """faster-whisper's Segment, Word and TranscriptionInfo as the parser's plain data. Reading
+    `segments` runs the model: it is a generator."""
+    return {
+        "language": getattr(info, "language", None),
+        "language_probability": getattr(info, "language_probability", None),
+        "all_language_probs": getattr(info, "all_language_probs", None),
+        "segments": [{"start": s.start, "end": s.end, "text": s.text,
+                      "avg_logprob": s.avg_logprob, "compression_ratio": s.compression_ratio,
+                      "no_speech_prob": s.no_speech_prob,
+                      "words": [{"start": w.start, "end": w.end, "word": w.word,
+                                 "probability": w.probability} for w in s.words or []]}
+                     for s in segments],
+    }
+
+
+def _failure(err: Exception, doing: str, *, first_run: bool = False) -> EngineError:
+    """The engine's error for `err`, named by its cause: a GPU library, the first download, or
+    what failed and the exception's type. The library's message is read, never shown."""
+    text = str(err).lower()
+    library = next((name for key, name in _GPU_LIBRARIES if key in text), None)
+    if library is not None:
+        return EngineError("unavailable", f"faster-whisper couldn't load the GPU's {library} "
+                           "library", hint=GPU_FIX)
+    if first_run:
+        return EngineError("unavailable", "faster-whisper couldn't download its model, which "
+                           "its first run needs", hint=FIRST_RUN)
+    return EngineError("unavailable", f"faster-whisper {doing} ({type(err).__name__})",
+                       hint=DOCTOR)
+
+
+class FasterWhisperEngine:
+    """One caller at a time: the model isn't documented as thread-safe."""
+
+    name = "faster-whisper"
+    supports_prompt = True
+
+    def __init__(self, name: str, entry: ModelEntry, *,
+                 model_factory: Callable[..., Any] | None = None):
+        catalog = CATALOG.get(entry.catalog or DEFAULT_CATALOG)
+        self.model_name = name
+        self.model_id = (entry.model or (catalog.default_model if catalog else None)
+                         or "large-v3-turbo")
+        self.max_chunk_s = catalog.max_chunk_s if catalog else 300.0
+        self.device: str | None = None  # "cuda" or "cpu", once the model is loaded
+        self._factory = model_factory
+        self._model: Any = None
+
+    def _load(self) -> Any:
+        if self._model is None:
+            factory = self._factory
+            if factory is None:
+                try:
+                    from faster_whisper import WhisperModel
+                except ImportError:
+                    raise EngineError("unavailable", "faster-whisper isn't installed",
+                                      hint=INSTALL) from None
+                factory = WhisperModel
+            devices = cuda_devices()
+            missing = missing_cuda_libraries() if devices else []
+            if missing:
+                log.warning("faster-whisper runs on the CPU: %s not found; `vid2sub doctor` "
+                            "says how to fix it", ", ".join(missing))
+            device, compute = device_for(devices, missing)
+            downloaded = model_path(self.model_id)
+            try:
+                self._model = factory(downloaded or self.model_id, device=device,
+                                      compute_type=compute)
+            except Exception as err:  # noqa: BLE001 - any load failure: the model can't run
+                raise _failure(err, "couldn't load its model",
+                               first_run=downloaded is None) from None
+            self.device = device
+        return self._model
+
+    def transcribe(self, chunk: Chunk, *, language: str | None, prompt: str) -> ChunkResult:
+        model = self._load()
+        try:
+            segments, info = model.transcribe(chunk.float32, language=language,
+                                              initial_prompt=prompt or None,
+                                              word_timestamps=True, vad_filter=False)
+            data = _plain(segments, info)
+        except Exception as err:  # noqa: BLE001 - CTranslate2 raises RuntimeError and others
+            raise _failure(err, "failed on this chunk") from None
+        return ChunkResult(parse_faster_whisper(data))
+
+    def detect_language(self, chunk: Chunk) -> dict[str, float]:
+        model = self._load()
+        try:
+            language, probability, every = model.detect_language(chunk.float32)
+        except Exception as err:  # noqa: BLE001 - as transcribe
+            raise _failure(err, "couldn't detect the language") from None
+        return {str(code): float(p) for code, p in (every or [(language, probability)])}
+
+    def stamp(self) -> ModelStamp:
+        return ModelStamp(self.name, self.model_id, hf_revision(self.model_id))
+
+    def close(self) -> None:
+        self._model = None
+```
+
+  In `src/vid2sub/commands/doctor.py`, in the module docstring replace
+
+```python
+Windows and Linux, faster-whisper and the NVIDIA GPU's libraries are warnings: CUDA on Windows
+needs the cuBLAS 12 DLLs on PATH, and without them faster-whisper runs on the CPU (spec §9.5).
+```
+
+  with
+
+```python
+Windows and Linux, faster-whisper and the NVIDIA GPU's libraries are warnings: CUDA needs the
+cuBLAS 12 and cuDNN 9 libraries, on Windows on PATH and on Linux where the loader finds them
+(LD_LIBRARY_PATH), and without them faster-whisper runs on the CPU (spec §9.5; Review Focus 5).
+```
+
+  below `CUDA_FIX`'s last line,
+
+```python
+            "or install NVIDIA's CUDA 12 toolkit and cuDNN 9; then start vid2sub again")
+```
+
+  add
+
+```python
+LINUX_CUDA_FIX = ("install vid2sub[nvidia] and set LD_LIBRARY_PATH to the lib folders of its "
+                  "nvidia-cublas-cu12 and nvidia-cudnn-cu12 packages before vid2sub starts (as "
+                  "faster-whisper's README shows), or install NVIDIA's CUDA 12 toolkit and cuDNN 9")
+```
+
+  and in `_whisper` replace
+
+```python
+    missing = fw.missing_cuda_libraries(environ, windows=platform == "win32")
+    if missing:
+        out.append(Check("cuBLAS 12", False, f"{', '.join(missing)} not on PATH: faster-whisper "
+                         "runs on the CPU", CUDA_FIX, essential=False))
+    else:
+        out.append(Check(
+            "cuBLAS 12", True, f"{gpus} NVIDIA GPU(s) seen", essential=False,
+            note="" if platform == "win32" else "CTranslate2 loads cuBLAS 12 and cuDNN 9 from "
+                 "LD_LIBRARY_PATH, which must be set before vid2sub starts"))
+    return out
+```
+
+  with
+
+```python
+    windows = platform == "win32"
+    missing = fw.missing_cuda_libraries(environ, platform=platform)
+    if missing:
+        where = "on PATH" if windows else "where the loader looks"
+        out.append(Check("CUDA libraries", False, f"{', '.join(missing)} not {where}: "
+                         "faster-whisper runs on the CPU", CUDA_FIX if windows else LINUX_CUDA_FIX,
+                         essential=False))
+    else:
+        out.append(Check(
+            "CUDA libraries", True, f"cuBLAS 12 and cuDNN 9 found; {gpus} NVIDIA GPU(s) seen",
+            essential=False,
+            note="" if windows else "CTranslate2 loads cuBLAS 12 and cuDNN 9 from "
+                 "LD_LIBRARY_PATH, which must be set before vid2sub starts"))
+    return out
+```
+
+- [ ] **Step 19: Run the checks; they pass.** `uv run pytest tests/test_faster_whisper_engine.py
+  tests/test_doctor_config.py -q` first (`38 passed, 1 skipped, 1 deselected`), then once with
+  the extra and no network: `uv sync --group dev --extra whisper`, then `HF_HOME=<an empty
+  folder> HF_HUB_OFFLINE=1 uv run --no-sync python -c "…"` making a `FasterWhisperEngine` for
+  `whisper-large-v3-turbo` with the real `WhisperModel` and transcribing one second of silence
+  (expected, in well under a second: `EngineError unavailable faster-whisper couldn't download
+  its model, which its first run needs`, and `model_path` gives `None`); `uv run --no-sync pytest
+  tests/test_faster_whisper_engine.py tests/test_doctor_config.py -q` (`39 passed, 1
+  deselected`); then `uv sync --group dev` to go back. Then the guard checks, each reverted and
+  restored, each with `uv run pytest tests/test_faster_whisper_engine.py -q`: in `_load`,
+  replace `first_run=downloaded is None) from None` with `first_run=False) from None` (`2
+  failed`: the two no-network tests); in `_failure`, make the download's error
+  `EngineError("connection", …)` (`3 failed`: the episode test waits and pauses); in
+  `missing_cuda_libraries`, return `[]` for Linux (`FAILED
+  …test_cuda_libraries_on_linux_are_those_the_loader_can_open`); in `_load`, pass
+  `self.model_id` instead of `downloaded or self.model_id` (`FAILED
+  …test_a_downloaded_model_loads_from_its_folder_without_asking_the_network`). `make check`.
+  Expected: `1130 passed, 3 skipped, 39 deselected` twice, `Test Files  20 passed (20)`,
+  `Tests  96 passed (96)`, `All checks passed!` and `no leaks found`.
+- [ ] **Step 20: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(engines): 🤖 faster-whisper's first run with no network, or a GPU without cuDNN 9, fails at once naming the cause and doctor
+
+Review Focus 5 (spec §9.5, §17.4). A model already in the local Hugging
+Face cache (faster_whisper.model_path: download_model with
+local_files_only=True) is loaded from its folder, so a later run never asks
+the network. A first run that can't download it fails at once as
+"faster-whisper couldn't download its model, which its first run needs",
+with a hint naming the size (1.6 GB for large-v3-turbo, 3.1 GB for
+large-v3), the network, the free disk space and `vid2sub doctor`. It is an
+`unavailable` error, so the pipeline fails the episode: a `connection`
+error would wait up to wait_on_connection_s (ten minutes) and then pause
+the queue, which is the hang this item names, and nothing falls back to
+another model or the cloud, even where the run allows the cloud. With no
+network, huggingface_hub 2.2 gives up through its own timeouts (10 s for
+the metadata request, HF_HUB_ETAG_TIMEOUT); run here with HF_HUB_OFFLINE=1
+and the real faster-whisper 1.2.1, the engine failed in well under a
+second with that message.
+
+The GPU's libraries are looked for before the GPU is chosen, on Linux too:
+the loader must open libcublas.so.12, libcudnn_ops.so.9 and
+libcudnn_cnn.so.9 (faster_whisper.can_load, ctypes, as CTranslate2's
+dlopen finds them through LD_LIBRARY_PATH); on Windows, cublas64_12.dll
+and cudnn64_9.dll on PATH or in CUDA_PATH's bin, where CTranslate2 also
+looks for cuBLAS. Without them the model runs on the CPU in int8, with a
+warning naming what is missing and `vid2sub doctor`, rather than failing
+in the library mid-episode; with no GPU, they aren't looked for. A GPU
+library that fails anyway is named ("faster-whisper couldn't load the
+GPU's cuDNN 9 library", or cuBLAS 12), its hint pointing at doctor; the
+library's message, which can hold a path, is never shown. missing_cuda_
+libraries takes `platform` (sys.platform) in place of `windows`. doctor's
+GPU check is now "CUDA libraries", on Linux as on Windows, with the
+LD_LIBRARY_PATH fix there.
+
+The new tests failed first with: AttributeError: <module
+'vid2sub.engines.faster_whisper' …> has no attribute 'model_path' (1
+deselected, 28 errors), and KeyError: 'CUDA libraries' (2 failed, 9
+passed). Guard checks, each reverted and restored: with first_run=False,
+the no-network tests fail; with the download failure a "connection"
+error, the episode test fails (it waits and pauses); with Linux's loader
+check taken out, its test fails; loading by name instead of the cached
+folder fails the cached-model test.
+
+Docs read: faster-whisper 1.2.1's utils.py (download_model calls
+huggingface_hub.snapshot_download with local_files_only and catches
+nothing) and transcribe.py (WhisperModel loads a directory as it is,
+else download_model); its README's GPU section ("cuBLAS for CUDA 12",
+"cuDNN 9 for CUDA 12"; on Linux the pip wheels need LD_LIBRARY_PATH
+set before Python starts; on Windows the libraries go in a folder on
+PATH; the latest ctranslate2 supports only CUDA 12 and cuDNN 9);
+CTranslate2's src/cuda/cublas_stub.cc (dlopen("libcublas.so.12"), or
+LoadLibraryA("cublas64_12.dll") after CUDA_PATH's bin, throwing "Library
+… is not found or cannot be loaded") and CMakeLists.txt ("libcudnn.so is
+a shim layer that dynamically loads the correct library at runtime");
+CTranslate2's installation page, which still says cuDNN 8 for CUDA 12,
+behind faster-whisper's README; huggingface_hub 2.2.0's constants
+(HF_HUB_ETAG_TIMEOUT 10, HF_HUB_DOWNLOAD_TIMEOUT 10) and its offline
+error (LocalEntryNotFoundError, a FileNotFoundError); the sizes of
+model.bin in Systran/faster-whisper-large-v3 (3,087,284,237 bytes) and
+mobiuslabsgmbh/faster-whisper-large-v3-turbo (1,617,884,929 bytes) from
+the Hugging Face API. Not checked here: no NVIDIA GPU, so the library
+names are from the sources above, not a real load.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 9
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/engines/faster_whisper.py src/vid2sub/commands/doctor.py
+  tests/test_faster_whisper_engine.py tests/test_doctor_config.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 9e: English's route and the Spark's Qwen3-ASR
+
+- [ ] **Step 21: Write the test** (it pins what Step 8 built, so it passes at once). Append to
+  `tests/test_catalog.py`, after two blank lines:
+
+```python
+@pytest.mark.parametrize("lang", ["en", "yue", "zh"])
+def test_the_sparks_qwen3_asr_comes_before_the_macs_wherever_qwen_is_on_the_route(lang):
+    # Phase 2 Task 20 put Qwen3-ASR on the Spark (parser = "qwen3-asr"): §11.2 names it "Spark,
+    # then Mac" for Cantonese, and English's "(Mac)" predates it, so the Spark's comes first.
+    found = machine(mac=True, spark=False) + [cand("spark-qwen", "qwen3-asr-1.7b")]
+    assert suggest(lang, found, "transcribe", allow_cloud=False).model == "spark-qwen"
+```
+
+- [ ] **Step 22: Run it, and check that it pins the reading.** `uv run pytest
+  tests/test_catalog.py -q` (`29 passed`). **Guard check**, reverted and restored: in
+  `catalog.TRANSCRIBE_ROUTES["en"]`, replace the plain `"qwen3-asr-1.7b",` step with
+  `("qwen3-asr-1.7b", "in-process"),` (`FAILED
+  …test_the_sparks_qwen3_asr_comes_before_the_macs_wherever_qwen_is_on_the_route[en]`).
+  `uv run ruff check src tests`: `All checks passed!`.
+- [ ] **Step 23: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+test(catalog): 🤖 the Spark's Qwen3-ASR comes before the Mac's for English, Cantonese and Mandarin
+
+Phase 2 Task 20 put Qwen3-ASR on the Spark (parser = "qwen3-asr"). Spec
+§11.2 names Cantonese's Qwen3-ASR "Spark, then Mac"; English's
+"qwen3-asr-1.7b (Mac)" was written before the Spark served it. English's
+route keeps qwen3-asr-1.7b as a plain step (anywhere, endpoints first),
+so the Spark's Qwen comes before the Mac's there too, as it does for
+Cantonese and Mandarin; this test pins that reading. With English's
+step narrowed to ("qwen3-asr-1.7b", "in-process"), its English case fails
+(FAILED …[en]: 'mac-qwen' == 'spark-qwen').
+
+Docs read: spec §11.2's routing table; the Phase 2 plan's Task 20
+(the Spark's Qwen3-ASR endpoint and its example entry).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 9
+Co-Authored-By: <the model's own line>
+```
+
+  `git add tests/test_catalog.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 24: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that the fakes match the real library
-  (the field check, run with the extra); that a GPU without its libraries means the CPU, never
-  a crash or a silent wrong device; that no failure message carries a path (§6.8); that the
-  parser stays pure. The forward review over Tasks 8, 10, 11 and 12: Task 8's Models page shows
-  the faster-whisper candidates and their install reason; Task 10's CI job installs the
-  `whisper` extra on Windows and Linux, runs the suite (the field check then runs) and keeps the
-  real model out; Task 11's README gains the per-OS install and the Windows NVIDIA notes
-  (cuBLAS 12 and cuDNN 9 on PATH, §23.5); Task 12's manual run uses `VID2SUB_LIVE_WHISPER=1` or a
-  real season. The docs this task made untrue: the spec's §4.2 says `[nvidia]` adds "the CUDA 12
-  cuBLAS runtime wheels" and §9.5 names only cuBLAS 12; the extra and doctor also need cuDNN 9,
-  as faster-whisper's README says. That changes the spec, so it waits on Dan (the plan's
-  Decisions list it); once approved, §4.2 and §9.5 name cuDNN 9 in this close, and if not, it is
-  the fifth stop (`AGENTS.md`, *Stops*). Then the close, its own commit,
-  holding this plan with this task's boxes ticked and **Now** set to `Task 10: CI on Windows and
-  Linux for faster-whisper, open.`, and the spec's S45 row with "Phase and task" set to
-  `Phase 3, Tasks 9–10, 12`; S45 stays `planned` (its proof is CI and one manual run). The
+  (the field check, run with the extra); that a GPU without its libraries means
+  the CPU, never a crash or a silent wrong device (the warning names what is missing); that a
+  first run with no network fails the episode at once, naming the download and doctor, and that
+  nothing falls back to another model or the cloud (Review Focus 5, §17.4); that no failure
+  message carries a path (§6.8); that the parser stays pure. The forward review over Tasks 8,
+  10, 11 and 12: Task 8's Models page shows the faster-whisper candidates and their install
+  reason; Task 10's CI job installs the `whisper` extra on Windows and Linux, runs the suite
+  (the field check then runs) and keeps the real model out; Task 11's README gains the per-OS
+  install and the NVIDIA notes (cuBLAS 12 and cuDNN 9: on PATH on Windows, LD_LIBRARY_PATH on
+  Linux; §23.5); Task 12's manual run uses `VID2SUB_LIVE_WHISPER=1` or a real season, and reads
+  doctor's `CUDA libraries` check. The docs this task made untrue: the spec's §4.2 says
+  `[nvidia]` adds "the CUDA 12 cuBLAS runtime wheels" and §9.5 names only cuBLAS 12 on PATH; the
+  extra and doctor also need cuDNN 9, as faster-whisper's README says, and Linux needs
+  LD_LIBRARY_PATH. That changes the spec, so it waits on Dan (the plan's Decision 10); once
+  approved, §4.2 and §9.5 name cuDNN 9 in this close, and if not, it is the fifth stop
+  (`AGENTS.md`, *Stops*). Then the close, its own commit, holding this plan with this task's
+  boxes ticked and **Now** set to `Task 10: CI on Windows and Linux for faster-whisper, open.`;
+  `docs/architecture.md`'s first diagram drawing faster-whisper as built (the node
+  `fw["In-process engine<br/>faster-whisper (Windows, Linux)"]`, the edge `core --> fw`, and
+  `fw` out of the `planned` class); and the spec's S45 row with "Phase and task" set to
+  `Phase 3, Tasks 9–10, 12` (S45 stays `planned`: its proof is CI and one manual run). The
   message, in `.git/CLOSE_MSG`:
 
 ```text
@@ -5491,7 +8503,7 @@ Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 9
 Co-Authored-By: <the model's own line>
 ```
 
-  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md
+  `git add docs/architecture.md docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md
   docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
@@ -5500,20 +8512,379 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 3 · **Scenarios:** S45
 
-**Interfaces:**
-- Consumes: Task 9's `[whisper]` extra: a Windows and a Linux job run
-  `uv sync --group dev --extra whisper`, so the engine's field check runs instead of skipping.
-  Not `[nvidia]` (its wheels are 553 MB and 743 MB). Task 1's Windows-only tests (junction,
-  hidden attribute, 8.3 short name) already run in the existing `windows-2022` job; Task 9 added
-  its parser test to the floor job.
+Spec §23.2 and S45 ("CI passes on all three systems"): a `whisper` job runs the suite on Windows
+and Linux with Task 9's `whisper` extra, so the engine's field check runs against the real
+faster-whisper there instead of skipping.
 
-<!-- steps: written in the next pass -->
+**Why it is built this way** (read 2026-10-24):
+- **A job of its own,** not another dimension of the `python` matrix: the python job's six
+  entries stay as they are, and the two whisper entries (ubuntu-24.04 and windows-2022, Python
+  3.12) are the only ones that install ctranslate2, PyAV and tokenizers. Not the `nvidia` extra:
+  its wheels are 553 MB and 743 MB, and GitHub's standard runners have no GPU. macOS keeps
+  Qwen3-ASR (`[mac]`); faster-whisper is Windows' and Linux's.
+- **A skip there is a failure.** `pytest.importorskip` would let the field check skip silently if
+  the extra didn't install, so the job sets `VID2SUB_REQUIRE_WHISPER=1`, which makes the field
+  check, and a new check of the signatures the engine calls (`WhisperModel(device=,
+  compute_type=)`, `transcribe(language=, initial_prompt=, word_timestamps=, vad_filter=)`,
+  `download_model(local_files_only=)`, `ctranslate2.get_cuda_device_count`), import the library
+  or fail, as `VID2SUB_REQUIRE_FFMPEG=1` does for media tests.
+- **`uv run --extra whisper pytest`,** so the run keeps the extra the sync installed: uv's `run`
+  syncs before it runs (inexactly, unless `--exact`), and naming the extra says what it needs.
+- **The real model stays out** of every job: `VID2SUB_LIVE_WHISPER` is opt-in (Task 12's manual
+  run), and no test downloads a model.
+- **Phase 3 Task 1's Windows-only tests** (the junction, the hidden attribute, the 8.3 short
+  name: `skipif(os.name != "nt")`) run in the existing `python` job, whose windows-2022 entries
+  run the whole suite (`uv run --python ${{ matrix.python }} pytest`), and in the new job's
+  Windows entry too. A test pins that the python job keeps doing so.
+- **What only a real run shows:** that the Windows and Linux wheels install from the lock
+  (ctranslate2 4.8.3, av 19.0.2, tokenizers 0.23.3, huggingface-hub 2.2.0), that the suite
+  passes on both with the extra, and the jobs' time. Here the workflow is proven by
+  `make actionlint` and by `tests/test_ci_workflow.py`, which reads it as Actions does (PyYAML,
+  the dev group's `pyyaml==6.0.3`), and the job's two commands were run on macOS with the extra.
+
+**Files:**
+- Modify: `.github/workflows/ci.yml` (the `whisper` job), `tests/test_faster_whisper_engine.py`
+  (`installed_faster_whisper`, the signature check), `tests/README.md`
+  (`VID2SUB_REQUIRE_WHISPER`), the spec (§23.2's job list, Decision 20)
+- Create: `tests/test_ci_workflow.py`
+- Modify at the close: this plan
+
+**Interfaces:**
+- Consumes: Task 9's `whisper` extra and `tests/test_faster_whisper_engine.py` (its field
+  check, `fw.cuda_devices`); Phase 2 Task 21's pins (checkout v7.0.1, setup-uv v10.3.0 with uv
+  0.13.1) and `make actionlint`; the python job's ffmpeg steps.
+- Produces:
+  - CI job `whisper`: matrix `os: [ubuntu-24.04, windows-2022]`, `fail-fast: false`, 30
+    minutes, `contents: read`; env `UV_FROZEN=1`, `VID2SUB_REQUIRE_FFMPEG=1`,
+    `VID2SUB_REQUIRE_WHISPER=1`; steps: checkout (`persist-credentials: false`), setup-uv,
+    ffmpeg (apt on Linux, choco on Windows), `uv sync --group dev --extra whisper --python
+    3.12`, `uv run --python 3.12 --extra whisper pytest`.
+  - `VID2SUB_REQUIRE_WHISPER=1`: faster-whisper's field and signature checks fail instead of
+    skipping without the extra (`installed_faster_whisper()` in the engine's test module).
+  - `tests/test_ci_workflow.py`: what Phase 4's workflow tasks can extend (pins, timeouts,
+    read-only permissions and token-free checkouts across every job).
+- For Task 12's Step 8: the run's job list shows `whisper (ubuntu-24.04)` and
+  `whisper (windows-2022)`.
+
+The counts below are this build's, on Phase 2's finished code with Tasks 7 and 9 in; with Tasks
+1–6 too, the suite's are higher. What matters is no failure, ruff's `All checks passed!` and
+gitleaks' `no leaks found`.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing test,** `tests/test_ci_workflow.py`:
+
+```python
+"""CI's workflow, read as GitHub Actions reads it (spec §23.1, §23.2; S45; Phase 3 Task 10).
+
+GitHub Actions can't run here, so this pins what only a real run would otherwise show missing:
+faster-whisper's own job, on Windows and Linux, installs the `whisper` extra (never `nvidia`, whose
+wheels are 553 MB and 743 MB) and fails where the field check against the real library would
+skip; the real model stays out of CI; the python job still runs the whole suite on Windows (Phase
+3 Task 1's junction, hidden-attribute and 8.3 short-name tests run only there); and every job keeps
+§23.1's hardening. `make actionlint` checks the file's syntax and expressions.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+import yaml
+
+WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+PINNED = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+(\.\d+)*$")
+
+
+@pytest.fixture(scope="module")
+def workflow() -> dict:
+    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+
+
+def runs(job: dict) -> list[str]:
+    return [step["run"] for step in job["steps"] if "run" in step]
+
+
+def test_faster_whisper_has_a_job_on_windows_and_linux(workflow):
+    job = workflow["jobs"]["whisper"]
+    assert job["strategy"]["matrix"]["os"] == ["ubuntu-24.04", "windows-2022"]
+    assert job["runs-on"] == "${{ matrix.os }}"
+    assert job["strategy"]["fail-fast"] is False
+
+
+def test_the_whisper_job_installs_the_whisper_extra_and_never_the_nvidia_one(workflow):
+    job = workflow["jobs"]["whisper"]
+    assert "uv sync --group dev --extra whisper --python 3.12" in runs(job)
+    assert "uv run --python 3.12 --extra whisper pytest" in runs(job)
+    every = [run for each in workflow["jobs"].values() for run in runs(each)]
+    assert not [run for run in every if "nvidia" in run or "--all-extras" in run]
+
+
+def test_the_whisper_job_fails_where_the_field_check_would_skip(workflow):
+    env = workflow["jobs"]["whisper"]["env"]
+    assert env == {"UV_FROZEN": "1", "VID2SUB_REQUIRE_FFMPEG": "1",
+                   "VID2SUB_REQUIRE_WHISPER": "1"}
+
+
+def test_the_real_model_never_runs_in_ci(workflow):
+    for name, job in workflow["jobs"].items():
+        assert not [k for k in job.get("env", {}) if k.startswith("VID2SUB_LIVE")], name
+        assert not [run for run in runs(job) if "VID2SUB_LIVE" in run or "-m live" in run], name
+
+
+def test_the_python_job_runs_the_whole_suite_on_windows_too(workflow):
+    # Phase 3 Task 1's Windows-only tests (skipped elsewhere) run in this job's Windows entries.
+    job = workflow["jobs"]["python"]
+    assert "windows-2022" in job["strategy"]["matrix"]["os"]
+    assert "uv run --python ${{ matrix.python }} pytest" in runs(job)
+
+
+def test_every_action_is_pinned_by_its_commit_with_its_version_beside_it():
+    uses = re.findall(r"uses: (.+)$", WORKFLOW.read_text(encoding="utf-8"), flags=re.MULTILINE)
+    assert uses and [u for u in uses if not PINNED.fullmatch(u.strip())] == []
+
+
+def test_every_job_has_a_timeout_and_reads_only_and_no_checkout_keeps_its_token(workflow):
+    assert workflow["permissions"] == {"contents": "read"}
+    for name, job in workflow["jobs"].items():
+        assert isinstance(job.get("timeout-minutes"), int), name
+        assert job.get("permissions", {"contents": "read"}) == {"contents": "read"}, name
+        for step in job["steps"]:
+            if step.get("uses", "").startswith("actions/checkout@"):
+                assert step["with"]["persist-credentials"] is False, name
+```
+
+  In `tests/test_faster_whisper_engine.py`, replace
+
+```python
+import ctypes.util
+import dataclasses
+import os
+```
+
+  with
+
+```python
+import ctypes.util
+import dataclasses
+import importlib
+import inspect
+import os
+```
+
+  and replace
+
+```python
+def test_the_fakes_have_the_fields_of_the_installed_faster_whisper():
+    transcribe = pytest.importorskip("faster_whisper.transcribe")
+```
+
+  with
+
+```python
+def installed_faster_whisper():
+    """faster-whisper's transcribe module: a skip without the `whisper` extra, but a failure where
+    VID2SUB_REQUIRE_WHISPER=1 says it is installed (CI's whisper job, Phase 3 Task 10), since a
+    skipped field check checks nothing."""
+    if os.environ.get("VID2SUB_REQUIRE_WHISPER") == "1":
+        return importlib.import_module("faster_whisper.transcribe")
+    return pytest.importorskip("faster_whisper.transcribe")
+
+
+def test_with_whisper_required_a_missing_library_fails_rather_than_skips(monkeypatch):
+    monkeypatch.setitem(sys.modules, "faster_whisper", None)
+    monkeypatch.setitem(sys.modules, "faster_whisper.transcribe", None)
+    monkeypatch.delenv("VID2SUB_REQUIRE_WHISPER", raising=False)
+    with pytest.raises(pytest.skip.Exception):
+        installed_faster_whisper()
+    monkeypatch.setenv("VID2SUB_REQUIRE_WHISPER", "1")
+    with pytest.raises(ImportError):
+        installed_faster_whisper()
+
+
+def test_the_engine_calls_the_installed_faster_whisper_as_its_signatures_allow():
+    transcribe = installed_faster_whisper()
+    from faster_whisper.utils import download_model
+
+    def takes(fn) -> set[str]:
+        return set(inspect.signature(fn).parameters)
+
+    assert {"device", "compute_type"} <= takes(transcribe.WhisperModel.__init__)
+    assert {"language", "initial_prompt", "word_timestamps", "vad_filter"} <= takes(
+        transcribe.WhisperModel.transcribe)
+    assert "local_files_only" in takes(download_model)
+    assert fw.cuda_devices() >= 0  # CTranslate2 answers, with no GPU as with one
+
+
+def test_the_fakes_have_the_fields_of_the_installed_faster_whisper():
+    transcribe = installed_faster_whisper()
+```
+
+- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_ci_workflow.py -q`.
+  Expected: `E       KeyError: 'whisper'` (three times) and `3 failed, 4 passed`.
+  `VID2SUB_REQUIRE_WHISPER=1 uv run pytest tests/test_faster_whisper_engine.py -q` (the extra
+  not installed). Expected: `E   ModuleNotFoundError: No module named 'faster_whisper'` and
+  `FAILED …test_the_engine_calls_the_installed_faster_whisper_as_its_signatures_allow`,
+  `FAILED …test_the_fakes_have_the_fields_of_the_installed_faster_whisper`: the guard works
+  before the job exists.
+- [ ] **Step 3: Write the job.** In `.github/workflows/ci.yml`, above the line `  floor:`, add:
+
+```yaml
+  whisper:
+    # faster-whisper on Windows and Linux (spec §9.5, S45): the suite with the `whisper` extra, so
+    # the engine's field check runs against the real library (VID2SUB_REQUIRE_WHISPER=1 fails it
+    # where it would skip). Not the `nvidia` extra: its wheels are 553 MB and 743 MB, and the
+    # runners have no GPU. The real model stays out (VID2SUB_LIVE_WHISPER is opt-in).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      UV_FROZEN: "1"
+      VID2SUB_REQUIRE_FFMPEG: "1"
+      VID2SUB_REQUIRE_WHISPER: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with: { version: "0.13.1" }
+      - name: ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+      - run: uv sync --group dev --extra whisper --python 3.12
+      - run: uv run --python 3.12 --extra whisper pytest
+
+```
+
+  In `tests/README.md`, below the `make check` item (its second line is
+  `  gitleaks. It runs no browser or live test.`), add:
+
+```markdown
+- faster-whisper's field and signature checks (`tests/test_faster_whisper_engine.py`) need the
+  `whisper` extra (`uv sync --group dev --extra whisper`); they skip without it unless
+  `VID2SUB_REQUIRE_WHISPER=1`, which CI's `whisper` job (Windows and Linux) sets. No test downloads
+  the model; only the live test below does.
+```
+
+  In the spec, `docs/superpowers/specs/2026-10-14-vid2sub-design.md`, §23.2 (Decision 20),
+  replace
+
+```markdown
+`frontend` (typecheck, Vitest, build), `e2e`, `leaks`.
+```
+
+  with
+
+```markdown
+`frontend` (typecheck, Vitest, build), `e2e`, `leaks`, and `whisper` (Ubuntu and Windows ×
+Python 3.12, with the `whisper` extra, so faster-whisper's field check runs instead of skipping).
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_ci_workflow.py
+  tests/test_faster_whisper_engine.py -q` first (`35 passed, 2 skipped, 1 deselected`), then
+  `make actionlint` (no output, exit 0), then the job's own commands with the extra:
+  `uv sync --group dev --extra whisper`, then `VID2SUB_REQUIRE_FFMPEG=1
+  VID2SUB_REQUIRE_WHISPER=1 UV_FROZEN=1 uv run --extra whisper pytest -q` (`1143 passed, 2
+  skipped, 39 deselected` here on macOS: both checks run), then `uv sync --group dev` to go
+  back. **Guard checks**, each reverted and restored, each with `uv run pytest
+  tests/test_ci_workflow.py -q`: take the job's `VID2SUB_REQUIRE_WHISPER: "1"` line out (`FAILED
+  …test_the_whisper_job_fails_where_the_field_check_would_skip`); make its sync
+  `--extra nvidia` (`FAILED
+  …test_the_whisper_job_installs_the_whisper_extra_and_never_the_nvidia_one`). `make check`.
+  Expected: `1141 passed, 4 skipped, 39 deselected` twice, `Test Files  20 passed (20)`,
+  `Tests  96 passed (96)`, `All checks passed!` and `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+ci: 🤖 faster-whisper's tests run on Windows and Linux with the whisper extra, and fail there rather than skip
+
+ci.yml gains the `whisper` job (spec §9.5, §23.2; S45): ubuntu-24.04 and
+windows-2022, Python 3.12, `uv sync --group dev --extra whisper`, then
+the whole suite through `uv run --extra whisper pytest`, with ffmpeg as
+the python job installs it. VID2SUB_REQUIRE_WHISPER=1 makes the engine's
+field check, and a new signature check (WhisperModel takes device and
+compute_type; transcribe takes language, initial_prompt, word_timestamps
+and vad_filter; download_model takes local_files_only; CTranslate2 counts
+its GPUs), fail where faster-whisper isn't installed instead of skipping,
+as VID2SUB_REQUIRE_FFMPEG does for media tests. Not the `nvidia` extra:
+its cuBLAS and cuDNN wheels are 553 MB and 743 MB, and the runners have
+no GPU. The real model stays out: VID2SUB_LIVE_WHISPER is opt-in. The job
+keeps §23.1's hardening: actions pinned by commit with their versions,
+contents: read, persist-credentials: false, a timeout, UV_FROZEN=1.
+
+tests/test_ci_workflow.py reads the workflow as Actions does (PyYAML):
+the job, its matrix, the extra and never `nvidia` in any job's run steps,
+its env, no live test anywhere, the python job still running the whole
+suite on windows-2022 (where Phase 3 Task 1's Windows-only tests run),
+and every job's pins, timeout, read-only permissions and checkouts that
+keep no token. tests/README.md names VID2SUB_REQUIRE_WHISPER, and the
+spec's §23.2 names the job (Decision 20).
+
+The new tests failed first with: KeyError: 'whisper' (3 failed, 4
+passed); with the variable set and no extra, the field and signature
+checks fail with ModuleNotFoundError: No module named 'faster_whisper'.
+Guard checks, each reverted and restored: without the job's
+VID2SUB_REQUIRE_WHISPER, or with --extra nvidia, its test fails. The job's
+two commands, run here (macOS) with the extra, pass the suite with both
+checks running: 1143 passed, 2 skipped. `make actionlint` passes. Only a
+real run shows the Windows and Linux wheels installing (ctranslate2
+4.8.3, av 19.0.2, tokenizers 0.23.3) and the suite passing there.
+
+Docs read: GitHub's "GitHub-hosted runners" reference (ubuntu-24.04 and
+windows-2022 are current labels, 4 CPUs and 16 GB); setup-uv's README
+(`version` pins uv; caching defaults to on for GitHub-hosted runners);
+`uv run --help` 0.13 (--extra; run syncs inexactly unless --exact).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 10
+Co-Authored-By: <the model's own line>
+```
+
+  `git add .github/workflows/ci.yml tests/test_ci_workflow.py
+  tests/test_faster_whisper_engine.py tests/README.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 6: Review, look forward, close.** The Tier 3 self-review from
+  `$(cat .git/TASK_BASE)` (*Standards*, *Spec*) plus `make check` and `make actionlint`; the
+  forward review over Task 11 (the README names the job only through `tests/README.md`) and
+  Task 12 (its Step 8 looks for this job's two entries in the run). Then the close, its own commit,
+  holding this plan with this task's boxes ticked and **Now** set to `Task 11: The docs, open.`,
+  with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 10: CI on Windows and Linux for faster-whisper
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 3
+Rounds: self-review (Standards, Spec); make check; make actionlint
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 10
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md`, `git commit -F
+  .git/CLOSE_MSG`.
 
 ***
 
 ### Task 11: The docs
 
 **Tier:** 3
+
+**Interfaces:**
+- Consumes: Task 7's README sentence on **Make preview copy** and its `cache clear` line, already
+  written; Task 9's NVIDIA notes, which the README still needs (cuBLAS 12 and cuDNN 9, Decision
+  10: on `PATH` on Windows, through `LD_LIBRARY_PATH` on Linux; §23.5).
 
 <!-- steps: written in the next pass -->
 
@@ -5583,8 +8954,9 @@ vid2sub config path
 vid2sub run <a short English video> --from en --to none --model local-whisper
 ```
 
-  Expected: `doctor` says faster-whisper runs on the CPU, or, with an NVIDIA GPU, that it found
-  cuBLAS 12 and cuDNN 9 (or says how to install them). The run writes the `.en.srt` next to the
+  Expected: `doctor` says faster-whisper runs on the CPU, or, with an NVIDIA GPU, its `CUDA
+  libraries` check says it found cuBLAS 12 and cuDNN 9 (or names what is missing and how to
+  install it). The run writes the `.en.srt` next to the
   video; the first run downloads the model (about 1.6 GB). Note what `doctor` printed, and how
   long the run took.
 - [ ] **Step 8: Check CI's Windows and Linux path:** the newest run on `phase-3` has Task 10's
@@ -5595,9 +8967,10 @@ gh run list --branch phase-3 --workflow ci.yml --limit 3
 gh run view "$(gh run list --branch phase-3 --workflow ci.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
 ```
 
-  Expected: the newest run's conclusion is `success`, and its job list includes Task 10's jobs.
+  Expected: the newest run's conclusion is `success`, and its job list includes Task 10's
+  `whisper (ubuntu-24.04)` and `whisper (windows-2022)`.
 - [ ] **Step 9: Record the results in the spec.** §29's M3 bullet gets Step 7's result, dated:
-  the OS, CPU or NVIDIA, and what `doctor` said about cuBLAS (and cuDNN). Set S38, S40, S41, S42
+  the OS, CPU or NVIDIA, and what `doctor`'s `CUDA libraries` check said. Set S38, S40, S41, S42
   and S45 to `verified` where they passed. A failure caused by a bug is a new task, proposed to
   Dan; a result that would change the spec is the fifth stop.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
@@ -5720,3 +9093,4 @@ fi
 | Task 1 (planning review) | Minor | `src/vid2sub/web/browse.py` | A folder swapped for a link between the browser's check and the job opening the file (a shared NAS, a removable drive) is followed; the checks run on what the disk returned at listing time | open |
 | Task 1 (planning review) | Minor | `src/vid2sub/web/browse.py` | `Library` and `AppData` are hidden in home on every OS, which hides more than it needs to on Linux | open |
 | Task 1 (planning review) | Minor | `tests/test_browse.py` | The junction, hidden-attribute and 8.3 short-name tests run only on Windows CI, so a Mac or Linux run can't catch a break there | open |
+| Task 7 (planning) | Minor | `src/vid2sub/web/server.py` | Two tabs that ask for one episode's preview copy at once encode it twice (each into its own temporary name; the later rename wins), doubling the wait; a per-video lock in the runtime would share one encode | open |
