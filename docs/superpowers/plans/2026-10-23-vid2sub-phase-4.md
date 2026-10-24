@@ -49,6 +49,13 @@ plus:
 
 **Tier:** 2 · **Scenarios:** S47
 
+**Interfaces:**
+- Consumes: Phase 2's Pages-safe server (Phase 2 Task 14, round 14a): `vid2sub.web.server` and
+  `views` import only what the bundle has; the types they share are in `vid2sub.web.episode`; the
+  local runtime is configured, not imported, and `runtime.blocking` is the one place blocking
+  calls run, so Pages configures a `Runtime` holding a `BrowserBackend` and an inline `blocking`
+  before importing the server, as `recordings`' `pages/app.py` does.
+
 <!-- steps: written in the next pass -->
 
 ***

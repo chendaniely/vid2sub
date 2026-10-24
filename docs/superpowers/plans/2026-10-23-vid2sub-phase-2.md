@@ -97,6 +97,12 @@ ffmpeg ≥6 for the playback audio.
   `createPortal` and `flushSync`). `src/vid2sub/web/www/ui.js` and `ui.css` are build output.
   `ReactApp(server)` is called in `src/vid2sub/web/server.py`. Every output is subscribed and every
   message handler and input lives in `App` (shinyreact 0.1.0).
+- The Shiny server runs in Pages too (spec §3.3, §21), so `vid2sub.web.server` and
+  `vid2sub.web.views` import, at module level, only the pure packages, shiny, shinyreact,
+  htmltools, pydantic and `vid2sub.web.{episode, views, runtime}`. Local-only code is reached
+  through the configured `Runtime`, and every blocking call goes through `runtime.blocking`, never
+  a thread or executor directly (Pyodide has none). `tests/test_pages_imports.py` pins both
+  (Task 14, round 14a).
 - Colours: NYC blue `#236192` (`#6CA6D9` dark) is the working colour; NYC orange `#F26522` marks
   bars and backgrounds, never text. Atkinson Hyperlegible and Atkinson Hyperlegible Mono.
 - British spelling; module docstrings give one sentence of purpose, then why, citing spec sections
