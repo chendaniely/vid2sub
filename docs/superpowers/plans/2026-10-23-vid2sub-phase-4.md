@@ -91,8 +91,12 @@ plus:
   calls run. `blocking` already runs inline when `runtime.INLINE` (`sys.platform ==
   "emscripten"`), which Phase 2 couldn't check in Pyodide; this task checks it first. So Pages
   configures a `Runtime` holding a `BrowserBackend` before importing the server, as
-  `recordings`' `pages/app.py` does. Two `Runtime` methods are local-only: `media_for` (Pages
-  plays a blob URL) and `reachable`. This task says what each does in the browser.
+  `recordings`' `pages/app.py` does. These `Runtime` parts are local-only: `media_for` (Pages
+  plays a blob URL), `reachable`, and, from Phase 2 Tasks 17–19, `retranslate`, `endpoint_models`
+  and `job_context`. The server offers Retranslate, the settings drawer and the Jobs page only
+  where `capabilities.generate` is true (Phase 2 Decision 23), so Pages calls none of the last
+  three; its `session` (a `vid2sub.web.settings.Session`, bundled) still gives Save's default
+  formats. This task says what each does in the browser.
 
 <!-- steps: written in the next pass -->
 

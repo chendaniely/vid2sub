@@ -102,6 +102,25 @@ ffmpeg ≥6 for the playback audio.
 22. **Per session means the engine's launch:** the drawer's defaults and typed keys are shared by
     every tab on one launch, held in memory, never written, and dropped on exit (spec §5.3,
     §5.4). A job reads the targets and formats when it starts (Tasks 18, 19).
+23. **One capability gate:** `capabilities.generate` hides Retranslate, the settings drawer and
+    the Jobs page, so the Pages editor, where it is false, offers none of them. No new
+    capabilities field (Tasks 17–19).
+24. **The drawer's Test lists models on any configured endpoint, cloud ones included,** when the
+    person clicks it: one GET for `/v1/models`, carrying only that endpoint's key, to that
+    endpoint's own origin, so no subtitle text leaves and the Allow cloud models box doesn't
+    apply (spec §19.2) (Task 18).
+25. **A typed key is 8 to 1,024 characters of `A–Z a–z 0–9 . _ ~ + / = : -`;** anything else is
+    refused with a fixed message. This keeps the key redactable in every error text (spec §5.3,
+    §6.8), but would refuse a real key that uses another character (Task 18, round 18c).
+26. **Retranslate always uses the route's translation model;** Phase 2 has no model picker for it
+    (spec §20 says which cues, not which model) (Task 17).
+27. **The crash draft keeps a retranslation as a marker, never its result:** restoring skips it,
+    and also skips any undo or redo that took back or brought back a retranslation, so restoring
+    a draft never asks a model again (Task 17, with Decision 18).
+28. **The Jobs page takes full local paths only;** a link is refused, since adding a YouTube link
+    is Phase 3's Add (spec §19.2, S36). Every tab on a launch sees the same jobs, with the paths
+    typed (Task 19).
+29. **The demo session's targets are `("ja",)`,** matching its canned translation (Tasks 17–19).
 
 ## Global Constraints
 
@@ -130,7 +149,8 @@ ffmpeg ≥6 for the playback audio.
   message handler and input lives in `App` (shinyreact 0.1.0).
 - The Shiny server runs in Pages too (spec §3.3, §21), so `vid2sub.web.server` and
   `vid2sub.web.views` import, at module level, only the pure packages, shiny, shinyreact,
-  htmltools, pydantic and `vid2sub.web.{episode, ops, views, runtime}`. Local-only code is
+  htmltools, pydantic and `vid2sub.web.{episode, ops, views, runtime, settings}` (`settings` from
+  Task 18). Local-only code is
   reached through the configured `Runtime`, and every blocking call goes through
   `runtime.blocking`, never a thread or executor directly (Pyodide has none; `blocking` runs
   inline there). `tests/test_pages_imports.py` pins both (Task 14, round 14a).
@@ -23800,10 +23820,2677 @@ Co-Authored-By: <the model's own line>
 **Tier:** 2 · **Scenarios:** S30
 
 **Files:**
-- Modify: `src/vid2sub/web/server.py` (input `retranslate`), the editor components
-- Test: `tests/e2e/test_retranslate.py`
+- Modify: `src/vid2sub/web/server.py` (input `retranslate`, output `progress`, message
+  `retranslate_result`), `src/vid2sub/web/runtime.py` (`Runtime.retranslate`),
+  `src/vid2sub/web/episode.py` (`RetranslateError`), `src/vid2sub/web/backend.py` (the
+  `_translator` and `_ask` seams), `src/vid2sub/web/demo.py` (the canned translator)
+- Create: `frontend/src/components/Retranslate.tsx`, `frontend/src/lib/retranslate.ts` (+ test)
+- Modify: `frontend/src/{App.tsx,types.ts}`, `frontend/src/components/{Editor,CueList,CueRow}.tsx`,
+  `frontend/src/lib/{draft,keys}.ts` (+ their tests)
+- Test: `tests/test_web_server.py`, `tests/test_backend_retranslate.py`,
+  `tests/e2e/test_retranslate.py`
 
-<!-- steps: written in the next pass -->
+**Interfaces:**
+- Consumes: `LocalBackend.retranslate(ep, track, *, ids, model=None, allow_cloud=False,
+  on_batch=None) -> Episode` and its errors (Task 7); Task 15's `Editor` queue, `as_json`,
+  `_named`, `Requests`, `pacer` and `control`; Task 16's draft (`DraftStep`, `addStep`,
+  `loadDraft`) and `Saving`; `runtime.blocking` (Task 14); `demo.canned_ask`, `JAPANESE`,
+  `NO_TRANSLATION` and `DemoBackend` (Task 13); `views.episode_view`'s `tracks[].all_stale`.
+- Produces:
+  - `web.episode.RetranslateError(message: str, hint: str = "")` (pure; `.hint`): the server
+    can't import `EngineError` (`engines.base` imports numpy and `media.decode`) or
+    `TranslationFailed`, so the runtime turns them into this.
+  - `Runtime.retranslate(self, ep, track, *, ids: Sequence[str] | None, allow_cloud: bool,
+    on_batch: Callable[[int, int], None] | None = None) -> Episode`: the backend's, with
+    `EngineError` and `TranslationFailed` raised as `RetranslateError` (a `cloud_not_allowed`
+    refusal's hint is `runtime.ALLOW_CLOUD`, "tick Allow cloud models, then retranslate again";
+    a `TranslationFailed`'s is "retranslate again, or pick fewer cues"); `EditError`,
+    `OpenError` and `GlossaryError` pass through. Blocks: call it through `blocking`.
+  - `LocalBackend._translator(self, lang, model, allow_cloud) -> tuple[str, ModelEntry]` (was
+    `-> str`) and `LocalBackend._ask(self, name, entry, policy: RunPolicy) -> AskFn`
+    (`check_allowed`, then `make_ask`): the seams the demo overrides. `DemoBackend` answers
+    with `demo.CANNED_JA = "canned-ja"` and `demo.CANNED_ENTRY` (a `ModelEntry` in no
+    vid2sub.toml) and `canned_ask`; any other named model is `EngineError("unavailable", "the
+    demo translates only with its canned model")`.
+  - Input `retranslate`: `{"episode": str, "n": int, "track": str, "ids": [cue id, …] | null,
+    "allow_cloud": true | false}`. `ids` null is "Retranslate stale"; else 1 to
+    `server.MAX_IDS` (10,000) ids of `new_cue_id`'s shape (`server.CUE_ID`). Anything else, or an
+    `allow_cloud` that isn't exactly `true` or `false` (missing included), is the notice `pick the
+    cues to retranslate` (`server.PICK_CUES`) and asks no model. It joins the tab's `Editor`
+    queue (`_retranslate`), with `busy` at `"retranslating"` from the start; edits sent meanwhile
+    wait in the queue and land on the retranslated episode. `EditError`, `OpenError` and
+    `GlossaryError` are notices with their messages; `RetranslateError` is the notice
+    `couldn't retranslate: <message> → <hint>`.
+  - Output `progress`: `{"done": int, "of": int}` after each batch of the running retranslation
+    (handed from the worker thread to the loop with `asyncio.run_coroutine_threadsafe`, and shown
+    only while that retranslation runs), else `null`; `_publish` and `_set_busy` clear it.
+  - Message `retranslate_result`: `{"episode": str, "n": int | null, "changed": int}` (the
+    translation cues the request replaced or added; 0 when nothing was stale, or it failed),
+    sent after every `retranslate` that names the open episode, after the episode is published.
+  - `types.ts`: `Busy` gains `"retranslating"`; `Progress`; `RetranslateResultMessage`.
+  - `lib/keys.ts`: `Action` gains `{kind: "extend"; by: -1 | 1}` (Shift+↑/↓ in navigate mode).
+  - `lib/draft.ts`: `DraftStep` gains `{retranslate: number}` (the request's `n`: a marker,
+    never replayed); `dropRetranslation(storage, key, n)`; `replayable(steps): DraftStep[]` (the
+    edits, undos and redos Restore sends, leaving out the markers and any undo or redo that took
+    back or brought back a retranslation).
+  - `lib/retranslate.ts`: `selectionRange(rows, selected, anchor: string | null): [number,
+    number] | null`, `selectedIds(rows, range): string[]`, `retranslateNotice(changed, label,
+    stale): Notice | null`.
+  - `Retranslate({label, selected, busy, progress, onSelected(allowCloud), onStale(allowCloud)})`:
+    test ids `retranslate`, `retranslate-selected` ("Retranslate this cue" / "Retranslate N
+    cues"), `retranslate-stale`, `allow-cloud` (unticked at first and after each request),
+    `retranslate-progress` (a polite live region).
+  - `Editor({…, progress, generate})` and `Requests.retranslate(track, ids | null, allowCloud)`;
+    Retranslate shows above the edit bar where `capabilities.generate` and a translation track
+    is shown. `CueList` takes `range` and is `aria-multiselectable`; `CueRow` takes `inRange`,
+    and its `onPick(cell, extend)` says whether Shift was held. `App` subscribes `progress`, sets
+    `retranslate` through the pacer, records the marker and handles `retranslate_result`.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+
+#### Round 17a: the server and the demo's canned translator
+
+- [ ] **Step 1: Write the failing tests.** In `tests/test_web_server.py`:
+
+  Replace
+
+```python
+
+import asyncio
+import contextlib
+import json
+import re
+import threading
+```
+
+  with
+
+```python
+
+import asyncio
+import contextlib
+import dataclasses
+import json
+import re
+import threading
+```
+
+  Replace
+
+```python
+from starlette.testclient import TestClient
+
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines import clients
+from vid2sub.engines.base import EngineError
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.web import runtime, server, views
+from vid2sub.web.app import create_app
+from vid2sub.web.guards import CSP
+
+PORT = 8765
+```
+
+  with
+
+```python
+from starlette.testclient import TestClient
+
+from vid2sub.cache import Cache
+from vid2sub.config import Config, ModelEntry
+from vid2sub.engines import clients
+from vid2sub.engines.base import EngineError
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.translate.run import TranslationFailed
+from vid2sub.web import runtime, server, views
+from vid2sub.web.app import create_app
+from vid2sub.web.backend import LocalBackend
+from vid2sub.web.guards import CSP
+
+PORT = 8765
+```
+
+  At the end of the file, after `assert results(t) == [] and "<" not in json.dumps(t.notices())`, after 2 blank lines, append:
+
+```python
+# ---- the editor: retranslating (Task 17) -------------------------------------------------------
+
+
+class Translating(LocalBackend):
+    """The backend with a model that answers "EN <id>" for each cue it is asked, keeping each
+    batch and each call's cloud policy; `gate`, once set, holds every batch until it opens, and
+    `fail` is raised where the model would be picked."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.batches: list[list[str]] = []
+        self.policies: list = []
+        self.gate: threading.Event | None = None
+        self.fail: Exception | None = None
+
+    def _translator(self, lang, model, allow_cloud):
+        if self.fail is not None:
+            raise self.fail
+        return "gemma", ModelEntry(endpoint="spark", model="gemma", task="translate", local=True)
+
+    def _ask(self, name, entry, policy):
+        self.policies.append(policy)
+
+        def ask(system, prompt, data_model):
+            if self.gate is not None:
+                assert self.gate.wait(20)
+            ids = re.findall(r"^\[(\S+)\] \(max", prompt, flags=re.MULTILINE)
+            self.batches.append(ids)
+            return data_model.model_validate(
+                {"items": [{"src": [i], "text": f"EN {i}"} for i in ids]})
+
+        return ask
+
+
+@pytest.fixture
+def tr_rt(tmp_path):
+    made = runtime.build(Config(), tools=Tools.find(), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=10**9))
+    made = dataclasses.replace(made, backend=Translating(made.config, made.backend.tools,
+                                                         made.keys, made.backend.cache))
+    runtime.configure(made)
+    yield made
+    runtime.configure(None)
+    made.queue.close()
+
+
+@pytest.fixture
+def tr_client(tr_rt):
+    with TestClient(create_app(tr_rt, token=TOKEN, port=PORT, shiny_app=server.app),
+                    base_url=BASE) as c:
+        r = c.post("/auth", content=json.dumps({"token": TOKEN}), headers={**JSON, **PAGE})
+        assert r.status_code == 204
+        yield c
+
+
+def retranslated(t: Tab) -> list[dict]:
+    return [m["custom"]["shinyReactMessage"]["data"] for m in t.messages
+            if m.get("custom", {}).get("shinyReactMessage", {}).get("id") == "retranslate_result"]
+
+
+def progress_seen(t: Tab) -> list:
+    return [m["values"]["progress"] for m in t.messages if "progress" in m.get("values", {})]
+
+
+def en_texts(ep: dict) -> list[str]:
+    return [c["text"] for row in ep["rows"] for c in row["tr"]["en"]["cues"]]
+
+
+RETRANSLATE_OUTPUTS = {"episode", "busy", "progress"}
+
+
+@pytest.mark.media
+def test_retranslating_stale_redoes_only_the_changed_cue_and_shows_that_it_is_working(
+        tr_client, tr_rt, tmp_path):
+    # S30, spec §13.4: only the stale cue changes; busy and each batch's progress are shown.
+    video = make_episode(tmp_path / "ep")
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"]}
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": ep["rows"][1]["id"],
+                                          "text": "お元気ですか"}})
+        latest(t, lambda e: e["dirty"])
+        t.set(retranslate={**ask, "n": 2, "track": "en", "ids": None, "allow_cloud": False})
+        assert t.until(lambda t: retranslated(t)) == [
+            {"episode": ep["id"], "n": 2, "changed": 1}]
+        done = latest(t, lambda e: en_texts(e)[1].startswith("EN "))
+        assert en_texts(done) == [ENGLISH[0], f"EN {ep['rows'][1]['id']}", ENGLISH[2]]
+        assert "stale" not in done["rows"][1]["tr"]["en"]["cues"][0]["flags"]
+        assert tr_rt.backend.batches == [[ep["rows"][1]["id"]]]
+        assert [p.allow_cloud for p in tr_rt.backend.policies] == [False]
+        assert "retranslating" in busy_seen(t) and t.value("busy") is None
+        assert {"done": 1, "of": 1} in progress_seen(t) and t.value("progress") is None
+        t.set(undo={**ask, "n": 3})  # one undo step
+        back = latest(t, lambda e: not en_texts(e)[1].startswith("EN "))
+        assert en_texts(back) == list(ENGLISH)
+
+
+@pytest.mark.media
+def test_named_cues_are_retranslated_even_where_a_translation_was_edited(tr_client, tr_rt,
+                                                                       tmp_path):
+    # Decision 8: the person asked, so an edited translation is replaced.
+    video = make_episode(tmp_path / "ep")
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"]}
+        first = ep["rows"][0]
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_translation_text", "track": "en",
+                                          "cue": first["tr"]["en"]["cues"][0]["id"],
+                                          "text": "Morning!"}})
+        latest(t, lambda e: en_texts(e)[0] == "Morning!")
+        t.set(retranslate={**ask, "n": 2, "track": "en", "ids": [first["id"]],
+                           "allow_cloud": False})
+        t.set(retranslate={**ask, "n": 3, "track": "en", "ids": None, "allow_cloud": False})
+        t.until(lambda t: len(retranslated(t)) == 2)
+        assert [r["changed"] for r in retranslated(t)] == [1, 0]  # then nothing is stale
+        assert en_texts(t.value("episode"))[0] == f"EN {first['id']}"
+
+
+@pytest.mark.media
+def test_an_edit_sent_while_retranslating_waits_its_turn_and_lands_on_the_new_episode(
+        tr_client, tr_rt, tmp_path):
+    video = make_episode(tmp_path / "ep")
+    tr_rt.backend.gate = gate = threading.Event()
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"]}
+        t.set(retranslate={**ask, "n": 1, "track": "en", "ids": [ep["rows"][0]["id"]],
+                           "allow_cloud": False})
+        t.until(lambda t: t.value("busy") == "retranslating")
+        t.set(edit={**ask, "n": 2, "op": {"op": "set_text", "cue": ep["rows"][2]["id"],
+                                          "text": "はい"}})
+        time.sleep(0.5)
+        assert not t.value("episode")["dirty"]  # the edit waits for the retranslation
+        gate.set()
+        done = latest(t, lambda e: e["rows"][2]["text"] == "はい")
+        assert en_texts(done)[0] == f"EN {ep['rows'][0]['id']}"
+        t.set(undo={**ask, "n": 3})  # the edit came after the retranslation: undone first
+        back = latest(t, lambda e: e["rows"][2]["text"] != "はい")
+        assert en_texts(back)[0] == f"EN {ep['rows'][0]['id']}"
+
+
+@pytest.mark.media
+def test_allow_cloud_is_the_requests_own_true_or_false_and_anything_else_is_refused(
+        tr_client, tr_rt, tmp_path):
+    # Spec §7.2: the editor's box, unticked every time; nothing presets it, so a request that
+    # doesn't say true or false (missing, "true", 1) asks no model.
+    video = make_episode(tmp_path / "ep")
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        cue = ep["rows"][0]["id"]
+        ask = {"episode": ep["id"], "track": "en", "ids": [cue]}
+        t.set(retranslate={**ask, "n": 1})
+        t.set(retranslate={**ask, "n": 2, "allow_cloud": "true"})
+        t.set(retranslate={**ask, "n": 3, "allow_cloud": 1})
+        t.until(lambda t: len(retranslated(t)) == 3)
+        assert [n["text"] for n in t.notices()] == ["pick the cues to retranslate"] * 3
+        assert tr_rt.backend.policies == []
+        t.set(retranslate={**ask, "n": 4, "allow_cloud": True})
+        t.until(lambda t: len(retranslated(t)) == 4)
+        assert [p.allow_cloud for p in tr_rt.backend.policies] == [True]
+
+
+@pytest.mark.media
+def test_cues_that_arent_cue_ids_or_a_track_that_isnt_one_are_refused_without_echoing_them(
+        tr_client, tr_rt, tmp_path):
+    video = make_episode(tmp_path / "ep")
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"], "allow_cloud": False}
+        t.set(retranslate={**ask, "n": 1, "track": "en", "ids": ["<script>"]})
+        t.set(retranslate={**ask, "n": 2, "track": "en", "ids": []})
+        t.set(retranslate={**ask, "n": 3, "track": "<b>en</b>", "ids": None})
+        t.set(retranslate={**ask, "n": 4, "track": "en", "ids": ["c" + "0" * 8]})
+        t.until(lambda t: len(retranslated(t)) == 4)
+        assert [n["text"] for n in t.notices()] == [
+            "pick the cues to retranslate", "pick the cues to retranslate",
+            "there's no such track", "one of those cues isn't in the source track"]
+        assert "<" not in json.dumps(t.notices()) and tr_rt.backend.batches == []
+        assert [r["changed"] for r in retranslated(t)] == [0, 0, 0, 0]
+
+
+@pytest.mark.media
+def test_a_retranslation_that_cant_run_is_a_notice_with_the_fix_and_changes_nothing(
+        tr_client, tr_rt, tmp_path):
+    # Spec §17.3: each error with the hint that names its fix.
+    video = make_episode(tmp_path / "ep")
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"], "track": "en", "ids": [ep["rows"][0]["id"]],
+               "allow_cloud": False}
+        tr_rt.backend.fail = EngineError(
+            "connection", "the translation model's server isn't reachable",
+            hint="is it running? For the Spark: is `make tunnel` running?")
+        t.set(retranslate={**ask, "n": 1})
+        t.until(lambda t: len(retranslated(t)) == 1)
+        tr_rt.backend.fail = EngineError("cloud_not_allowed", "cloud is a cloud model, and this "
+                                         "run doesn't allow cloud models",
+                                         hint="add --allow-cloud to send audio or text to it")
+        t.set(retranslate={**ask, "n": 2})
+        t.until(lambda t: len(retranslated(t)) == 2)
+        tr_rt.backend.fail = TranslationFailed("the model couldn't translate cue ca0000000 in "
+                                               "the required shape")
+        t.set(retranslate={**ask, "n": 3})
+        t.until(lambda t: len(retranslated(t)) == 3)
+        video.with_name("vid2sub.glossary.toml").write_bytes(b"\xff\xfe not utf-8")
+        tr_rt.backend.fail = None
+        t.set(retranslate={**ask, "n": 4})
+        t.until(lambda t: len(retranslated(t)) == 4)
+        assert [n["text"] for n in t.notices()] == [
+            ("couldn't retranslate: the translation model's server isn't reachable → is it "
+             "running? For the Spark: is `make tunnel` running?"),
+            ("couldn't retranslate: cloud is a cloud model, and this run doesn't allow cloud "
+             "models → tick Allow cloud models, then retranslate again"),
+            ("couldn't retranslate: the model couldn't translate cue ca0000000 in the required "
+             "shape → retranslate again, or pick fewer cues"),
+            "the glossary isn't UTF-8; save it as UTF-8"]
+        assert [r["changed"] for r in retranslated(t)] == [0] * 4
+        assert not t.value("episode")["dirty"] and t.value("busy") is None
+```
+
+  In `tests/test_backend_retranslate.py`:
+
+  Replace
+
+```python
+from vid2sub.subs.model import Cue, check_track
+from vid2sub.subs.translate_shape import src_sha
+from vid2sub.web import backend as web_backend
+from vid2sub.web import views
+from vid2sub.web.backend import LocalBackend
+from vid2sub.web.ops import parse_op
+
+```
+
+  with
+
+```python
+from vid2sub.subs.model import Cue, check_track
+from vid2sub.subs.translate_shape import src_sha
+from vid2sub.web import backend as web_backend
+from vid2sub.web import demo, views
+from vid2sub.web.backend import LocalBackend
+from vid2sub.web.ops import parse_op
+
+```
+
+  At the end of the file, after `assert set(ids) <= set(wanted)  # a named cue is always translated`, after 2 blank lines, append:
+
+```python
+# The demo retranslates with its canned translation, sending nothing anywhere (Task 17)
+
+
+def test_the_demo_retranslates_with_its_canned_model_and_no_other(tmp_path):
+    tools = Tools.find()
+    copy = demo.prepare(tools)
+    backend = demo.DemoBackend(copy, tools, Cache(tmp_path / "cache", max_bytes=10**9))
+    ep = backend.open(str(copy / demo.VIDEO))
+    assert backend.retranslate(ep, "ja", ids=None) is ep  # made with canned-ja: nothing stale
+    college = ep.tracks.source[2]  # "We meet at a college noted for knowledge,"
+    (mine,) = [c for c in ep.tracks.translations["ja"] if college.id in c.src]
+    ep = edit(backend, ep, op="set_translation_text", track="ja", cue=mine.id, text="大学")
+    out = backend.retranslate(ep, "ja", ids=[college.id])
+    (new,) = [c for c in out.tracks.translations["ja"] if college.id in c.src]
+    assert new.id != mine.id and new.text.replace("\n", "") == demo.JAPANESE[1][1]
+    with pytest.raises(EngineError, match="only with its canned model"):
+        backend.retranslate(ep, "ja", ids=[college.id], model="gemma")
+```
+
+- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q -k
+  'retransl or allow_cloud or cue_ids or cant_run or named_cues'`. Expected (about two minutes:
+  each test waits 20 s for a message that never comes): `E       AssertionError: timed out; the
+  tab saw [...]` and `6 failed, 24 deselected`. `uv run pytest tests/test_backend_retranslate.py
+  -q -k demo`. Expected: `E           vid2sub.engines.base.EngineError: no usable translation
+  model` and `1 failed, 20 deselected`.
+- [ ] **Step 3: Write the code.** `src/vid2sub/web/episode.py`:
+
+  Replace
+
+```python
+    """Nothing was saved; the reason is fit to show."""
+
+
+@dataclass(frozen=True)
+class SaveResult:
+    written: tuple[str, ...]  # file names written
+```
+
+  with
+
+```python
+    """Nothing was saved; the reason is fit to show."""
+
+
+class RetranslateError(Exception):
+    """A retranslation that couldn't run (no usable model, a cloud model this one doesn't allow,
+    the server down or refusing, an answer in the wrong shape): the reason and its fix (`hint`,
+    spec §17.3) are fit to show. The local runtime makes it from the engine's own errors, which
+    the server can't import in Pages (Task 17)."""
+
+    def __init__(self, message: str, hint: str = ""):
+        super().__init__(message)
+        self.hint = hint
+
+
+@dataclass(frozen=True)
+class SaveResult:
+    written: tuple[str, ...]  # file names written
+```
+
+  `src/vid2sub/web/runtime.py`:
+
+  Replace
+
+```python
+The server runs in Pages too (spec §3.3, §21), so this module imports nothing the Pages bundle
+lacks at its top: `build()` imports the local parts (the backend, the queue, ffmpeg's tools, the
+cache, the network client) when it runs, and the server reaches local-only work through the
+`Runtime` (`reachable`, `media_for`). Every call that blocks goes through `blocking`, never a
+thread or an executor of the server's own: a worker thread here, inline in Pyodide, which has no
+threads (Task 14 round 14a, decided with the coordinator 2026-10-24).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+```
+
+  with
+
+```python
+The server runs in Pages too (spec §3.3, §21), so this module imports nothing the Pages bundle
+lacks at its top: `build()` imports the local parts (the backend, the queue, ffmpeg's tools, the
+cache, the network client) when it runs, and the server reaches local-only work through the
+`Runtime` (`reachable`, `media_for`, `retranslate`). Every call that blocks goes through
+`blocking`, never a thread or an executor of the server's own: a worker thread here, inline in
+Pyodide, which has no threads (Task 14 round 14a, decided with the coordinator 2026-10-24).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+```
+
+  Replace
+
+```python
+    from vid2sub.web.episode import Episode
+    from vid2sub.web.media import MediaTokens
+
+PLAYBACK_TIMEOUT = 3600.0  # seconds: a two-hour episode's audio, read from a slow network share
+INLINE = sys.platform == "emscripten"  # Pyodide: no threads, so a blocking call runs inline
+
+```
+
+  with
+
+```python
+    from vid2sub.web.episode import Episode
+    from vid2sub.web.media import MediaTokens
+
+ALLOW_CLOUD = "tick Allow cloud models, then retranslate again"
+PLAYBACK_TIMEOUT = 3600.0  # seconds: a two-hour episode's audio, read from a slow network share
+INLINE = sys.platform == "emscripten"  # Pyodide: no threads, so a blocking call runs inline
+
+```
+
+  Replace
+
+```python
+                found[name] = False
+        return found
+
+    def media_for(self, ep: Episode, *, audio_only: bool = False) -> Media:
+        """The video by a media token when the browser can play its audio; else, or with
+        `audio_only` (the browser said it can't play the video, spec §8.2), the playback audio
+```
+
+  with
+
+```python
+                found[name] = False
+        return found
+
+    def retranslate(self, ep: Episode, track: str, *, ids: Sequence[str] | None,
+                    allow_cloud: bool, on_batch: Callable[[int, int], None] | None = None
+                    ) -> Episode:
+        """The backend's retranslate, with the engine's errors (`EngineError`, and
+        `TranslationFailed` for an answer in the wrong shape) made the pure `RetranslateError`,
+        message and hint, so the server catches it without importing them (Pages has neither).
+        `EditError`, `OpenError` and `GlossaryError` pass through: they are pure already. Blocks
+        on the model's server: call it through `blocking`; `on_batch` runs on that thread. A
+        cloud model this call doesn't allow says to tick the editor's box (spec §7.2)."""
+        from vid2sub.engines.base import EngineError
+        from vid2sub.translate.run import TranslationFailed
+        from vid2sub.web.episode import RetranslateError
+
+        try:
+            return self.backend.retranslate(ep, track, ids=ids, allow_cloud=allow_cloud,
+                                            on_batch=on_batch)
+        except EngineError as err:  # the CLI's hint names a flag; the editor has a box
+            hint = ALLOW_CLOUD if err.kind == "cloud_not_allowed" else err.hint
+            raise RetranslateError(str(err), hint) from None
+        except TranslationFailed as err:
+            raise RetranslateError(str(err), "retranslate again, or pick fewer cues") from None
+
+    def media_for(self, ep: Episode, *, audio_only: bool = False) -> Media:
+        """The video by a media token when the browser can play its audio; else, or with
+        `audio_only` (the browser said it can't play the video, spec §8.2), the playback audio
+```
+
+  `src/vid2sub/web/backend.py`:
+
+  Replace
+
+```python
+from vid2sub import detect as detecting
+from vid2sub.cache import Cache
+from vid2sub.catalog import suggest
+from vid2sub.config import Config
+from vid2sub.engines.base import EngineError
+from vid2sub.engines.clients import KeyRing, RunPolicy, check_allowed
+from vid2sub.media.identity import identify
+```
+
+  with
+
+```python
+from vid2sub import detect as detecting
+from vid2sub.cache import Cache
+from vid2sub.catalog import suggest
+from vid2sub.config import Config, ModelEntry
+from vid2sub.engines.base import EngineError
+from vid2sub.engines.clients import KeyRing, RunPolicy, check_allowed
+from vid2sub.media.identity import identify
+```
+
+  Replace
+
+```python
+    make_rendition,
+)
+from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.translate.run import make_ask, translate_cues
+from vid2sub.web import ops
+from vid2sub.web.episode import (
+    Capabilities,
+```
+
+  with
+
+```python
+    make_rendition,
+)
+from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.translate.run import AskFn, make_ask, translate_cues
+from vid2sub.web import ops
+from vid2sub.web.episode import (
+    Capabilities,
+```
+
+  Replace
+
+```python
+            return ep
+        source, cues = ep.tracks.source, ep.tracks.translations[track]
+        lang = _lang(ep.source_key)
+        name = self._translator(lang, model, allow_cloud)
+        entry = self.config.models[name]
+        glossary = glossary_with(read_glossary(ep.video), ep.glossary_adds)
+        everything = ids is None and setup_changed(track_setup(ep, track), glossary.sha(),
+                                                   entry.model)
+        wanted, replaced = retranslation(source, cues, ids, everything=everything)
+        if not wanted:
+            return ep
+        policy = RunPolicy(allow_cloud)
+        check_allowed(name, entry, self.config, policy)
+        ask = make_ask(name, entry, self.config, policy, self.keys)
+        taken = set(ep.taken)
+        new = translate_cues(source, source_lang=lang, target_track=track,
+                             glossary=glossary, ask=ask, only=wanted, taken=taken,
+```
+
+  with
+
+```python
+            return ep
+        source, cues = ep.tracks.source, ep.tracks.translations[track]
+        lang = _lang(ep.source_key)
+        name, entry = self._translator(lang, model, allow_cloud)
+        glossary = glossary_with(read_glossary(ep.video), ep.glossary_adds)
+        everything = ids is None and setup_changed(track_setup(ep, track), glossary.sha(),
+                                                   entry.model)
+        wanted, replaced = retranslation(source, cues, ids, everything=everything)
+        if not wanted:
+            return ep
+        ask = self._ask(name, entry, RunPolicy(allow_cloud))
+        taken = set(ep.taken)
+        new = translate_cues(source, source_lang=lang, target_track=track,
+                             glossary=glossary, ask=ask, only=wanted, taken=taken,
+```
+
+  Replace
+
+```python
+        return replace(ep, tracks=tracks, taken=taken, made_with=made_with, redo=[],
+                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+
+    def _translator(self, lang: str, model: str | None, allow_cloud: bool) -> str:
+        """The named model, else the catalog route's pick, as M1's pipeline picks (§11.2). A route
+        whose model's server isn't answering stops here rather than taking the next model."""
+        if model is not None:
+            entry = self.config.models.get(model)
+            if entry is None or entry.task != "translate":
+                raise EngineError("unavailable", "that isn't a translation model in vid2sub.toml",
+                                  hint="`vid2sub models` lists them")
+            return model
+        cands = detecting.candidates(self.config, self.keys)
+
+        def pick(c: list) -> str | None:
+```
+
+  with
+
+```python
+        return replace(ep, tracks=tracks, taken=taken, made_with=made_with, redo=[],
+                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+
+    def _translator(self, lang: str, model: str | None, allow_cloud: bool
+                    ) -> tuple[str, ModelEntry]:
+        """The named model, else the catalog route's pick, as M1's pipeline picks (§11.2), with
+        its entry. A route whose model's server isn't answering stops here rather than taking
+        the next model. The demo's backend answers with its canned model instead."""
+        if model is not None:
+            entry = self.config.models.get(model)
+            if entry is None or entry.task != "translate":
+                raise EngineError("unavailable", "that isn't a translation model in vid2sub.toml",
+                                  hint="`vid2sub models` lists them")
+            return model, entry
+        cands = detecting.candidates(self.config, self.keys)
+
+        def pick(c: list) -> str | None:
+```
+
+  Replace
+
+```python
+            raise EngineError("unavailable", "no usable translation model",
+                              hint="; ".join(f"{n}: {r}" for n, r in s.considered)
+                              or "add one to vid2sub.toml (`vid2sub config init`)")
+        return s.model
+
+    def _check_open(self, ep: Episode) -> None:
+        if not self.is_open(ep.id):
+            raise OpenError("this episode was closed: open it again")
+    def _route_model(self, lang: str) -> str | None:
+        """The model Retranslate would use with none named and no cloud: M1's catalog route over
+        the configured models, each local server taken to answer (`probe_endpoints=False`)."""
+```
+
+  with
+
+```python
+            raise EngineError("unavailable", "no usable translation model",
+                              hint="; ".join(f"{n}: {r}" for n, r in s.considered)
+                              or "add one to vid2sub.toml (`vid2sub config init`)")
+        return s.model, self.config.models[s.model]
+
+    def _ask(self, name: str, entry: ModelEntry, policy: RunPolicy) -> AskFn:
+        """The model's ask function, once this call may use it: a cloud model only when the call
+        allows it (spec §7.2), checked here, before anything is sent."""
+        check_allowed(name, entry, self.config, policy)
+        return make_ask(name, entry, self.config, policy, self.keys)
+
+    def _check_open(self, ep: Episode) -> None:
+        if not self.is_open(ep.id):
+            raise OpenError("this episode was closed: open it again")
+
+    def _route_model(self, lang: str) -> str | None:
+        """The model Retranslate would use with none named and no cloud: M1's catalog route over
+        the configured models, each local server taken to answer (`probe_endpoints=False`)."""
+```
+
+  `src/vid2sub/web/demo.py`:
+
+  Replace
+
+```python
+
+import vid2sub
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines.base import ChunkResult, ModelStamp
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.identity import full_sha256, identify
+from vid2sub.media.probe import probe
+from vid2sub.media.tools import Tools, run_tool
+```
+
+  with
+
+```python
+
+import vid2sub
+from vid2sub.cache import Cache
+from vid2sub.config import Config, ModelEntry
+from vid2sub.engines.base import ChunkResult, EngineError, ModelStamp
+from vid2sub.engines.clients import KeyRing, RunPolicy
+from vid2sub.media.identity import full_sha256, identify
+from vid2sub.media.probe import probe
+from vid2sub.media.tools import Tools, run_tool
+```
+
+  Replace
+
+```python
+from vid2sub.store import header_for, now, sidecar_path
+from vid2sub.subs.model import Segment, Word
+from vid2sub.subs.sidecar import IdentityRecord, Sidecar, parse_sidecar, serialize
+from vid2sub.web import runtime
+from vid2sub.web.backend import Episode, LocalBackend, OpenError
+
+```
+
+  with
+
+```python
+from vid2sub.store import header_for, now, sidecar_path
+from vid2sub.subs.model import Segment, Word
+from vid2sub.subs.sidecar import IdentityRecord, Sidecar, parse_sidecar, serialize
+from vid2sub.translate.run import AskFn
+from vid2sub.web import runtime
+from vid2sub.web.backend import Episode, LocalBackend, OpenError
+
+```
+
+  Replace
+
+```python
+     "進歩で知られる都市、力強さで知られる州です。"),
+)
+NO_TRANSLATION = "（訳はありません）"
+
+
+class DemoMissing(Exception):
+```
+
+  with
+
+```python
+     "進歩で知られる都市、力強さで知られる州です。"),
+)
+NO_TRANSLATION = "（訳はありません）"
+# The model the canned sidecar's Japanese was made with (scripts/demo_sidecar.py), so the demo's
+# own track isn't stale for want of the model (spec §13.4); it is in no vid2sub.toml.
+CANNED_JA = "canned-ja"
+CANNED_ENTRY = ModelEntry(model=CANNED_JA, task="translate", local=True)
+
+
+class DemoMissing(Exception):
+```
+
+  Replace
+
+```python
+
+
+class DemoBackend(LocalBackend):
+    """LocalBackend, opening only episodes in the demo's copy."""
+
+    def __init__(self, copy: Path, tools: Tools, cache: Cache):
+        super().__init__(Config(), tools, KeyRing(environ={}), cache)
+        self.copy = copy.resolve()
+
+    def open(self, path: str) -> Episode:
+        try:
+            inside = Path(path).resolve().is_relative_to(self.copy)
+```
+
+  with
+
+```python
+
+
+class DemoBackend(LocalBackend):
+    """LocalBackend, opening only episodes in the demo's copy, and retranslating with the canned
+    translation (`CANNED_JA`, the model the demo's sidecar was made with), which sends nothing
+    anywhere: the demo has no vid2sub.toml, so no endpoint or model of its own (Task 17)."""
+
+    def __init__(self, copy: Path, tools: Tools, cache: Cache):
+        super().__init__(Config(), tools, KeyRing(environ={}), cache)
+        self.copy = copy.resolve()
+
+    def _translator(self, lang: str, model: str | None, allow_cloud: bool
+                    ) -> tuple[str, ModelEntry]:
+        if model not in (None, CANNED_JA):
+            raise EngineError("unavailable", "the demo translates only with its canned model")
+        return CANNED_JA, CANNED_ENTRY
+
+    def _ask(self, name: str, entry: ModelEntry, policy: RunPolicy) -> AskFn:
+        return canned_ask
+
+    def open(self, path: str) -> Episode:
+        try:
+            inside = Path(path).resolve().is_relative_to(self.copy)
+```
+
+  `src/vid2sub/web/server.py`:
+
+  Replace
+
+```python
+`ReactApp(...)` is called in this file. It reads the launch's parts from `runtime.current()`,
+which `vid2sub serve` sets before importing this module. An unset input is a silent exception the
+client treats as pending; an explicit null clears a pane (§19.1). Work that blocks (the endpoint
+check here; opening, saving and retranslating later) runs off the event loop, through
+`runtime.blocking` only. The server runs in Pages too (spec §3.3, §21), so this module imports,
+at its top, only the pure packages, shiny, shinyreact, htmltools, pydantic and
+`vid2sub.web.{episode, views, runtime, ops}`, and reaches local-only work through the configured
+`Runtime` (Task 14 round 14a; `tests/test_pages_imports.py`). Shiny's reconnect
+```
+
+  with
+
+```python
+`ReactApp(...)` is called in this file. It reads the launch's parts from `runtime.current()`,
+which `vid2sub serve` sets before importing this module. An unset input is a silent exception the
+client treats as pending; an explicit null clears a pane (§19.1). Work that blocks (the endpoint
+check, opening, saving and retranslating) runs off the event loop, through `runtime.blocking`
+only. The server runs in Pages too (spec §3.3, §21), so this module imports,
+at its top, only the pure packages, shiny, shinyreact, htmltools, pydantic and
+`vid2sub.web.{episode, views, runtime, ops}`, and reaches local-only work through the configured
+`Runtime` (Task 14 round 14a; `tests/test_pages_imports.py`). Shiny's reconnect
+```
+
+  Replace
+
+```python
+`runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each sends
+`save_result`: what was written, what was left alone, which tracks are in conflict, and the
+notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save sees
+(Review Focus 4, S32).
+
+The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
+for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
+```
+
+  with
+
+```python
+`runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each sends
+`save_result`: what was written, what was left alone, which tracks are in conflict, and the
+notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save sees
+(Review Focus 4, S32). Retranslate (§13.4, §20; S30) names source cues, or none for every stale
+one; it waits on the model's server, so it too runs through `runtime.blocking`, with `busy` at
+"retranslating" from the start (with no model named, the route's servers are asked first) and
+`progress` after each batch, handed back to the loop from the worker thread. It is reached
+through the runtime, whose `retranslate` turns the engine's errors into the pure
+`RetranslateError`, so nothing here imports them. Cloud models only when the request itself says
+`allow_cloud: true` (§7.2): the editor's box, unticked every time.
+
+The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
+for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
+```
+
+  Replace
+
+```python
+from shinyreact import ReactApp, page_react, reactive_output
+
+from vid2sub.subs.edit import EditError
+from vid2sub.web import WWW, ops, runtime, views
+from vid2sub.web.episode import Episode, OpenError, SaveError, SaveResult
+
+# By name: a test may load this file as a module of another name.
+log = logging.getLogger("vid2sub.web.server")
+```
+
+  with
+
+```python
+from shinyreact import ReactApp, page_react, reactive_output
+
+from vid2sub.subs.edit import EditError
+from vid2sub.subs.glossary import GlossaryError
+from vid2sub.web import WWW, ops, runtime, views
+from vid2sub.web.episode import Episode, OpenError, RetranslateError, SaveError, SaveResult
+
+# By name: a test may load this file as a module of another name.
+log = logging.getLogger("vid2sub.web.server")
+```
+
+  Replace
+
+```python
+FORMATS = ("srt", "ass")
+BAD_FORMATS = "Save writes srt, and ass when asked for: nothing was saved"
+RENDITION = re.compile(r"r_[0-9a-f]{16}")  # sidecar.make_rendition's ids (spec §14.2)
+# htmltools keeps the highest version of a dependency per name. Shiny's own version with a local
+# label (1.8.0+vid2sub, which PEP 440 sorts above 1.8.0) makes this one replace Shiny's
+# shiny-busy-indicators: its stylesheet, without the inline script in its head. The second
+```
+
+  with
+
+```python
+FORMATS = ("srt", "ass")
+BAD_FORMATS = "Save writes srt, and ass when asked for: nothing was saved"
+RENDITION = re.compile(r"r_[0-9a-f]{16}")  # sidecar.make_rendition's ids (spec §14.2)
+CUE_ID = re.compile(r"c[0-9a-f]{8}")  # model.new_cue_id's ids, as ops.CueId checks them
+MAX_IDS = 10_000  # source cues one retranslation may name: every cue of a long episode
+PICK_CUES = "pick the cues to retranslate"
+# htmltools keeps the highest version of a dependency per name. Shiny's own version with a local
+# label (1.8.0+vid2sub, which PEP 440 sorts above 1.8.0) makes this one replace Shiny's
+# shiny-busy-indicators: its stylesheet, without the inline script in its head. The second
+```
+
+  Replace
+
+```python
+        self.media = runtime.Media(None, None)
+        self.shown: reactive.Value[tuple[Episode, runtime.Media] | None] = reactive.value(None)
+        self.busy: reactive.Value[str | None] = reactive.value(None)
+        self._todo: deque[tuple[str, object]] = deque()
+        self._worker: asyncio.Task | None = None
+        self._ended = False
+```
+
+  with
+
+```python
+        self.media = runtime.Media(None, None)
+        self.shown: reactive.Value[tuple[Episode, runtime.Media] | None] = reactive.value(None)
+        self.busy: reactive.Value[str | None] = reactive.value(None)
+        self.progress: reactive.Value[dict[str, int] | None] = reactive.value(None)
+        self._retranslating: object | None = None  # the running retranslation's token
+        self._todo: deque[tuple[str, object]] = deque()
+        self._worker: asyncio.Task | None = None
+        self._ended = False
+```
+
+  Replace
+
+```python
+        await self._publish(busy=None)
+        await self._report("pick", picked, result)
+
+    async def _report(self, kind: Literal["save", "pick"], ep: Episode,
+                      result: SaveResult) -> None:
+        """The `save_result` message: file names and track keys only, never a path (§6.8)."""
+```
+
+  with
+
+```python
+        await self._publish(busy=None)
+        await self._report("pick", picked, result)
+
+    async def _retranslate(self, request: object) -> None:
+        """Retranslate (spec §13.4, §20): the source cues the request names, else (`ids` null)
+        every stale or untranslated one. It blocks on the model's server, for minutes on a whole
+        episode, so it runs through `runtime.blocking`, and each batch's progress hops back to
+        this loop from the thread it runs on. Edits sent meanwhile wait their turn in this tab's
+        queue and land on the retranslated episode. `allow_cloud` is the request's own, true or
+        false, never a setting (§7.2). Whatever happens, `retranslate_result` says how many
+        translation cues changed, so the tab's draft keeps only what changed the episode."""
+        ep = self._named(request)
+        if ep is None or not isinstance(request, dict):
+            return
+        changed = 0
+        try:
+            track, ids = request.get("track"), request.get("ids")
+            allow_cloud = request.get("allow_cloud")
+            if not (isinstance(track, str) and isinstance(allow_cloud, bool) and _cue_ids(ids)):
+                await notice(self.session, "error", PICK_CUES)
+                return
+            loop = asyncio.get_running_loop()
+            job = self._retranslating = object()
+
+            def on_batch(done: int, of: int) -> None:  # on the thread `blocking` runs it on
+                asyncio.run_coroutine_threadsafe(self._progress(job, done, of), loop)
+
+            await self._set_busy("retranslating")
+            try:
+                new = await runtime.blocking(self.rt.retranslate, ep, track, ids=ids,
+                                             allow_cloud=allow_cloud, on_batch=on_batch)
+            except (EditError, OpenError, GlossaryError) as err:  # fit to show, echoing nothing
+                await self._set_busy(None)
+                await notice(self.session, "error", str(err))
+                return
+            except RetranslateError as err:
+                await self._set_busy(None)
+                await notice(self.session, "error", f"couldn't retranslate: {err}"
+                             + (f" → {err.hint}" if err.hint else ""))
+                return
+            finally:
+                self._retranslating = None
+            before = {c.id for c in ep.tracks.translations.get(track, ())}
+            changed = sum(1 for c in new.tracks.translations.get(track, ()) if c.id not in before)
+            self.ep = new
+            await self._publish(busy=None)
+        finally:
+            n = request.get("n")
+            await shinyreact.send_message(self.session, "retranslate_result", {
+                "episode": ep.id, "n": n if type(n) is int else None, "changed": changed})
+
+    async def _progress(self, job: object, done: int, of: int) -> None:
+        """A batch finished (`on_batch`): shown while that retranslation still runs, so a late
+        one never shows after it ended."""
+        if self._retranslating is not job:
+            return
+        async with reactive.lock():
+            self.progress.set({"done": done, "of": of})
+            await reactive.flush()
+
+    async def _report(self, kind: Literal["save", "pick"], ep: Episode,
+                      result: SaveResult) -> None:
+        """The `save_result` message: file names and track keys only, never a path (§6.8)."""
+```
+
+  Replace
+
+```python
+        async with reactive.lock():
+            self.shown.set(None if self.ep is None else (self.ep, self.media))
+            self.busy.set(busy)
+            await reactive.flush()
+
+    async def _set_busy(self, busy: str | None) -> None:
+        async with reactive.lock():
+            self.busy.set(busy)
+            await reactive.flush()
+
+
+def server(input: Inputs, output: Outputs, session: Session) -> None:
+    rt = runtime.current()
+
+```
+
+  with
+
+```python
+        async with reactive.lock():
+            self.shown.set(None if self.ep is None else (self.ep, self.media))
+            self.busy.set(busy)
+            self.progress.set(None)
+            await reactive.flush()
+
+    async def _set_busy(self, busy: str | None) -> None:
+        async with reactive.lock():
+            self.busy.set(busy)
+            self.progress.set(None)
+            await reactive.flush()
+
+
+def _cue_ids(ids: object) -> bool:
+    """None (every stale or untranslated cue), or 1 to MAX_IDS cue ids of new_cue_id's shape."""
+    return ids is None or (isinstance(ids, list) and 0 < len(ids) <= MAX_IDS
+                           and all(isinstance(i, str) and CUE_ID.fullmatch(i) for i in ids))
+
+
+def server(input: Inputs, output: Outputs, session: Session) -> None:
+    rt = runtime.current()
+
+```
+
+  Replace
+
+```python
+    def _resolve() -> None:
+        editor.submit("resolve", input.resolve())
+
+    @reactive_output
+    def episode():
+        shown = editor.shown()
+```
+
+  with
+
+```python
+    def _resolve() -> None:
+        editor.submit("resolve", input.resolve())
+
+    @reactive.effect
+    @reactive.event(input.retranslate)
+    def _retranslate() -> None:
+        editor.submit("retranslate", input.retranslate())
+
+    @reactive_output
+    def episode():
+        shown = editor.shown()
+```
+
+  Replace
+
+```python
+    def busy():
+        return editor.busy()
+
+
+app = ReactApp(server, ui=page, static_assets={"/": WWW})
+```
+
+  with
+
+```python
+    def busy():
+        return editor.busy()
+
+    @reactive_output
+    def progress():
+        return editor.progress()
+
+
+app = ReactApp(server, ui=page, static_assets={"/": WWW})
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_server.py
+  tests/test_backend_retranslate.py tests/test_pages_imports.py -q` first (`56 passed`), then
+  `make check`. Expected: `967 passed, 2 skipped, 28 deselected` (twice), `Test Files  14 passed
+  (14)`, `Tests  63 passed (63)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 a tab retranslates named or stale cues off the event loop, with progress, and the demo answers with its canned translation
+
+Input `retranslate` ({"episode", "n", "track", "ids": [cue ids] | null,
+"allow_cloud": true | false}) joins the tab's Editor queue (spec §13.4,
+§20; S30). It runs through runtime.blocking with `busy` at
+"retranslating" from the start, since with no model named the route's
+servers are asked first; each batch's on_batch, on the worker thread,
+hands {"done", "of"} back to the loop (run_coroutine_threadsafe) as the
+new `progress` output, guarded so a late one never shows after the
+retranslation ended. Edits sent meanwhile wait in the tab's queue and
+land on the retranslated episode. `allow_cloud` must be the request's own
+true or false (spec §7.2): missing, "true" or 1 asks no model. Ids must
+have new_cue_id's shape (1 to 10,000), the track is checked by the
+backend, and nothing the page sent is echoed. Message
+`retranslate_result` ({"episode", "n", "changed"}) always follows, so the
+tab's draft keeps only retranslations that changed something.
+
+The server can't import EngineError (engines.base imports numpy and
+media.decode) or TranslationFailed, so Runtime.retranslate wraps
+LocalBackend.retranslate and raises the pure web.episode.RetranslateError
+(message, hint); the cloud refusal's hint names the editor's box instead
+of --allow-cloud. EditError, OpenError and GlossaryError pass through.
+LocalBackend gains two seams: _translator returns (name, ModelEntry), and
+_ask(name, entry, policy) runs check_allowed and make_ask. DemoBackend
+answers with CANNED_JA ("canned-ja", the model its sidecar was made with)
+and canned_ask, so the demo sends nothing anywhere.
+
+The new server tests failed first with: AssertionError: timed out; the
+tab saw [...] (no retranslate input); the demo test with: EngineError: no
+usable translation model.
+
+Docs read: shiny 1.8.0's session (_manage_inputs, send_custom_message,
+reactive.event's ignore_none), shinyreact 0.1.0's send_message and
+resolve_id, Python's asyncio.run_coroutine_threadsafe and to_thread
+(contexts carried), translate.run's on_batch.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 17
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/backend.py src/vid2sub/web/demo.py src/vid2sub/web/episode.py
+  src/vid2sub/web/runtime.py src/vid2sub/web/server.py tests/test_backend_retranslate.py
+  tests/test_web_server.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1
+  --format='%(trailers)'` shows `Plan:`.
+
+#### Round 17b: Retranslate in the editor
+
+- [ ] **Step 6: Write the failing tests.** In `frontend/src/lib/keys.test.ts`:
+
+  Replace
+
+```ts
+    expect(actionFor(press("y", { ctrlKey: true }), "navigate")).toEqual({ kind: "redo" });
+  });
+
+  it("leaves every other key to the browser", () => {
+    for (const k of [press("a"), press("Tab"), press("Escape"), press("s", { metaKey: true }), press("ArrowUp", { altKey: true })]) {
+      expect(actionFor(k, "navigate")).toBeNull();
+```
+
+  with
+
+```ts
+    expect(actionFor(press("y", { ctrlKey: true }), "navigate")).toEqual({ kind: "redo" });
+  });
+
+  it("extends the selection a cue up or down with Shift and the arrows (spec §20's selection)", () => {
+    expect(actionFor(press("ArrowUp", { shiftKey: true }), "navigate")).toEqual({ kind: "extend", by: -1 });
+    expect(actionFor(press("ArrowDown", { shiftKey: true }), "navigate")).toEqual({ kind: "extend", by: 1 });
+  });
+
+  it("leaves every other key to the browser", () => {
+    for (const k of [press("a"), press("Tab"), press("Escape"), press("s", { metaKey: true }), press("ArrowUp", { altKey: true })]) {
+      expect(actionFor(k, "navigate")).toBeNull();
+```
+
+  In `frontend/src/lib/draft.test.ts`:
+
+  Replace
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import { addStep, clearDraft, draftKey, type DraftStorage, loadDraft } from "./draft";
+
+function memory(): DraftStorage & { data: Map<string, string> } {
+  const data = new Map<string, string>();
+```
+
+  with
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import { addStep, clearDraft, draftKey, type DraftStep, type DraftStorage, dropRetranslation, loadDraft, replayable } from "./draft";
+
+function memory(): DraftStorage & { data: Map<string, string> } {
+  const data = new Map<string, string>();
+```
+
+  At the end of the file, after `});`, after one blank line, append:
+
+```ts
+describe("a retranslation in the draft (Task 17)", () => {
+  const EDIT2 = { edit: { op: "set_text", cue: "c0000000b", text: "We meet." } } as const;
+
+  it("is never replayed, so a restored draft never asks a model again", () => {
+    expect(replayable([EDIT, { retranslate: 3 }, EDIT2])).toEqual([EDIT, EDIT2]);
+  });
+
+  it("still takes the undo that undid it, and the redo that redid it, so neither lands elsewhere", () => {
+    const steps: DraftStep[] = [EDIT, { retranslate: 3 }, { undo: true }, EDIT2];
+    expect(replayable(steps)).toEqual([EDIT, EDIT2]);
+    expect(replayable([EDIT, { retranslate: 3 }, { undo: true }, { redo: true }])).toEqual([EDIT]);
+    expect(replayable([{ retranslate: 3 }, EDIT, { undo: true }, { undo: true }, { undo: true }])).toEqual([EDIT, { undo: true }]);
+    expect(replayable([EDIT, { undo: true }, { redo: true }])).toEqual([EDIT, { undo: true }, { redo: true }]);
+    // a new edit clears what redo could bring back, on the server as here
+    expect(replayable([{ retranslate: 3 }, { undo: true }, EDIT2, { redo: true }])).toEqual([EDIT2]);
+  });
+
+  it("is dropped when the server says it changed nothing, and only that one", () => {
+    const s = memory();
+    const key = draftKey({ en: "r_1" });
+    for (const step of [EDIT, { retranslate: 3 }, { retranslate: 4 }, EDIT2] as DraftStep[]) addStep(s, key, step, AT);
+    dropRetranslation(s, key, 3);
+    expect(loadDraft(s, key)?.steps).toEqual([EDIT, { retranslate: 4 }, EDIT2]);
+    dropRetranslation(s, key, 9);
+    expect(loadDraft(s, key)?.steps).toEqual([EDIT, { retranslate: 4 }, EDIT2]);
+    expect(() => dropRetranslation(throwing, key, 4)).not.toThrow();
+  });
+});
+```
+
+  `frontend/src/lib/retranslate.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { Row } from "@/types";
+
+import { retranslateNotice, selectedIds, selectionRange } from "./retranslate";
+
+const row = (id: string): Row => ({ id, n: 1, start_ms: 0, end_ms: 1, text: id, w: null, flags: [], tr: {} });
+const ROWS = ["c00000001", "c00000002", "c00000003", "c00000004"].map(row);
+
+describe("what Retranslate names (spec §20)", () => {
+  it("is the selected cue, or every cue from the anchor to it, either way round", () => {
+    expect(selectionRange(ROWS, 1, null)).toEqual([1, 1]);
+    expect(selectionRange(ROWS, 1, "c00000004")).toEqual([1, 3]);
+    expect(selectionRange(ROWS, 3, "c00000002")).toEqual([1, 3]);
+    expect(selectedIds(ROWS, [1, 3])).toEqual(["c00000002", "c00000003", "c00000004"]);
+  });
+
+  it("is nothing with no cue selected, and only the selected cue once the anchor's cue is gone", () => {
+    expect(selectionRange(ROWS, -1, "c00000002")).toBeNull();
+    expect(selectionRange(ROWS, 2, "c0000dead")).toEqual([2, 2]);
+    expect(selectedIds(ROWS, null)).toEqual([]);
+  });
+});
+
+describe("what a retranslation says", () => {
+  it("counts the cues it changed, or says nothing was stale", () => {
+    expect(retranslateNotice(2, "Japanese", true)).toEqual({ kind: "info", text: "Retranslated 2 Japanese cues" });
+    expect(retranslateNotice(1, "Japanese", false)).toEqual({ kind: "info", text: "Retranslated 1 Japanese cue" });
+    expect(retranslateNotice(0, "Japanese", true)).toEqual({ kind: "info", text: "Nothing to retranslate: no Japanese cue is stale or untranslated, apart from those you edited" });
+  });
+
+  it("leaves a failed request to the server's own notice", () => {
+    expect(retranslateNotice(0, "Japanese", false)).toBeNull();
+  });
+});
+```
+
+  `tests/e2e/test_retranslate.py`:
+
+```python
+"""Retranslating in Chromium, against `vid2sub serve --demo` and its canned translation (spec
+§13.4, §20, §7.2; S30, the plan's Decisions 8 and 9): Retranslate stale changes only the stale
+cues and keeps the translations a person edited; the selected cues, a run of them picked with
+Shift, are retranslated even where edited; Allow cloud models starts unticked and unticks again
+after each request; and a crashed tab's draft never replays a retranslation. Run with
+`make e2e`."""
+
+import re
+
+import pytest
+from playwright.sync_api import expect
+
+from vid2sub.web.demo import JAPANESE, NO_TRANSLATION
+
+pytestmark = pytest.mark.e2e
+
+COLLEGE, STATE = JAPANESE[1][1], JAPANESE[2][1]  # the canned Japanese of rows 2 and 3
+
+
+def open_demo(page, server):
+    copy = next(server.tmp.glob("vid2sub-demo-*/demo"))
+    page.get_by_test_id("open-path").fill(str(copy / "jfk.mp4"))
+    page.get_by_test_id("open-button").click()
+    rows = page.get_by_test_id("cue-row")
+    expect(rows).to_have_count(4)
+    return rows
+
+
+def edit(page, cell, text: str) -> None:
+    """Edits a source cell (`cue-text`) or a translation cell (`cue-translation`)."""
+    cell.click()
+    page.keyboard.press("Enter")
+    page.get_by_test_id("cue-editor").fill(text)
+    page.keyboard.press("ControlOrMeta+Enter")
+    expect(cell).to_have_text(text)
+
+
+def translation(rows, k: int) -> str:
+    return rows.nth(k).get_by_test_id("cue-translation").inner_text().replace("\n", "")
+
+
+def notices(page) -> list[str]:
+    return [t.removesuffix("×").strip() for t in page.get_by_test_id("notice").all_inner_texts()]
+
+
+def test_retranslate_stale_changes_only_the_stale_cues_and_keeps_edited_translations(
+        page, server):
+    # S30: two source cues changed; the translation of one of them was edited by hand.
+    rows = open_demo(page, server)
+    first = translation(rows, 0)
+    edit(page, rows.nth(3).get_by_test_id("cue-translation"), "力強い州。")
+    edit(page, rows.nth(3).get_by_test_id("cue-text"), "in a state noted for strength,")
+    edit(page, rows.nth(2).get_by_test_id("cue-text"), "We meet at a college known for knowledge,")
+    expect(rows.nth(2).locator("[data-flag=stale]")).to_have_count(1)
+    expect(rows.nth(3).locator("[data-flag=stale]")).to_have_count(1)
+    allow = page.get_by_test_id("allow-cloud")
+    expect(allow).not_to_be_checked()  # §7.2: unticked every time
+    page.get_by_test_id("retranslate-stale").click()
+    expect(rows.nth(2).get_by_test_id("cue-translation")).to_have_text(NO_TRANSLATION)
+    assert translation(rows, 3) == "力強い州。"  # edited: kept (§13.4)
+    assert translation(rows, 0) == first  # not stale: untouched
+    expect(rows.nth(2).locator("[data-flag=stale]")).to_have_count(0)
+    expect(rows.nth(3).locator("[data-flag=edited]")).to_have_count(1)
+    assert notices(page) == ["Retranslated 1 Japanese cue"]
+    page.get_by_test_id("retranslate-stale").click()
+    expect(page.get_by_test_id("notice")).to_have_count(2)
+    assert notices(page)[-1] == ("Nothing to retranslate: no Japanese cue is stale or "
+                                 "untranslated, apart from those you edited")
+    page.get_by_test_id("tool-undo").click()  # one undo step
+    expect(rows.nth(2).get_by_test_id("cue-translation")).to_have_text(
+        re.compile("^私たちが集うのは"))
+
+
+def test_the_selected_cues_are_retranslated_even_where_edited_and_the_cloud_box_unticks(
+        page, server):
+    # Decision 8: the person named them; spec §7.2: the box unticks after each request.
+    rows = open_demo(page, server)
+    edit(page, rows.nth(2).get_by_test_id("cue-translation"), "大学。")
+    rows.nth(2).get_by_test_id("cue-text").click()
+    rows.nth(3).get_by_test_id("cue-text").click(modifiers=["Shift"])
+    for k, selected in enumerate(["false", "false", "true", "true"]):
+        expect(rows.nth(k)).to_have_attribute("aria-selected", selected)
+    named = page.get_by_test_id("retranslate-selected")
+    expect(named).to_have_text("Retranslate 2 cues")
+    allow = page.get_by_test_id("allow-cloud")
+    allow.check()
+    named.click()
+    expect(allow).not_to_be_checked()
+    expect(rows.nth(2).get_by_test_id("cue-translation")).not_to_have_text("大学。")
+    assert translation(rows, 2) == COLLEGE and translation(rows, 3) == STATE
+    assert notices(page) == ["Retranslated 2 Japanese cues"]
+    # Shift+↓ grows the selection by keyboard, ↓ alone goes back to one cue (S37)
+    rows.first.get_by_test_id("cue-text").click()
+    page.get_by_test_id("cue-list").focus()
+    page.keyboard.press("Shift+ArrowDown")
+    page.keyboard.press("Shift+ArrowDown")
+    expect(named).to_have_text("Retranslate 3 cues")
+    page.keyboard.press("ArrowDown")
+    expect(named).to_have_text("Retranslate this cue")
+    expect(page.get_by_test_id("cue-list")).to_have_attribute("aria-multiselectable", "true")
+
+
+def test_a_crashed_tabs_draft_never_replays_a_retranslation_or_the_undo_that_undid_it(
+        open_page, server):
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit(a, rows.nth(2).get_by_test_id("cue-translation"), "大学。")
+    rows.nth(2).get_by_test_id("cue-text").click()
+    a.get_by_test_id("retranslate-selected").click()
+    expect(rows.nth(2).get_by_test_id("cue-translation")).not_to_have_text("大学。")
+    a.get_by_test_id("tool-undo").click()  # takes back the retranslation, not the edit
+    expect(rows.nth(2).get_by_test_id("cue-translation")).to_have_text("大学。")
+    edit(a, rows.nth(1).get_by_test_id("cue-text"), "occasion!")
+    a.close()  # a crash: no warning, no Save
+    second = open_page(server)
+    b = second.page
+    rows = open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_contain_text("2 unsaved edits from")
+    b.get_by_test_id("draft-restore").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
+    expect(rows.nth(2).get_by_test_id("cue-translation")).to_have_text("大学。")
+    assert notices(b) == []  # nothing replayed failed, and no model was asked
+    assert first.errors == [] and second.errors == [] and second.violations() == []
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `cd frontend && npx vitest run src/lib`. Expected:
+  `Error: Failed to resolve import "./retranslate" from "src/lib/retranslate.test.ts"`,
+  `TypeError: replayable is not a function` (twice), `TypeError: dropRetranslation is not a
+  function`, `AssertionError: expected { kind: 'previous' } to deeply equal { kind: 'extend',
+  by: -1 }`, and `Test Files  3 failed | 7 passed (10)`. `make build && uv run pytest -m e2e
+  tests/e2e/test_retranslate.py -q`. Expected: `E       AssertionError: Locator expected not to
+  be checked` with `waiting for get_by_test_id("allow-cloud")`, and `3 failed`.
+- [ ] **Step 8: Write the code.** `frontend/src/types.ts`:
+
+  Replace
+
+```ts
+};
+
+/** The `busy` output: what the tab's editor is doing, or null. */
+export type Busy = "opening" | "playback" | "saving" | "picking" | null;
+
+/** An edit, as `vid2sub.web.ops` takes it: every edit goes through the server's `apply`. */
+export type EditOp =
+```
+
+  with
+
+```ts
+};
+
+/** The `busy` output: what the tab's editor is doing, or null. */
+export type Busy = "opening" | "playback" | "saving" | "picking" | "retranslating" | null;
+
+/** The `progress` output: a running retranslation's batches, once the first is done, else null. */
+export type Progress = { done: number; of: number } | null;
+
+/** The `retranslate_result` message: how many translation cues request `n` changed (0: nothing
+ * was stale, or it failed, which a notice says). */
+export type RetranslateResultMessage = { episode: string; n: number | null; changed: number };
+
+/** An edit, as `vid2sub.web.ops` takes it: every edit goes through the server's `apply`. */
+export type EditOp =
+```
+
+  `frontend/src/lib/keys.ts`:
+
+  Replace
+
+```ts
+// The editor's keyboard model, verbatim from spec §20, safe with CJK input methods.
+//
+// Navigate mode (the default): Space plays or pauses, J/K/L shuttle (J back two seconds, K
+// pause, L play), ↑/↓ the previous or next cue, ←/→ the source or the translation cell, `[` and
+// `]` set the cue's start or end to the playhead, Alt+←/→ nudge it 100 ms (500 ms with Shift),
+// Enter edits the selected cell, Ctrl/⌘+Z undoes and Ctrl/⌘+Shift+Z (or Ctrl+Y) redoes. Edit
+// mode: typing goes to the text and only Ctrl/⌘ chords act (⌘↵ commit, ⌘⇧S split at the caret,
+```
+
+  with
+
+```ts
+// The editor's keyboard model, verbatim from spec §20, safe with CJK input methods.
+//
+// Navigate mode (the default): Space plays or pauses, J/K/L shuttle (J back two seconds, K
+// pause, L play), ↑/↓ the previous or next cue (with Shift, the selection grows a cue that way,
+// for Retranslate), ←/→ the source or the translation cell, `[` and
+// `]` set the cue's start or end to the playhead, Alt+←/→ nudge it 100 ms (500 ms with Shift),
+// Enter edits the selected cell, Ctrl/⌘+Z undoes and Ctrl/⌘+Shift+Z (or Ctrl+Y) redoes. Edit
+// mode: typing goes to the text and only Ctrl/⌘ chords act (⌘↵ commit, ⌘⇧S split at the caret,
+```
+
+  Replace
+
+```ts
+  | { kind: "play" }
+  | { kind: "previous" }
+  | { kind: "next" }
+  | { kind: "cell"; cell: "source" | "translation" }
+  | { kind: "set-start" }
+  | { kind: "set-end" }
+```
+
+  with
+
+```ts
+  | { kind: "play" }
+  | { kind: "previous" }
+  | { kind: "next" }
+  | { kind: "extend"; by: -1 | 1 }
+  | { kind: "cell"; cell: "source" | "translation" }
+  | { kind: "set-start" }
+  | { kind: "set-end" }
+```
+
+  Replace
+
+```ts
+    case "j": return e.shiftKey ? null : { kind: "back" };
+    case "k": return e.shiftKey ? null : { kind: "pause" };
+    case "l": return e.shiftKey ? null : { kind: "play" };
+    case "ArrowUp": return { kind: "previous" };
+    case "ArrowDown": return { kind: "next" };
+    case "ArrowLeft": return { kind: "cell", cell: "source" };
+    case "ArrowRight": return { kind: "cell", cell: "translation" };
+    case "[": return { kind: "set-start" };
+```
+
+  with
+
+```ts
+    case "j": return e.shiftKey ? null : { kind: "back" };
+    case "k": return e.shiftKey ? null : { kind: "pause" };
+    case "l": return e.shiftKey ? null : { kind: "play" };
+    case "ArrowUp": return e.shiftKey ? { kind: "extend", by: -1 } : { kind: "previous" };
+    case "ArrowDown": return e.shiftKey ? { kind: "extend", by: 1 } : { kind: "next" };
+    case "ArrowLeft": return { kind: "cell", cell: "source" };
+    case "ArrowRight": return { kind: "cell", cell: "translation" };
+    case "[": return { kind: "set-start" };
+```
+
+  `frontend/src/lib/draft.ts`:
+
+  Replace
+
+```ts
+// request that changes the episode is also written to localStorage, so a tab that crashes or is
+// closed can offer them back when the episode is opened again. The draft is the edits, undos and
+// redos in the order they were sent, replayed through the server's rules on Restore, so the
+// rules exist once (§20). It is keyed by the heads the episode was opened at: a Save moves the
+// heads, so a draft is only ever offered on the versions its edits were made against. Every
+// storage call is wrapped in try/catch: a private window or blocked site data throws, and the
+// editor must work without it.
+
+import type { EditOp } from "@/types";
+
+export type DraftStep = { edit: EditOp } | { undo: true } | { redo: true };
+export type Draft = { v: 1; at: string; steps: DraftStep[] };
+export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+```
+
+  with
+
+```ts
+// request that changes the episode is also written to localStorage, so a tab that crashes or is
+// closed can offer them back when the episode is opened again. The draft is the edits, undos and
+// redos in the order they were sent, replayed through the server's rules on Restore, so the
+// rules exist once (§20). A retranslation is kept only as a marker (its request's count), never
+// replayed, so a restored draft never asks a model again; it still takes the undo that undid it,
+// so that undo doesn't take back an edit instead (Task 17), and the server's word that it changed
+// nothing drops it. It is keyed by the heads the episode was opened at: a Save moves the
+// heads, so a draft is only ever offered on the versions its edits were made against. Every
+// storage call is wrapped in try/catch: a private window or blocked site data throws, and the
+// editor must work without it.
+
+import type { EditOp } from "@/types";
+
+export type DraftStep = { edit: EditOp } | { undo: true } | { redo: true } | { retranslate: number };
+export type Draft = { v: 1; at: string; steps: DraftStep[] };
+export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+```
+
+  At the end of the file, after `}`, after one blank line, append:
+
+```ts
+/** Removes the marker of the retranslation sent as request `n`: the server says it changed
+ * nothing, so it left no undo step behind. */
+export function dropRetranslation(storage: DraftStorage | null, key: string, n: number): void {
+  try {
+    const draft = loadDraft(storage, key);
+    if (!draft) return;
+    const steps = draft.steps.filter((s) => !("retranslate" in s && s.retranslate === n));
+    if (steps.length === draft.steps.length) return;
+    if (steps.length) storage?.setItem(key, JSON.stringify({ ...draft, steps }));
+    else storage?.removeItem(key);
+  } catch {
+    /* forbidden: there is no draft to change */
+  }
+}
+
+/** The steps Restore sends: the edits, undos and redos, without the retranslations. The undo
+ * history is followed as the server keeps it, so an undo or a redo that took back or brought back
+ * a retranslation is left out too, rather than landing on an edit. */
+export function replayable(steps: readonly DraftStep[]): DraftStep[] {
+  const out: DraftStep[] = [];
+  const done: boolean[] = []; // the undo history: true for an edit, false for a retranslation
+  const undone: boolean[] = []; // what redo would bring back
+  for (const step of steps) {
+    if ("edit" in step || "retranslate" in step) {
+      done.push("edit" in step);
+      undone.length = 0;
+      if ("edit" in step) out.push(step);
+      continue;
+    }
+    const [from, to] = "undo" in step ? [done, undone] : [undone, done];
+    const edit = from.pop();
+    if (edit === undefined) continue; // nothing to take back: the server ignores it too
+    to.push(edit);
+    if (edit) out.push(step);
+  }
+  return out;
+}
+```
+
+  `frontend/src/lib/retranslate.ts`:
+
+```ts
+// What Retranslate names and says (spec §13.4, §20; S30). It names the selected cue, or the
+// selection: every cue from the anchor (where Shift+click or Shift+↑/↓ started) to the selected
+// one. "Retranslate stale" names none, and the server redoes every stale or untranslated cue,
+// never one a person edited. The server says how many translation cues changed; nothing changed
+// on a stale request means nothing was stale, and on a named one that it failed, which the
+// server's own notice says.
+
+import type { Notice, Row } from "@/types";
+
+/** The selected rows, [first, last], or null with none selected. */
+export function selectionRange(rows: readonly Row[], selected: number, anchor: string | null): [number, number] | null {
+  if (selected < 0 || selected >= rows.length) return null;
+  const at = anchor === null ? -1 : rows.findIndex((r) => r.id === anchor);
+  if (at < 0) return [selected, selected];
+  return [Math.min(at, selected), Math.max(at, selected)];
+}
+
+/** The source cue ids of the selected rows, in order. */
+export function selectedIds(rows: readonly Row[], range: [number, number] | null): string[] {
+  return range ? rows.slice(range[0], range[1] + 1).map((r) => r.id) : [];
+}
+
+/** The notice for a retranslation that came back, or null when the server's error says it. */
+export function retranslateNotice(changed: number, label: string, stale: boolean): Notice | null {
+  if (changed > 0) return { kind: "info", text: `Retranslated ${changed} ${label} ${changed === 1 ? "cue" : "cues"}` };
+  if (stale) return { kind: "info", text: `Nothing to retranslate: no ${label} cue is stale or untranslated, apart from those you edited` };
+  return null;
+}
+```
+
+  `frontend/src/components/Retranslate.tsx`:
+
+```tsx
+import { useState } from "react";
+
+import type { Busy, Progress } from "@/types";
+
+const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+
+/** Retranslate (spec §13.4, §20; S30): the selected cues, replaced even where a translation was
+ * edited, since the person asked (Decision 8), or every stale or untranslated cue, never one a
+ * person edited. **Allow cloud models** starts unticked, and unticks again after each request:
+ * the cloud is allowed per retranslation, never by a setting (spec §7.2). The model's server can
+ * take minutes over a whole episode, so while it works, the batches done so far are announced
+ * politely (§19.3). */
+export function Retranslate({ label, selected, busy, progress, onSelected, onStale }: {
+  label: string; // the translation track's name
+  selected: number; // how many cues are selected
+  busy: Busy;
+  progress: Progress;
+  onSelected: (allowCloud: boolean) => void;
+  onStale: (allowCloud: boolean) => void;
+}) {
+  const [allowCloud, setAllowCloud] = useState(false);
+  const working = busy === "retranslating";
+  const send = (run: (allowCloud: boolean) => void) => {
+    run(allowCloud);
+    setAllowCloud(false);
+  };
+  return (
+    <div role="group" aria-label={`Retranslate ${label}`} className="flex flex-wrap items-center gap-2 text-sm" data-testid="retranslate">
+      <button type="button" className={button} disabled={working || selected === 0} onClick={() => send(onSelected)} data-testid="retranslate-selected">
+        {selected > 1 ? `Retranslate ${selected} cues` : "Retranslate this cue"}
+      </button>
+      <button type="button" className={button} disabled={working} onClick={() => send(onStale)} data-testid="retranslate-stale">
+        Retranslate stale
+      </button>
+      <label className="flex items-center gap-1">
+        <input type="checkbox" className="size-4 accent-(--primary)" checked={allowCloud} onChange={(e) => setAllowCloud(e.target.checked)} data-testid="allow-cloud" />
+        Allow cloud models
+      </label>
+      <span role="status" aria-live="polite" className="text-muted-foreground" data-testid="retranslate-progress">
+        {working ? (progress ? `Retranslating: ${progress.done} of ${progress.of} batches done…` : "Retranslating…") : ""}
+      </span>
+    </div>
+  );
+}
+```
+
+  `frontend/src/components/CueRow.tsx`:
+
+  Replace
+
+```tsx
+/** One source cue with its translation alongside (spec §20): number, times, source text, the
+ * chosen track's translation and the flags. The current cue has the orange bar and
+ * `aria-current`; in it the spoken word is marked, found in the text from the transcript's words.
+ * The selected row's selected cell is outlined, and in edit mode it is a text box. Every string is
+ * a text node or a text box's value (spec §6.3). */
+export function CueRow({ row, track, current, selected, cell, editing, word, words, total, onPick, onDraft, onEditKey, editorRef }: {
+  row: Row;
+  track: string | null;
+  current: boolean;
+  selected: boolean;
+  cell: Cell;
+  editing: Editing | null; // only when this row is being edited
+  word: number; // the spoken word's index in `words`, or -1
+  words: readonly SpokenWord[];
+  total: number;
+  onPick: (cell: Cell) => void;
+  onDraft: (text: string) => void;
+  onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+  editorRef: RefObject<HTMLTextAreaElement | null>;
+```
+
+  with
+
+```tsx
+/** One source cue with its translation alongside (spec §20): number, times, source text, the
+ * chosen track's translation and the flags. The current cue has the orange bar and
+ * `aria-current`; in it the spoken word is marked, found in the text from the transcript's words.
+ * The selected row's selected cell is outlined, and in edit mode it is a text box; a row in the
+ * selection a Shift+click or Shift+↑/↓ made is marked selected too, for Retranslate. Every string
+ * is a text node or a text box's value (spec §6.3). */
+export function CueRow({ row, track, current, selected, inRange, cell, editing, word, words, total, onPick, onDraft, onEditKey, editorRef }: {
+  row: Row;
+  track: string | null;
+  current: boolean;
+  selected: boolean;
+  inRange: boolean; // in the selection, beside the selected row
+  cell: Cell;
+  editing: Editing | null; // only when this row is being edited
+  word: number; // the spoken word's index in `words`, or -1
+  words: readonly SpokenWord[];
+  total: number;
+  onPick: (cell: Cell, extend: boolean) => void; // extend: Shift was held
+  onDraft: (text: string) => void;
+  onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+  editorRef: RefObject<HTMLTextAreaElement | null>;
+```
+
+  Replace
+
+```tsx
+    <div
+      role="option"
+      id={`cue-${row.id}`}
+      aria-selected={selected}
+      aria-current={current ? "true" : undefined}
+      aria-setsize={total}
+      aria-posinset={row.n}
+      data-testid="cue-row"
+      data-cue={row.id}
+      onClick={() => onPick("source")}
+      className={cn(
+        "grid cursor-pointer grid-cols-[2.5rem_1fr] gap-x-2 border-b border-l-4 border-b-border px-2 py-1.5",
+        current ? "border-l-(--brand-orange)" : "border-l-transparent",
+        selected && "bg-accent",
+      )}
+    >
+      <span className="pt-0.5 text-xs text-muted-foreground tabular-nums">{row.n}</span>
+```
+
+  with
+
+```tsx
+    <div
+      role="option"
+      id={`cue-${row.id}`}
+      aria-selected={selected || inRange}
+      aria-current={current ? "true" : undefined}
+      aria-setsize={total}
+      aria-posinset={row.n}
+      data-testid="cue-row"
+      data-cue={row.id}
+      onClick={(e) => onPick("source", e.shiftKey)}
+      className={cn(
+        "grid cursor-pointer grid-cols-[2.5rem_1fr] gap-x-2 border-b border-l-4 border-b-border px-2 py-1.5",
+        current ? "border-l-(--brand-orange)" : "border-l-transparent",
+        (selected || inRange) && "bg-accent",
+      )}
+    >
+      <span className="pt-0.5 text-xs text-muted-foreground tabular-nums">{row.n}</span>
+```
+
+  Replace
+
+```tsx
+          </span>
+        )}
+        {tr && (editing?.cell === "translation" ? box("translation") : (
+          <span onClick={(e) => { e.stopPropagation(); onPick("translation"); }} data-selected={marked("translation") || undefined} className={cn("rounded-sm whitespace-pre-line text-muted-foreground", marked("translation") && "outline-2 outline-ring")} data-testid="cue-translation">
+            {tr.cues.length ? tr.cues.map((c) => c.text).join("\n") : "—"}
+          </span>
+        ))}
+```
+
+  with
+
+```tsx
+          </span>
+        )}
+        {tr && (editing?.cell === "translation" ? box("translation") : (
+          <span onClick={(e) => { e.stopPropagation(); onPick("translation", e.shiftKey); }} data-selected={marked("translation") || undefined} className={cn("rounded-sm whitespace-pre-line text-muted-foreground", marked("translation") && "outline-2 outline-ring")} data-testid="cue-translation">
+            {tr.cues.length ? tr.cues.map((c) => c.text).join("\n") : "—"}
+          </span>
+        ))}
+```
+
+  `frontend/src/components/CueList.tsx`:
+
+  Replace
+
+```tsx
+ * side, are in the page (Review Focus 3: about 2,000 cues for two hours), measured as they render
+ * since a row's height follows its text; @tanstack/react-virtual places them, through React's
+ * style props (the CSSOM, which the CSP allows), never a style attribute in the markup. The
+ * selected row is scrolled into view, and while playback is followed so is the current one. */
+export function CueList({ listRef, rows, words, track, current, word, selected, cell, editing, follow, onPick, onKeyDown, onDraft, onEditKey, editorRef }: {
+  listRef: RefObject<HTMLDivElement | null>;
+  rows: readonly Row[];
+  words: readonly SpokenWord[];
+```
+
+  with
+
+```tsx
+ * side, are in the page (Review Focus 3: about 2,000 cues for two hours), measured as they render
+ * since a row's height follows its text; @tanstack/react-virtual places them, through React's
+ * style props (the CSSOM, which the CSP allows), never a style attribute in the markup. The
+ * selected row is scrolled into view, and while playback is followed so is the current one.
+ * Shift+click and Shift+↑/↓ select a run of rows, for Retranslate (`aria-multiselectable`). */
+export function CueList({ listRef, rows, words, track, current, word, selected, range, cell, editing, follow, onPick, onKeyDown, onDraft, onEditKey, editorRef }: {
+  listRef: RefObject<HTMLDivElement | null>;
+  rows: readonly Row[];
+  words: readonly SpokenWord[];
+```
+
+  Replace
+
+```tsx
+  current: number;
+  word: number;
+  selected: number;
+  cell: Cell;
+  editing: Editing | null;
+  follow: boolean;
+  onPick: (index: number, cell: Cell) => void;
+  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
+  onDraft: (text: string) => void;
+  onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+```
+
+  with
+
+```tsx
+  current: number;
+  word: number;
+  selected: number;
+  range: [number, number] | null; // the selection's first and last rows
+  cell: Cell;
+  editing: Editing | null;
+  follow: boolean;
+  onPick: (index: number, cell: Cell, extend: boolean) => void;
+  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
+  onDraft: (text: string) => void;
+  onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+```
+
+  Replace
+
+```tsx
+      ref={listRef}
+      role="listbox"
+      aria-label="Cues: arrows to move, Enter to edit, Space to play"
+      tabIndex={0}
+      aria-activedescendant={selected >= 0 && selected < rows.length ? `cue-${rows[selected].id}` : undefined}
+      onKeyDown={onKeyDown}
+```
+
+  with
+
+```tsx
+      ref={listRef}
+      role="listbox"
+      aria-label="Cues: arrows to move, Enter to edit, Space to play"
+      aria-multiselectable="true"
+      tabIndex={0}
+      aria-activedescendant={selected >= 0 && selected < rows.length ? `cue-${rows[selected].id}` : undefined}
+      onKeyDown={onKeyDown}
+```
+
+  Replace
+
+```tsx
+                  track={track}
+                  current={item.index === current}
+                  selected={item.index === selected}
+                  cell={cell}
+                  editing={editing?.id === row.id ? editing : null}
+                  word={word}
+                  words={words}
+                  total={rows.length}
+                  onPick={(which) => onPick(item.index, which)}
+                  onDraft={onDraft}
+                  onEditKey={onEditKey}
+                  editorRef={editorRef}
+```
+
+  with
+
+```tsx
+                  track={track}
+                  current={item.index === current}
+                  selected={item.index === selected}
+                  inRange={range !== null && range[0] <= item.index && item.index <= range[1]}
+                  cell={cell}
+                  editing={editing?.id === row.id ? editing : null}
+                  word={word}
+                  words={words}
+                  total={rows.length}
+                  onPick={(which, extend) => onPick(item.index, which, extend)}
+                  onDraft={onDraft}
+                  onEditKey={onEditKey}
+                  editorRef={editorRef}
+```
+
+  `frontend/src/components/Editor.tsx`:
+
+  Replace
+
+```tsx
+import { indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
+import { type Action, type KeyLike, actionFor } from "@/lib/keys";
+import { captionLines, type Showing } from "@/lib/overlay";
+import type { Busy, EditOp, EpisodeView } from "@/types";
+
+import { ConflictPicker } from "./ConflictPicker";
+import { type Cell, type Editing } from "./CueRow";
+import { CueList } from "./CueList";
+import { FindReplace } from "./FindReplace";
+import { Player } from "./Player";
+import { SaveBar } from "./SaveBar";
+
+const SPEEDS = [0.75, 1, 1.25] as const; // the practice aids' playback rates (spec §20)
+```
+
+  with
+
+```tsx
+import { indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
+import { type Action, type KeyLike, actionFor } from "@/lib/keys";
+import { captionLines, type Showing } from "@/lib/overlay";
+import { selectedIds, selectionRange } from "@/lib/retranslate";
+import type { Busy, EditOp, EpisodeView, Progress } from "@/types";
+
+import { ConflictPicker } from "./ConflictPicker";
+import { type Cell, type Editing } from "./CueRow";
+import { CueList } from "./CueList";
+import { FindReplace } from "./FindReplace";
+import { Player } from "./Player";
+import { Retranslate } from "./Retranslate";
+import { SaveBar } from "./SaveBar";
+
+const SPEEDS = [0.75, 1, 1.25] as const; // the practice aids' playback rates (spec §20)
+```
+
+  Replace
+
+```tsx
+  redo: () => void;
+  save: (formats: ("srt" | "ass")[]) => void;
+  resolve: (track: string, rendition: string) => void;
+};
+
+/** Saving's state, from App: the draft a crashed tab left (S34), and a count that goes up each
+```
+
+  with
+
+```tsx
+  redo: () => void;
+  save: (formats: ("srt" | "ass")[]) => void;
+  resolve: (track: string, rendition: string) => void;
+  retranslate: (track: string, ids: string[] | null, allowCloud: boolean) => void; // null: stale
+};
+
+/** Saving's state, from App: the draft a crashed tab left (S34), and a count that goes up each
+```
+
+  Replace
+
+```tsx
+};
+
+/** The editor (spec §20): the path box, then, once an episode is open, the player on the left
+ * and the cue list on the right, with the edit bar and find and replace. */
+export function Editor({ episode, busy, pathInput, onOpen, onCantPlay, requests, saving }: {
+  episode: EpisodeView | null;
+  busy: Busy;
+  pathInput: boolean;
+  onOpen: (path: string) => void;
+  onCantPlay: () => void;
+  requests: Requests;
+```
+
+  with
+
+```tsx
+};
+
+/** The editor (spec §20): the path box, then, once an episode is open, the player on the left
+ * and the cue list on the right, with the edit bar, Retranslate (where the engine has models:
+ * `generate`) and find and replace. */
+export function Editor({ episode, busy, progress, pathInput, generate, onOpen, onCantPlay, requests, saving }: {
+  episode: EpisodeView | null;
+  busy: Busy;
+  progress: Progress;
+  pathInput: boolean;
+  generate: boolean;
+  onOpen: (path: string) => void;
+  onCantPlay: () => void;
+  requests: Requests;
+```
+
+  Replace
+
+```tsx
+    <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
+      {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
+      {episode ? (
+        <EpisodeEditor key={episode.id} episode={episode} busy={busy} requests={requests} saving={saving} onCantPlay={onCantPlay} />
+      ) : (
+        <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
+      )}
+```
+
+  with
+
+```tsx
+    <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
+      {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
+      {episode ? (
+        <EpisodeEditor key={episode.id} episode={episode} busy={busy} progress={progress} generate={generate} requests={requests} saving={saving} onCantPlay={onCantPlay} />
+      ) : (
+        <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
+      )}
+```
+
+  Replace
+
+```tsx
+  return { key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey };
+}
+
+function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
+  episode: EpisodeView;
+  busy: Busy;
+  requests: Requests;
+  saving: Saving;
+  onCantPlay: () => void;
+```
+
+  with
+
+```tsx
+  return { key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey };
+}
+
+function EpisodeEditor({ episode, busy, progress, generate, requests, saving, onCantPlay }: {
+  episode: EpisodeView;
+  busy: Busy;
+  progress: Progress;
+  generate: boolean;
+  requests: Requests;
+  saving: Saving;
+  onCantPlay: () => void;
+```
+
+  Replace
+
+```tsx
+  const [word, setWord] = useState(-1);
+  const [trAt, setTrAt] = useState(-1);
+  const [sel, setSel] = useState<{ index: number; id: string | null }>({ index: -1, id: null });
+  const [cell, setCell] = useState<Cell>("source");
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [finding, setFinding] = useState(false);
+```
+
+  with
+
+```tsx
+  const [word, setWord] = useState(-1);
+  const [trAt, setTrAt] = useState(-1);
+  const [sel, setSel] = useState<{ index: number; id: string | null }>({ index: -1, id: null });
+  const [anchor, setAnchor] = useState<string | null>(null); // where a Shift selection started
+  const [cell, setCell] = useState<Cell>("source");
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [finding, setFinding] = useState(false);
+```
+
+  Replace
+
+```tsx
+  const trCues = useMemo(() => trackCues(rows, shownTrack), [rows, shownTrack]);
+  const selected = sel.index;
+  const row = selected >= 0 ? rows[selected] : undefined;
+
+  // The rows change with every edit: the selection follows its cue, else stays at its place (a
+  // split or merge replaces the cue's id); an inserted cue is selected and edited.
+```
+
+  with
+
+```tsx
+  const trCues = useMemo(() => trackCues(rows, shownTrack), [rows, shownTrack]);
+  const selected = sel.index;
+  const row = selected >= 0 ? rows[selected] : undefined;
+  const range = selectionRange(rows, selected, anchor);
+
+  // The rows change with every edit: the selection follows its cue, else stays at its place (a
+  // split or merge replaces the cue's id); an inserted cue is selected and edited.
+```
+
+  Replace
+
+```tsx
+  const seekTo = (ms: number) => {
+    if (media.current) media.current.currentTime = ms / 1000;
+  };
+  const select = (index: number, which: Cell = cell) => {
+    if (index < 0 || index >= rows.length) return;
+    setSel({ index, id: rows[index].id });
+    setCell(which);
+    seekTo(rows[index].start_ms + 1);
+```
+
+  with
+
+```tsx
+  const seekTo = (ms: number) => {
+    if (media.current) media.current.currentTime = ms / 1000;
+  };
+  const select = (index: number, which: Cell = cell, extend = false) => {
+    if (index < 0 || index >= rows.length) return;
+    setAnchor(extend ? (anchor ?? sel.id) : null);
+    setSel({ index, id: rows[index].id });
+    setCell(which);
+    seekTo(rows[index].start_ms + 1);
+```
+
+  Replace
+
+```tsx
+      case "play": if (m) void m.play().catch(() => undefined); return;
+      case "previous": select(Math.max(0, selected - 1)); return;
+      case "next": select(Math.min(rows.length - 1, selected + 1)); return;
+      case "cell": if (a.cell === "source" || shownTrack) setCell(a.cell); return;
+      case "set-start": if (row) requests.edit({ op: "set_times", cue: row.id, start_ms: playhead() }); return;
+      case "set-end": if (row) requests.edit({ op: "set_times", cue: row.id, end_ms: playhead() }); return;
+```
+
+  with
+
+```tsx
+      case "play": if (m) void m.play().catch(() => undefined); return;
+      case "previous": select(Math.max(0, selected - 1)); return;
+      case "next": select(Math.min(rows.length - 1, selected + 1)); return;
+      case "extend": select(Math.min(rows.length - 1, Math.max(0, selected + a.by)), cell, true); return;
+      case "cell": if (a.cell === "source" || shownTrack) setCell(a.cell); return;
+      case "set-start": if (row) requests.edit({ op: "set_times", cue: row.id, start_ms: playhead() }); return;
+      case "set-end": if (row) requests.edit({ op: "set_times", cue: row.id, end_ms: playhead() }); return;
+```
+
+  Replace
+
+```tsx
+    const a = actionFor(keyOf(e), "navigate");
+    if (!a) return;
+    e.preventDefault();
+    if (selected < 0 && (a.kind === "next" || a.kind === "previous")) {
+      select(current >= 0 ? current : 0);
+      return;
+    }
+```
+
+  with
+
+```tsx
+    const a = actionFor(keyOf(e), "navigate");
+    if (!a) return;
+    e.preventDefault();
+    if (selected < 0 && (a.kind === "next" || a.kind === "previous" || a.kind === "extend")) {
+      select(current >= 0 ? current : 0);
+      return;
+    }
+```
+
+  Replace
+
+```tsx
+          <ul role="status" className="flex flex-col gap-0.5 text-sm" data-testid="episode-notes">
+            {episode.notes.map((note, k) => <li key={k}>{note}</li>)}
+            {stale.map((t) => (
+              <li key={`stale-${t.key}`}>Every {t.label} cue is stale: the glossary or the translation model changed since it was made, or a glossary term is waiting for Save.</li>
+            ))}
+            {conflicted.map((t) => (
+              <li key={`conflict-${t.key}`} className="flex flex-wrap items-center gap-2 text-destructive">
+```
+
+  with
+
+```tsx
+          <ul role="status" className="flex flex-col gap-0.5 text-sm" data-testid="episode-notes">
+            {episode.notes.map((note, k) => <li key={k}>{note}</li>)}
+            {stale.map((t) => (
+              <li key={`stale-${t.key}`}>
+                Every {t.label} cue is stale: the glossary or the translation model changed since it was made, or a glossary term is waiting for Save.
+                {generate && " Retranslate stale redoes them all, except those you edited."}
+              </li>
+            ))}
+            {conflicted.map((t) => (
+              <li key={`conflict-${t.key}`} className="flex flex-wrap items-center gap-2 text-destructive">
+```
+
+  Replace
+
+```tsx
+            onPick={(track, rendition) => { requests.resolve(track, rendition); setPicking(false); }} />
+        </section>
+        <section aria-label="Cue list" className="flex min-h-0 flex-col gap-2">
+          <div role="toolbar" aria-label="Edit the selected cue" className="flex flex-wrap gap-1" data-testid="edit-bar">
+            {tool("Edit", "Enter", () => startEditing(cell), "tool-edit")}
+            {tool("Start to playhead", "[", () => act({ kind: "set-start" }), "tool-start")}
+```
+
+  with
+
+```tsx
+            onPick={(track, rendition) => { requests.resolve(track, rendition); setPicking(false); }} />
+        </section>
+        <section aria-label="Cue list" className="flex min-h-0 flex-col gap-2">
+          {generate && shownTrack && (
+            <Retranslate
+              label={translations.find((t) => t.key === shownTrack)?.label ?? shownTrack}
+              selected={range ? range[1] - range[0] + 1 : 0}
+              busy={busy}
+              progress={progress}
+              onSelected={(allowCloud) => requests.retranslate(shownTrack, selectedIds(rows, range), allowCloud)}
+              onStale={(allowCloud) => requests.retranslate(shownTrack, null, allowCloud)}
+            />
+          )}
+          <div role="toolbar" aria-label="Edit the selected cue" className="flex flex-wrap gap-1" data-testid="edit-bar">
+            {tool("Edit", "Enter", () => startEditing(cell), "tool-edit")}
+            {tool("Start to playhead", "[", () => act({ kind: "set-start" }), "tool-start")}
+```
+
+  Replace
+
+```tsx
+              current={current}
+              word={word}
+              selected={selected}
+              cell={cell}
+              editing={editing}
+              follow={follow}
+              onPick={(index, which) => select(index, which)}
+              onKeyDown={onListKey}
+              onDraft={(text) => setEditing((e) => (e ? { ...e, text } : e))}
+              onEditKey={onEditKey}
+```
+
+  with
+
+```tsx
+              current={current}
+              word={word}
+              selected={selected}
+              range={range}
+              cell={cell}
+              editing={editing}
+              follow={follow}
+              onPick={(index, which, extend) => select(index, which, extend)}
+              onKeyDown={onListKey}
+              onDraft={(text) => setEditing((e) => (e ? { ...e, text } : e))}
+              onEditKey={onEditKey}
+```
+
+  `frontend/src/App.tsx`:
+
+  Replace
+
+```tsx
+import { resultNotices } from "@/components/SaveBar";
+import { TopBar } from "@/components/TopBar";
+import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
+import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, loadDraft } from "@/lib/draft";
+import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
+import { pacer } from "@/lib/sends";
+import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { Busy, Capabilities, EditOp, EpisodeView, SaveResultMessage, Status } from "@/types";
+
+type Ask = { episode: string; n: number };
+
+```
+
+  with
+
+```tsx
+import { resultNotices } from "@/components/SaveBar";
+import { TopBar } from "@/components/TopBar";
+import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
+import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, dropRetranslation, loadDraft, replayable } from "@/lib/draft";
+import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
+import { retranslateNotice } from "@/lib/retranslate";
+import { pacer } from "@/lib/sends";
+import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { Busy, Capabilities, EditOp, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, Status } from "@/types";
+
+type Ask = { episode: string; n: number };
+
+```
+
+  Replace
+
+```tsx
+  const status = useShinyOutputValue<Status>("status");
+  const episode = useShinyOutputValue<EpisodeView | null>("episode");
+  const busy = useShinyOutputValue<Busy>("busy");
+  // Every input is set from here too. Each request carries a count, so the same path asked for
+  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
+```
+
+  with
+
+```tsx
+  const status = useShinyOutputValue<Status>("status");
+  const episode = useShinyOutputValue<EpisodeView | null>("episode");
+  const busy = useShinyOutputValue<Busy>("busy");
+  const progress = useShinyOutputValue<Progress>("progress");
+  // Every input is set from here too. Each request carries a count, so the same path asked for
+  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
+```
+
+  Replace
+
+```tsx
+  const setRedo = useSetShinyInput<Ask | null>("redo", null, { priority: "event", debounceMs: 0 });
+  const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
+  const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
+  const sent = useRef(0);
+  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
+  const pace = useMemo(() => pacer(), []);
+```
+
+  with
+
+```tsx
+  const setRedo = useSetShinyInput<Ask | null>("redo", null, { priority: "event", debounceMs: 0 });
+  const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
+  const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
+  const setRetranslate = useSetShinyInput<(Ask & { track: string; ids: string[] | null; allow_cloud: boolean }) | null>("retranslate", null, { priority: "event", debounceMs: 0 });
+  const sent = useRef(0);
+  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
+  const pace = useMemo(() => pacer(), []);
+```
+
+  Replace
+
+```tsx
+    addStep(draftStorage(), at.key, step);
+  }, [offer]);
+
+  const episodeId = episode?.id ?? null;
+  const requests = useMemo<Requests>(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+```
+
+  with
+
+```tsx
+    addStep(draftStorage(), at.key, step);
+  }, [offer]);
+
+  // A retranslation goes in the draft as a marker only (never replayed: a restored draft asks no
+  // model), dropped when the server says it changed nothing; `asking` remembers which were
+  // "Retranslate stale", for the notice.
+  const asking = useRef(new Map<number, { track: string; stale: boolean }>());
+  const episodeId = episode?.id ?? null;
+  const requests = useMemo<Requests>(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+```
+
+  Replace
+
+```tsx
+      redo: () => { record({ redo: true }); send(setRedo, ask()); },
+      save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
+      resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
+    };
+  }, [episodeId, pace, record, setEdit, setUndo, setRedo, setSave, setResolve]);
+
+  const [conflictsFound, setConflictsFound] = useState(0);
+  useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
+```
+
+  with
+
+```tsx
+      redo: () => { record({ redo: true }); send(setRedo, ask()); },
+      save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
+      resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
+      retranslate: (track, ids, allowCloud) => {
+        const a = ask();
+        if (!a) return;
+        record({ retranslate: a.n });
+        asking.current.set(a.n, { track, stale: ids === null });
+        send(setRetranslate, { ...a, track, ids, allow_cloud: allowCloud });
+      },
+    };
+  }, [episodeId, pace, record, setEdit, setUndo, setRedo, setSave, setResolve, setRetranslate]);
+  useShinyMessageHandler("retranslate_result", (data: RetranslateResultMessage) => {
+    if (!episode || data.episode !== episode.id || data.n === null) return;
+    const asked = asking.current.get(data.n);
+    asking.current.delete(data.n);
+    if (data.changed === 0 && drafted.current) dropRetranslation(draftStorage(), drafted.current.key, data.n);
+    if (!asked) return;
+    const label = episode.tracks.find((t) => t.key === asked.track)?.label ?? asked.track;
+    const n = retranslateNotice(data.changed, label, asked.stale);
+    if (n) setNotices((shown) => addNotice(shown, n, nextId.current++));
+  });
+
+  const [conflictsFound, setConflictsFound] = useState(0);
+  useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
+```
+
+  Replace
+
+```tsx
+    for (const n of resultNotices(data, episode.tracks)) setNotices((shown) => addNotice(shown, n, nextId.current++));
+    if (data.conflicts.length) setConflictsFound((k) => k + 1);
+  });
+  const saving: Saving = {
+    draft: offer && { at: offer.at, steps: offer.steps.length },
+    conflictsFound,
+    onRestore: () => {
+      const steps = offer?.steps ?? [];
+      if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
+      setOffer(null);
+      for (const step of steps) {
+        if ("edit" in step) requests.edit(step.edit);
+        else if ("undo" in step) requests.undo();
+        else requests.redo();
+      }
+    },
+    onDiscard: () => {
+```
+
+  with
+
+```tsx
+    for (const n of resultNotices(data, episode.tracks)) setNotices((shown) => addNotice(shown, n, nextId.current++));
+    if (data.conflicts.length) setConflictsFound((k) => k + 1);
+  });
+  const offered = offer ? replayable(offer.steps).length : 0; // the steps Restore would send
+  const saving: Saving = {
+    draft: offer && offered ? { at: offer.at, steps: offered } : null,
+    conflictsFound,
+    onRestore: () => {
+      const steps = offer?.steps ?? [];
+      if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
+      setOffer(null);
+      for (const step of replayable(steps)) {
+        if ("edit" in step) requests.edit(step.edit);
+        else if ("undo" in step) requests.undo();
+        else if ("redo" in step) requests.redo();
+      }
+    },
+    onDiscard: () => {
+```
+
+  Replace
+
+```tsx
+        <Editor
+          episode={episode ?? null}
+          busy={busy ?? null}
+          pathInput={capabilities?.path_input ?? false}
+          onOpen={(path) => setOpen({ path, n: ++sent.current })}
+          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+          requests={requests}
+```
+
+  with
+
+```tsx
+        <Editor
+          episode={episode ?? null}
+          busy={busy ?? null}
+          progress={progress ?? null}
+          pathInput={capabilities?.path_input ?? false}
+          generate={capabilities?.generate ?? false}
+          onOpen={(path) => setOpen({ path, n: ++sent.current })}
+          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+          requests={requests}
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `cd frontend && npm run typecheck && npx vitest run`
+  first (`Test Files  15 passed (15)`, `Tests  71 passed (71)`), then `make build && uv run
+  pytest -m e2e tests/e2e/test_retranslate.py tests/e2e/test_editing.py -q` (`9 passed`: the
+  keyboard test of Task 15 walks the edit bar with Shift+Tab from the cue list, which is why
+  Retranslate sits above the edit bar, not between it and the list). **Guard check** (spec
+  §7.2): in `Retranslate.tsx`, take out `setAllowCloud(false);` from `send`; `make build && uv
+  run pytest -m e2e tests/e2e/test_retranslate.py -q -k cloud` fails with `AssertionError:
+  Locator expected not to be checked` and `Actual value: checked`; put it back and `make build`.
+  Then `make check`. Expected: `967 passed, 2 skipped, 31 deselected` (twice), `Test Files  15
+  passed (15)`, `Tests  71 passed (71)`, `All checks passed!`, `no leaks found`. Then `make
+  e2e`. Expected: `27 passed`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(frontend): 🤖 the editor retranslates the selected cues or every stale one, with the cloud box unticked every time, and a crashed tab's draft never asks a model again
+
+Retranslate (spec §13.4, §20; S30) sits above the edit bar where the
+engine has models (capabilities.generate): "Retranslate this cue" or
+"Retranslate N cues" names the selection, a run picked with Shift+click
+or Shift+↑/↓ (keys.ts's new `extend` action; the listbox is
+aria-multiselectable and each row in the run aria-selected), and
+"Retranslate stale" names none. Allow cloud models starts unticked and
+unticks again after each request (spec §7.2); nothing stores it. While
+the server works, a polite live region says "Retranslating…", then the
+batches done (§19.3). The stale note adds that Retranslate stale redoes
+them all except those you edited (Decision 9). A retranslation goes in
+the crash draft only as a marker ({"retranslate": n}), dropped when
+retranslate_result says nothing changed; Restore sends replayable(steps),
+which leaves the markers out and follows the undo history, so an undo
+that took back a retranslation isn't replayed onto an edit; the draft's
+count is of the steps Restore would send.
+
+The new tests failed first with: Error: Failed to resolve import
+"./retranslate"; TypeError: replayable is not a function; AssertionError:
+expected { kind: 'previous' } to deeply equal { kind: 'extend', by: -1 };
+and in Chromium, before the frontend change: Locator expected not to be
+checked ... waiting for get_by_test_id("allow-cloud"). With the box's
+untick after a request taken out, the cloud test fails with "Actual
+value: checked".
+
+Docs read: React 19's useState and event handlers (MouseEvent.shiftKey);
+MDN on aria-multiselectable, aria-selected and aria-live="polite";
+Playwright 1.64's locator.click(modifiers=["Shift"]) and
+expect(...).not_to_be_checked(); shinyreact 0.1.0's useSetShinyInput and
+useShinyMessageHandler.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 17
+Co-Authored-By: <the model's own line>
+```
+
+  `git add frontend/src/App.tsx frontend/src/components/CueList.tsx
+  frontend/src/components/CueRow.tsx frontend/src/components/Editor.tsx
+  frontend/src/components/Retranslate.tsx frontend/src/lib/draft.test.ts frontend/src/lib/draft.ts
+  frontend/src/lib/keys.test.ts frontend/src/lib/keys.ts frontend/src/lib/retranslate.test.ts
+  frontend/src/lib/retranslate.ts frontend/src/types.ts tests/e2e/test_retranslate.py`, `git
+  commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that `allow_cloud` comes only from the
+  request, true or false, and the box unticks after every request (§7.2); that a late
+  `progress` never shows after its retranslation ended, and `busy` always goes back to null;
+  that an edit sent during a retranslation lands on the retranslated episode, one undo step
+  after it; that "Retranslate stale" never replaces an edited translation and named cues do
+  (Decision 8), in the demo and with a real route; that `retranslate_result` follows every
+  request naming the open episode, so the draft's marker is dropped exactly when nothing
+  changed; that `replayable` follows the server's undo history (a new edit clears redo, an
+  undo with nothing to undo is ignored); that no notice echoes what the page sent. The forward
+  review over Tasks 18, 19, 21, 22 and 23 (Task 18's drawer and Task 19's Jobs page are shown
+  only where `capabilities.generate`, as Retranslate is; Task 19's jobs translate through the
+  pipeline, not this path, and the demo's jobs need the canned translation there too; Task 21's
+  CI e2e job runs `tests/e2e/test_retranslate.py`; Task 22's README says Retranslate names the
+  selection or every stale cue and never replaces an edited one when stale; Task 23's Step 5 is
+  "Retranslate stale" on Dan's episode, through his configured route; Phase 4 Task 1's
+  `BrowserBackend` has no `Runtime.retranslate`, and Pages hides Retranslate). The docs this task
+  made untrue: none expected. Then the close, its own commit, holding this plan with this task's
+  boxes ticked and **Now** set to `Task 18: The settings drawer, open.`, and the spec's S30 set to
+  `built` (Proof: `tests/test_backend_retranslate.py; tests/e2e/test_retranslate.py; the exit
+  test`), with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 17: Retranslating
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 17
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -23812,26 +26499,5325 @@ Co-Authored-By: <the model's own line>
 **Tier:** 1 · **Scenarios:** S35
 
 **Files:**
-- Create: `frontend/src/components/SettingsDrawer.tsx`, `src/vid2sub/web/settings.py`
-- Modify: `src/vid2sub/web/server.py` (output `settings`; inputs `typed_key`, `endpoint_test`;
-  message `endpoint_test_result`)
-- Test: `tests/test_web_settings.py`, `tests/e2e/test_settings.py`
+- Create: `src/vid2sub/web/settings.py` (Pages-safe), `frontend/src/components/SettingsDrawer.tsx`
+  (+ test), `frontend/src/lib/settings.ts` (+ test)
+- Modify: `src/vid2sub/web/server.py` (output `settings`; inputs `typed_key`, `endpoint_test`,
+  `session_defaults`; message `endpoint_test_result`; `status` and `episode` read the session),
+  `src/vid2sub/web/runtime.py` (`Runtime.session`, `Runtime.endpoint_models`),
+  `src/vid2sub/web/views.py` (`episode_view(…, default_formats)`, `track_label`),
+  `frontend/src/{App.tsx,types.ts}`, `frontend/src/components/TopBar.tsx` (+ test)
+- Test: `tests/test_web_settings.py`, `tests/test_pages_imports.py` (`web.settings` is bundled),
+  `tests/e2e/test_settings.py`
 
-<!-- steps: written in the next pass -->
+**Interfaces:**
+- Consumes: `engines.clients.KeyRing` (`typed`, `key_for`, the method listing every configured
+  and typed key value) and `list_models(name, endpoint, keys, *, timeout)` (M1: the one client
+  factory, redirects refused, the endpoint's own key redacted from errors); `security.redact`;
+  `config.Config`, `Defaults`, `is_local`, `load_config`; `views.local_endpoints`; Task 12's
+  `Dialog` (`side="right"`) and the top bar; Task 15's `pacer`; Task 16's `SaveBar` (its "ASS
+  too" starts from the episode view's `formats`); `subs.rules.RULES`.
+- Produces:
+  - `vid2sub.web.settings` (imports only the standard library and the pure packages at its top;
+    in `test_pages_imports.BUNDLED_MODULES`):
+    - `Defaults(targets: tuple[str, ...] = ("en",), formats: tuple[str, ...] = ("srt",))`,
+      frozen; `Defaults.from_config(config.defaults)` (the targets through
+      `naming.target_track`, each once, round 18c; SRT always, ASS when the file has it).
+    - `Session(defaults: Defaults | None = None)`: this launch's settings, shared by every tab,
+      never written: `defaults()`, `set_defaults(defaults)`, `on_change(fn) -> stop`, `changed()`
+      (a typed key came or went). Changed on the event loop only; a job's thread reads
+      `defaults()`, a frozen value replaced whole.
+    - `change_defaults(current, request) -> Defaults`: `{"n", "targets": [track key, …]}` (known
+      `naming.TRACKS` keys, each once, at least one) or `{"n", "formats": ["srt"] | ["srt",
+      "ass"]}`, one at a time; `BadSetting` otherwise (`BAD_TARGETS`, `BAD_FORMATS`, or "change
+      one default at a time").
+    - `enter_key(config, keys, request) -> str`: `{"endpoint", "key", "n"}` keeps the key in
+      `keys.typed` only for an endpoint with `allow_typed_key` and only if it is `KEY_SHAPE`, 8
+      to `MAX_KEY` (1,024) of `[A-Za-z0-9._~+/=:-]` (round 18c: nothing a repr or JSON escapes,
+      and long enough for `redact()`); `"key": ""` forgets it; returns `KEY_ENTERED` ("key
+      entered for this session") or `KEY_FORGOTTEN`; `BadSetting(NO_TYPED_KEY | BAD_KEY)`, echoing
+      nothing, otherwise.
+    - `models_shown(found) -> (names, more)`: at most `MODELS_SHOWN` (100), each cut to
+      `MAX_MODEL_NAME` (200) characters.
+    - `settings_view(config, keys, defaults) -> dict` and `settings_toml(config, defaults) -> str`
+      (Copy settings: the `[defaults]` table, which `load_config` reads back as it is; no key).
+    - `BadSetting(ValueError)`; `EndpointError(message, hint="")` (pure, as `RetranslateError`).
+  - Round 18c, beyond the drawer: `KeyRing.typed` and `KeyRing.environ` are `repr=False`;
+    `translate.run.make_ask`'s `ask` reads the keys to redact at each call.
+  - `Runtime.session: Session` (default `Session()`; `build` makes it from `[defaults]`) and
+    `Runtime.endpoint_models(self, name) -> list[str]`: `clients.list_models` with a 10 s timeout
+    (`runtime.TEST_TIMEOUT`); `EndpointError` with every configured and typed key redacted.
+    Blocks: call it through `blocking`. Any endpoint, cloud ones too: the person asked.
+  - Output `settings` (null where `capabilities.generate` is false, the Pages editor):
+    `{"endpoints": [{"name", "base_url", "local": bool, "key_env": str | null, "key": "present" |
+    "missing" | "none", "allow_typed_key": bool, "typed": bool}], "models": [{"name", "task",
+    "catalog", "endpoint", "engine", "model", "local": bool}], "defaults": {"targets": [...],
+    "formats": [...]}, "targets": [{"key", "label"}], "rules": [{"lang", "label", "max_width",
+    "max_lines", "cps", "min_ms", "max_ms"}], "toml": str}`.
+  - Input `typed_key`: `{"endpoint": str, "key": str, "n": int}` (`""` forgets), read in the
+    flush of its own message; the page sends `null` straight after, which replaces the key in
+    Shiny's input map (shiny 1.8.0 keeps every input's last value), shiny.js's `$inputValues` and
+    shinyreact's registry. Answer: the notice `key entered for this session` or the
+    `BadSetting`'s.
+  - Input `session_defaults`: `{"n": int, "targets": [...]}` or `{"n": int, "formats": [...]}`;
+    a `BadSetting` is a notice. Every tab's `settings` and `status` follow a change.
+  - Input `endpoint_test`: `{"endpoint": str, "n": int}`, in a task of its own, one per endpoint
+    at a time; a name not in vid2sub.toml is the notice `there's no such endpoint in
+    vid2sub.toml`. Message `endpoint_test_result`: `{"endpoint": str, "n": int | null, "ok":
+    bool, "models": [str], "more": int, "error": str | null}` (`error` is `<message> → <hint>`).
+  - `views.episode_view(ep, *, video_url, audio_url, default_formats=("srt",))`: `formats` is
+    `["srt", "ass"]` where ASS was written before or `default_formats` has it; the server passes
+    the session's. `views._label` is now `views.track_label`.
+  - `types.ts`: `EndpointSetting`, `ModelSetting`, `CueRuleSetting`, `SessionDefaults`,
+    `SettingsView`, `EndpointTestResult`. `lib/settings.ts`: `keyLabel(e)`, `testSummary(r)`,
+    `withTarget(targets, key, on, order)`.
+  - `SettingsDrawer({open, onClose, settings, tests, onTest(name), onTypedKey(name, key),
+    onDefaults(change)})` and `type DefaultsChange`; test ids `settings`, `endpoint-<name>`,
+    `test-<name>`, `test-result-<name>`, `key-<name>`, `typed-key-<name>` (`type="password"`,
+    `autocomplete="off"`), `use-key-<name>`, `forget-key-<name>`, `settings-models`,
+    `target-<key>`, `default-ass`, `settings-rules`, `settings-toml`, `copy-settings`. Round
+    18c adds `connected` (Use and Forget wait for a connection); the key field is uncontrolled,
+    outside any form, cleared when sent and when the drawer closes.
+    `TopBar({capabilities, status, onSettings?})` (`open-settings`, shown where `onSettings` is
+    given: `App` gives it where `capabilities.generate`).
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+
+#### Round 18a: the server's settings, typed keys, defaults and Test
+
+- [ ] **Step 1: Write the failing tests,** `tests/test_web_settings.py`:
+
+```python
+"""The settings drawer (spec §19.2, §5.3, §5.4, §6.4, §6.8; S35): endpoints and models as
+vid2sub.toml has them, keys by presence only; a typed key only for an endpoint that allows one,
+kept in the engine's memory and shown back only as "key entered for this session", never in an
+output, a notice, a log or Shiny's input map; Test lists an endpoint's models, asking only its
+own origin; the session's defaults change in one tab and reach every tab; cue rules are shown as
+built; Copy settings loads back as it is, holding no key; and Pages is offered none of it."""
+
+import dataclasses
+import json
+import logging
+
+import pytest
+from episodes import make_episode
+from fakes import FakeServer, closed_port_url
+from shiny import reactive
+from starlette.testclient import TestClient
+from test_web_server import (  # noqa: F401 - fresh_reactive_lock is autouse
+    BASE,
+    JSON,
+    PAGE,
+    PORT,
+    TOKEN,
+    Tab,
+    fresh_reactive_lock,
+    tab,
+)
+
+from vid2sub.cache import Cache
+from vid2sub.config import Config, load_config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.media.tools import Tools
+from vid2sub.web import runtime, server, settings
+from vid2sub.web.app import create_app
+from vid2sub.web.episode import Capabilities
+from vid2sub.web.settings import Defaults, Session
+
+KEY = "k" * 40  # a typed key's value: low entropy, plainly not a real one
+ENV_KEY = "e" * 32  # an environment key's value
+OUTPUTS = {"settings", "status"}
+
+
+def config(spark: str = "http://127.0.0.1:9/v1", lan: str = "http://127.0.0.1:10/v1",
+           **defaults) -> Config:
+    return Config.model_validate({
+        "endpoints": {
+            "spark": {"base_url": spark, "key_env": "SPARK_TEST_KEY"},
+            "lan": {"base_url": lan, "allow_typed_key": True},
+            "openai": {"base_url": "https://api.openai.com/v1", "key_env": "OPENAI_TEST_KEY"},
+        },
+        "models": {
+            "spark-turbo": {"catalog": "whisper-large-v3-turbo", "endpoint": "spark",
+                            "model": "w", "parser": "whisper.cpp", "local": True},
+            "lan-gemma": {"endpoint": "lan", "model": "g", "task": "translate"},
+        },
+        "defaults": defaults,
+    })
+
+
+# ---- the pure parts ----------------------------------------------------------------------------
+
+
+def test_the_view_shows_the_toml_as_it_is_and_every_key_by_presence_only():
+    keys = KeyRing(typed={"lan": KEY}, environ={"SPARK_TEST_KEY": ENV_KEY})
+    view = settings.settings_view(config(), keys, Defaults(("en",), ("srt",)))
+    assert view["endpoints"] == [
+        {"name": "spark", "base_url": "http://127.0.0.1:9/v1", "local": True,
+         "key_env": "SPARK_TEST_KEY", "key": "present", "allow_typed_key": False,
+         "typed": False},
+        {"name": "lan", "base_url": "http://127.0.0.1:10/v1", "local": False, "key_env": None,
+         "key": "present", "allow_typed_key": True, "typed": True},
+        {"name": "openai", "base_url": "https://api.openai.com/v1", "local": False,
+         "key_env": "OPENAI_TEST_KEY", "key": "missing", "allow_typed_key": False,
+         "typed": False}]
+    assert view["models"] == [
+        {"name": "spark-turbo", "task": "transcribe", "catalog": "whisper-large-v3-turbo",
+         "endpoint": "spark", "engine": None, "model": "w", "local": True},
+        {"name": "lan-gemma", "task": "translate", "catalog": None, "endpoint": "lan",
+         "engine": None, "model": "g", "local": False}]
+    assert view["defaults"] == {"targets": ["en"], "formats": ["srt"]}
+    assert [t["key"] for t in view["targets"]] == ["en", "ja", "ko", "zh-Hans", "zh-Hant",
+                                                   "yue-Hant"]
+    assert KEY not in json.dumps(view) and ENV_KEY not in json.dumps(view)
+
+
+def test_the_cue_rules_are_shown_as_built_and_nothing_can_change_them():
+    # Phase 2 Decision 21: nothing in vid2sub.toml holds cue rules yet.
+    rules = settings.settings_view(config(), KeyRing(environ={}), Defaults())["rules"]
+    assert rules[0] == {"lang": "en", "label": "English", "max_width": 42, "max_lines": 2,
+                        "cps": 20.0, "min_ms": 833, "max_ms": 7000}
+    assert [r["lang"] for r in rules] == ["en", "ja", "zh", "yue", "ko"]
+    with pytest.raises(settings.BadSetting):
+        settings.change_defaults(Defaults(), {"n": 1, "rules": {"en": {"max_width": 99}}})
+
+
+def test_copy_settings_loads_back_with_m1s_config_giving_the_same_defaults_and_no_key(tmp_path):
+    # §5.4: the session's settings as TOML to paste into the file, never including a key.
+    cfg = config(youtube_dir='C:\\Users\\"Dan"\\動画\tclips', cache_max_gb=7.5)
+    keys = KeyRing(typed={"lan": KEY}, environ={"SPARK_TEST_KEY": ENV_KEY})
+    session = Defaults(("ja", "zh-Hant"), ("srt", "ass"))
+    text = settings.settings_view(cfg, keys, session)["toml"]
+    assert KEY not in text and ENV_KEY not in text and "[endpoints" not in text
+    path = tmp_path / "vid2sub.toml"
+    path.write_text(text, encoding="utf-8")
+    back = load_config(path).defaults
+    assert (back.targets, back.formats) == (["ja", "zh-Hant"], ["srt", "ass"])
+    assert back.youtube_dir == cfg.defaults.youtube_dir and back.cache_max_gb == 7.5
+    assert settings.Defaults.from_config(back) == session
+
+
+def test_a_typed_key_is_kept_only_for_an_endpoint_that_allows_one_and_never_echoed():
+    keys = KeyRing(environ={})
+    assert settings.enter_key(config(), keys, {"endpoint": "lan", "key": KEY, "n": 1}) == \
+        "key entered for this session"
+    assert keys.typed == {"lan": KEY}
+    for request in ({"endpoint": "spark", "key": KEY}, {"endpoint": "<b>", "key": KEY},
+                    {"endpoint": ["lan"], "key": KEY}, "lan"):
+        with pytest.raises(settings.BadSetting) as err:
+            settings.enter_key(config(), keys, request)
+        assert str(err.value) == settings.NO_TYPED_KEY
+    for bad in (KEY + " ", KEY + "\n", "ключ" * 10, "k" * 1025, 42, None):
+        with pytest.raises(settings.BadSetting) as err:
+            settings.enter_key(config(), keys, {"endpoint": "lan", "key": bad})
+        assert str(err.value) == settings.BAD_KEY
+    assert keys.typed == {"lan": KEY}  # nothing refused replaced it
+    assert settings.enter_key(config(), keys, {"endpoint": "lan", "key": ""}) == \
+        "the typed key is forgotten"
+    assert keys.typed == {}
+
+
+def test_defaults_change_one_at_a_time_and_only_to_what_vid2sub_knows():
+    now = Defaults(("en",), ("srt",))
+    assert settings.change_defaults(now, {"n": 1, "targets": ["ja", "en"]}) == \
+        Defaults(("ja", "en"), ("srt",))
+    assert settings.change_defaults(now, {"n": 2, "formats": ["srt", "ass"]}) == \
+        Defaults(("en",), ("srt", "ass"))
+    for bad in ({"targets": []}, {"targets": ["xx"]}, {"targets": ["en", "en"]},
+                {"targets": "en"}, {"formats": ["ass"]}, {"formats": ["srt", "vtt"]},
+                {"targets": ["en"], "formats": ["srt"]}, {}, [], {"targets": [{"a": 1}]}):
+        with pytest.raises(settings.BadSetting):
+            settings.change_defaults(now, bad)
+
+
+def test_the_session_tells_each_listener_of_a_change_until_it_stops_listening():
+    heard: list[str] = []
+    session = Session()
+    stop = session.on_change(lambda: heard.append("a"))
+    session.on_change(lambda: heard.append("b"))
+    session.set_defaults(Defaults(("ja",), ("srt",)))
+    stop()
+    session.changed()
+    assert heard == ["a", "b", "b"] and session.defaults().targets == ("ja",)
+
+
+def test_a_test_lists_what_a_hostile_server_sends_only_as_much_as_fits():
+    names, more = settings.models_shown([f"m{i}" for i in range(150)] + ["x" * 5000])
+    assert len(names) == 100 and more == 51
+    assert settings.models_shown(["<img src=x>", "y" * 300]) == (["<img src=x>", "y" * 200], 0)
+
+
+# ---- the runtime: Test --------------------------------------------------------------------------
+
+
+def models_responder(req):
+    if req.path.endswith("/models"):
+        return 200, {"object": "list", "data": [{"id": "w", "object": "model", "created": 0,
+                                                 "owned_by": "spark"},
+                                                {"id": "g", "object": "model", "created": 0,
+                                                 "owned_by": "spark"}]}, {}
+    return 404, {}, {}
+
+
+def test_test_asks_only_the_endpoints_own_origin_with_its_own_key(tmp_path):
+    with FakeServer(responder=models_responder) as spark, \
+            FakeServer(responder=models_responder) as lan:
+        cfg = config(spark=spark.url, lan=lan.url)
+        rt = runtime.build(cfg, tools=Tools(None, None, None),
+                           keys=KeyRing(typed={"lan": KEY}, environ={"SPARK_TEST_KEY": ENV_KEY}),
+                           cache=Cache(tmp_path / "cache", max_bytes=0))
+        try:
+            assert rt.endpoint_models("lan") == ["w", "g"]
+            assert rt.endpoint_models("spark") == ["w", "g"]
+        finally:
+            rt.queue.close()
+    assert [r.headers.get("authorization") for r in lan.requests] == [f"Bearer {KEY}"]
+    assert [r.headers.get("authorization") for r in spark.requests] == [f"Bearer {ENV_KEY}"]
+
+
+def test_a_test_that_fails_names_the_fix_and_never_holds_a_key(tmp_path):
+    def echo(req):  # a server that puts what it was sent in its error
+        return 400, {"error": {"message": f"bad request with {req.headers['authorization']}"}}, {}
+
+    with FakeServer(responder=echo) as lan:
+        rt = runtime.build(config(lan=lan.url), tools=Tools(None, None, None),
+                           keys=KeyRing(typed={"lan": KEY}, environ={}),
+                           cache=Cache(tmp_path / "cache", max_bytes=0))
+        try:
+            with pytest.raises(settings.EndpointError) as err:
+                rt.endpoint_models("lan")
+            rt2 = dataclasses.replace(rt, config=config(lan=closed_port_url()))
+            with pytest.raises(settings.EndpointError) as down:
+                rt2.endpoint_models("lan")
+        finally:
+            rt.queue.close()
+    assert KEY not in str(err.value) and "400" in str(err.value)
+    assert str(down.value) == "couldn't reach the server" and "make tunnel" in down.value.hint
+
+
+# ---- the server -------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def rt(tmp_path):
+    made = runtime.build(config(), tools=Tools(None, None, None),
+                         keys=KeyRing(environ={"SPARK_TEST_KEY": ENV_KEY}),
+                         cache=Cache(tmp_path / "cache", max_bytes=0))
+    runtime.configure(made)
+    yield made
+    runtime.configure(None)
+    made.queue.close()
+
+
+def client_for(rt):
+    c = TestClient(create_app(rt, token=TOKEN, port=PORT, shiny_app=server.app), base_url=BASE)
+    c.__enter__()
+    assert c.post("/auth", content=json.dumps({"token": TOKEN}),
+                  headers={**JSON, **PAGE}).status_code == 204
+    return c
+
+
+@pytest.fixture
+def client(rt, monkeypatch):
+    from vid2sub.engines import clients
+
+    monkeypatch.setattr(clients, "list_models", lambda *a, **kw: ["w"])  # the status check
+    c = client_for(rt)
+    yield c
+    c.__exit__(None, None, None)
+
+
+def view(t: Tab) -> dict:
+    return t.until(lambda t: t.has("settings") and t.value("settings"))
+
+
+def lan_of(view: dict) -> dict:
+    return next(e for e in view["endpoints"] if e["name"] == "lan")
+
+
+def test_a_typed_key_reaches_the_engine_and_is_shown_only_as_entered(client, rt, caplog):
+    caplog.set_level(logging.DEBUG)
+    with tab(client, OUTPUTS) as t:
+        assert not lan_of(view(t))["typed"]
+        t.set(typed_key={"endpoint": "lan", "key": KEY, "n": 1})
+        t.set(typed_key=None)  # the page sends null straight after (spec §5.3)
+        t.until(lambda t: lan_of(t.value("settings"))["typed"])
+        assert [n["text"] for n in t.notices()] == ["key entered for this session"]
+        t.until(lambda t: next(e for e in t.value("status")["endpoints"]
+                               if e["name"] == "lan")["key"] == "present")
+        assert rt.keys.typed == {"lan": KEY}
+        # Shiny keeps every input's last value in the session; the page's null replaced the key.
+        (shiny_session,) = server.app._sessions.values()
+        with reactive.isolate():
+            assert shiny_session.input["typed_key"]() is None
+        t.set(typed_key={"endpoint": "lan", "key": "", "n": 2})
+        t.until(lambda t: not lan_of(t.value("settings"))["typed"])
+    assert rt.keys.typed == {}
+    assert KEY not in json.dumps(t.messages) and KEY not in caplog.text
+
+
+def test_a_typed_key_for_an_endpoint_that_doesnt_allow_one_is_kept_nowhere(client, rt):
+    with tab(client, OUTPUTS) as t:
+        view(t)
+        t.set(typed_key={"endpoint": "spark", "key": KEY, "n": 1})
+        t.set(typed_key={"endpoint": "lan", "key": KEY + " x", "n": 2})
+        t.until(lambda t: len(t.notices()) == 2)
+        assert [n["text"] for n in t.notices()] == [settings.NO_TYPED_KEY, settings.BAD_KEY]
+    assert rt.keys.typed == {} and KEY not in json.dumps(t.messages)
+
+
+def results(t: Tab) -> list[dict]:
+    return [m["custom"]["shinyReactMessage"]["data"] for m in t.messages
+            if m.get("custom", {}).get("shinyReactMessage", {}).get("id")
+            == "endpoint_test_result"]
+
+
+def test_test_answers_with_the_models_or_the_fix_and_refuses_an_unknown_endpoint(tmp_path):
+    with FakeServer(responder=models_responder) as lan:
+        made = runtime.build(config(lan=lan.url, spark=closed_port_url()),
+                             tools=Tools(None, None, None), keys=KeyRing(environ={}),
+                             cache=Cache(tmp_path / "cache", max_bytes=0))
+        runtime.configure(made)
+        c = client_for(made)
+        try:
+            with tab(c, OUTPUTS) as t:
+                view(t)
+                t.set(endpoint_test={"endpoint": "lan", "n": 1})
+                t.set(endpoint_test={"endpoint": "spark", "n": 2})
+                t.set(endpoint_test={"endpoint": "<script>", "n": 3})
+                t.until(lambda t: len(results(t)) == 2 and t.notices())
+        finally:
+            c.__exit__(None, None, None)
+            runtime.configure(None)
+            made.queue.close()
+    by = {r["endpoint"]: r for r in results(t)}
+    assert by["lan"] == {"endpoint": "lan", "n": 1, "ok": True, "models": ["w", "g"],
+                         "more": 0, "error": None}
+    assert by["spark"]["ok"] is False and by["spark"]["error"].startswith(
+        "couldn't reach the server → is it running?")
+    assert [n["text"] for n in t.notices()] == [settings.NO_ENDPOINT]
+    assert "<script>" not in json.dumps(t.notices())
+
+
+def test_a_default_changed_in_one_tab_reaches_every_tab_and_copy_settings(client, rt):
+    with tab(client, OUTPUTS) as a, tab(client, OUTPUTS) as b:
+        view(a), view(b)
+        a.set(session_defaults={"n": 1, "targets": ["en", "ja"]})
+        a.set(session_defaults={"n": 2, "formats": ["srt", "ass"]})
+        a.set(session_defaults={"n": 3, "formats": ["ass"]})
+        seen = b.until(lambda t: t.value("settings")["defaults"]["formats"] == ["srt", "ass"]
+                       and t.value("settings"))
+        assert seen["defaults"] == {"targets": ["en", "ja"], "formats": ["srt", "ass"]}
+        assert 'targets = ["en", "ja"]' in seen["toml"]
+        assert 'formats = ["srt", "ass"]' in seen["toml"]
+        a.until(lambda t: t.notices())
+        assert [n["text"] for n in a.notices()] == [settings.BAD_FORMATS] and b.notices() == []
+    assert rt.session.defaults() == Defaults(("en", "ja"), ("srt", "ass"))
+
+
+class Browser:
+    """A backend as the Pages editor's capabilities describe it."""
+
+    def __init__(self, backend):
+        self._backend = backend
+
+    def capabilities(self):
+        return Capabilities(engine="browser", generate=False, save="download", path_input=False)
+
+    def __getattr__(self, name):
+        return getattr(self._backend, name)
+
+
+def test_the_pages_editor_is_offered_no_settings_and_takes_no_key(rt, monkeypatch):
+    pages = dataclasses.replace(rt, backend=Browser(rt.backend))
+    runtime.configure(pages)
+    c = client_for(pages)
+    try:
+        with tab(c, OUTPUTS) as t:
+            t.until(lambda t: t.has("settings"))
+            assert t.value("settings") is None
+            t.set(typed_key={"endpoint": "lan", "key": KEY, "n": 1})
+            t.set(session_defaults={"n": 2, "targets": ["ja"]})
+            t.set(endpoint_test={"endpoint": "lan", "n": 3})
+            t.until(lambda t: t.notices())
+            assert [n["text"] for n in t.notices()] == [settings.NO_ENDPOINT]
+    finally:
+        c.__exit__(None, None, None)
+    assert rt.keys.typed == {} and rt.session.defaults() == Defaults(("en",), ("srt",))
+
+
+@pytest.mark.media
+def test_an_episode_opened_once_ass_is_a_default_starts_save_with_ass_too(tmp_path):
+    # Task 16's Save: "ASS too" starts from the episode view's formats.
+    video = make_episode(tmp_path / "ep")
+    made = runtime.build(Config(), tools=Tools.find(), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=10**9))
+    made.session.set_defaults(Defaults(("en",), ("srt", "ass")))
+    runtime.configure(made)
+    c = client_for(made)
+    try:
+        with tab(c, {"episode"}) as t:
+            t.until(lambda t: t.has("episode"))
+            t.set(open={"path": str(video), "n": 1})
+            ep = t.until(lambda t: t.value("episode"))
+    finally:
+        c.__exit__(None, None, None)
+        runtime.configure(None)
+        made.queue.close()
+    assert ep["formats"] == ["srt", "ass"]
+```
+
+  In `tests/test_pages_imports.py`:
+
+  Replace
+
+```python
+SRC = Path(__file__).resolve().parents[1] / "src" / "vid2sub"
+
+# What spec §21's bundle holds of vid2sub: whole packages, then single modules. `web.ops` parses
+# the editor's edits at the door, so the browser editor needs it too; it is pure.
+BUNDLED_TREES = ("vid2sub.subs", "vid2sub.parse")
+BUNDLED_MODULES = ("vid2sub", "vid2sub.catalog", "vid2sub.web", "vid2sub.web.server",
+                   "vid2sub.web.views", "vid2sub.web.episode", "vid2sub.web.runtime",
+                   "vid2sub.web.ops")
+# vid2sub's own dependencies (pyproject.toml, the mac extra, and Phase 3's faster-whisper) that
+# the bundle doesn't have.
+NOT_BUNDLED = ("platformdirs", "numpy", "onnxruntime", "chatlas", "openai", "httpx", "yt_dlp",
+```
+
+  with
+
+```python
+SRC = Path(__file__).resolve().parents[1] / "src" / "vid2sub"
+
+# What spec §21's bundle holds of vid2sub: whole packages, then single modules. `web.ops` parses
+# the editor's edits at the door, so the browser editor needs it too; it is pure. `web.settings`
+# holds the session's defaults, which the runtime makes (Task 18).
+BUNDLED_TREES = ("vid2sub.subs", "vid2sub.parse")
+BUNDLED_MODULES = ("vid2sub", "vid2sub.catalog", "vid2sub.web", "vid2sub.web.server",
+                   "vid2sub.web.views", "vid2sub.web.episode", "vid2sub.web.runtime",
+                   "vid2sub.web.ops", "vid2sub.web.settings")
+# vid2sub's own dependencies (pyproject.toml, the mac extra, and Phase 3's faster-whisper) that
+# the bundle doesn't have.
+NOT_BUNDLED = ("platformdirs", "numpy", "onnxruntime", "chatlas", "openai", "httpx", "yt_dlp",
+```
+
+- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_settings.py -q`.
+  Expected: `E   ImportError: cannot import name 'settings' from 'vid2sub.web'` and `1 error`.
+- [ ] **Step 3: Write the code,** `src/vid2sub/web/settings.py`:
+
+```python
+"""The settings drawer: the engine's configuration shown read-only, typed keys, the session's
+defaults and Copy settings (spec §19.2, §5.3, §5.4; S35).
+
+What vid2sub.toml fixes at launch (endpoints, key variable names, models, `local` flags) is shown,
+never changed: the UI only chooses among them, and a URL can't be typed in (§6.4). A key is shown
+by presence only. A typed key is taken only for an endpoint declared with `allow_typed_key =
+true`, into the engine's `KeyRing` (held in memory for this run, scoped to that endpoint, whose
+origin is fixed at launch, and dropped on exit, §5.3); it is never written, logged, put in a
+notice or sent back, and the drawer says only "key entered for this session". The session's
+defaults are targets and formats, held in the runtime for this launch and shared by every tab,
+as the jobs and typed keys are; never written (§5.4): jobs read them when each starts, and an
+episode opened afterwards starts Save's "ASS too" from them. Cue rules are shown read-only, as
+built (§12.2): nothing in vid2sub.toml can hold them yet, so the session can't change them
+(Phase 2 Decision 21). Copy settings is the `[defaults]` table as TOML, the only part the
+session changes, which `vid2sub.toml` loads back as it is; it never holds a key. The server runs
+in Pages too (§21), so this module imports only the standard library and the pure packages at
+its top; the Pages editor has no endpoints (its capabilities say `generate: false`), and the
+server offers none of this there.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Any
+
+from vid2sub.subs import langs, naming
+from vid2sub.subs.rules import RULES
+
+if TYPE_CHECKING:  # local only: the Pages bundle has neither (spec §21)
+    from vid2sub.config import Config
+    from vid2sub.config import Defaults as ConfigDefaults
+    from vid2sub.engines.clients import KeyRing
+
+FORMATS = ("srt", "ass")
+MAX_KEY = 1024  # characters in a typed key
+MODELS_SHOWN = 100  # model names an endpoint's Test lists, before "and N more"
+MAX_MODEL_NAME = 200  # characters of each, as a hostile server could send anything
+KEY_ENTERED = "key entered for this session"
+KEY_FORGOTTEN = "the typed key is forgotten"
+NO_TYPED_KEY = "that endpoint doesn't take a typed key: set allow_typed_key for it in vid2sub.toml"
+BAD_KEY = "a key is letters, digits and punctuation, with no spaces: nothing was kept"
+NO_ENDPOINT = "there's no such endpoint in vid2sub.toml"
+BAD_TARGETS = "pick one or more of the targets vid2sub knows"
+BAD_FORMATS = "subtitles are srt, and ass too when asked for"
+
+
+class BadSetting(ValueError):
+    """A change the drawer sent that isn't valid; the message echoes nothing it sent."""
+
+
+class EndpointError(Exception):
+    """An endpoint's Test failed: the reason and its fix (`hint`) are fit to show, with every key
+    redacted. The local runtime makes it from the engine's error, which Pages can't import."""
+
+    def __init__(self, message: str, hint: str = ""):
+        super().__init__(message)
+        self.hint = hint
+
+
+@dataclass(frozen=True)
+class Defaults:
+    """The session's defaults: the target tracks a job translates to, and the formats it and Save
+    write (SRT always)."""
+
+    targets: tuple[str, ...] = ("en",)
+    formats: tuple[str, ...] = ("srt",)
+
+    @classmethod
+    def from_config(cls, defaults: ConfigDefaults) -> Defaults:
+        return cls(tuple(defaults.targets), ("srt", "ass") if "ass" in defaults.formats
+                   else ("srt",))
+
+
+class Session:
+    """This launch's session settings, shared by every tab: the defaults, and word of any change
+    (a default or a typed key) for each tab to show it. Changed only on the event loop; a job's
+    thread reads `defaults()`, a frozen value replaced whole, so it never sees half a change."""
+
+    def __init__(self, defaults: Defaults | None = None):
+        self._defaults = defaults if defaults is not None else Defaults()
+        self._listeners: list[Callable[[], None]] = []
+
+    def defaults(self) -> Defaults:
+        return self._defaults
+
+    def set_defaults(self, defaults: Defaults) -> None:
+        self._defaults = defaults
+        self.changed()
+
+    def on_change(self, fn: Callable[[], None]) -> Callable[[], None]:
+        """Calls `fn` after each change; returns what stops it (a tab that closed)."""
+        self._listeners.append(fn)
+        return lambda: self._listeners.remove(fn) if fn in self._listeners else None
+
+    def changed(self) -> None:
+        for fn in list(self._listeners):
+            fn()
+
+
+def change_defaults(current: Defaults, request: object) -> Defaults:
+    """The defaults after the drawer's change: `{"targets": [track, …]}` (known target tracks,
+    each once) or `{"formats": ["srt"] | ["srt", "ass"]}`, with the request's count `n`."""
+    if not isinstance(request, dict) or set(request) - {"n"} not in ({"targets"}, {"formats"}):
+        raise BadSetting("change one default at a time")
+    if "targets" in request:
+        targets = request["targets"]
+        if (not isinstance(targets, list) or not 0 < len(targets) <= len(naming.TRACKS)
+                or len(set(map(str, targets))) != len(targets)
+                or any(not isinstance(t, str) or t not in naming.TRACKS for t in targets)):
+            raise BadSetting(BAD_TARGETS)
+        return Defaults(tuple(targets), current.formats)
+    formats = request["formats"]
+    if formats not in (["srt"], ["srt", "ass"]):
+        raise BadSetting(BAD_FORMATS)
+    return Defaults(current.targets, tuple(formats))
+
+
+def enter_key(config: Config, keys: KeyRing, request: object) -> str:
+    """Keeps a typed key for this run (§5.3), or with `"key": ""` forgets it: `{"endpoint":
+    name, "key": str, "n": int}`. Only for an endpoint that allows one; BadSetting otherwise,
+    and for a key that isn't one line of printable ASCII, up to MAX_KEY characters. Returns what
+    to tell the person, which never holds the key."""
+    if not isinstance(request, dict):
+        raise BadSetting(NO_TYPED_KEY)
+    name, key = request.get("endpoint"), request.get("key")
+    endpoint = config.endpoints.get(name) if isinstance(name, str) else None
+    if endpoint is None or not endpoint.allow_typed_key:
+        raise BadSetting(NO_TYPED_KEY)
+    if key == "":
+        keys.typed.pop(name, None)
+        return KEY_FORGOTTEN
+    if (not isinstance(key, str) or len(key) > MAX_KEY
+            or any(not "\x21" <= ch <= "\x7e" for ch in key)):
+        raise BadSetting(BAD_KEY)
+    keys.typed[name] = key
+    return KEY_ENTERED
+
+
+def models_shown(found: list[str]) -> tuple[list[str], int]:
+    """What a Test lists from a server's `/v1/models`: at most MODELS_SHOWN names, each cut to
+    MAX_MODEL_NAME characters, and how many more there were. The page shows them as text."""
+    names = [str(m)[:MAX_MODEL_NAME] for m in found]
+    return names[:MODELS_SHOWN], max(0, len(names) - MODELS_SHOWN)
+
+
+def settings_view(config: Config, keys: KeyRing, defaults: Defaults) -> dict[str, Any]:
+    """The drawer's JSON: endpoints and models as vid2sub.toml has them, keys by presence only,
+    the session's defaults with the targets to choose from, the cue rules, and Copy settings."""
+    from vid2sub.config import is_local  # here: the Pages bundle has no vid2sub.config
+    from vid2sub.web.views import local_endpoints, track_label
+
+    local = set(local_endpoints(config))
+    endpoints = []
+    for name, ep in config.endpoints.items():
+        typed = bool(ep.allow_typed_key and keys.typed.get(name))
+        if ep.key_env or ep.allow_typed_key:
+            key = "present" if keys.key_for(name, ep) else "missing"
+        else:
+            key = "none"
+        endpoints.append({"name": name, "base_url": ep.base_url, "local": name in local,
+                          "key_env": ep.key_env, "key": key,
+                          "allow_typed_key": ep.allow_typed_key, "typed": typed})
+    models = [{"name": name, "task": m.task, "catalog": m.catalog, "endpoint": m.endpoint,
+               "engine": m.engine, "model": m.model, "local": is_local(m, config)}
+              for name, m in config.models.items()]
+    return {
+        "endpoints": endpoints,
+        "models": models,
+        "defaults": {"targets": list(defaults.targets), "formats": list(defaults.formats)},
+        "targets": [{"key": key, "label": track_label(key)} for key in naming.TRACKS],
+        "rules": [{"lang": lang, "label": langs.LANGS[lang].name if lang in langs.LANGS
+                   else lang, **{k: v for k, v in asdict(rules).items()
+                                 if k in ("max_width", "max_lines", "cps", "min_ms", "max_ms")}}
+                  for lang, rules in RULES.items()],
+        "toml": settings_toml(config, defaults),
+    }
+
+
+def settings_toml(config: Config, defaults: Defaults) -> str:
+    """Copy settings (§5.4): vid2sub.toml's `[defaults]` table with the session's targets and
+    formats, and the file's other defaults as they are, so it can replace the table whole. It
+    holds no key: no endpoint is in it. Strings are written as TOML basic strings, which JSON's
+    escapes are (every control character escaped, non-ASCII as it is)."""
+    lines = ["[defaults]", f"targets = {_array(defaults.targets)}",
+             f"formats = {_array(defaults.formats)}"]
+    if config.defaults.youtube_dir is not None:
+        lines.append(f"youtube_dir = {json.dumps(config.defaults.youtube_dir, ensure_ascii=False)}")
+    lines.append(f"cache_max_gb = {config.defaults.cache_max_gb!r}")
+    return "\n".join(lines) + "\n"
+
+
+def _array(values: tuple[str, ...]) -> str:
+    return "[" + ", ".join(json.dumps(v, ensure_ascii=False) for v in values) + "]"
+```
+
+  `src/vid2sub/web/runtime.py`:
+
+  Replace
+
+```python
+server function runs once per browser session, so the server finds the backend, the job queue
+and the media tokens here (`current()`), and `serve` calls `configure()` before it imports the
+Shiny app. There is one of each per launch: the backend holds the open episodes, the queue holds
+the jobs, which belong to the engine rather than a tab (spec §17.1), and the media tokens die
+with the engine (the Phase 2 plan's Decision 1). Until the Jobs page gives the queue the
+pipeline (S36), a job that somehow reaches it fails without running anything.
+
+The server runs in Pages too (spec §3.3, §21), so this module imports nothing the Pages bundle
+lacks at its top: `build()` imports the local parts (the backend, the queue, ffmpeg's tools, the
+cache, the network client) when it runs, and the server reaches local-only work through the
+`Runtime` (`reachable`, `media_for`, `retranslate`). Every call that blocks goes through
+`blocking`, never a thread or an executor of the server's own: a worker thread here, inline in
+Pyodide, which has no threads (Task 14 round 14a, decided with the coordinator 2026-10-24).
+"""
+```
+
+  with
+
+```python
+server function runs once per browser session, so the server finds the backend, the job queue
+and the media tokens here (`current()`), and `serve` calls `configure()` before it imports the
+Shiny app. There is one of each per launch: the backend holds the open episodes, the queue holds
+the jobs, which belong to the engine rather than a tab (spec §17.1), the media tokens die
+with the engine (the Phase 2 plan's Decision 1), and the session's settings (`session`: the
+defaults the drawer changes, never written, §5.4) and typed keys (in `keys`) are this launch's,
+shared by every tab and gone when it exits. Until the Jobs page gives the queue the
+pipeline (S36), a job that somehow reaches it fails without running anything.
+
+The server runs in Pages too (spec §3.3, §21), so this module imports nothing the Pages bundle
+lacks at its top: `build()` imports the local parts (the backend, the queue, ffmpeg's tools, the
+cache, the network client) when it runs, and the server reaches local-only work through the
+`Runtime` (`reachable`, `media_for`, `retranslate`, `endpoint_models`). Every call that blocks goes through
+`blocking`, never a thread or an executor of the server's own: a worker thread here, inline in
+Pyodide, which has no threads (Task 14 round 14a, decided with the coordinator 2026-10-24).
+"""
+```
+
+  Replace
+
+```python
+import asyncio
+import sys
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vid2sub.cache import Cache
+    from vid2sub.config import Config
+```
+
+  with
+
+```python
+import asyncio
+import sys
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+from vid2sub.web.settings import Defaults, Session
+
+if TYPE_CHECKING:
+    from vid2sub.cache import Cache
+    from vid2sub.config import Config
+```
+
+  Replace
+
+```python
+    from vid2sub.web.media import MediaTokens
+
+ALLOW_CLOUD = "tick Allow cloud models, then retranslate again"
+PLAYBACK_TIMEOUT = 3600.0  # seconds: a two-hour episode's audio, read from a slow network share
+INLINE = sys.platform == "emscripten"  # Pyodide: no threads, so a blocking call runs inline
+
+```
+
+  with
+
+```python
+    from vid2sub.web.media import MediaTokens
+
+ALLOW_CLOUD = "tick Allow cloud models, then retranslate again"
+TEST_TIMEOUT = 10.0  # seconds a settings drawer Test waits for an endpoint's model list
+PLAYBACK_TIMEOUT = 3600.0  # seconds: a two-hour episode's audio, read from a slow network share
+INLINE = sys.platform == "emscripten"  # Pyodide: no threads, so a blocking call runs inline
+
+```
+
+  Replace
+
+```python
+    media: MediaTokens
+    config: Config
+    keys: KeyRing
+
+    def reachable(self) -> dict[str, bool]:
+        """Whether each local endpoint answers its model list. Blocks on the network: call it
+```
+
+  with
+
+```python
+    media: MediaTokens
+    config: Config
+    keys: KeyRing
+    session: Session = field(default_factory=Session)  # this launch's settings (spec §5.4)
+
+    def reachable(self) -> dict[str, bool]:
+        """Whether each local endpoint answers its model list. Blocks on the network: call it
+```
+
+  Replace
+
+```python
+        except TranslationFailed as err:
+            raise RetranslateError(str(err), "retranslate again, or pick fewer cues") from None
+
+    def media_for(self, ep: Episode, *, audio_only: bool = False) -> Media:
+        """The video by a media token when the browser can play its audio; else, or with
+        `audio_only` (the browser said it can't play the video, spec §8.2), the playback audio
+```
+
+  with
+
+```python
+        except TranslationFailed as err:
+            raise RetranslateError(str(err), "retranslate again, or pick fewer cues") from None
+
+    def endpoint_models(self, name: str) -> list[str]:
+        """The models endpoint `name` serves, from its `/v1/models` (the settings drawer's
+        Test), asked through the one client factory, only at the endpoint's own origin, with
+        its key and no redirect followed (§6.4). Any endpoint, cloud ones too: the person asked,
+        and a model list carries nothing of theirs. EndpointError, with every key redacted, when
+        it fails. Blocks on the network: call it through `blocking`."""
+        from vid2sub.engines import clients
+        from vid2sub.engines.base import EngineError
+        from vid2sub.security import redact
+        from vid2sub.web.settings import EndpointError
+
+        try:
+            return clients.list_models(name, self.config.endpoints[name], self.keys,
+                                       timeout=TEST_TIMEOUT)
+        except EngineError as err:
+            values = self.keys.secrets(self.config)
+            raise EndpointError(redact(str(err), values), redact(err.hint, values)) from None
+
+    def media_for(self, ep: Episode, *, audio_only: bool = False) -> Media:
+        """The video by a media token when the browser can play its audio; else, or with
+        `audio_only` (the browser said it can't play the video, spec §8.2), the playback audio
+```
+
+  Replace
+
+```python
+    keys = keys if keys is not None else KeyRing()
+    cache = cache if cache is not None else caching.from_config(config)
+    return Runtime(backend=LocalBackend(config, tools, keys, cache), queue=Queue(_no_jobs),
+                   media=MediaTokens(), config=config, keys=keys)
+
+
+def _no_jobs(source: str, events: Event, cancelled: Callable[[], bool]) -> InputResult:
+```
+
+  with
+
+```python
+    keys = keys if keys is not None else KeyRing()
+    cache = cache if cache is not None else caching.from_config(config)
+    return Runtime(backend=LocalBackend(config, tools, keys, cache), queue=Queue(_no_jobs),
+                   media=MediaTokens(), config=config, keys=keys,
+                   session=Session(Defaults.from_config(config.defaults)))
+
+
+def _no_jobs(source: str, events: Event, cancelled: Callable[[], bool]) -> InputResult:
+```
+
+  `src/vid2sub/web/views.py`:
+
+  Replace
+
+```python
+covers. The view never holds a path, only the video's bare file name (§6.8), and the probe's
+container and codec names, which the browser's canPlayType is asked about (§8.2). It names each
+track's head rendition, by which the tab keys its crash-recovery draft (§14.5, S34), and the
+formats Save writes: ASS too where one was written before (§15.2). A track in conflict lists its
+versions, and the cues where they differ, so the person can tell which holds what (§14.4, S32).
+The top bar's views are here too (§19.2): the backend's capabilities, and the engine's status, which
+gives each endpoint's key by presence only, never its value, and its reach only for local endpoints:
+```
+
+  with
+
+```python
+covers. The view never holds a path, only the video's bare file name (§6.8), and the probe's
+container and codec names, which the browser's canPlayType is asked about (§8.2). It names each
+track's head rendition, by which the tab keys its crash-recovery draft (§14.5, S34), and the
+formats Save writes: ASS too where one was written before (§15.2) or the session's defaults ask. A track in conflict lists its
+versions, and the cues where they differ, so the person can tell which holds what (§14.4, S32).
+The top bar's views are here too (§19.2): the backend's capabilities, and the engine's status, which
+gives each endpoint's key by presence only, never its value, and its reach only for local endpoints:
+```
+
+  Replace
+
+```python
+
+import dataclasses
+from bisect import bisect_right
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
+
+from vid2sub.subs import langs, naming
+```
+
+  with
+
+```python
+
+import dataclasses
+from bisect import bisect_right
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any
+
+from vid2sub.subs import langs, naming
+```
+
+  Replace
+
+```python
+DIFFERENCES_SHOWN = 50  # cues where a conflicted track's versions differ, before "and N more"
+
+
+def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None) -> dict[str, Any]:
+    return {
+        "id": ep.id,
+        "video": {"name": ep.video.name, "duration_ms": ep.header.video.duration_ms,
+```
+
+  with
+
+```python
+DIFFERENCES_SHOWN = 50  # cues where a conflicted track's versions differ, before "and N more"
+
+
+def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None,
+                 default_formats: Sequence[str] = ("srt",)) -> dict[str, Any]:
+    return {
+        "id": ep.id,
+        "video": {"name": ep.video.name, "duration_ms": ep.header.video.duration_ms,
+```
+
+  Replace
+
+```python
+        "differences": _differences(ep),
+        "glossary_adds": dict(ep.glossary_adds),
+        "heads": dict(ep.heads),
+        "formats": _formats(ep),
+    }
+
+
+```
+
+  with
+
+```python
+        "differences": _differences(ep),
+        "glossary_adds": dict(ep.glossary_adds),
+        "heads": dict(ep.heads),
+        "formats": _formats(ep, default_formats),
+    }
+
+
+```
+
+  Replace
+
+```python
+    out = []
+    for key in keys:
+        head = ep.sidecar.head(key)
+        out.append({"key": key, "label": _label(key),
+                    "role": "source" if key == ep.source_key else "translation",
+                    "head_by": head.by if isinstance(head, HeadRecord) else None,
+                    "in_conflict": key in ep.conflicts,
+```
+
+  with
+
+```python
+    out = []
+    for key in keys:
+        head = ep.sidecar.head(key)
+        out.append({"key": key, "label": track_label(key),
+                    "role": "source" if key == ep.source_key else "translation",
+                    "head_by": head.by if isinstance(head, HeadRecord) else None,
+                    "in_conflict": key in ep.conflicts,
+```
+
+  Replace
+
+```python
+    return out
+
+
+def _formats(ep: Episode) -> list[str]:
+    """SRT, and ASS where vid2sub has written an ASS for this video before (spec §15.2)."""
+    written = {p.format for p in ep.sidecar.projections().values()}
+    return ["srt", "ass"] if "ass" in written else ["srt"]
+
+
+def _flags(stored: tuple[str, ...], computed: tuple[str, ...]) -> list[str]:
+```
+
+  with
+
+```python
+    return out
+
+
+def _formats(ep: Episode, default_formats: Sequence[str]) -> list[str]:
+    """SRT, and ASS where vid2sub has written an ASS for this video before (spec §15.2) or the
+    session's default formats have it (§5.4, the settings drawer)."""
+    written = {p.format for p in ep.sidecar.projections().values()}
+    return ["srt", "ass"] if "ass" in written or "ass" in default_formats else ["srt"]
+
+
+def _flags(stored: tuple[str, ...], computed: tuple[str, ...]) -> list[str]:
+```
+
+  Replace
+
+```python
+    return info.lang if info else track.split("-")[0]
+
+
+def _label(track: str) -> str:
+    info = naming.TRACKS.get(track)
+    if info is None:
+        return track
+```
+
+  with
+
+```python
+    return info.lang if info else track.split("-")[0]
+
+
+def track_label(track: str) -> str:
+    """A track's name for people: its language, and the script where it has one."""
+    info = naming.TRACKS.get(track)
+    if info is None:
+        return track
+```
+
+  `src/vid2sub/web/server.py`:
+
+  Replace
+
+```python
+`RetranslateError`, so nothing here imports them. Cloud models only when the request itself says
+`allow_cloud: true` (§7.2): the editor's box, unticked every time.
+
+The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
+for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
+indicators on with an inline script, which the CSP's `script-src 'self'` blocks (§6.3), so the
+```
+
+  with
+
+```python
+`RetranslateError`, so nothing here imports them. Cloud models only when the request itself says
+`allow_cloud: true` (§7.2): the editor's box, unticked every time.
+
+The settings drawer (§19.2, S35) is `web.settings`'s: the `settings` output (null in Pages, which
+has no endpoints), a typed key (`typed_key`, read in the flush of its own message and replaced by
+the page's null straight after, so Shiny's input map doesn't keep it; it lives only in the
+engine's `KeyRing`), the session's defaults (`session_defaults`), and Test (`endpoint_test`, its
+answer the `endpoint_test_result` message), which asks the endpoint's `/v1/models` through the
+runtime, off the loop. A change any tab makes reaches every tab, through the session's listeners.
+
+The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
+for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
+indicators on with an inline script, which the CSP's `script-src 'self'` blocks (§6.3), so the
+```
+
+  Replace
+
+```python
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from collections import deque
+```
+
+  with
+
+```python
+from __future__ import annotations
+
+import asyncio
+import itertools
+import logging
+import re
+from collections import deque
+```
+
+  Replace
+
+```python
+from vid2sub.subs.glossary import GlossaryError
+from vid2sub.web import WWW, ops, runtime, views
+from vid2sub.web.episode import Episode, OpenError, RetranslateError, SaveError, SaveResult
+
+# By name: a test may load this file as a module of another name.
+log = logging.getLogger("vid2sub.web.server")
+```
+
+  with
+
+```python
+from vid2sub.subs.glossary import GlossaryError
+from vid2sub.web import WWW, ops, runtime, views
+from vid2sub.web.episode import Episode, OpenError, RetranslateError, SaveError, SaveResult
+from vid2sub.web.settings import (
+    NO_ENDPOINT,
+    BadSetting,
+    EndpointError,
+    change_defaults,
+    enter_key,
+    models_shown,
+    settings_view,
+)
+
+# By name: a test may load this file as a module of another name.
+log = logging.getLogger("vid2sub.web.server")
+```
+
+  Replace
+
+```python
+        if check.status() == "success":
+            found.set(check.result())
+
+    @reactive_output
+    def status():
+        return views.status_view(rt.config, rt.keys, found(),
+                                 ffmpeg=bool(rt.backend.tools.ffmpeg))
+
+    editor = Editor(rt, session)
+    session.on_ended(editor.end)
+
+```
+
+  with
+
+```python
+        if check.status() == "success":
+            found.set(check.result())
+
+    # The settings drawer (spec §19.2, §5.3, §5.4; S35), the local engine's alone: the Pages
+    # editor has no endpoints (`generate` is false there), so it is offered none of this. The
+    # session's settings are the launch's, shared by every tab: a change any tab makes (a default,
+    # a typed key) reaches every tab's views through the session's listeners.
+    local = rt.backend.capabilities().generate
+    ticks = itertools.count(1)
+    changed = reactive.value(0)
+    session.on_ended(rt.session.on_change(lambda: changed.set(next(ticks))))
+
+    @reactive_output
+    def status():
+        changed()  # a typed key makes a key present
+        return views.status_view(rt.config, rt.keys, found(),
+                                 ffmpeg=bool(rt.backend.tools.ffmpeg))
+
+    @reactive_output
+    def settings():
+        changed()
+        if not local:
+            return None
+        return settings_view(rt.config, rt.keys, rt.session.defaults())
+
+    @reactive.effect
+    @reactive.event(input.typed_key)
+    async def _typed_key() -> None:
+        # Read in the flush of the message that brought it; the page sends null straight after,
+        # which replaces it in this session's inputs and in the page's own copies (spec §5.3).
+        request = as_json(input.typed_key())
+        if not local:
+            return
+        try:
+            said = enter_key(rt.config, rt.keys, request)
+        except BadSetting as err:  # never echoes the key or the endpoint sent
+            await notice(session, "error", str(err))
+            return
+        rt.session.changed()
+        await notice(session, "info", said)
+
+    @reactive.effect
+    @reactive.event(input.session_defaults)
+    async def _session_defaults() -> None:
+        if not local:
+            return
+        try:
+            rt.session.set_defaults(change_defaults(rt.session.defaults(),
+                                                    as_json(input.session_defaults())))
+        except BadSetting as err:
+            await notice(session, "error", str(err))
+
+    # A Test asks the endpoint for its models off the event loop, in a task of its own, so a
+    # slow server holds up nothing else; one at a time per endpoint.
+    testing: dict[str, asyncio.Task] = {}
+
+    @reactive.effect
+    @reactive.event(input.endpoint_test)
+    def _endpoint_test() -> None:
+        request = as_json(input.endpoint_test())
+        name = request.get("endpoint") if isinstance(request, dict) else None
+        n = request.get("n") if isinstance(request, dict) else None
+        if not isinstance(name, str) or name in testing:
+            return
+        testing[name] = asyncio.create_task(test_endpoint(name, n if type(n) is int else None))
+        testing[name].add_done_callback(lambda _: testing.pop(name, None))
+
+    async def test_endpoint(name: str, n: int | None) -> None:
+        if not local or name not in rt.config.endpoints:
+            await notice(session, "error", NO_ENDPOINT)  # never echoes the name sent
+            return
+        try:
+            found = await runtime.blocking(rt.endpoint_models, name)
+        except EndpointError as err:
+            result = {"ok": False, "models": [], "more": 0,
+                      "error": str(err) + (f" → {err.hint}" if err.hint else "")}
+        except Exception as err:  # noqa: BLE001 - one Test failing must not stop the session
+            log.error("an endpoint test failed: %s", type(err).__name__)
+            result = {"ok": False, "models": [], "more": 0,
+                      "error": "something went wrong; see the log"}
+        else:
+            models, more = models_shown(found)
+            result = {"ok": True, "models": models, "more": more, "error": None}
+        await shinyreact.send_message(session, "endpoint_test_result",
+                                      {"endpoint": name, "n": n, **result})
+
+    editor = Editor(rt, session)
+    session.on_ended(editor.end)
+
+```
+
+  Replace
+
+```python
+        if shown is None:
+            return None  # an explicit null: nothing is open
+        ep, media = shown
+        return views.episode_view(ep, video_url=media.video_url, audio_url=media.audio_url)
+
+    @reactive_output
+    def busy():
+```
+
+  with
+
+```python
+        if shown is None:
+            return None  # an explicit null: nothing is open
+        ep, media = shown
+        return views.episode_view(ep, video_url=media.video_url, audio_url=media.audio_url,
+                                  default_formats=rt.session.defaults().formats)
+
+    @reactive_output
+    def busy():
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_settings.py
+  tests/test_pages_imports.py tests/test_web_server.py -q` first (`50 passed`), then the guard
+  checks, one at a time, each put back after: in `settings.enter_key`, change `if endpoint is
+  None or not endpoint.allow_typed_key:` to `if endpoint is None:`, and `uv run pytest
+  tests/test_web_settings.py -q` gives `FAILED
+  tests/test_web_settings.py::test_a_typed_key_is_kept_only_for_an_endpoint_that_allows_one_and_never_echoed`
+  and `FAILED
+  tests/test_web_settings.py::test_a_typed_key_for_an_endpoint_that_doesnt_allow_one_is_kept_nowhere`;
+  in `server.py`'s `_typed_key`, take out `if not local: return`, and it gives `FAILED
+  tests/test_web_settings.py::test_the_pages_editor_is_offered_no_settings_and_takes_no_key`.
+  Then `make check`. Expected: `982 passed, 2 skipped, 31 deselected` (twice), `Test Files  15
+  passed (15)`, `Tests  71 passed (71)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the settings drawer's server shows vid2sub.toml read-only, takes a typed key only where allowed, tests an endpoint and keeps the session's defaults
+
+vid2sub.web.settings (spec §19.2, §5.3, §5.4, §6.4; S35), Pages-safe
+(stdlib and the pure packages; Config and KeyRing type-only), added to
+test_pages_imports' bundled modules. Output `settings`: the endpoints and
+models as vid2sub.toml has them, every key by presence only, a typed one
+as `typed: true`; the session's defaults (targets, formats) with the
+targets to choose from; the cue rules as built, read-only (Decision 21);
+and Copy settings, the [defaults] table as TOML (JSON-escaped basic
+strings), which load_config reads back as it is and which holds no key.
+Null where capabilities.generate is false (the Pages editor has no
+endpoints), and there the inputs below change nothing.
+
+Input `typed_key` ({"endpoint", "key", "n"}; "" forgets) keeps a key in
+the engine's KeyRing only for an endpoint with allow_typed_key, only if
+it is one line of printable ASCII up to 1,024 characters; it is read in
+the flush of its own message, and the page's null straight after
+replaces it in Shiny's input map (shiny 1.8.0 keeps every input's last
+value: Inputs._map, _manage_inputs). Notices never echo the key or the
+endpoint sent. Input `session_defaults` ({"targets": [...]} or
+{"formats": [...]}, one at a time) changes Runtime.session, the launch's
+settings shared by every tab, never written; each tab's `settings` and
+`status` hear changes through Session.on_change. Input `endpoint_test`
+({"endpoint", "n"}) runs Runtime.endpoint_models through
+runtime.blocking in a task of its own, one per endpoint at a time:
+clients.list_models, the one client factory, at the endpoint's declared
+origin with its own key and no redirect; an EngineError becomes the pure
+settings.EndpointError with every configured and typed key redacted.
+Message `endpoint_test_result` ({"endpoint", "n", "ok", "models" (at
+most 100, each at most 200 characters), "more", "error"}).
+views.episode_view gains default_formats, so an episode opened once
+"ass" is a default starts Save's "ASS too" ticked; views._label is now
+views.track_label.
+
+The new tests failed first with: ImportError: cannot import name
+'settings' from 'vid2sub.web'. Guards reverted one at a time: without the
+allow_typed_key check, test_a_typed_key_is_kept_only_for_an_endpoint_
+that_allows_one_and_never_echoed and test_a_typed_key_for_an_endpoint_
+that_doesnt_allow_one_is_kept_nowhere fail; without the server's Pages
+check, test_the_pages_editor_is_offered_no_settings_and_takes_no_key
+fails.
+
+Docs read: shiny 1.8.0's session (_run's per-message flush under the
+lock, _manage_inputs, Inputs, reactive.event's ignore_none,
+session.on_ended); shiny.js's InputNoResendDecorator and
+shinyapp.$inputValues; shinyreact 0.1.0's input registry (keeps each
+input's last value, resent on mount) and send_message; the openai SDK's
+models.list and types/model.py (the /v1/models list shape, {"object":
+"list", "data": [{"id", "object", "created", "owned_by"}]}; the
+OpenAI reference page itself refused to load); engines/clients.py's
+list_models and map_error; config.py's Defaults and load_config.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 18
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/runtime.py src/vid2sub/web/server.py src/vid2sub/web/views.py
+  src/vid2sub/web/settings.py tests/test_pages_imports.py tests/test_web_settings.py`, `git commit
+  -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 18b: the drawer
+
+- [ ] **Step 6: Write the failing tests,** `frontend/src/lib/settings.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { EndpointSetting } from "@/types";
+
+import { keyLabel, testSummary, withTarget } from "./settings";
+
+const LAN: EndpointSetting = { name: "lan", base_url: "http://127.0.0.1:10/v1", local: false, key_env: null, key: "missing", allow_typed_key: true, typed: false };
+
+describe("an endpoint's key in the drawer (spec §5.3, §19.2)", () => {
+  it("is shown by presence only, and a typed one only as entered for this session", () => {
+    expect(keyLabel({ ...LAN, key: "present", typed: true })).toBe("key entered for this session");
+    expect(keyLabel(LAN)).toBe("no key yet: type one below to use it this session");
+    expect(keyLabel({ ...LAN, key_env: "SPARK_API_KEY", key: "present", allow_typed_key: false })).toBe("SPARK_API_KEY is set");
+    expect(keyLabel({ ...LAN, key_env: "SPARK_API_KEY", allow_typed_key: false })).toBe("SPARK_API_KEY isn't set in the shell vid2sub started from");
+    expect(keyLabel({ ...LAN, key: "none", allow_typed_key: false })).toBe("no key");
+  });
+});
+
+describe("a Test's answer", () => {
+  it("lists the models the server serves, or says why it failed", () => {
+    expect(testSummary({ endpoint: "lan", n: 1, ok: true, models: ["w", "g"], more: 0, error: null })).toBe("Answers, serving w, g");
+    expect(testSummary({ endpoint: "lan", n: 1, ok: true, models: ["w"], more: 3, error: null })).toBe("Answers, serving w and 3 more");
+    expect(testSummary({ endpoint: "lan", n: 1, ok: true, models: [], more: 0, error: null })).toBe("Answers, serving no models");
+    expect(testSummary({ endpoint: "lan", n: 1, ok: false, models: [], more: 0, error: "couldn't reach the server" })).toBe("couldn't reach the server");
+  });
+});
+
+describe("the session's targets", () => {
+  it("keep the drawer's order, and never become none", () => {
+    const order = ["en", "ja", "ko"];
+    expect(withTarget(["en"], "ja", true, order)).toEqual(["en", "ja"]);
+    expect(withTarget(["ja"], "en", true, order)).toEqual(["en", "ja"]);
+    expect(withTarget(["en", "ja"], "en", false, order)).toEqual(["ja"]);
+    expect(withTarget(["en"], "en", false, order)).toEqual(["en"]);
+  });
+});
+```
+
+  `frontend/src/components/SettingsDrawer.test.ts`:
+
+```ts
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import type { SettingsView } from "@/types";
+
+import { SettingsDrawer } from "./SettingsDrawer";
+
+const VIEW: SettingsView = {
+  endpoints: [
+    { name: "<b>spark</b>", base_url: "http://127.0.0.1:9/v1", local: true, key_env: "SPARK_API_KEY", key: "present", allow_typed_key: false, typed: false },
+    { name: "lan", base_url: "http://127.0.0.1:10/v1", local: false, key_env: null, key: "present", allow_typed_key: true, typed: true },
+  ],
+  models: [{ name: "lan-gemma", task: "translate", catalog: null, endpoint: "lan", engine: null, model: "g", local: false }],
+  defaults: { targets: ["en"], formats: ["srt"] },
+  targets: [{ key: "en", label: "English" }, { key: "ja", label: "Japanese" }],
+  rules: [{ lang: "en", label: "English", max_width: 42, max_lines: 2, cps: 20, min_ms: 833, max_ms: 7000 }],
+  toml: '[defaults]\ntargets = ["en"]\nformats = ["srt"]\ncache_max_gb = 20.0\n',
+};
+
+function render(view: SettingsView = VIEW): string {
+  const noop = () => undefined;
+  return renderToStaticMarkup(createElement(SettingsDrawer, { open: true, onClose: noop, settings: view, tests: { lan: { endpoint: "lan", n: 1, ok: true, models: ["<img src=x>"], more: 0, error: null } }, onTest: noop, onTypedKey: noop, onDefaults: noop }));
+}
+
+describe("the settings drawer (spec §19.2, S35)", () => {
+  it("is the native dialog at the right edge (Decision 13)", () => {
+    expect(render()).toMatch(/<dialog[^>]*data-side="right"/);
+  });
+
+  it("shows the endpoints, the models and every server's answer as text, never markup", () => {
+    const html = render();
+    expect(html).toContain("&lt;b&gt;spark&lt;/b&gt;");
+    expect(html).toContain("&lt;img src=x&gt;");
+    expect(html).not.toContain("<img");
+    expect(html).toContain("lan-gemma");
+  });
+
+  it("offers a typed key only where vid2sub.toml allows one, in a field the browser won't keep", () => {
+    const html = render();
+    expect(html.match(/type="password"/g)).toHaveLength(1);
+    expect(html).toMatch(/<input[^>]*type="password"[^>]*autoComplete="off"|<input[^>]*autoComplete="off"[^>]*type="password"/i);
+    expect(html).toContain("key entered for this session");
+    expect(html).toContain('data-testid="typed-key-lan"');
+    expect(html).not.toContain('data-testid="typed-key-&lt;b&gt;spark&lt;/b&gt;"');
+  });
+
+  it("shows the cue rules read-only, saying they can't be changed yet, and Copy settings", () => {
+    const html = render();
+    expect(html).toContain("Cue rules can&#x27;t be changed yet.");
+    expect(html).toContain("cache_max_gb = 20.0");
+  });
+});
+```
+
+  In `frontend/src/components/TopBar.test.ts`:
+
+  Replace
+
+```ts
+    expect(renderToStaticMarkup(createElement(TopBar, { capabilities: browser }))).toContain("Browser editor");
+  });
+
+  it("names each endpoint's reach and key in words", () => {
+    expect(endpointLabel({ name: "spark", local: true, key: "present", reachable: true })).toBe("spark: reachable, key set");
+    expect(endpointLabel({ name: "spark", local: true, key: "missing", reachable: false })).toBe("spark: not reachable, key missing");
+```
+
+  with
+
+```ts
+    expect(renderToStaticMarkup(createElement(TopBar, { capabilities: browser }))).toContain("Browser editor");
+  });
+
+  it("offers Settings only where the engine has settings", () => {
+    expect(renderToStaticMarkup(createElement(TopBar, {}))).not.toContain("open-settings");
+    expect(renderToStaticMarkup(createElement(TopBar, { onSettings: () => undefined }))).toContain('data-testid="open-settings"');
+  });
+
+  it("names each endpoint's reach and key in words", () => {
+    expect(endpointLabel({ name: "spark", local: true, key: "present", reachable: true })).toBe("spark: reachable, key set");
+    expect(endpointLabel({ name: "spark", local: true, key: "missing", reachable: false })).toBe("spark: not reachable, key missing");
+```
+
+  `tests/e2e/test_settings.py`:
+
+```python
+"""The settings drawer in Chromium, against `vid2sub serve` with a vid2sub.toml whose endpoints
+are fake servers on this machine (spec §19.2, §5.3, §5.4, §6.4; S35, S37): the native <dialog>
+at the right edge, modal; endpoints and models read-only, with Test; a typed key only for the
+endpoint that allows one, shown back only as "key entered for this session", sent only to that
+endpoint, and kept nowhere in the page; the session's defaults, shared by every tab of the
+launch; the cue rules read-only; Copy settings. Run with `make e2e`."""
+
+import pytest
+from fakes import FakeServer
+from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
+
+KEY = "k" * 40  # a typed key: low entropy, plainly not a real one
+
+
+def models(req):
+    if req.path.endswith("/models"):
+        return 200, {"object": "list", "data": [
+            {"id": "w", "object": "model", "created": 0, "owned_by": "test"},
+            {"id": "g", "object": "model", "created": 0, "owned_by": "test"}]}, {}
+    return 404, {}, {}
+
+
+def toml(spark: str, lan: str) -> str:
+    return f"""
+[endpoints.spark]
+base_url = "{spark}"
+
+[endpoints.lan]
+base_url = "{lan}"
+allow_typed_key = true
+
+[models.spark-turbo]
+endpoint = "spark"
+model = "w"
+parser = "whisper.cpp"
+local = true
+
+[models.lan-gemma]
+endpoint = "lan"
+model = "g"
+task = "translate"
+"""
+
+
+@pytest.fixture
+def servers():
+    with FakeServer(responder=models) as spark, FakeServer(responder=models) as lan:
+        yield spark, lan
+
+
+def open_settings(page):
+    opener = page.get_by_test_id("open-settings")
+    opener.click()
+    dialog = page.locator("dialog[open]")
+    expect(dialog).to_be_visible()
+    return opener, dialog
+
+
+def test_the_drawer_shows_the_toml_read_only_tests_endpoints_and_takes_a_typed_key(
+        launch, open_page, servers, tmp_path, context):
+    spark, lan = servers
+    server = launch(tmp_path / "server", toml=toml(spark.url, lan.url))
+    watched = open_page(server)
+    page = watched.page
+    opener, dialog = open_settings(page)
+    # Decision 13: the native <dialog>, modal, at the right edge, focus inside
+    assert dialog.evaluate("d => d.matches(':modal') && d.dataset.side === 'right'")
+    assert dialog.evaluate("d => d.contains(document.activeElement)")
+    expect(page.get_by_test_id("endpoint-spark")).to_contain_text(spark.url)
+    expect(page.get_by_test_id("settings-models")).to_contain_text("lan-gemma: translates on lan")
+    # nothing of vid2sub.toml can be changed here: lan's key box is the only text field
+    assert dialog.locator("input:not([type=checkbox])").count() == 1
+    page.get_by_test_id("test-spark").click()
+    expect(page.get_by_test_id("test-result-spark")).to_have_text("Answers, serving w, g")
+    # §5.3: a typed key, only where vid2sub.toml allows one
+    expect(page.get_by_test_id("key-lan")).to_have_text(
+        "no key yet: type one below to use it this session")
+    box = page.get_by_test_id("typed-key-lan")
+    expect(box).to_have_attribute("type", "password")
+    expect(box).to_have_attribute("autocomplete", "off")
+    box.fill(KEY)
+    page.get_by_test_id("use-key-lan").click()
+    expect(box).to_have_value("")
+    expect(page.get_by_test_id("key-lan")).to_have_text("key entered for this session")
+    # kept nowhere in the page: not in Shiny's or shinyreact's copy of the input, the markup or
+    # the browser's storage (the page sends null straight after the key)
+    page.wait_for_function("""() => {
+        const v = window.Shiny.shinyapp.$inputValues["typed_key:shinyreact.default"];
+        return v === null;
+    }""")
+    found = page.evaluate("""key => [JSON.stringify(window.Shiny.shinyapp.$inputValues),
+        document.documentElement.outerHTML, JSON.stringify(localStorage),
+        JSON.stringify(sessionStorage)].some((s) => s.includes(key))""", KEY)
+    assert found is False
+    page.get_by_test_id("test-lan").click()
+    expect(page.get_by_test_id("test-result-lan")).to_have_text("Answers, serving w, g")
+    # §6.4: the key goes only to the origin its endpoint declared
+    assert [r.headers.get("authorization") for r in lan.requests] == [f"Bearer {KEY}"]
+    assert all(KEY not in str(r.headers) for r in spark.requests)
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(opener).to_be_focused()
+    expect(page.get_by_test_id("status")).to_contain_text("lan: cloud, key set")
+    assert watched.errors == [] and watched.violations() == []
+
+
+def test_the_sessions_defaults_reach_every_tab_and_copy_settings_holds_them(
+        launch, open_page, servers, tmp_path, context):
+    spark, lan = servers
+    server = launch(tmp_path / "server", toml=toml(spark.url, lan.url))
+    context.grant_permissions(["clipboard-read", "clipboard-write"], origin=server.url)
+    first = open_page(server)
+    a = first.page
+    open_settings(a)
+    expect(a.get_by_test_id("target-en")).to_be_checked()
+    expect(a.get_by_test_id("target-en")).to_be_disabled()  # the last target can't go
+    # the boxes show the engine's session, so each changes once the engine has the change
+    a.get_by_test_id("target-ja").click()
+    expect(a.get_by_test_id("target-ja")).to_be_checked()
+    a.get_by_test_id("default-ass").click()
+    expect(a.get_by_test_id("default-ass")).to_be_checked()
+    text = a.get_by_test_id("settings-toml")
+    expect(text).to_contain_text('targets = ["en", "ja"]')
+    expect(text).to_contain_text('formats = ["srt", "ass"]')
+    a.get_by_test_id("copy-settings").click()
+    expect(a.get_by_role("status").filter(has_text="Copied")).to_have_count(1)
+    assert a.evaluate("() => navigator.clipboard.readText()") == text.inner_text()
+    expect(a.get_by_test_id("settings-rules")).to_contain_text("English")
+    expect(a.get_by_test_id("settings")).to_contain_text("Cue rules can't be changed yet.")
+    assert a.get_by_test_id("settings-rules").locator("input").count() == 0
+    second = open_page(server)  # another tab of the same launch
+    b = second.page
+    open_settings(b)
+    expect(b.get_by_test_id("target-ja")).to_be_checked()
+    expect(b.get_by_test_id("default-ass")).to_be_checked()
+    for watched in (first, second):
+        assert watched.errors == [] and watched.violations() == []
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `cd frontend && npx vitest run
+  src/lib/settings.test.ts src/components/SettingsDrawer.test.ts`. Expected: `Error: Failed to
+  resolve import "./SettingsDrawer" from "src/components/SettingsDrawer.test.ts"`, `Error:
+  Failed to resolve import "./settings" from "src/lib/settings.test.ts"` and `Test Files  2
+  failed (2)`. `make build && uv run pytest -m e2e tests/e2e/test_settings.py -q`. Expected:
+  `playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.` with
+  `waiting for get_by_test_id("open-settings")`, and `2 failed`.
+- [ ] **Step 8: Write the code.** `frontend/src/types.ts`:
+
+  Replace
+
+```ts
+
+export type Status = { endpoints: EndpointStatus[]; ffmpeg: boolean };
+
+/** The `notice` message: something to tell the person, as plain text. */
+export type Notice = { kind: "info" | "error"; text: string };
+
+```
+
+  with
+
+```ts
+
+export type Status = { endpoints: EndpointStatus[]; ffmpeg: boolean };
+
+/** One endpoint as vid2sub.toml declares it, for the settings drawer (spec §19.2): its key by
+ * presence only, and whether a key typed this session is in use (§5.3); never a key's value. */
+export type EndpointSetting = {
+  name: string;
+  base_url: string;
+  local: boolean;
+  key_env: string | null;
+  key: "present" | "missing" | "none";
+  allow_typed_key: boolean;
+  typed: boolean;
+};
+
+export type ModelSetting = {
+  name: string;
+  task: "transcribe" | "translate";
+  catalog: string | null;
+  endpoint: string | null;
+  engine: string | null;
+  model: string | null;
+  local: boolean;
+};
+
+/** A language's cue rules as built (spec §12.2), shown read-only (Phase 2 Decision 21). */
+export type CueRuleSetting = { lang: string; label: string; max_width: number; max_lines: number; cps: number; min_ms: number; max_ms: number };
+
+export type SessionDefaults = { targets: string[]; formats: ("srt" | "ass")[] };
+
+/** The `settings` output: web/settings.py's settings_view, or null where there are no endpoints
+ * (the Pages editor). `toml` is Copy settings: the [defaults] table, never a key. */
+export type SettingsView = {
+  endpoints: EndpointSetting[];
+  models: ModelSetting[];
+  defaults: SessionDefaults;
+  targets: { key: string; label: string }[];
+  rules: CueRuleSetting[];
+  toml: string;
+};
+
+/** The `endpoint_test_result` message: what an endpoint's /v1/models said, or why it failed. */
+export type EndpointTestResult = { endpoint: string; n: number | null; ok: boolean; models: string[]; more: number; error: string | null };
+
+/** The `notice` message: something to tell the person, as plain text. */
+export type Notice = { kind: "info" | "error"; text: string };
+
+```
+
+  `frontend/src/lib/settings.ts`:
+
+```ts
+// The settings drawer's words (spec §19.2, §5.3): a key by presence only, and a typed one only as
+// "key entered for this session"; a Test's answer; and the session's targets, which keep the
+// drawer's order and are never none.
+
+import type { EndpointSetting, EndpointTestResult } from "@/types";
+
+export function keyLabel(e: EndpointSetting): string {
+  if (e.typed) return "key entered for this session";
+  if (e.key === "none") return "no key";
+  if (e.key_env) return e.key === "present" ? `${e.key_env} is set` : `${e.key_env} isn't set in the shell vid2sub started from`;
+  return "no key yet: type one below to use it this session";
+}
+
+export function testSummary(r: EndpointTestResult): string {
+  if (!r.ok) return r.error ?? "the test failed";
+  if (!r.models.length) return "Answers, serving no models";
+  return `Answers, serving ${r.models.join(", ")}${r.more ? ` and ${r.more} more` : ""}`;
+}
+
+/** The targets with `key` ticked or unticked, in `order`; unticking the last one changes nothing. */
+export function withTarget(targets: readonly string[], key: string, on: boolean, order: readonly string[]): string[] {
+  const next = new Set(targets);
+  if (on) next.add(key);
+  else next.delete(key);
+  return next.size ? order.filter((k) => next.has(k)) : [...targets];
+}
+```
+
+  `frontend/src/components/SettingsDrawer.tsx`:
+
+```tsx
+import { type FormEvent, useState } from "react";
+
+import { keyLabel, testSummary, withTarget } from "@/lib/settings";
+import type { EndpointSetting, EndpointTestResult, SessionDefaults, SettingsView } from "@/types";
+
+import { Dialog } from "./ui/dialog";
+
+const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+const field = "min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 font-mono text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring";
+
+export type DefaultsChange = { targets: string[] } | { formats: SessionDefaults["formats"] };
+
+/** The settings drawer (spec §19.2, S35): the native <dialog> at the right edge (Decision 13).
+ * Endpoints and models as vid2sub.toml has them, read-only, each endpoint with **Test** (its
+ * /v1/models, asked by the engine) and its key by presence only; a typed key only where the file
+ * allows one (§5.3), in a password field the browser is asked not to fill or keep, cleared once
+ * sent, and shown back only as "key entered for this session". The session's defaults (targets,
+ * formats) are for this launch, never written (§5.4); the cue rules are shown as built, since
+ * nothing can change them yet (Decision 21); Copy settings gives the [defaults] table as TOML,
+ * never a key. Every name, address and server answer is plain text (§6.3). */
+export function SettingsDrawer({ open, onClose, settings, tests, onTest, onTypedKey, onDefaults }: {
+  open: boolean;
+  onClose: () => void;
+  settings: SettingsView | null;
+  tests: Record<string, EndpointTestResult | "testing">;
+  onTest: (endpoint: string) => void;
+  onTypedKey: (endpoint: string, key: string) => void; // "" forgets the typed key
+  onDefaults: (change: DefaultsChange) => void;
+}) {
+  return (
+    <Dialog open={open} onClose={onClose} title="Settings" side="right" className="overflow-y-auto">
+      {settings && (
+        <div className="flex flex-col gap-5 text-sm" data-testid="settings">
+          <section aria-labelledby="settings-endpoints" className="flex flex-col gap-2">
+            <h3 id="settings-endpoints" className="font-bold">Endpoints</h3>
+            <p className="text-muted-foreground">As vid2sub.toml declares them: change them there.</p>
+            {settings.endpoints.length === 0 && <p>None: vid2sub.toml declares no endpoint.</p>}
+            {settings.endpoints.map((e) => (
+              <Endpoint key={e.name} endpoint={e} test={tests[e.name]} onTest={onTest} onTypedKey={onTypedKey} />
+            ))}
+          </section>
+          <section aria-labelledby="settings-models" className="flex flex-col gap-1">
+            <h3 id="settings-models" className="font-bold">Models</h3>
+            {settings.models.length === 0 && <p>None: vid2sub.toml declares no model.</p>}
+            <ul className="flex flex-col gap-1" data-testid="settings-models">
+              {settings.models.map((m) => (
+                <li key={m.name}>
+                  <span className="font-mono">{m.name}</span>: {m.task === "translate" ? "translates" : "transcribes"}
+                  {m.endpoint ? ` on ${m.endpoint}` : m.engine ? ` in-process (${m.engine})` : ""}, {m.local ? "local" : "cloud"}
+                </li>
+              ))}
+            </ul>
+          </section>
+          <Defaults settings={settings} onDefaults={onDefaults} />
+          <section aria-labelledby="settings-rules" className="flex flex-col gap-1">
+            <h3 id="settings-rules" className="font-bold">Cue rules</h3>
+            <p className="text-muted-foreground">Cue rules can't be changed yet.</p>
+            <table className="text-left text-xs" data-testid="settings-rules">
+              <thead>
+                <tr><th scope="col">Language</th><th scope="col">Width</th><th scope="col">Lines</th><th scope="col">Chars/s</th><th scope="col">Duration</th></tr>
+              </thead>
+              <tbody>
+                {settings.rules.map((r) => (
+                  <tr key={r.lang}>
+                    <th scope="row" className="font-normal">{r.label}</th>
+                    <td>{r.max_width}</td><td>{r.max_lines}</td><td>{r.cps}</td>
+                    <td>{(r.min_ms / 1000).toFixed(3)}–{r.max_ms / 1000} s</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+          <CopySettings toml={settings.toml} />
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function Endpoint({ endpoint: e, test, onTest, onTypedKey }: {
+  endpoint: EndpointSetting;
+  test: EndpointTestResult | "testing" | undefined;
+  onTest: (endpoint: string) => void;
+  onTypedKey: (endpoint: string, key: string) => void;
+}) {
+  const [key, setKey] = useState("");
+  const submit = (ev: FormEvent) => {
+    ev.preventDefault();
+    if (!key) return;
+    onTypedKey(e.name, key);
+    setKey(""); // out of the page as soon as it is sent
+  };
+  return (
+    <div className="flex flex-col gap-1 rounded-md border border-border p-2" data-testid={`endpoint-${e.name}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-bold">{e.name}</span>
+        <span className="text-muted-foreground">{e.local ? "local" : "cloud"}</span>
+        <button type="button" className={`${button} ml-auto`} onClick={() => onTest(e.name)} disabled={test === "testing"} data-testid={`test-${e.name}`}>
+          {test === "testing" ? "Testing…" : "Test"}
+        </button>
+      </div>
+      <span className="font-mono text-xs break-all">{e.base_url}</span>
+      <span data-testid={`key-${e.name}`}>{keyLabel(e)}</span>
+      <span role="status" aria-live="polite" className="break-words text-muted-foreground" data-testid={`test-result-${e.name}`}>
+        {test && test !== "testing" ? testSummary(test) : ""}
+      </span>
+      {e.allow_typed_key && (
+        <form className="flex items-center gap-2" onSubmit={submit}>
+          <label htmlFor={`typed-key-${e.name}`} className="sr-only">Key for {e.name}, for this session only</label>
+          <input
+            id={`typed-key-${e.name}`}
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            className={field}
+            value={key}
+            onChange={(ev) => setKey(ev.target.value)}
+            placeholder="key for this session only"
+            data-testid={`typed-key-${e.name}`}
+          />
+          <button type="submit" className={button} disabled={!key} data-testid={`use-key-${e.name}`}>Use</button>
+          {e.typed && <button type="button" className={button} onClick={() => onTypedKey(e.name, "")} data-testid={`forget-key-${e.name}`}>Forget</button>}
+        </form>
+      )}
+    </div>
+  );
+}
+
+function Defaults({ settings, onDefaults }: { settings: SettingsView; onDefaults: (change: DefaultsChange) => void }) {
+  const { targets, formats } = settings.defaults;
+  const order = settings.targets.map((t) => t.key);
+  return (
+    <section aria-labelledby="settings-defaults" className="flex flex-col gap-1">
+      <h3 id="settings-defaults" className="font-bold">Defaults for this session</h3>
+      <p className="text-muted-foreground">For jobs, and for Save in an episode opened from now on; never written to vid2sub.toml (Copy settings has them).</p>
+      <fieldset className="flex flex-wrap gap-x-3 gap-y-1">
+        <legend className="mb-1">Translate to</legend>
+        {settings.targets.map((t) => (
+          <label key={t.key} className="flex items-center gap-1">
+            <input type="checkbox" className="size-4 accent-(--primary)" checked={targets.includes(t.key)}
+              disabled={targets.length === 1 && targets.includes(t.key)}
+              onChange={(ev) => onDefaults({ targets: withTarget(targets, t.key, ev.target.checked, order) })} data-testid={`target-${t.key}`} />
+            {t.label}
+          </label>
+        ))}
+      </fieldset>
+      <label className="flex items-center gap-1">
+        <input type="checkbox" className="size-4 accent-(--primary)" checked={formats.includes("ass")}
+          onChange={(ev) => onDefaults({ formats: ev.target.checked ? ["srt", "ass"] : ["srt"] })} data-testid="default-ass" />
+        ASS too (SRT is always written)
+      </label>
+    </section>
+  );
+}
+
+function CopySettings({ toml }: { toml: string }) {
+  const [copied, setCopied] = useState<"yes" | "no" | null>(null);
+  const copy = () => {
+    void navigator.clipboard?.writeText(toml).then(() => setCopied("yes"), () => setCopied("no"));
+  };
+  return (
+    <section aria-labelledby="settings-copy" className="flex flex-col gap-1">
+      <h3 id="settings-copy" className="font-bold">Copy settings</h3>
+      <p className="text-muted-foreground">This session's defaults as TOML, to paste over [defaults] in vid2sub.toml. It never holds a key.</p>
+      <pre className="overflow-x-auto rounded-md border border-border bg-muted p-2 font-mono text-xs" data-testid="settings-toml">{toml}</pre>
+      <div className="flex items-center gap-2">
+        <button type="button" className={button} onClick={copy} data-testid="copy-settings">Copy settings</button>
+        <span role="status" className="text-muted-foreground">{copied === "yes" ? "Copied" : copied === "no" ? "The browser wouldn't copy: select the text instead" : ""}</span>
+      </div>
+    </section>
+  );
+}
+```
+
+  `frontend/src/components/TopBar.tsx`:
+
+  Replace
+
+```tsx
+import type { Capabilities, EndpointStatus, Status } from "@/types";
+
+import { ThemeSwitch } from "./ThemeSwitch";
+```
+
+  with
+
+```tsx
+import { Settings } from "lucide-react";
+
+import type { Capabilities, EndpointStatus, Status } from "@/types";
+
+import { ThemeSwitch } from "./ThemeSwitch";
+```
+
+  Replace
+
+```tsx
+  return `${e.name}: ${reach}${key}`;
+}
+
+/** Which engine this is (from `capabilities`, not a toggle), the engine's status, and the theme
+ * switch (spec §19.2). */
+export function TopBar({ capabilities, status }: { capabilities?: Capabilities; status?: Status }) {
+  return (
+    <header className="flex items-center gap-4 border-b border-border bg-card px-4 py-2" data-testid="topbar">
+      <span className="flex items-center gap-2 font-bold">
+```
+
+  with
+
+```tsx
+  return `${e.name}: ${reach}${key}`;
+}
+
+/** Which engine this is (from `capabilities`, not a toggle), the engine's status, the theme
+ * switch, and Settings where the engine has settings (`onSettings`: the local engine's; spec
+ * §19.2, §21). */
+export function TopBar({ capabilities, status, onSettings }: { capabilities?: Capabilities; status?: Status; onSettings?: () => void }) {
+  return (
+    <header className="flex items-center gap-4 border-b border-border bg-card px-4 py-2" data-testid="topbar">
+      <span className="flex items-center gap-2 font-bold">
+```
+
+  Replace
+
+```tsx
+        </ul>
+      )}
+      <ThemeSwitch />
+    </header>
+  );
+}
+```
+
+  with
+
+```tsx
+        </ul>
+      )}
+      <ThemeSwitch />
+      {onSettings && (
+        <button type="button" className="flex items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" onClick={onSettings} aria-haspopup="dialog" data-testid="open-settings">
+          <Settings aria-hidden className="size-4" />
+          Settings
+        </button>
+      )}
+    </header>
+  );
+}
+```
+
+  `frontend/src/App.tsx`:
+
+  Replace
+
+```tsx
+
+import { Editor, type Requests, type Saving } from "@/components/Editor";
+import { resultNotices } from "@/components/SaveBar";
+import { TopBar } from "@/components/TopBar";
+import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
+import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, dropRetranslation, loadDraft, replayable } from "@/lib/draft";
+```
+
+  with
+
+```tsx
+
+import { Editor, type Requests, type Saving } from "@/components/Editor";
+import { resultNotices } from "@/components/SaveBar";
+import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer";
+import { TopBar } from "@/components/TopBar";
+import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
+import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, dropRetranslation, loadDraft, replayable } from "@/lib/draft";
+```
+
+  Replace
+
+```tsx
+import { retranslateNotice } from "@/lib/retranslate";
+import { pacer } from "@/lib/sends";
+import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { Busy, Capabilities, EditOp, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, Status } from "@/types";
+
+type Ask = { episode: string; n: number };
+
+```
+
+  with
+
+```tsx
+import { retranslateNotice } from "@/lib/retranslate";
+import { pacer } from "@/lib/sends";
+import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
+
+type Ask = { episode: string; n: number };
+
+```
+
+  Replace
+
+```tsx
+  const episode = useShinyOutputValue<EpisodeView | null>("episode");
+  const busy = useShinyOutputValue<Busy>("busy");
+  const progress = useShinyOutputValue<Progress>("progress");
+  // Every input is set from here too. Each request carries a count, so the same path asked for
+  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
+```
+
+  with
+
+```tsx
+  const episode = useShinyOutputValue<EpisodeView | null>("episode");
+  const busy = useShinyOutputValue<Busy>("busy");
+  const progress = useShinyOutputValue<Progress>("progress");
+  const settings = useShinyOutputValue<SettingsView | null>("settings");
+  // Every input is set from here too. Each request carries a count, so the same path asked for
+  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
+```
+
+  Replace
+
+```tsx
+  const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
+  const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
+  const setRetranslate = useSetShinyInput<(Ask & { track: string; ids: string[] | null; allow_cloud: boolean }) | null>("retranslate", null, { priority: "event", debounceMs: 0 });
+  const sent = useRef(0);
+  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
+  const pace = useMemo(() => pacer(), []);
+```
+
+  with
+
+```tsx
+  const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
+  const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
+  const setRetranslate = useSetShinyInput<(Ask & { track: string; ids: string[] | null; allow_cloud: boolean }) | null>("retranslate", null, { priority: "event", debounceMs: 0 });
+  const setTypedKey = useSetShinyInput<{ endpoint: string; key: string; n: number } | null>("typed_key", null, { priority: "event", debounceMs: 0 });
+  const setEndpointTest = useSetShinyInput<{ endpoint: string; n: number } | null>("endpoint_test", null, { priority: "event", debounceMs: 0 });
+  const setDefaults = useSetShinyInput<(DefaultsChange & { n: number }) | null>("session_defaults", null, { priority: "event", debounceMs: 0 });
+  const sent = useRef(0);
+  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
+  const pace = useMemo(() => pacer(), []);
+```
+
+  Replace
+
+```tsx
+    },
+  };
+
+  // Closing the tab with unsaved edits warns first (S34): listened for only while there are
+  // some, as MDN advises; preventDefault, and returnValue for older browsers.
+  const dirty = episode?.dirty ?? false;
+```
+
+  with
+
+```tsx
+    },
+  };
+
+  // The settings drawer (spec §19.2, S35). A typed key is sent once, and null straight after, in
+  // a task of its own: Shiny's input map on the server, its copy in the page, and shinyreact's
+  // keep each input's last value, and the null replaces the key in all three (§5.3). It is never
+  // kept anywhere else in the page: not in state, storage, the draft or a notice.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tests, setTests] = useState<Record<string, EndpointTestResult | "testing">>({});
+  useShinyMessageHandler("endpoint_test_result", (r: EndpointTestResult) => {
+    if (typeof r?.endpoint === "string") setTests((t) => ({ ...t, [r.endpoint]: r }));
+  });
+  const onTypedKey = (endpoint: string, key: string) => {
+    const n = ++sent.current;
+    pace(() => setTypedKey({ endpoint, key, n }));
+    pace(() => setTypedKey(null));
+  };
+  const onTest = (endpoint: string) => {
+    setTests((t) => ({ ...t, [endpoint]: "testing" }));
+    const n = ++sent.current;
+    pace(() => setEndpointTest({ endpoint, n }));
+  };
+  const onDefaults = (change: DefaultsChange) => {
+    const n = ++sent.current;
+    pace(() => setDefaults({ ...change, n }));
+  };
+
+  // Closing the tab with unsaved edits warns first (S34): listened for only while there are
+  // some, as MDN advises; preventDefault, and returnValue for older browsers.
+  const dirty = episode?.dirty ?? false;
+```
+
+  Replace
+
+```tsx
+  if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
+  return (
+    <div className="flex h-dvh flex-col" data-testid="app">
+      <TopBar capabilities={capabilities} status={status} />
+      {lost && (
+        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
+        <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">
+```
+
+  with
+
+```tsx
+  if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
+  return (
+    <div className="flex h-dvh flex-col" data-testid="app">
+      <TopBar capabilities={capabilities} status={status} onSettings={capabilities?.generate ? () => setSettingsOpen(true) : undefined} />
+      <SettingsDrawer open={settingsOpen && Boolean(settings)} onClose={() => setSettingsOpen(false)} settings={settings ?? null}
+        tests={tests} onTest={onTest} onTypedKey={onTypedKey} onDefaults={onDefaults} />
+      {lost && (
+        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
+        <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `cd frontend && npm run typecheck && npx vitest run`
+  first (`Test Files  17 passed (17)`, `Tests  79 passed (79)`), then `make build && uv run
+  pytest -m e2e tests/e2e/test_settings.py -q` three times (`2 passed` each). **Guard check**
+  (spec §5.3): in `App.tsx`'s `onTypedKey`, take out `pace(() => setTypedKey(null));`; `make
+  build && uv run pytest -m e2e tests/e2e/test_settings.py -q -k typed` fails with
+  `playwright._impl._errors.TimeoutError: Page.wait_for_function: Timeout 30000ms exceeded.`
+  (the page kept the key); put it back and `make build`. Then `make check`. Expected: `982
+  passed, 2 skipped, 33 deselected` (twice), `Test Files  17 passed (17)`, `Tests  79 passed
+  (79)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `29 passed`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(frontend): 🤖 the settings drawer shows the endpoints and models read-only, tests an endpoint, takes a typed key it never keeps, and changes the session's defaults
+
+SettingsDrawer (spec §19.2, S35) is Task 12's native Dialog with
+side="right" (Decision 13), opened by Settings in the top bar where the
+engine has settings (capabilities.generate; §21 hides engine settings in
+Pages); Esc closes it and focus goes back to Settings. Endpoints and
+models are text, as vid2sub.toml has them, each endpoint with Test (its
+answer in a polite live region) and its key by presence only. An
+endpoint with allow_typed_key gets a password field with
+autocomplete="off" (MDN: the value that keeps password managers and
+session restore out of a field that isn't a password), cleared as soon
+as the key is sent; App sends the key and then null, each in its own
+task through the pacer, so Shiny's input map, shiny.js's $inputValues
+and shinyreact's registry all end up holding null; the key is never in
+React state beyond the field, storage, the draft or a notice, and the
+drawer says only "key entered for this session". The session's targets
+(never none) and "ASS too" change the engine's defaults; the cue rules
+are a read-only table that says they can't be changed yet (Decision 21);
+Copy settings shows the TOML and copies it with navigator.clipboard.
+
+The new tests failed first with: Error: Failed to resolve import
+"./SettingsDrawer"; Error: Failed to resolve import "./settings"; and in
+Chromium, before the frontend change: Locator.click: Timeout 30000ms
+exceeded ... waiting for get_by_test_id("open-settings"). With App's null
+after the key taken out, the typed-key test fails: Page.wait_for_function:
+Timeout 30000ms exceeded (the page kept the key).
+
+Docs read: MDN on <input type="password"> and the autocomplete
+attribute (off, new-password; "off" ignored on login fields by some
+password managers), <dialog> and showModal(), aria-live; React 19's
+controlled inputs; Playwright 1.64's grant_permissions for the clipboard,
+locator.check (which needs the state to change on the click itself, so
+the server-controlled boxes are clicked and then checked);
+shinyreact 0.1.0's useSetShinyInput (debounced, keeps the last value)
+and useShinyMessageHandler; lucide-react's Settings icon.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 18
+Co-Authored-By: <the model's own line>
+```
+
+  `git add frontend/src/App.tsx frontend/src/components/TopBar.test.ts
+  frontend/src/components/TopBar.tsx frontend/src/types.ts
+  frontend/src/components/SettingsDrawer.test.ts frontend/src/components/SettingsDrawer.tsx
+  frontend/src/lib/settings.test.ts frontend/src/lib/settings.ts tests/e2e/test_settings.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 18c: what the security review of the build found
+
+This listing's own build had one independent security reviewer (a subagent) go over rounds 18a
+and 18b with `AGENTS.md`'s checklist; its findings are fixed here, as their own round, so the
+implementer builds them in. Step 16's review runs again, on the whole task.
+
+- [ ] **Step 11: Write the failing tests.** In `tests/test_web_settings.py`:
+
+  Replace
+
+```python
+
+
+def test_copy_settings_loads_back_with_m1s_config_giving_the_same_defaults_and_no_key(tmp_path):
+    # §5.4: the session's settings as TOML to paste into the file, never including a key.
+    cfg = config(youtube_dir='C:\\Users\\"Dan"\\動画\tclips', cache_max_gb=7.5)
+    keys = KeyRing(typed={"lan": KEY}, environ={"SPARK_TEST_KEY": ENV_KEY})
+    session = Defaults(("ja", "zh-Hant"), ("srt", "ass"))
+    text = settings.settings_view(cfg, keys, session)["toml"]
+```
+
+  with
+
+```python
+
+
+def test_copy_settings_loads_back_with_m1s_config_giving_the_same_defaults_and_no_key(tmp_path):
+    # §5.4: the session's settings as TOML to paste into the file, never including a key. TOML
+    # allows no raw control character in a string, DEL included (review round 18c).
+    cfg = config(youtube_dir='C:\\Users\\"Dan"\\動画\tclips\x7f\x01', cache_max_gb=7.5)
+    keys = KeyRing(typed={"lan": KEY}, environ={"SPARK_TEST_KEY": ENV_KEY})
+    session = Defaults(("ja", "zh-Hant"), ("srt", "ass"))
+    text = settings.settings_view(cfg, keys, session)["toml"]
+```
+
+  Replace
+
+```python
+        with pytest.raises(settings.BadSetting) as err:
+            settings.enter_key(config(), keys, request)
+        assert str(err.value) == settings.NO_TYPED_KEY
+    for bad in (KEY + " ", KEY + "\n", "ключ" * 10, "k" * 1025, 42, None):
+        with pytest.raises(settings.BadSetting) as err:
+            settings.enter_key(config(), keys, {"endpoint": "lan", "key": bad})
+        assert str(err.value) == settings.BAD_KEY
+```
+
+  with
+
+```python
+        with pytest.raises(settings.BadSetting) as err:
+            settings.enter_key(config(), keys, request)
+        assert str(err.value) == settings.NO_TYPED_KEY
+    # Review round 18c: only a key's own characters, and 8 or more of them, so redact() always
+    # finds it in an error, in any quoting a server or the SDK gives it (§6.8).
+    for bad in (KEY + " ", KEY + "\n", "ключ" * 10, "k" * 1025, 42, None, "k" * 7,
+                "k" * 20 + "\\" + "k" * 20, "k" * 20 + '"' + "k" * 20, "k" * 20 + "'"):
+        with pytest.raises(settings.BadSetting) as err:
+            settings.enter_key(config(), keys, {"endpoint": "lan", "key": bad})
+        assert str(err.value) == settings.BAD_KEY
+```
+
+  Replace
+
+```python
+    assert keys.typed == {}
+
+
+def test_defaults_change_one_at_a_time_and_only_to_what_vid2sub_knows():
+    now = Defaults(("en",), ("srt",))
+    assert settings.change_defaults(now, {"n": 1, "targets": ["ja", "en"]}) == \
+```
+
+  with
+
+```python
+    assert keys.typed == {}
+
+
+def test_the_sessions_defaults_start_from_the_files_targets_as_vid2sub_names_them():
+    # Review round 18c: vid2sub.toml takes a target's other names and cases (naming.target_track).
+    cfg = config(targets=["EN", "jpn", "en", "zh"], formats=["srt", "ass"])
+    assert Defaults.from_config(cfg.defaults) == Defaults(("en", "ja", "zh-Hans"), ("srt", "ass"))
+
+
+def test_no_key_is_in_a_keyrings_or_a_runtimes_repr(tmp_path):
+    # Review round 18c: a traceback or a %r would otherwise carry every key.
+    keys = KeyRing(typed={"lan": KEY}, environ={"SPARK_TEST_KEY": ENV_KEY})
+    rt = runtime.build(config(), tools=Tools(None, None, None), keys=keys,
+                       cache=Cache(tmp_path / "cache", max_bytes=0))
+    try:
+        assert KEY not in repr(keys) and ENV_KEY not in repr(keys)
+        assert KEY not in repr(rt) and ENV_KEY not in repr(rt)
+    finally:
+        rt.queue.close()
+
+
+def test_defaults_change_one_at_a_time_and_only_to_what_vid2sub_knows():
+    now = Defaults(("en",), ("srt",))
+    assert settings.change_defaults(now, {"n": 1, "targets": ["ja", "en"]}) == \
+```
+
+  Replace
+
+```python
+    assert [r.headers.get("authorization") for r in spark.requests] == [f"Bearer {ENV_KEY}"]
+
+
+def test_a_test_that_fails_names_the_fix_and_never_holds_a_key(tmp_path):
+    def echo(req):  # a server that puts what it was sent in its error
+        return 400, {"error": {"message": f"bad request with {req.headers['authorization']}"}}, {}
+
+    with FakeServer(responder=echo) as lan:
+        rt = runtime.build(config(lan=lan.url), tools=Tools(None, None, None),
+                           keys=KeyRing(typed={"lan": KEY}, environ={}),
+                           cache=Cache(tmp_path / "cache", max_bytes=0))
+        try:
+            with pytest.raises(settings.EndpointError) as err:
+```
+
+  with
+
+```python
+    assert [r.headers.get("authorization") for r in spark.requests] == [f"Bearer {ENV_KEY}"]
+
+
+@pytest.mark.parametrize("typed", [KEY, "ab+/=:~.-_" * 4])  # the second: every symbol allowed
+def test_a_test_that_fails_names_the_fix_and_never_holds_a_key(tmp_path, typed):
+    def echo(req):  # a server that puts what it was sent in its error
+        return 400, {"error": {"message": f"bad request with {req.headers['authorization']}"}}, {}
+
+    keys = KeyRing(environ={})
+    settings.enter_key(config(), keys, {"endpoint": "lan", "key": typed, "n": 1})
+    with FakeServer(responder=echo) as lan:
+        rt = runtime.build(config(lan=lan.url), tools=Tools(None, None, None), keys=keys,
+                           cache=Cache(tmp_path / "cache", max_bytes=0))
+        try:
+            with pytest.raises(settings.EndpointError) as err:
+```
+
+  Replace
+
+```python
+                rt2.endpoint_models("lan")
+        finally:
+            rt.queue.close()
+    assert KEY not in str(err.value) and "400" in str(err.value)
+    assert str(down.value) == "couldn't reach the server" and "make tunnel" in down.value.hint
+
+
+```
+
+  with
+
+```python
+                rt2.endpoint_models("lan")
+        finally:
+            rt.queue.close()
+    assert typed not in str(err.value) and "400" in str(err.value)
+    assert str(down.value) == "couldn't reach the server" and "make tunnel" in down.value.hint
+
+
+```
+
+  In `tests/test_translate.py`:
+
+  Replace
+
+```python
+    assert body["messages"][0]["role"] == "system"
+
+
+def test_a_connection_or_key_error_stops_translation_at_once():
+    calls = []
+
+```
+
+  with
+
+```python
+    assert body["messages"][0]["role"] == "system"
+
+
+def test_a_typed_key_entered_after_the_translator_was_made_is_still_redacted():
+    # Phase 2 Task 18, review round 18c: the settings drawer can change a typed key between two
+    # batches of one retranslation; the key the next batch uses is the one redacted (§6.8).
+    def echo(req):
+        return 400, {"error": {"message": f"bad request with {req.headers['authorization']}"}}, {}
+
+    new_key = "n" * 40
+    with FakeServer(responder=echo) as srv:
+        cfg = Config(endpoints={"lan": Endpoint(base_url=srv.url, allow_typed_key=True)},
+                     models={"gemma": ModelEntry(endpoint="lan", model="g", task="translate",
+                                                 local=True)})
+        keys = KeyRing(typed={"lan": "o" * 40}, environ={})
+        ask = make_ask("gemma", cfg.models["gemma"], cfg, RunPolicy(), keys)
+        keys.typed["lan"] = new_key
+        with pytest.raises(EngineError) as err:
+            translate_cues(SOURCE[:1], source_lang="ja", target_track="en",
+                           glossary=EMPTY_GLOSSARY, ask=ask)
+        assert srv.requests[0].headers["authorization"] == f"Bearer {new_key}"
+    assert new_key not in str(err.value) and "400" in str(err.value)
+
+
+def test_a_connection_or_key_error_stops_translation_at_once():
+    calls = []
+
+```
+
+  In `frontend/src/components/SettingsDrawer.test.ts`:
+
+  Replace
+
+```ts
+
+function render(view: SettingsView = VIEW): string {
+  const noop = () => undefined;
+  return renderToStaticMarkup(createElement(SettingsDrawer, { open: true, onClose: noop, settings: view, tests: { lan: { endpoint: "lan", n: 1, ok: true, models: ["<img src=x>"], more: 0, error: null } }, onTest: noop, onTypedKey: noop, onDefaults: noop }));
+}
+
+describe("the settings drawer (spec §19.2, S35)", () => {
+```
+
+  with
+
+```ts
+
+function render(view: SettingsView = VIEW): string {
+  const noop = () => undefined;
+  return renderToStaticMarkup(createElement(SettingsDrawer, { open: true, onClose: noop, connected: true, settings: view, tests: { lan: { endpoint: "lan", n: 1, ok: true, models: ["<img src=x>"], more: 0, error: null } }, onTest: noop, onTypedKey: noop, onDefaults: noop }));
+}
+
+describe("the settings drawer (spec §19.2, S35)", () => {
+```
+
+  Replace
+
+```ts
+    expect(html.match(/type="password"/g)).toHaveLength(1);
+    expect(html).toMatch(/<input[^>]*type="password"[^>]*autoComplete="off"|<input[^>]*autoComplete="off"[^>]*type="password"/i);
+    expect(html).toContain("key entered for this session");
+    expect(html).toContain('data-testid="typed-key-lan"');
+    expect(html).not.toContain('data-testid="typed-key-&lt;b&gt;spark&lt;/b&gt;"');
+  });
+```
+
+  with
+
+```ts
+    expect(html.match(/type="password"/g)).toHaveLength(1);
+    expect(html).toMatch(/<input[^>]*type="password"[^>]*autoComplete="off"|<input[^>]*autoComplete="off"[^>]*type="password"/i);
+    expect(html).toContain("key entered for this session");
+    // review round 18c: no form to submit, password managers asked to leave it, no value attribute
+    expect(html).not.toContain("<form");
+    expect(html).toMatch(/<input[^>]*data-1p-ignore=""[^>]*data-lpignore="true"[^>]*data-bwignore=""/);
+    expect(html).not.toMatch(/<input[^>]*type="password"[^>]*value=/);
+    expect(html).toContain('data-testid="typed-key-lan"');
+    expect(html).not.toContain('data-testid="typed-key-&lt;b&gt;spark&lt;/b&gt;"');
+  });
+```
+
+  In `tests/e2e/test_settings.py`:
+
+  Replace
+
+```python
+    box = page.get_by_test_id("typed-key-lan")
+    expect(box).to_have_attribute("type", "password")
+    expect(box).to_have_attribute("autocomplete", "off")
+    box.fill(KEY)
+    page.get_by_test_id("use-key-lan").click()
+    expect(box).to_have_value("")
+```
+
+  with
+
+```python
+    box = page.get_by_test_id("typed-key-lan")
+    expect(box).to_have_attribute("type", "password")
+    expect(box).to_have_attribute("autocomplete", "off")
+    # typed but not sent, then the drawer closed: the key goes with it (review round 18c)
+    box.fill(KEY)
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    page.wait_for_function("key => !document.documentElement.outerHTML.includes(key)"
+                           " && !document.querySelector('[data-testid=typed-key-lan]').value"
+                           ".includes(key)", arg=KEY, timeout=5_000)
+    opener, dialog = open_settings(page)
+    box.fill(KEY)
+    page.get_by_test_id("use-key-lan").click()
+    expect(box).to_have_value("")
+```
+
+- [ ] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_web_settings.py
+  tests/test_translate.py -q`. Expected: `E           vid2sub.config.ConfigError: vid2sub.toml:
+  Illegal character '\x7f' (at line 4, column 45)`, `E           Failed: DID NOT RAISE
+  BadSetting`, `targets: ('EN', 'jpn', 'en', 'zh') != ('en', 'ja', 'zh-Hans')`, the test key in
+  `KeyRing(typ...` (its repr), and the new typed key in the translation error's text. `cd
+  frontend && npx vitest run src/components/SettingsDrawer.test.ts`. Expected: `AssertionError:
+  expected '<dialog aria-labelledby="_R_0_" data-…' not to contain '<form'` and `Tests  1 failed
+  | 3 passed (4)`. `make build && uv run pytest -m e2e tests/e2e/test_settings.py -q -k typed`.
+  Expected: `playwright._impl._errors.TimeoutError: Page.wait_for_function: Timeout 5000ms
+  exceeded.` (the key typed and left behind stays in the page).
+- [ ] **Step 13: Write the code.** `src/vid2sub/web/settings.py`:
+
+  Replace
+
+```python
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Any
+```
+
+  with
+
+```python
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Any
+```
+
+  Replace
+
+```python
+
+FORMATS = ("srt", "ass")
+MAX_KEY = 1024  # characters in a typed key
+MODELS_SHOWN = 100  # model names an endpoint's Test lists, before "and N more"
+MAX_MODEL_NAME = 200  # characters of each, as a hostile server could send anything
+KEY_ENTERED = "key entered for this session"
+KEY_FORGOTTEN = "the typed key is forgotten"
+NO_TYPED_KEY = "that endpoint doesn't take a typed key: set allow_typed_key for it in vid2sub.toml"
+BAD_KEY = "a key is letters, digits and punctuation, with no spaces: nothing was kept"
+NO_ENDPOINT = "there's no such endpoint in vid2sub.toml"
+BAD_TARGETS = "pick one or more of the targets vid2sub knows"
+BAD_FORMATS = "subtitles are srt, and ass too when asked for"
+```
+
+  with
+
+```python
+
+FORMATS = ("srt", "ass")
+MAX_KEY = 1024  # characters in a typed key
+# A key's own characters, 8 or more: redact() finds every value of 6 or more, and none of these
+# is quoted or escaped in an error's text (a repr, JSON), so it is found there too (review 18c).
+KEY_SHAPE = re.compile(rf"[A-Za-z0-9._~+/=:-]{{8,{MAX_KEY}}}")
+MODELS_SHOWN = 100  # model names an endpoint's Test lists, before "and N more"
+MAX_MODEL_NAME = 200  # characters of each, as a hostile server could send anything
+KEY_ENTERED = "key entered for this session"
+KEY_FORGOTTEN = "the typed key is forgotten"
+NO_TYPED_KEY = "that endpoint doesn't take a typed key: set allow_typed_key for it in vid2sub.toml"
+BAD_KEY = ("a key is 8 or more letters, digits and . _ ~ + / = : -, with no spaces: nothing "
+           "was kept")
+NO_ENDPOINT = "there's no such endpoint in vid2sub.toml"
+BAD_TARGETS = "pick one or more of the targets vid2sub knows"
+BAD_FORMATS = "subtitles are srt, and ass too when asked for"
+```
+
+  Replace
+
+```python
+
+    @classmethod
+    def from_config(cls, defaults: ConfigDefaults) -> Defaults:
+        return cls(tuple(defaults.targets), ("srt", "ass") if "ass" in defaults.formats
+                   else ("srt",))
+
+
+class Session:
+```
+
+  with
+
+```python
+
+    @classmethod
+    def from_config(cls, defaults: ConfigDefaults) -> Defaults:
+        """The file's targets by vid2sub's names for them, each once (vid2sub.toml takes other
+        names and cases: `naming.target_track`), and its formats."""
+        targets = tuple(dict.fromkeys(naming.target_track(t) for t in defaults.targets))
+        return cls(targets, ("srt", "ass") if "ass" in defaults.formats else ("srt",))
+
+
+class Session:
+```
+
+  Replace
+
+```python
+    """Keeps a typed key for this run (§5.3), or with `"key": ""` forgets it: `{"endpoint":
+    name, "key": str, "n": int}`. Only for an endpoint that allows one; BadSetting otherwise,
+    and for a key that isn't one line of printable ASCII, up to MAX_KEY characters. Returns what
+    to tell the person, which never holds the key."""
+    if not isinstance(request, dict):
+        raise BadSetting(NO_TYPED_KEY)
+    name, key = request.get("endpoint"), request.get("key")
+```
+
+  with
+
+```python
+    """Keeps a typed key for this run (§5.3), or with `"key": ""` forgets it: `{"endpoint":
+    name, "key": str, "n": int}`. Only for an endpoint that allows one; BadSetting otherwise,
+    and for a key that isn't one line of printable ASCII, up to MAX_KEY characters. Returns what
+    to tell the person, which never holds the key. A key is KEY_SHAPE: anything else, a space,
+    a quote or a backslash included, is refused, so it can't hide from redact() in an error."""
+    if not isinstance(request, dict):
+        raise BadSetting(NO_TYPED_KEY)
+    name, key = request.get("endpoint"), request.get("key")
+```
+
+  Replace
+
+```python
+    if key == "":
+        keys.typed.pop(name, None)
+        return KEY_FORGOTTEN
+    if (not isinstance(key, str) or len(key) > MAX_KEY
+            or any(not "\x21" <= ch <= "\x7e" for ch in key)):
+        raise BadSetting(BAD_KEY)
+    keys.typed[name] = key
+    return KEY_ENTERED
+```
+
+  with
+
+```python
+    if key == "":
+        keys.typed.pop(name, None)
+        return KEY_FORGOTTEN
+    if not isinstance(key, str) or not KEY_SHAPE.fullmatch(key):
+        raise BadSetting(BAD_KEY)
+    keys.typed[name] = key
+    return KEY_ENTERED
+```
+
+  Replace
+
+```python
+def settings_toml(config: Config, defaults: Defaults) -> str:
+    """Copy settings (§5.4): vid2sub.toml's `[defaults]` table with the session's targets and
+    formats, and the file's other defaults as they are, so it can replace the table whole. It
+    holds no key: no endpoint is in it. Strings are written as TOML basic strings, which JSON's
+    escapes are (every control character escaped, non-ASCII as it is)."""
+    lines = ["[defaults]", f"targets = {_array(defaults.targets)}",
+             f"formats = {_array(defaults.formats)}"]
+    if config.defaults.youtube_dir is not None:
+        lines.append(f"youtube_dir = {json.dumps(config.defaults.youtube_dir, ensure_ascii=False)}")
+    lines.append(f"cache_max_gb = {config.defaults.cache_max_gb!r}")
+    return "\n".join(lines) + "\n"
+
+
+def _array(values: tuple[str, ...]) -> str:
+    return "[" + ", ".join(json.dumps(v, ensure_ascii=False) for v in values) + "]"
+```
+
+  with
+
+```python
+def settings_toml(config: Config, defaults: Defaults) -> str:
+    """Copy settings (§5.4): vid2sub.toml's `[defaults]` table with the session's targets and
+    formats, and the file's other defaults as they are, so it can replace the table whole. It
+    holds no key: no endpoint is in it. Strings are written as TOML basic strings: JSON's
+    escapes are TOML's, for every control character but DEL, escaped here too (review 18c)."""
+    lines = ["[defaults]", f"targets = {_array(defaults.targets)}",
+             f"formats = {_array(defaults.formats)}"]
+    if config.defaults.youtube_dir is not None:
+        lines.append(f"youtube_dir = {_string(config.defaults.youtube_dir)}")
+    lines.append(f"cache_max_gb = {config.defaults.cache_max_gb!r}")
+    return "\n".join(lines) + "\n"
+
+
+def _string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
+def _array(values: tuple[str, ...]) -> str:
+    return "[" + ", ".join(_string(v) for v in values) + "]"
+```
+
+  `src/vid2sub/engines/clients.py`:
+
+  Replace
+
+```python
+
+@dataclass
+class KeyRing:
+    typed: dict[str, str] = field(default_factory=dict)
+    environ: Mapping[str, str] = field(default_factory=lambda: os.environ)
+
+    def key_for(self, endpoint_name: str, endpoint: Endpoint) -> str | None:
+        if endpoint.allow_typed_key and self.typed.get(endpoint_name):
+```
+
+  with
+
+```python
+
+@dataclass
+class KeyRing:
+    # Never in a repr: a traceback or a %r would carry every key (Phase 2 Task 18, review 18c).
+    typed: dict[str, str] = field(default_factory=dict, repr=False)
+    environ: Mapping[str, str] = field(default_factory=lambda: os.environ, repr=False)
+
+    def key_for(self, endpoint_name: str, endpoint: Endpoint) -> str | None:
+        if endpoint.allow_typed_key and self.typed.get(endpoint_name):
+```
+
+  `src/vid2sub/translate/run.py`:
+
+  Replace
+
+```python
+def make_ask(name: str, entry: ModelEntry, config: Config, policy: clients.RunPolicy,
+             keys: clients.KeyRing) -> AskFn:
+    key_env = config.endpoints[entry.endpoint].key_env
+    secrets = keys.secrets(config)
+
+    def ask(system: str, prompt: str, data_model: type[BaseModel]) -> BaseModel:
+        chat = clients.chat(name, entry, config, policy, keys, system_prompt=system)
+        return clients.call_structured(chat, prompt, data_model,
+                                       extra_body=entry.request_extra or None,
+                                       key_env=key_env, secrets=secrets)
+
+    return ask
+
+```
+
+  with
+
+```python
+def make_ask(name: str, entry: ModelEntry, config: Config, policy: clients.RunPolicy,
+             keys: clients.KeyRing) -> AskFn:
+    key_env = config.endpoints[entry.endpoint].key_env
+
+    def ask(system: str, prompt: str, data_model: type[BaseModel]) -> BaseModel:
+        # The keys as they are now: a typed key can change between two batches (Phase 2 Task 18).
+        chat = clients.chat(name, entry, config, policy, keys, system_prompt=system)
+        return clients.call_structured(chat, prompt, data_model,
+                                       extra_body=entry.request_extra or None,
+                                       key_env=key_env, secrets=keys.secrets(config))
+
+    return ask
+
+```
+
+  `frontend/src/components/SettingsDrawer.tsx`:
+
+  Replace
+
+```tsx
+import { type FormEvent, useState } from "react";
+
+import { keyLabel, testSummary, withTarget } from "@/lib/settings";
+import type { EndpointSetting, EndpointTestResult, SessionDefaults, SettingsView } from "@/types";
+```
+
+  with
+
+```tsx
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+
+import { keyLabel, testSummary, withTarget } from "@/lib/settings";
+import type { EndpointSetting, EndpointTestResult, SessionDefaults, SettingsView } from "@/types";
+```
+
+  Replace
+
+```tsx
+import { Dialog } from "./ui/dialog";
+
+const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+const field = "min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 font-mono text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring";
+
+export type DefaultsChange = { targets: string[] } | { formats: SessionDefaults["formats"] };
+
+/** The settings drawer (spec §19.2, S35): the native <dialog> at the right edge (Decision 13).
+ * Endpoints and models as vid2sub.toml has them, read-only, each endpoint with **Test** (its
+ * /v1/models, asked by the engine) and its key by presence only; a typed key only where the file
+ * allows one (§5.3), in a password field the browser is asked not to fill or keep, cleared once
+ * sent, and shown back only as "key entered for this session". The session's defaults (targets,
+ * formats) are for this launch, never written (§5.4); the cue rules are shown as built, since
+ * nothing can change them yet (Decision 21); Copy settings gives the [defaults] table as TOML,
+ * never a key. Every name, address and server answer is plain text (§6.3). */
+export function SettingsDrawer({ open, onClose, settings, tests, onTest, onTypedKey, onDefaults }: {
+  open: boolean;
+  onClose: () => void;
+  settings: SettingsView | null;
+  tests: Record<string, EndpointTestResult | "testing">;
+  onTest: (endpoint: string) => void;
+```
+
+  with
+
+```tsx
+import { Dialog } from "./ui/dialog";
+
+const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+const keyField = "min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 font-mono text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring";
+
+export type DefaultsChange = { targets: string[] } | { formats: SessionDefaults["formats"] };
+
+/** The settings drawer (spec §19.2, S35): the native <dialog> at the right edge (Decision 13).
+ * Endpoints and models as vid2sub.toml has them, read-only, each endpoint with **Test** (its
+ * /v1/models, asked by the engine) and its key by presence only; a typed key only where the file
+ * allows one (§5.3), shown back only as "key entered for this session". Its field is a password
+ * field outside any form, which browsers and password managers are asked to leave alone (a
+ * password manager may still offer to keep it); its text is the DOM's alone, never React state
+ * or a value attribute, and is cleared once sent and when the drawer closes. Use waits for a
+ * connection, since a message sent while there is none stays queued in the page. The session's
+ * defaults (targets,
+ * formats) are for this launch, never written (§5.4); the cue rules are shown as built, since
+ * nothing can change them yet (Decision 21); Copy settings gives the [defaults] table as TOML,
+ * never a key. Every name, address and server answer is plain text (§6.3). */
+export function SettingsDrawer({ open, onClose, connected, settings, tests, onTest, onTypedKey, onDefaults }: {
+  open: boolean;
+  onClose: () => void;
+  connected: boolean; // the engine is there to send a key to
+  settings: SettingsView | null;
+  tests: Record<string, EndpointTestResult | "testing">;
+  onTest: (endpoint: string) => void;
+```
+
+  Replace
+
+```tsx
+            <p className="text-muted-foreground">As vid2sub.toml declares them: change them there.</p>
+            {settings.endpoints.length === 0 && <p>None: vid2sub.toml declares no endpoint.</p>}
+            {settings.endpoints.map((e) => (
+              <Endpoint key={e.name} endpoint={e} test={tests[e.name]} onTest={onTest} onTypedKey={onTypedKey} />
+            ))}
+          </section>
+          <section aria-labelledby="settings-models" className="flex flex-col gap-1">
+```
+
+  with
+
+```tsx
+            <p className="text-muted-foreground">As vid2sub.toml declares them: change them there.</p>
+            {settings.endpoints.length === 0 && <p>None: vid2sub.toml declares no endpoint.</p>}
+            {settings.endpoints.map((e) => (
+              <Endpoint key={e.name} endpoint={e} open={open} connected={connected} test={tests[e.name]} onTest={onTest} onTypedKey={onTypedKey} />
+            ))}
+          </section>
+          <section aria-labelledby="settings-models" className="flex flex-col gap-1">
+```
+
+  Replace
+
+```tsx
+  );
+}
+
+function Endpoint({ endpoint: e, test, onTest, onTypedKey }: {
+  endpoint: EndpointSetting;
+  test: EndpointTestResult | "testing" | undefined;
+  onTest: (endpoint: string) => void;
+  onTypedKey: (endpoint: string, key: string) => void;
+}) {
+  const [key, setKey] = useState("");
+  const submit = (ev: FormEvent) => {
+    ev.preventDefault();
+    if (!key) return;
+    onTypedKey(e.name, key);
+    setKey(""); // out of the page as soon as it is sent
+  };
+  return (
+    <div className="flex flex-col gap-1 rounded-md border border-border p-2" data-testid={`endpoint-${e.name}`}>
+```
+
+  with
+
+```tsx
+  );
+}
+
+function Endpoint({ endpoint: e, open, connected, test, onTest, onTypedKey }: {
+  endpoint: EndpointSetting;
+  open: boolean;
+  connected: boolean;
+  test: EndpointTestResult | "testing" | undefined;
+  onTest: (endpoint: string) => void;
+  onTypedKey: (endpoint: string, key: string) => void;
+}) {
+  const field = useRef<HTMLInputElement>(null);
+  const [filled, setFilled] = useState(false); // whether there is a key to send, never the key
+  const clear = () => {
+    if (field.current) field.current.value = "";
+    setFilled(false);
+  };
+  useEffect(() => {
+    if (!open) clear(); // closed with a key typed but not sent: it goes
+  }, [open]);
+  const use = () => {
+    const key = field.current?.value ?? "";
+    if (!key || !connected) return;
+    onTypedKey(e.name, key);
+    clear(); // out of the page as soon as it is sent
+  };
+  const onKey = (ev: KeyboardEvent<HTMLInputElement>) => {
+    if (ev.key === "Enter" && !ev.nativeEvent.isComposing) {
+      ev.preventDefault();
+      use();
+    }
+  };
+  return (
+    <div className="flex flex-col gap-1 rounded-md border border-border p-2" data-testid={`endpoint-${e.name}`}>
+```
+
+  Replace
+
+```tsx
+        {test && test !== "testing" ? testSummary(test) : ""}
+      </span>
+      {e.allow_typed_key && (
+        <form className="flex items-center gap-2" onSubmit={submit}>
+          <label htmlFor={`typed-key-${e.name}`} className="sr-only">Key for {e.name}, for this session only</label>
+          <input
+            id={`typed-key-${e.name}`}
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            className={field}
+            value={key}
+            onChange={(ev) => setKey(ev.target.value)}
+            placeholder="key for this session only"
+            data-testid={`typed-key-${e.name}`}
+          />
+          <button type="submit" className={button} disabled={!key} data-testid={`use-key-${e.name}`}>Use</button>
+          {e.typed && <button type="button" className={button} onClick={() => onTypedKey(e.name, "")} data-testid={`forget-key-${e.name}`}>Forget</button>}
+        </form>
+      )}
+    </div>
+  );
+```
+
+  with
+
+```tsx
+        {test && test !== "testing" ? testSummary(test) : ""}
+      </span>
+      {e.allow_typed_key && (
+        <div className="flex items-center gap-2">
+          <label htmlFor={`typed-key-${e.name}`} className="sr-only">Key for {e.name}, for this session only</label>
+          <input
+            ref={field}
+            id={`typed-key-${e.name}`}
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            data-1p-ignore=""
+            data-lpignore="true"
+            data-bwignore=""
+            className={keyField}
+            onInput={(ev) => setFilled(ev.currentTarget.value.length > 0)}
+            onKeyDown={onKey}
+            placeholder="key for this session only"
+            data-testid={`typed-key-${e.name}`}
+          />
+          <button type="button" className={button} disabled={!filled || !connected} onClick={use} data-testid={`use-key-${e.name}`}>Use</button>
+          {e.typed && <button type="button" className={button} onClick={() => onTypedKey(e.name, "")} disabled={!connected} data-testid={`forget-key-${e.name}`}>Forget</button>}
+        </div>
+      )}
+    </div>
+  );
+```
+
+  `frontend/src/App.tsx`:
+
+  Replace
+
+```tsx
+  return (
+    <div className="flex h-dvh flex-col" data-testid="app">
+      <TopBar capabilities={capabilities} status={status} onSettings={capabilities?.generate ? () => setSettingsOpen(true) : undefined} />
+      <SettingsDrawer open={settingsOpen && Boolean(settings)} onClose={() => setSettingsOpen(false)} settings={settings ?? null}
+        tests={tests} onTest={onTest} onTypedKey={onTypedKey} onDefaults={onDefaults} />
+      {lost && (
+        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
+```
+
+  with
+
+```tsx
+  return (
+    <div className="flex h-dvh flex-col" data-testid="app">
+      <TopBar capabilities={capabilities} status={status} onSettings={capabilities?.generate ? () => setSettingsOpen(true) : undefined} />
+      <SettingsDrawer open={settingsOpen && Boolean(settings)} onClose={() => setSettingsOpen(false)} connected={lost === null} settings={settings ?? null}
+        tests={tests} onTest={onTest} onTypedKey={onTypedKey} onDefaults={onDefaults} />
+      {lost && (
+        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
+```
+
+- [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_web_settings.py
+  tests/test_translate.py tests/test_clients.py -q` first (`46 passed`), `cd frontend && npx
+  vitest run` (`Tests  79 passed (79)`), then `make build && uv run pytest -m e2e
+  tests/e2e/test_settings.py -q` five times (`2 passed` each: the key leaves the page when React
+  re-renders the closed drawer, a moment after the native close, so the test waits for it).
+  `make check`. Expected: `986 passed, 2 skipped, 33 deselected` (twice), `Test Files  17 passed
+  (17)`, `Tests  79 passed (79)`, `All checks passed!`, `no leaks found`. Then `make e2e`.
+  Expected: `29 passed`.
+- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(web): 🤖 a typed key is only a key's own characters, and stays out of reprs, stale redaction lists, the drawer's markup and password managers' forms
+
+Task 18's Tier 1 security review (one independent reviewer, AGENTS.md's
+checklist), its findings fixed as their own round:
+
+- Important: a typed key with a backslash or a quote, or under 6
+  characters, could come back unredacted in a Test's error, since the
+  SDK puts a body's strings in repr form and redact() skips short values.
+  enter_key now takes only settings.KEY_SHAPE, 8 to 1,024 of
+  [A-Za-z0-9._~+/=:-], which no repr or JSON escapes.
+- Important: Defaults.from_config copied vid2sub.toml's targets as
+  written ("EN", "jpn"), which the drawer then showed unticked; they go
+  through naming.target_track, each once.
+- Important: Copy settings left DEL raw, which TOML refuses; it is
+  escaped, and the docstring no longer says every control character was.
+- Minor: KeyRing's repr held every key (typed, and the environment);
+  both fields are repr=False, so neither KeyRing's nor Runtime's repr has
+  one.
+- Minor: make_ask took its redaction list once, though a typed key can
+  change between two batches; it reads the keys at each call.
+- Minor: the key field was controlled (React mirrors the value into the
+  attribute) inside a <form> (a password-manager save prompt); it is now
+  uncontrolled, outside any form, Enter sends it, it is cleared when sent
+  and when the drawer closes, it carries data-1p-ignore, data-lpignore
+  and data-bwignore, and Use and Forget wait for a connection (a message
+  sent with none stays queued in the page).
+- Minor, to the phase-end list: a Test has httpx's per-read timeout but
+  no overall deadline or size cap.
+
+The new tests failed first with: ConfigError: vid2sub.toml: Illegal
+character '\x7f'; Failed: DID NOT RAISE BadSetting; targets: ('EN',
+'jpn', 'en', 'zh') != ('en', 'ja', 'zh-Hans'); a key in KeyRing's repr;
+the new typed key in a translation error; in Vitest, expected '<dialog
+…' not to contain '<form'; and in Chromium, with round 18b's drawer,
+Page.wait_for_function: Timeout 5000ms exceeded (the key typed and left
+stayed in the page).
+
+Docs read: shiny.js's InputNoResendDecorator and $pendingMessages (a
+message sent while disconnected is queued); React 19's uncontrolled
+inputs and refs; MDN on autocomplete for password fields; 1Password's
+compatible-website-design page (data-1p-ignore); Bitwarden's auto-fill
+page, which documents no per-field attribute, so data-bwignore and
+LastPass's data-lpignore are unverified hints, harmless where unknown;
+TOML 1.0's basic strings (U+007F must be escaped); security.redact.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 18
+Co-Authored-By: <the model's own line>
+```
+
+  `git add frontend/src/App.tsx frontend/src/components/SettingsDrawer.test.ts
+  frontend/src/components/SettingsDrawer.tsx src/vid2sub/engines/clients.py
+  src/vid2sub/translate/run.py src/vid2sub/web/settings.py tests/e2e/test_settings.py
+  tests/test_translate.py tests/test_web_settings.py`, `git commit -F .git/COMMIT_MSG`, then `git
+  log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*: Matt's `code-review`, two axes in two subagents, plus the security
+  checklist, at most one re-review). Worth the reviewers' time, for the checklist: every path a
+  typed key takes (the field, the pacer, shinyreact's registry, shiny.js's `$inputValues` and
+  `$pendingMessages`, Shiny's input map, `KeyRing.typed`, `list_models`, the chat clients, error
+  text, reprs, logs, the DOM, storage, the draft); that a key goes only to its endpoint's
+  origin, and a page can never name an address; what a hostile `/v1/models` answer or error body
+  can do; that malformed inputs fail closed and echo nothing; that Copy settings round-trips and
+  holds no key; the per-endpoint Test tasks and the session's listeners across tabs, a tab
+  closing mid-Test; and that the Pages editor is offered none of it. Each checklist item is a
+  line under `Rounds:`. The forward review over Tasks 19, 21, 22 and 23 and Phase 4 Task 1
+  (Task 19's jobs read `Runtime.session.defaults()` when each starts, and the demo's session is
+  `("ja",)`; Task 21's CI e2e job runs `tests/e2e/test_settings.py`, which needs Chromium's
+  clipboard permission; Task 22's README says the drawer shows vid2sub.toml read-only, takes a
+  typed key only where `allow_typed_key = true`, and that Copy settings is the `[defaults]` table;
+  Task 23 has no step for the drawer, and S35's proof is this task's tests; Phase 4 Task 1's
+  `Runtime` in Pages has a third local-only method, `endpoint_models`, and the server offers no
+  settings there). The docs this task made untrue: none expected (spec §19.2's cue rules line
+  waits on Decision 21, which the coordinator records). Then the close, its own commit, holding
+  this plan with this task's boxes ticked and **Now** set to `Task 19: The Jobs page, open.`, and
+  the spec's S35 set to `built` (Proof: `tests/test_web_settings.py; tests/e2e/test_settings.py`),
+  with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 18: The settings drawer
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 1
+Rounds: <Matt's code-review, Standards and Spec in two subagents; the security checklist, one line each: secrets, permissions, network exposure, failing closed, injection, logging; any re-review>
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 18
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
 ### Task 19: The Jobs page
 
-**Tier:** 2 · **Scenarios:** S36
+**Tier:** 2 · **Scenarios:** S36, and S37's last part (job progress announced politely)
 
 **Files:**
-- Create: `frontend/src/components/JobsPage.tsx`
+- Create: `frontend/src/components/JobsPage.tsx` (+ test), `frontend/src/lib/jobs.ts` (+ test)
 - Modify: `src/vid2sub/web/server.py` (output `jobs`; inputs `jobs_submit`, `job_cancel`),
-  `src/vid2sub/web/runtime.py` (the job runner)
-- Test: `tests/test_web_jobs.py`, `tests/e2e/test_jobs.py`
+  `src/vid2sub/web/runtime.py` (the job runner: `job_runner`, `Runtime.job_context`, `build`'s
+  `session=`, `job_context=` and `runner=`), `src/vid2sub/web/views.py` (`jobs_view`),
+  `src/vid2sub/web/demo.py` (the demo's jobs), `src/vid2sub/jobs.py` (`on_change` returns what
+  stops it; `JobView.stopping`), `src/vid2sub/pipeline.py` (`RunContext.ask_for`),
+  `frontend/src/{App.tsx,types.ts}`
+- Test: `tests/test_web_jobs.py`, `tests/test_jobs.py`, `tests/test_pipeline.py`,
+  `tests/e2e/test_jobs.py`
 
-<!-- steps: written in the next pass -->
+**Interfaces:**
+- Consumes: Task 4's `jobs.Queue` (`submit`, `cancel`, `jobs`, `on_change`, `close`), `JobView`,
+  `Runner` and `pipeline.Cancelled`, `RunContext.cancelled`, `run_one`, `InputResult`; Task 18's
+  `Runtime.session` (`Session.defaults()`, read on the worker thread) and its test helper
+  `tests/test_web_settings.Browser`; Task 14's `open` input and `server.MAX_PATH`, `as_json`,
+  `notice`; Task 13's `CannedEngine`, `canned_ask` and the demo's copy; Task 15's `pacer`;
+  `capabilities.generate`; `tests/helpers.make_clip`, `SPEECH` and `tests/fakes.FakeServer`.
+- Produces:
+  - `jobs.Queue.on_change(fn) -> Callable[[], None]` (was `-> None`): what stops `fn` hearing
+    more, for a tab that closed; calling it twice is harmless.
+  - `jobs.JobView.stopping: bool = False` (a last field with a default): the running job was
+    asked to stop and will before its next chunk or batch (Decision 7); cleared when it ends.
+    `Queue.cancel` of the running job now tells the listeners.
+  - `pipeline.RunContext.ask_for: Callable[..., AskFn] | None = None`: the translator's maker,
+    called as `make_ask` is (`name, entry, config, policy, keys`); None is `make_ask`. The demo's
+    jobs set it to the canned translation.
+  - `runtime.job_runner(ctx: RunContext, session: Session) -> Runner`: `pipeline.run_one(source,
+    dataclasses.replace(ctx, options=…, events=events, cancelled=cancelled))`, the options' targets
+    and formats the session's as they are when the job starts; the copies share `ctx`'s engines
+    and finished chunks. `runtime._no_jobs` is gone.
+  - `Runtime.job_context: RunContext | None = None` (Phase 3's Review starts its runners from
+    it); `runtime.build(config, *, tools=None, keys=None, cache=None, session=None,
+    job_context=None, runner=None)`: the session from `[defaults]`, a job context of
+    `RunOptions()` (M1's defaults: the route's models, the language detected, `allow_cloud`
+    false, `wait_on_connection_s` 600), and a `Queue(runner or job_runner(job_context, session))`.
+  - `demo.runtime_for(copy, tools)`: a session of `Defaults(("ja",), ("srt",))`, a job context of
+    `demo.JOB_CONFIG` (the canned endpoint and models `scripts/demo_sidecar.py` names, never
+    contacted) with `RunOptions(source_lang="en", model="canned", translate_model=CANNED_JA)`,
+    `engines={"canned": CannedEngine()}` and `ask_for` the canned translation, and the runner
+    `demo.only_inside(copy, runtime.job_runner(…))`: a source outside the copy fails, untouched,
+    with reason `demo.DEMO_ONLY` ("the demo runs only its own clip") and hint `demo.YOUR_OWN`
+    ("run vid2sub serve without --demo for your own videos").
+  - `views.jobs_view(jobs: Sequence[JobView]) -> {"jobs": [{"id", "name" (the file's bare
+    name), "path" (as typed), "state", "stage", "progress": [index, of] | null, "status" (the
+    result's, or null), "reason" (where it didn't finish), "hint", "written", "notes",
+    "stopping", "can_open"}]}`.
+  - Output `jobs`: that view, the same in every tab, or null where `capabilities.generate` is
+    false (Pages). The queue's listeners run on the thread that changed it, so each tab's hands
+    the change to its own loop (`loop.call_soon_threadsafe(…, context=…)`), one refresh waiting
+    at most.
+  - Input `jobs_submit`: `{"paths": [str, …], "n": int}`: 1 to `server.MAX_JOBS` (500) fully
+    qualified paths (after `~`), one line each, up to `MAX_PATH` characters; anything else is the
+    notice `type each video's full path, one per line: nothing was queued` (`server.TYPE_PATHS`),
+    and nothing is queued. Input `job_cancel`: `{"job": "j" + 8 hex, "n": int}`; one that names
+    no queued or running job is the notice `that job had already finished` (`server.FINISHED`).
+    Both do nothing in Pages.
+  - `types.ts`: `JobItem`, `JobsView`. `lib/jobs.ts`: `jobLine(job)` ("transcribing 7/11"),
+    `announcement(jobs)` (the polite live region's line), `typedPaths(text)`.
+  - `JobsPage({jobs, onSubmit(paths), onCancel(id), onOpen(path)})`; test ids `jobs-page`,
+    `jobs-paths`, `jobs-start`, `jobs-announce` (`role="status"`, `aria-live="polite"`),
+    `jobs-list`, `job` (with `data-state`, and `data-stopping` while stopping), `job-line`,
+    `job-hint`, `job-cancel` ("Stopping…" once asked), `job-open`. `App` shows a "Screens" nav
+    (`nav-editor`, `nav-jobs`) where `capabilities.generate`, keeps the editor mounted (hidden)
+    while Jobs shows, sends `jobs_submit` and `job_cancel` through the pacer, and Open in editor
+    sets `open` with the job's path and goes back to the editor.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+
+#### Round 19a: the queue runs the pipeline, and the server shows it
+
+- [ ] **Step 1: Write the failing tests,** `tests/test_web_jobs.py`:
+
+```python
+"""The Jobs page's server (spec §17, §19.2, §19.3; S36): paths typed into a box become jobs on
+the engine's queue, run by the pipeline with the session's targets and formats as each job
+starts; every tab hears each job's stage and progress, handed from the worker thread to the
+event loop; Cancel takes a queued job out or stops the running one between chunks; anything but
+full paths is refused, echoing nothing; the demo runs only its own clip, with the canned engine
+and translation; and the Pages editor has no jobs."""
+
+import dataclasses
+import json
+import threading
+import time
+
+import pytest
+from starlette.testclient import TestClient
+from test_web_server import (  # noqa: F401 - fresh_reactive_lock is autouse
+    BASE,
+    JSON,
+    PAGE,
+    PORT,
+    TOKEN,
+    Tab,
+    fresh_reactive_lock,
+    tab,
+)
+from test_web_settings import Browser
+
+from vid2sub import jobs, pipeline
+from vid2sub.cache import Cache
+from vid2sub.config import Config
+from vid2sub.engines.clients import KeyRing
+from vid2sub.jobs import JobView
+from vid2sub.media.tools import Tools
+from vid2sub.pipeline import Cancelled, InputResult
+from vid2sub.web import demo, runtime, server, views
+from vid2sub.web.app import create_app
+from vid2sub.web.settings import Defaults
+
+OUTPUTS = {"jobs"}
+
+
+# ---- the view ----------------------------------------------------------------------------------
+
+
+def test_the_jobs_view_names_each_job_by_its_file_with_its_stage_and_progress():
+    done = InputResult(input="/films/Show - S01E01.mkv", status="done",
+                       written=["Show - S01E01.en.srt"], notes=["used ja like the others"])
+    failed = InputResult(input="/films/b.mkv", status="failed", reason="couldn't reach the server",
+                         hint="is `make tunnel` running?", kind="connection")
+    view = views.jobs_view([
+        JobView("j00000001", "/films/Show - S01E01.mkv", "done", "translate", (2, 2), done),
+        JobView("j00000002", "/films/b.mkv", "failed", "transcribe", (1, 3), failed,
+                "is `make tunnel` running?"),
+        JobView("j00000003", "/films/c.mkv", "running", "transcribe", (7, 11)),
+        JobView("j00000004", "/films/d.mkv", "queued"),
+    ])
+    assert view == {"jobs": [
+        {"id": "j00000001", "name": "Show - S01E01.mkv", "path": "/films/Show - S01E01.mkv",
+         "state": "done", "stage": "translate", "progress": [2, 2], "status": "done",
+         "reason": None, "hint": None, "written": ["Show - S01E01.en.srt"],
+         "notes": ["used ja like the others"], "can_open": True},
+        {"id": "j00000002", "name": "b.mkv", "path": "/films/b.mkv", "state": "failed",
+         "stage": "transcribe", "progress": [1, 3], "status": "failed",
+         "reason": "couldn't reach the server", "hint": "is `make tunnel` running?",
+         "written": [], "notes": [], "can_open": False},
+        {"id": "j00000003", "name": "c.mkv", "path": "/films/c.mkv", "state": "running",
+         "stage": "transcribe", "progress": [7, 11], "status": None, "reason": None,
+         "hint": None, "written": [], "notes": [], "can_open": False},
+        {"id": "j00000004", "name": "d.mkv", "path": "/films/d.mkv", "state": "queued",
+         "stage": None, "progress": None, "status": None, "reason": None, "hint": None,
+         "written": [], "notes": [], "can_open": False}]}
+
+
+def test_a_job_whose_language_was_unclear_says_so_and_cant_be_opened():
+    unclear = InputResult(input="/films/a.mkv", status="uncertain",
+                          reason="the language is unclear: ja or zh")
+    (job,) = views.jobs_view([JobView("j00000001", "/films/a.mkv", "done", "detect", None,
+                                      unclear)])["jobs"]
+    assert job["status"] == "uncertain" and job["reason"] == unclear.reason
+    assert job["can_open"] is False
+
+
+# ---- the runner --------------------------------------------------------------------------------
+
+
+def until(check, timeout=10.0):
+    end = time.monotonic() + timeout
+    while not check():
+        assert time.monotonic() < end, "timed out waiting"
+        time.sleep(0.01)
+
+
+def test_the_runner_runs_the_pipeline_with_the_sessions_defaults_as_each_job_starts(
+        tmp_path, monkeypatch):
+    seen: list[tuple[list[str], list[str], bool]] = []
+    gate = threading.Event()
+
+    def run_one(source, ctx):
+        seen.append((ctx.options.targets, ctx.options.formats, ctx.options.allow_cloud))
+        ctx.events("stage", {"stage": "decode"})
+        ctx.events("chunk", {"index": 1, "of": 2})
+        if source.endswith("a.mkv"):
+            assert gate.wait(10)
+        return InputResult(input=source, status="done")
+
+    monkeypatch.setattr(pipeline, "run_one", run_one)
+    rt = runtime.build(Config.model_validate({"defaults": {"targets": ["ja"]}}),
+                       tools=Tools(None, None, None), keys=KeyRing(environ={}),
+                       cache=Cache(tmp_path / "cache", max_bytes=0))
+    try:
+        assert rt.job_context.options.allow_cloud is False  # nothing presets it (§7.2)
+        rt.queue.submit(["/films/a.mkv", "/films/b.mkv"])
+        until(lambda: rt.queue.jobs()[0].progress == (1, 2))
+        rt.session.set_defaults(Defaults(("en", "ko"), ("srt", "ass")))  # while a.mkv runs
+        gate.set()
+        until(lambda: all(j.state == "done" for j in rt.queue.jobs()))
+    finally:
+        rt.queue.close()
+    assert seen == [(["ja"], ["srt"], False), (["en", "ko"], ["srt", "ass"], False)]
+
+
+def test_a_cancelled_job_stops_and_the_next_one_runs(tmp_path, monkeypatch):
+    def run_one(source, ctx):
+        while not ctx.cancelled():
+            ctx.sleep(0.01)
+        raise Cancelled()
+
+    monkeypatch.setattr(pipeline, "run_one", run_one)
+    rt = runtime.build(Config(), tools=Tools(None, None, None), keys=KeyRing(environ={}),
+                       cache=Cache(tmp_path / "cache", max_bytes=0))
+    try:
+        first, _ = rt.queue.submit(["/films/a.mkv", "/films/b.mkv"])
+        until(lambda: rt.queue.jobs()[0].state == "running")
+        assert rt.queue.cancel(first)
+        until(lambda: rt.queue.jobs()[0].state == "cancelled")
+        until(lambda: rt.queue.jobs()[1].state == "running")
+    finally:
+        rt.queue.close()
+
+
+@pytest.mark.media
+def test_the_demo_runs_its_own_clip_with_the_canned_engine_and_refuses_anything_else(
+        tmp_path):
+    tools = Tools.find()
+    copy = demo.prepare(tools)
+    rt = demo.runtime_for(copy, tools)
+    try:
+        assert rt.session.defaults() == Defaults(("ja",), ("srt",))
+        rt.queue.submit([str(copy / demo.VIDEO), str(tmp_path / "mine.mkv")])
+        until(lambda: all(j.state in ("done", "failed") for j in rt.queue.jobs()), timeout=60)
+        ran, refused = rt.queue.jobs()
+    finally:
+        rt.queue.close()
+    assert ran.state == "done" and ran.result.status == "done", ran.result
+    assert refused.state == "failed" and refused.result.reason == "the demo runs only its own clip"
+    assert refused.hint == "run vid2sub serve without --demo for your own videos"
+
+
+# ---- the server --------------------------------------------------------------------------------
+
+
+class Gated:
+    """A runner that reports a stage and two chunks, then waits for its source's gate,
+    stopping if cancelled."""
+
+    def __init__(self):
+        self.gates: dict[str, threading.Event] = {}
+
+    def gate(self, source: str) -> threading.Event:
+        return self.gates.setdefault(source, threading.Event())
+
+    def __call__(self, source, events, cancelled):
+        events("stage", {"stage": "decode"})
+        events("chunk", {"index": 1, "of": 2})
+        while not self.gate(source).wait(0.01):
+            if cancelled():
+                raise Cancelled()
+        return InputResult(input=source, status="done", written=["a.en.srt"])
+
+
+@pytest.fixture
+def gated():
+    return Gated()
+
+
+@pytest.fixture
+def rt(tmp_path, gated):
+    made = runtime.build(Config(), tools=Tools(None, None, None), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=0))
+    made.queue.close()
+    made = dataclasses.replace(made, queue=jobs.Queue(gated))
+    runtime.configure(made)
+    yield made
+    for gate in list(gated.gates.values()):
+        gate.set()
+    runtime.configure(None)
+    made.queue.close()
+
+
+def client_for(rt):
+    c = TestClient(create_app(rt, token=TOKEN, port=PORT, shiny_app=server.app), base_url=BASE)
+    c.__enter__()
+    assert c.post("/auth", content=json.dumps({"token": TOKEN}),
+                  headers={**JSON, **PAGE}).status_code == 204
+    return c
+
+
+@pytest.fixture
+def client(rt):
+    c = client_for(rt)
+    yield c
+    c.__exit__(None, None, None)
+
+
+def listed(t: Tab) -> list[dict]:
+    return t.value("jobs")["jobs"] if t.has("jobs") and t.value("jobs") else []
+
+
+def test_paths_typed_into_the_box_become_jobs_whose_progress_reaches_every_tab(
+        client, rt, gated):
+    with tab(client, OUTPUTS) as a, tab(client, OUTPUTS) as b:
+        a.until(lambda t: t.has("jobs"))
+        assert a.value("jobs") == {"jobs": []}
+        a.set(jobs_submit={"n": 1, "paths": ["/films/a.mkv", "~/films/b.mkv"]})
+        running = b.until(lambda t: listed(t) and listed(t)[0]["progress"] == [1, 2]
+                          and listed(t))
+        assert [(j["name"], j["state"]) for j in running] == [("a.mkv", "running"),
+                                                              ("b.mkv", "queued")]
+        assert running[0]["stage"] == "transcribe"
+        a.set(job_cancel={"n": 2, "job": running[1]["id"]})  # queued: taken out
+        a.until(lambda t: listed(t)[1]["state"] == "cancelled")
+        gated.gate("/films/a.mkv").set()
+        finished = b.until(lambda t: listed(t)[0]["state"] == "done" and listed(t))
+        assert finished[0]["written"] == ["a.en.srt"] and finished[0]["can_open"] is True
+        assert finished[1]["state"] == "cancelled"
+        a.set(job_cancel={"n": 3, "job": running[0]["id"]})  # finished: nothing to cancel
+        a.until(lambda t: t.notices())
+        assert [n["text"] for n in a.notices()] == ["that job had already finished"]
+
+
+def test_cancelling_the_running_job_stops_it_and_the_next_one_starts(client, rt, gated):
+    with tab(client, OUTPUTS) as t:
+        t.until(lambda t: t.has("jobs"))
+        t.set(jobs_submit={"n": 1, "paths": ["/films/a.mkv", "/films/b.mkv"]})
+        first = t.until(lambda t: listed(t) and listed(t)[0]["state"] == "running"
+                        and listed(t)[0])
+        t.set(job_cancel={"n": 2, "job": first["id"]})
+        t.until(lambda t: [j["state"] for j in listed(t)] == ["cancelled", "running"])
+
+
+def test_anything_but_full_paths_is_refused_whole_and_echoes_nothing(client, rt):
+    with tab(client, OUTPUTS) as t:
+        t.until(lambda t: t.has("jobs"))
+        for n, paths in enumerate([["films/a.mkv"], ["https://youtu.be/abcdefghijk"], [""],
+                                   "/films/a.mkv", ["/films/a.mkv", 7], [], ["/" + "a" * 5000],
+                                   ["/films/<script>.mkv\n/films/b.mkv"]], 1):
+            t.set(jobs_submit={"n": n, "paths": paths})
+        t.set(job_cancel={"n": 9, "job": "<b>"})
+        t.until(lambda t: len(t.notices()) == 9)
+        assert [n["text"] for n in t.notices()] == [server.TYPE_PATHS] * 8 + [server.FINISHED]
+        assert server.TYPE_PATHS == ("type each video's full path, one per line: nothing was "
+                                     "queued")
+        assert "<" not in json.dumps(t.notices()) and rt.queue.jobs() == []
+
+
+def test_the_pages_editor_has_no_jobs(rt):
+    pages = dataclasses.replace(rt, backend=Browser(rt.backend))
+    runtime.configure(pages)
+    c = client_for(pages)
+    try:
+        with tab(c, OUTPUTS) as t:
+            t.until(lambda t: t.has("jobs"))
+            assert t.value("jobs") is None
+            t.set(jobs_submit={"n": 1, "paths": ["/films/a.mkv"]})
+            t.set(job_cancel={"n": 2, "job": "j00000001"})
+            t.set(open={"path": "/nowhere/x.mkv", "n": 3})  # something it does answer
+            t.until(lambda t: t.notices())
+    finally:
+        c.__exit__(None, None, None)
+    assert rt.queue.jobs() == []
+```
+
+  In `tests/test_jobs.py`:
+
+  At the end of the file, after `q.submit(["c.mkv"])`, after 2 blank lines, append:
+
+```python
+def test_a_listener_that_stops_listening_hears_nothing_more(queue, runner):
+    # Phase 2 Task 19: a tab that closes stops listening.
+    heard = []
+    stop = queue.on_change(lambda: heard.append(len(queue.jobs())))
+    queue.submit(["a.mkv"])
+    until(lambda: heard)
+    stop()
+    stop()  # twice is harmless
+    count = len(heard)
+    queue.submit(["b.mkv"])
+    runner.gate("a.mkv").set()
+    until(lambda: queue.jobs()[0].state == "done")
+    assert len(heard) == count
+```
+
+  In `tests/test_pipeline.py`:
+
+  At the end of the file, after `assert len(ctx.sleeps) == 1 and len(engine.calls) == 1`, after 2 blank lines, append:
+
+```python
+# Phase 2, Task 19: a context may bring its own translator (the demo's canned one)
+
+
+def test_a_context_with_its_own_ask_for_translates_through_it_and_never_make_ask(clip,
+                                                                               monkeypatch):
+    def refuse(*args, **kwargs):
+        pytest.fail("make_ask was called though the context brings its own")
+
+    monkeypatch.setattr(pipeline, "make_ask", refuse)
+    asked: list[str] = []
+    ctx = make_ctx(FakeEngine())
+    ctx.ask_for = lambda name, entry, config, policy, keys: (
+        asked.append(name) or fake_make_ask(name, entry, config, policy, keys))
+    result = pipeline.run_one(str(clip), ctx)
+    assert result.status == "done", (result.reason, result.hint)
+    assert asked == ["gemma"]
+```
+
+- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_jobs.py
+  tests/test_pipeline.py -q -k 'listener_that_stops or ask_for'`. Expected: `E       TypeError:
+  'NoneType' object is not callable`, `E       Failed: make_ask was called though the context
+  brings its own` and `2 failed, 66 deselected`. `uv run pytest tests/test_web_jobs.py -q`.
+  Expected, first: `E       AttributeError: module 'vid2sub.web.views' has no attribute
+  'jobs_view'`.
+- [ ] **Step 3: Write the code.** `src/vid2sub/jobs.py`:
+
+  Replace
+
+```python
+the queue, or asks the running one to stop at its next check, between chunks or translation
+batches (`pipeline.Cancelled`; the Phase 2 plan's Decision 7). Listeners are called after every
+change of state, stage or progress, on the thread that made it (the worker, or the caller of
+`submit`, `cancel` or `close`); one that raises is logged and the queue carries on. The log names
+jobs by id and errors by kind, never an input, a title or a path (spec §6.8).
+"""
+
+```
+
+  with
+
+```python
+the queue, or asks the running one to stop at its next check, between chunks or translation
+batches (`pipeline.Cancelled`; the Phase 2 plan's Decision 7). Listeners are called after every
+change of state, stage or progress, on the thread that made it (the worker, or the caller of
+`submit`, `cancel` or `close`); one that raises is logged and the queue carries on, and one
+can stop listening (a tab that closed). The log names
+jobs by id and errors by kind, never an input, a title or a path (spec §6.8).
+"""
+
+```
+
+  Replace
+
+```python
+        with self._lock:
+            return list(self._jobs.values())
+
+    def on_change(self, fn: Callable[[], None]) -> None:
+        with self._lock:
+            self._listeners.append(fn)
+
+    def close(self, timeout: float = 5.0) -> None:
+        """Cancels every queued job and the running one, then waits up to `timeout` seconds
+        for the worker to stop."""
+```
+
+  with
+
+```python
+        with self._lock:
+            return list(self._jobs.values())
+
+    def on_change(self, fn: Callable[[], None]) -> Callable[[], None]:
+        """Calls `fn` after every change; returns what stops it (a tab that closed)."""
+        with self._lock:
+            self._listeners.append(fn)
+
+        def stop() -> None:
+            with self._lock:
+                if fn in self._listeners:
+                    self._listeners.remove(fn)
+
+        return stop
+
+    def close(self, timeout: float = 5.0) -> None:
+        """Cancels every queued job and the running one, then waits up to `timeout` seconds
+        for the worker to stop."""
+```
+
+  `src/vid2sub/pipeline.py` (the hook blocks shell commands that name `src/vid2sub/media/`, not
+  this file):
+
+  Replace
+
+```python
+    make_rendition,
+)
+from vid2sub.subs.translate_shape import stale_ids
+from vid2sub.translate.run import PROMPT_VERSION, TranslationFailed, make_ask, translate_cues
+
+MEDIA_SUFFIXES = frozenset({".mkv", ".mp4", ".m4v", ".mov", ".webm", ".avi", ".ts", ".m2ts",
+                            ".wmv", ".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".opus"})
+```
+
+  with
+
+```python
+    make_rendition,
+)
+from vid2sub.subs.translate_shape import stale_ids
+from vid2sub.translate.run import (
+    PROMPT_VERSION,
+    AskFn,
+    TranslationFailed,
+    make_ask,
+    translate_cues,
+)
+
+MEDIA_SUFFIXES = frozenset({".mkv", ".mp4", ".m4v", ".mov", ".webm", ".avi", ".ts", ".m2ts",
+                            ".wmv", ".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".opus"})
+```
+
+  Replace
+
+```python
+    folder_votes: dict[Path, list[str]] = field(default_factory=dict)
+    candidates: list | None = None
+    cancelled: Callable[[], bool] = _never
+
+    @property
+    def policy(self) -> RunPolicy:
+```
+
+  with
+
+```python
+    folder_votes: dict[Path, list[str]] = field(default_factory=dict)
+    candidates: list | None = None
+    cancelled: Callable[[], bool] = _never
+    # The translator's maker, with make_ask's arguments; None is make_ask itself. The demo's
+    # job runner brings its canned translation (Phase 2 Task 19).
+    ask_for: Callable[..., AskFn] | None = None
+
+    @property
+    def policy(self) -> RunPolicy:
+```
+
+  Replace
+
+```python
+            if not todo:
+                continue
+        ctx.events("stage", {"stage": "translate"})
+        raw_ask = make_ask(model_name, entry, ctx.config, ctx.policy, ctx.keys)
+
+        def ask(system, prompt, model, _raw=raw_ask):
+            return _retrying(lambda: _raw(system, prompt, model), ctx)
+```
+
+  with
+
+```python
+            if not todo:
+                continue
+        ctx.events("stage", {"stage": "translate"})
+        raw_ask = (ctx.ask_for or make_ask)(model_name, entry, ctx.config, ctx.policy, ctx.keys)
+
+        def ask(system, prompt, model, _raw=raw_ask):
+            return _retrying(lambda: _raw(system, prompt, model), ctx)
+```
+
+  `src/vid2sub/web/runtime.py`:
+
+  Replace
+
+```python
+the jobs, which belong to the engine rather than a tab (spec §17.1), the media tokens die
+with the engine (the Phase 2 plan's Decision 1), and the session's settings (`session`: the
+defaults the drawer changes, never written, §5.4) and typed keys (in `keys`) are this launch's,
+shared by every tab and gone when it exits. Until the Jobs page gives the queue the
+pipeline (S36), a job that somehow reaches it fails without running anything.
+
+The server runs in Pages too (spec §3.3, §21), so this module imports nothing the Pages bundle
+lacks at its top: `build()` imports the local parts (the backend, the queue, ffmpeg's tools, the
+```
+
+  with
+
+```python
+the jobs, which belong to the engine rather than a tab (spec §17.1), the media tokens die
+with the engine (the Phase 2 plan's Decision 1), and the session's settings (`session`: the
+defaults the drawer changes, never written, §5.4) and typed keys (in `keys`) are this launch's,
+shared by every tab and gone when it exits. The queue runs the pipeline (`job_runner`): each
+job is `run_one` on a copy of the launch's job context (`job_context`, which Phase 3's Review
+starts its own runners from), with the session's targets and formats as they are when the job
+starts, so a change in the drawer reaches every job that hasn't started (Task 19, decided with
+the coordinator 2026-10-24); the copies share the context's engines and finished chunks
+(§8.9). Nothing here presets `allow_cloud` (§7.2): a job never uses a cloud model in Phase 2.
+
+The server runs in Pages too (spec §3.3, §21), so this module imports nothing the Pages bundle
+lacks at its top: `build()` imports the local parts (the backend, the queue, ffmpeg's tools, the
+```
+
+  Replace
+
+```python
+from __future__ import annotations
+
+import asyncio
+import sys
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+```
+
+  with
+
+```python
+from __future__ import annotations
+
+import asyncio
+import dataclasses
+import sys
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+```
+
+  Replace
+
+```python
+    from vid2sub.cache import Cache
+    from vid2sub.config import Config
+    from vid2sub.engines.clients import KeyRing
+    from vid2sub.jobs import Queue
+    from vid2sub.media.tools import Tools
+    from vid2sub.pipeline import Event, InputResult
+    from vid2sub.web.backend import LocalBackend
+    from vid2sub.web.episode import Episode
+    from vid2sub.web.media import MediaTokens
+```
+
+  with
+
+```python
+    from vid2sub.cache import Cache
+    from vid2sub.config import Config
+    from vid2sub.engines.clients import KeyRing
+    from vid2sub.jobs import Queue, Runner
+    from vid2sub.media.tools import Tools
+    from vid2sub.pipeline import Event, InputResult, RunContext
+    from vid2sub.web.backend import LocalBackend
+    from vid2sub.web.episode import Episode
+    from vid2sub.web.media import MediaTokens
+```
+
+  Replace
+
+```python
+    config: Config
+    keys: KeyRing
+    session: Session = field(default_factory=Session)  # this launch's settings (spec §5.4)
+
+    def reachable(self) -> dict[str, bool]:
+        """Whether each local endpoint answers its model list. Blocks on the network: call it
+```
+
+  with
+
+```python
+    config: Config
+    keys: KeyRing
+    session: Session = field(default_factory=Session)  # this launch's settings (spec §5.4)
+    job_context: RunContext | None = None  # what each job's run_one runs on (job_runner)
+
+    def reachable(self) -> dict[str, bool]:
+        """Whether each local endpoint answers its model list. Blocks on the network: call it
+```
+
+  Replace
+
+```python
+
+
+def build(config: Config, *, tools: Tools | None = None, keys: KeyRing | None = None,
+          cache: Cache | None = None) -> Runtime:
+    """One launch's parts: the tools found on PATH, the keys from the environment, and the cache
+    that `[defaults] cache_max_gb` caps, unless the caller gives its own."""
+    from vid2sub import cache as caching
+    from vid2sub.engines.clients import KeyRing
+    from vid2sub.jobs import Queue
+    from vid2sub.media.tools import Tools
+    from vid2sub.web.backend import LocalBackend
+    from vid2sub.web.media import MediaTokens
+
+    tools = tools if tools is not None else Tools.find()
+    keys = keys if keys is not None else KeyRing()
+    cache = cache if cache is not None else caching.from_config(config)
+    return Runtime(backend=LocalBackend(config, tools, keys, cache), queue=Queue(_no_jobs),
+                   media=MediaTokens(), config=config, keys=keys,
+                   session=Session(Defaults.from_config(config.defaults)))
+
+
+def _no_jobs(source: str, events: Event, cancelled: Callable[[], bool]) -> InputResult:
+    raise RuntimeError("this engine has no job runner")
+```
+
+  with
+
+```python
+
+
+def build(config: Config, *, tools: Tools | None = None, keys: KeyRing | None = None,
+          cache: Cache | None = None, session: Session | None = None,
+          job_context: RunContext | None = None, runner: Runner | None = None) -> Runtime:
+    """One launch's parts: the tools found on PATH, the keys from the environment, the cache
+    that `[defaults] cache_max_gb` caps, the session's defaults from `[defaults]`, and a job
+    context with M1's options (the route's models, the language detected, no cloud, ten minutes
+    for a dropped connection), unless the caller gives its own; the queue runs `runner`, else
+    `job_runner` on that context."""
+    from vid2sub import cache as caching
+    from vid2sub.engines.clients import KeyRing
+    from vid2sub.jobs import Queue
+    from vid2sub.media.tools import Tools
+    from vid2sub.pipeline import RunContext, RunOptions
+    from vid2sub.web.backend import LocalBackend
+    from vid2sub.web.media import MediaTokens
+
+    tools = tools if tools is not None else Tools.find()
+    keys = keys if keys is not None else KeyRing()
+    cache = cache if cache is not None else caching.from_config(config)
+    session = session if session is not None else Session(Defaults.from_config(config.defaults))
+    if job_context is None:
+        job_context = RunContext(config=config, tools=tools, keys=keys, options=RunOptions())
+    queue = Queue(runner if runner is not None else job_runner(job_context, session))
+    return Runtime(backend=LocalBackend(config, tools, keys, cache), queue=queue,
+                   media=MediaTokens(), config=config, keys=keys, session=session,
+                   job_context=job_context)
+
+
+def job_runner(ctx: RunContext, session: Session) -> Runner:
+    """The queue's runner (spec §17, S36): the pipeline's `run_one` on a copy of `ctx` with this
+    job's events and cancel check, and the session's targets and formats as they are when the
+    job starts (§5.4). As Phase 2 Task 4 has it: `lambda source, events, cancelled:
+    run_one(source, dataclasses.replace(ctx, events=events, cancelled=cancelled))`, the options
+    included. Runs on the queue's worker thread."""
+    from vid2sub import pipeline
+
+    def run(source: str, events: Event, cancelled: Callable[[], bool]) -> InputResult:
+        defaults = session.defaults()
+        options = dataclasses.replace(ctx.options, targets=list(defaults.targets),
+                                      formats=list(defaults.formats))
+        return pipeline.run_one(source, dataclasses.replace(ctx, options=options, events=events,
+                                                            cancelled=cancelled))
+
+    return run
+```
+
+  `src/vid2sub/web/views.py`:
+
+  Replace
+
+```python
+import dataclasses
+from bisect import bisect_right
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any
+
+from vid2sub.subs import langs, naming
+```
+
+  with
+
+```python
+import dataclasses
+from bisect import bisect_right
+from collections.abc import Mapping, Sequence
+from pathlib import PurePath
+from typing import TYPE_CHECKING, Any
+
+from vid2sub.subs import langs, naming
+```
+
+  Replace
+
+```python
+from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.web.episode import Capabilities, Episode, all_stale
+
+if TYPE_CHECKING:  # local only: the Pages bundle has neither (spec §21)
+    from vid2sub.config import Config
+    from vid2sub.engines.clients import KeyRing
+
+_SCRIPTS = {"Hant": " (Traditional)", "Hans": " (Simplified)"}
+DIFFERENCES_SHOWN = 50  # cues where a conflicted track's versions differ, before "and N more"
+```
+
+  with
+
+```python
+from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.web.episode import Capabilities, Episode, all_stale
+
+if TYPE_CHECKING:  # local only: the Pages bundle has none of them (spec §21)
+    from vid2sub.config import Config
+    from vid2sub.engines.clients import KeyRing
+    from vid2sub.jobs import JobView
+
+_SCRIPTS = {"Hant": " (Traditional)", "Hans": " (Simplified)"}
+DIFFERENCES_SHOWN = 50  # cues where a conflicted track's versions differ, before "and N more"
+```
+
+  Replace
+
+```python
+    }
+
+
+def capabilities_view(caps: Capabilities) -> dict[str, Any]:
+    return dataclasses.asdict(caps)
+
+```
+
+  with
+
+```python
+    }
+
+
+def jobs_view(jobs: Sequence[JobView]) -> dict[str, Any]:
+    """The Jobs page (spec §19.2, S36): each job in the order submitted, by its file's bare name,
+    with the path as typed, which Open in editor sends back to `open`; its state, stage and
+    progress (a chunk or a translation batch: index, of); and once it has run, the pipeline's
+    status, the reason where it didn't finish, the fix (§17.3), the files written and the
+    notes. A job opens in the editor once it is done and its subtitles are there."""
+    out = []
+    for j in jobs:
+        r = j.result
+        finished = r is not None and r.status in ("done", "skipped")
+        out.append({"id": j.id, "name": PurePath(j.input).name or j.input, "path": j.input,
+                    "state": j.state, "stage": j.stage,
+                    "progress": list(j.progress) if j.progress else None,
+                    "status": r.status if r else None,
+                    "reason": (r.reason or None) if r is not None and not finished else None,
+                    "hint": j.hint or None, "written": list(r.written) if r else [],
+                    "notes": list(r.notes) if r else [],
+                    "can_open": j.state == "done" and finished})
+    return {"jobs": out}
+
+
+def capabilities_view(caps: Capabilities) -> dict[str, Any]:
+    return dataclasses.asdict(caps)
+
+```
+
+  `src/vid2sub/web/demo.py`:
+
+  Replace
+
+```python
+from vid2sub.media.probe import probe
+from vid2sub.media.tools import Tools, run_tool
+from vid2sub.parse import ParsedChunk
+from vid2sub.store import header_for, now, sidecar_path
+from vid2sub.subs.model import Segment, Word
+from vid2sub.subs.sidecar import IdentityRecord, Sidecar, parse_sidecar, serialize
+from vid2sub.translate.run import AskFn
+from vid2sub.web import runtime
+from vid2sub.web.backend import Episode, LocalBackend, OpenError
+
+REPO = Path(__file__).resolve().parents[3]
+DEMO = REPO / "demo"
+```
+
+  with
+
+```python
+from vid2sub.media.probe import probe
+from vid2sub.media.tools import Tools, run_tool
+from vid2sub.parse import ParsedChunk
+from vid2sub.pipeline import Event, InputResult, RunContext, RunOptions
+from vid2sub.store import header_for, now, sidecar_path
+from vid2sub.subs.model import Segment, Word
+from vid2sub.subs.sidecar import IdentityRecord, Sidecar, parse_sidecar, serialize
+from vid2sub.translate.run import AskFn
+from vid2sub.web import runtime
+from vid2sub.web.backend import Episode, LocalBackend, OpenError
+from vid2sub.web.settings import Defaults, Session
+
+REPO = Path(__file__).resolve().parents[3]
+DEMO = REPO / "demo"
+```
+
+  Replace
+
+```python
+# own track isn't stale for want of the model (spec §13.4); it is in no vid2sub.toml.
+CANNED_JA = "canned-ja"
+CANNED_ENTRY = ModelEntry(model=CANNED_JA, task="translate", local=True)
+
+
+class DemoMissing(Exception):
+```
+
+  with
+
+```python
+# own track isn't stale for want of the model (spec §13.4); it is in no vid2sub.toml.
+CANNED_JA = "canned-ja"
+CANNED_ENTRY = ModelEntry(model=CANNED_JA, task="translate", local=True)
+# The demo's jobs: the canned engine and translation under the names its sidecar was made with
+# (scripts/demo_sidecar.py), on an endpoint nothing contacts, since both are canned.
+JOB_CONFIG = Config.model_validate({
+    "endpoints": {"canned": {"base_url": "http://127.0.0.1:9/v1"}},
+    "models": {
+        "canned": {"endpoint": "canned", "model": "canned-jfk", "parser": "whisper.cpp",
+                   "local": True},
+        CANNED_JA: {"endpoint": "canned", "model": CANNED_JA, "task": "translate",
+                    "local": True},
+    },
+})
+DEMO_ONLY = "the demo runs only its own clip"
+YOUR_OWN = "run vid2sub serve without --demo for your own videos"
+
+
+class DemoMissing(Exception):
+```
+
+  Replace
+
+```python
+
+def runtime_for(copy: Path, tools: Tools) -> runtime.Runtime:
+    """The demo's parts: no vid2sub.toml, no key from the environment, a cache in the demo's own
+    folder, and a backend that opens only the copy's episodes."""
+    cache = Cache(copy.parent / "cache", max_bytes=CACHE_BYTES)
+    backend = DemoBackend(copy, tools, cache)
+    built = runtime.build(backend.config, tools=tools, keys=backend.keys, cache=cache)
+    return replace(built, backend=backend)
+
+
+# ---- isolation --------------------------------------------------------------------------------
+
+# The audit events that change the file system: each path argument's position, with the position
+```
+
+  with
+
+```python
+
+def runtime_for(copy: Path, tools: Tools) -> runtime.Runtime:
+    """The demo's parts: no vid2sub.toml, no key from the environment, a cache in the demo's own
+    folder, a backend that opens only the copy's episodes, and a job queue that runs only the
+    copy's clip, with the canned engine and translation, into Japanese (Task 19): whatever a job
+    writes, it writes in the demo's folder."""
+    cache = Cache(copy.parent / "cache", max_bytes=CACHE_BYTES)
+    backend = DemoBackend(copy, tools, cache)
+    session = Session(Defaults(("ja",), ("srt",)))
+    jobs = RunContext(config=JOB_CONFIG, tools=tools, keys=backend.keys,
+                      options=RunOptions(source_lang="en", model="canned",
+                                         translate_model=CANNED_JA),
+                      engines={"canned": CannedEngine()},
+                      ask_for=lambda *args, **kwargs: canned_ask)
+    built = runtime.build(backend.config, tools=tools, keys=backend.keys, cache=cache,
+                          session=session, job_context=jobs,
+                          runner=only_inside(copy, runtime.job_runner(jobs, session)))
+    return replace(built, backend=backend)
+
+
+def only_inside(copy: Path, runner):
+    """`runner`, for sources in the demo's copy; any other fails without being touched."""
+    folder = copy.resolve()
+
+    def run(source: str, events: Event, cancelled) -> InputResult:
+        try:
+            inside = Path(source).expanduser().resolve().is_relative_to(folder)
+        except (OSError, ValueError):
+            inside = False
+        if not inside:
+            return InputResult(input=source, status="failed", reason=DEMO_ONLY, hint=YOUR_OWN,
+                               kind="demo_only")
+        return runner(source, events, cancelled)
+
+    return run
+
+
+# ---- isolation --------------------------------------------------------------------------------
+
+# The audit events that change the file system: each path argument's position, with the position
+```
+
+  `src/vid2sub/web/server.py`:
+
+  Replace
+
+```python
+answer the `endpoint_test_result` message), which asks the endpoint's `/v1/models` through the
+runtime, off the loop. A change any tab makes reaches every tab, through the session's listeners.
+
+The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
+for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
+indicators on with an inline script, which the CSP's `script-src 'self'` blocks (§6.3), so the
+```
+
+  with
+
+```python
+answer the `endpoint_test_result` message), which asks the endpoint's `/v1/models` through the
+runtime, off the loop. A change any tab makes reaches every tab, through the session's listeners.
+
+The Jobs page (§17, §19.2; S36) is the engine's queue, shown to every tab (`jobs`, from
+`views.jobs_view`): full paths typed in (`jobs_submit`) become jobs, which the runtime's
+`job_runner` runs through the pipeline one at a time; `job_cancel` takes a queued job out or
+asks the running one to stop before its next chunk or batch (Decision 7). The queue tells its
+listeners on the worker thread, so each tab's hands the change to its own loop.
+
+The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
+for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
+indicators on with an inline script, which the CSP's `script-src 'self'` blocks (§6.3), so the
+```
+
+  Replace
+
+```python
+from __future__ import annotations
+
+import asyncio
+import itertools
+import logging
+import re
+from collections import deque
+from pathlib import Path
+```
+
+  with
+
+```python
+from __future__ import annotations
+
+import asyncio
+import contextvars
+import itertools
+import logging
+import os
+import re
+from collections import deque
+from pathlib import Path
+```
+
+  Replace
+
+```python
+CUE_ID = re.compile(r"c[0-9a-f]{8}")  # model.new_cue_id's ids, as ops.CueId checks them
+MAX_IDS = 10_000  # source cues one retranslation may name: every cue of a long episode
+PICK_CUES = "pick the cues to retranslate"
+# htmltools keeps the highest version of a dependency per name. Shiny's own version with a local
+# label (1.8.0+vid2sub, which PEP 440 sorts above 1.8.0) makes this one replace Shiny's
+# shiny-busy-indicators: its stylesheet, without the inline script in its head. The second
+```
+
+  with
+
+```python
+CUE_ID = re.compile(r"c[0-9a-f]{8}")  # model.new_cue_id's ids, as ops.CueId checks them
+MAX_IDS = 10_000  # source cues one retranslation may name: every cue of a long episode
+PICK_CUES = "pick the cues to retranslate"
+JOB_ID = re.compile(r"j[0-9a-f]{8}")  # jobs.Queue's ids
+MAX_JOBS = 500  # paths one Start may queue
+TYPE_PATHS = "type each video's full path, one per line: nothing was queued"
+FINISHED = "that job had already finished"
+STOPPING = "vid2sub is stopping: nothing was queued"
+# htmltools keeps the highest version of a dependency per name. Shiny's own version with a local
+# label (1.8.0+vid2sub, which PEP 440 sorts above 1.8.0) makes this one replace Shiny's
+# shiny-busy-indicators: its stylesheet, without the inline script in its head. The second
+```
+
+  Replace
+
+```python
+            await reactive.flush()
+
+
+def _cue_ids(ids: object) -> bool:
+    """None (every stale or untranslated cue), or 1 to MAX_IDS cue ids of new_cue_id's shape."""
+    return ids is None or (isinstance(ids, list) and 0 < len(ids) <= MAX_IDS
+```
+
+  with
+
+```python
+            await reactive.flush()
+
+
+def _full_paths(paths: object) -> bool:
+    """1 to MAX_JOBS fully qualified paths, each one line of at most MAX_PATH characters (spec
+    §6.5: a typed path is fully qualified; the server's folder means nothing to the person)."""
+    return (isinstance(paths, list) and 0 < len(paths) <= MAX_JOBS
+            and all(isinstance(p, str) and 0 < len(p) <= MAX_PATH
+                    and not any(ch in p for ch in "\r\n\0")
+                    and os.path.isabs(os.path.expanduser(p)) for p in paths))
+
+
+def _cue_ids(ids: object) -> bool:
+    """None (every stale or untranslated cue), or 1 to MAX_IDS cue ids of new_cue_id's shape."""
+    return ids is None or (isinstance(ids, list) and 0 < len(ids) <= MAX_IDS
+```
+
+  Replace
+
+```python
+    def _retranslate() -> None:
+        editor.submit("retranslate", input.retranslate())
+
+    @reactive_output
+    def episode():
+        shown = editor.shown()
+```
+
+  with
+
+```python
+    def _retranslate() -> None:
+        editor.submit("retranslate", input.retranslate())
+
+    # The Jobs page (spec §17, §19.2; S36): the engine's queue, the same in every tab, and the
+    # local engine's alone (Pages has no jobs: `generate` is false there). The queue's listeners
+    # run on the thread that changed it, the worker's mostly, so each change is handed to this
+    # session's loop, in its context, with one refresh waiting at most.
+    jobs_changed = reactive.value(0)
+    if local:
+        loop = asyncio.get_running_loop()
+        here = contextvars.copy_context()
+        job_ticks = itertools.count(1)
+        waiting = [False]
+
+        async def refresh() -> None:
+            waiting[0] = False
+            async with reactive.lock():
+                jobs_changed.set(next(job_ticks))
+                await reactive.flush()
+
+        def heard() -> None:  # on the worker thread, or this loop's
+            if not waiting[0]:
+                waiting[0] = True
+                loop.call_soon_threadsafe(lambda: asyncio.ensure_future(refresh()),
+                                          context=here)
+
+        session.on_ended(rt.queue.on_change(heard))
+
+    @reactive_output
+    def jobs():
+        jobs_changed()
+        if not local:
+            return None
+        return views.jobs_view(rt.queue.jobs())
+
+    @reactive.effect
+    @reactive.event(input.jobs_submit)
+    async def _jobs_submit() -> None:
+        if not local:
+            return
+        request = as_json(input.jobs_submit())
+        paths = request.get("paths") if isinstance(request, dict) else None
+        if not _full_paths(paths):
+            await notice(session, "error", TYPE_PATHS)  # never echoes what was typed
+            return
+        try:
+            rt.queue.submit(paths)
+        except RuntimeError:  # closed: the engine is stopping
+            await notice(session, "error", STOPPING)
+
+    @reactive.effect
+    @reactive.event(input.job_cancel)
+    async def _job_cancel() -> None:
+        if not local:
+            return
+        request = as_json(input.job_cancel())
+        job = request.get("job") if isinstance(request, dict) else None
+        if not (isinstance(job, str) and JOB_ID.fullmatch(job) and rt.queue.cancel(job)):
+            await notice(session, "info", FINISHED)
+
+    @reactive_output
+    def episode():
+        shown = editor.shown()
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_jobs.py
+  tests/test_jobs.py tests/test_pipeline.py tests/test_pages_imports.py -q` first (`82 passed`);
+  these use threads, so run `for i in 1 2 3 4 5; do uv run pytest tests/test_web_jobs.py
+  tests/test_jobs.py -q | tail -1; done` and each says `21 passed`. **Guard check** (the demo
+  touches nothing but its copy, spec §22.7): in `demo.only_inside`, change `if not inside:` to `if
+  False:`; `uv run pytest tests/test_web_jobs.py -q -k demo` fails at `assert refused.state ==
+  "failed" and refused.result.reason == "the demo runs only its own clip"`; put it back. Then
+  `make check`. Expected: `997 passed, 2 skipped, 33 deselected` (twice), `Test Files  17 passed
+  (17)`, `Tests  79 passed (79)`, `All checks passed!`, `no leaks found`. Then `make e2e` (the
+  demo's runtime changed). Expected: `29 passed`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(web): 🤖 the job queue runs the pipeline with the session's defaults, and every tab hears each job's stage and progress and can cancel it
+
+runtime.job_runner(ctx, session) replaces runtime._no_jobs (spec §17,
+S36): each job is pipeline.run_one on dataclasses.replace(ctx, options=…,
+events=…, cancelled=…), as Task 4 planned it, with the session's targets
+and formats read when the job starts (decided with the coordinator,
+2026-10-24). runtime.build makes the launch's job context (M1's
+RunOptions: the route's models, the language detected, no cloud, ten
+minutes for a dropped connection) and keeps it as Runtime.job_context,
+which Phase 3's Review starts its own runners from; build takes
+session=, job_context= and runner=. Queue.on_change now returns what
+stops the listener, so a tab that closed stops listening.
+
+Server (local engine only; Pages has no jobs): output `jobs`
+(views.jobs_view: id, the file's bare name, the path as typed for Open in
+editor, state, stage, progress [index, of], and the pipeline's status,
+reason, files written and notes, with the job's hint); input
+`jobs_submit` ({"paths": [...], "n"}: 1 to 500 fully qualified paths, one
+line each, else a notice that echoes nothing and queues nothing); input
+`job_cancel` ({"job": "j" + 8 hex, "n"}), which takes a queued job out or
+stops the running one before its next chunk or batch (Decision 7), and
+says "that job had already finished" otherwise. The queue's listeners run
+on the worker thread, so each tab's hands the change to its own loop with
+call_soon_threadsafe in the session's context, one refresh waiting at
+most.
+
+The demo's queue runs only its copy's clip (demo.only_inside), with the
+canned engine and translation into Japanese: RunContext gains ask_for,
+the translator's maker (None: make_ask), which the demo sets to
+canned_ask, and its session's targets are ("ja",). Whatever a demo job
+writes, it writes in the demo's folder.
+
+The new tests failed first with: AttributeError: module
+'vid2sub.web.views' has no attribute 'jobs_view'; TypeError: 'NoneType'
+object is not callable (on_change returned nothing); Failed: make_ask was
+called though the context brings its own. With demo.only_inside's check
+taken out, the demo test fails: the other video ran.
+
+Docs read: Python's asyncio loop.call_soon_threadsafe (its context
+argument) and contextvars.copy_context; shiny 1.8.0's reactive.lock and
+flush and session.on_ended; pipeline.run_one's events (stage, chunk
+before each chunk, batch) and InputResult; jobs.Queue's listeners.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 19
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/jobs.py src/vid2sub/pipeline.py src/vid2sub/web/demo.py
+  src/vid2sub/web/runtime.py src/vid2sub/web/server.py src/vid2sub/web/views.py tests/test_jobs.py
+  tests/test_pipeline.py tests/test_web_jobs.py`, `git commit -F .git/COMMIT_MSG`, then `git log
+  -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 19b: the Jobs page
+
+- [ ] **Step 6: Write the failing tests,** `frontend/src/lib/jobs.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { JobItem } from "@/types";
+
+import { announcement, jobLine, typedPaths } from "./jobs";
+
+const JOB: JobItem = { id: "j00000001", name: "a.mkv", path: "/films/a.mkv", state: "queued", stage: null, progress: null, status: null, reason: null, hint: null, written: [], notes: [], stopping: false, can_open: false };
+
+describe("a job in words (spec §19.2: \"transcribing 7/11\")", () => {
+  it("names the stage and the chunk or batch it is on", () => {
+    expect(jobLine(JOB)).toBe("waiting");
+    expect(jobLine({ ...JOB, state: "running" })).toBe("starting");
+    expect(jobLine({ ...JOB, state: "running", stage: "decode" })).toBe("decoding the audio");
+    expect(jobLine({ ...JOB, state: "running", stage: "transcribe", progress: [7, 11] })).toBe("transcribing 7/11");
+    expect(jobLine({ ...JOB, state: "running", stage: "translate", progress: [1, 2] })).toBe("translating 1/2");
+    expect(jobLine({ ...JOB, state: "running", stage: "something-new" })).toBe("something-new");
+  });
+
+  it("says what a finished job did, why one failed, and that one was cancelled", () => {
+    expect(jobLine({ ...JOB, state: "done", status: "done", written: ["a.en.srt", "a.ja.srt"] })).toBe("done: wrote a.en.srt, a.ja.srt");
+    expect(jobLine({ ...JOB, state: "done", status: "done" })).toBe("done: the subtitles were up to date");
+    expect(jobLine({ ...JOB, state: "done", status: "uncertain", reason: "ja or zh?" })).toBe("the language is unclear: ja or zh?");
+    expect(jobLine({ ...JOB, state: "failed", status: "failed", reason: "couldn't reach the server" })).toBe("failed: couldn't reach the server");
+    expect(jobLine({ ...JOB, state: "failed" })).toBe("failed: see the log");
+    expect(jobLine({ ...JOB, state: "cancelled" })).toBe("cancelled");
+  });
+});
+
+describe("what the polite live region says (spec §19.3, S37)", () => {
+  it("is the running job, else the one that finished last", () => {
+    const running = { ...JOB, id: "j2", name: "b.mkv", state: "running" as const, stage: "transcribe", progress: [2, 3] as [number, number] };
+    const done = { ...JOB, state: "done" as const, status: "done", written: ["a.en.srt"] };
+    expect(announcement([done, running])).toBe("b.mkv: transcribing 2/3");
+    expect(announcement([done, { ...JOB, id: "j3", name: "c.mkv" }])).toBe("a.mkv: done: wrote a.en.srt");
+    expect(announcement([JOB])).toBe("");
+  });
+});
+
+describe("the paths box", () => {
+  it("takes one path a line, trimmed, blank lines left out", () => {
+    expect(typedPaths("  /films/a.mkv \n\n/films/b c.mkv\r\n")).toEqual(["/films/a.mkv", "/films/b c.mkv"]);
+    expect(typedPaths("   ")).toEqual([]);
+  });
+});
+```
+
+  `frontend/src/components/JobsPage.test.ts`:
+
+```ts
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import type { JobItem } from "@/types";
+
+import { JobsPage } from "./JobsPage";
+
+const JOB: JobItem = { id: "j00000001", name: "<img src=x>.mkv", path: "/films/<img src=x>.mkv", state: "running", stage: "transcribe", progress: [7, 11], status: null, reason: null, hint: null, written: [], notes: [], stopping: false, can_open: false };
+
+function render(jobs: JobItem[]): string {
+  const noop = () => undefined;
+  return renderToStaticMarkup(createElement(JobsPage, { jobs, onSubmit: noop, onCancel: noop, onOpen: noop }));
+}
+
+describe("the Jobs page (spec §19.2, §19.3; S36)", () => {
+  it("shows a running job's stage and chunk, with a bar and Cancel, and announces it politely", () => {
+    const html = render([JOB]);
+    expect(html).toContain("transcribing 7/11");
+    expect(html).toMatch(/<progress[^>]*value="7"[^>]*max="11"/);
+    expect(html).toContain('data-testid="job-cancel"');
+    expect(html).toMatch(/role="status" aria-live="polite"[^>]*data-testid="jobs-announce">&lt;img src=x&gt;\.mkv: transcribing 7\/11</);
+  });
+
+  it("shows names, reasons and hints as text, never markup", () => {
+    const html = render([{ ...JOB, state: "failed", reason: "<b>down</b>", hint: "is `make tunnel` running?" }]);
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("<b>");
+    expect(html).toContain("failed: &lt;b&gt;down&lt;/b&gt;");
+    expect(html).toContain("→ is `make tunnel` running?");
+  });
+
+  it("offers Open in editor only for a job that is done, and Cancel only while it can stop", () => {
+    const done = render([{ ...JOB, state: "done", status: "done", progress: null, can_open: true }]);
+    expect(done).toContain('data-testid="job-open"');
+    expect(done).not.toContain('data-testid="job-cancel"');
+    expect(render([{ ...JOB, state: "cancelled" }])).not.toContain('data-testid="job-cancel"');
+    expect(render([{ ...JOB, state: "queued", stage: null, progress: null }])).toContain('data-testid="job-cancel"');
+  });
+
+  it("says a cancelled job is stopping, as the engine says, until it stops", () => {
+    const html = render([{ ...JOB, stopping: true }]);
+    expect(html).toMatch(/data-stopping="true"/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-testid="job-cancel">Stopping…</);
+  });
+
+  it("says there are no jobs yet", () => {
+    expect(render([])).toContain("No jobs yet.");
+  });
+});
+```
+
+  In `tests/test_jobs.py`:
+
+  At the end of the file, after `assert len(heard) == count`, after 2 blank lines, append:
+
+```python
+def test_the_running_job_says_it_is_stopping_until_it_stops(queue, runner):
+    # Phase 2 Task 19: Cancel stops a running job at its next check (Decision 7), so until then
+    # every tab shows it stopping.
+    heard = []
+    queue.on_change(lambda: heard.append([(j.state, j.stopping) for j in queue.jobs()]))
+    (job,) = queue.submit(["a.mkv"])
+    until(lambda: state(queue, job) == "running")
+    assert queue.cancel(job) is True
+    until(lambda: state(queue, job) == "cancelled")
+    assert [("running", True)] in heard and view(queue, job).stopping is False
+```
+
+  In `tests/test_web_jobs.py`:
+
+  Replace
+
+```python
+        {"id": "j00000001", "name": "Show - S01E01.mkv", "path": "/films/Show - S01E01.mkv",
+         "state": "done", "stage": "translate", "progress": [2, 2], "status": "done",
+         "reason": None, "hint": None, "written": ["Show - S01E01.en.srt"],
+         "notes": ["used ja like the others"], "can_open": True},
+        {"id": "j00000002", "name": "b.mkv", "path": "/films/b.mkv", "state": "failed",
+         "stage": "transcribe", "progress": [1, 3], "status": "failed",
+         "reason": "couldn't reach the server", "hint": "is `make tunnel` running?",
+         "written": [], "notes": [], "can_open": False},
+        {"id": "j00000003", "name": "c.mkv", "path": "/films/c.mkv", "state": "running",
+         "stage": "transcribe", "progress": [7, 11], "status": None, "reason": None,
+         "hint": None, "written": [], "notes": [], "can_open": False},
+        {"id": "j00000004", "name": "d.mkv", "path": "/films/d.mkv", "state": "queued",
+         "stage": None, "progress": None, "status": None, "reason": None, "hint": None,
+         "written": [], "notes": [], "can_open": False}]}
+
+
+def test_a_job_whose_language_was_unclear_says_so_and_cant_be_opened():
+```
+
+  with
+
+```python
+        {"id": "j00000001", "name": "Show - S01E01.mkv", "path": "/films/Show - S01E01.mkv",
+         "state": "done", "stage": "translate", "progress": [2, 2], "status": "done",
+         "reason": None, "hint": None, "written": ["Show - S01E01.en.srt"],
+         "notes": ["used ja like the others"], "stopping": False,
+         "can_open": True},
+        {"id": "j00000002", "name": "b.mkv", "path": "/films/b.mkv", "state": "failed",
+         "stage": "transcribe", "progress": [1, 3], "status": "failed",
+         "reason": "couldn't reach the server", "hint": "is `make tunnel` running?",
+         "written": [], "notes": [], "stopping": False, "can_open": False},
+        {"id": "j00000003", "name": "c.mkv", "path": "/films/c.mkv", "state": "running",
+         "stage": "transcribe", "progress": [7, 11], "status": None, "reason": None,
+         "hint": None, "written": [], "notes": [], "stopping": False, "can_open": False},
+        {"id": "j00000004", "name": "d.mkv", "path": "/films/d.mkv", "state": "queued",
+         "stage": None, "progress": None, "status": None, "reason": None, "hint": None,
+         "written": [], "notes": [], "stopping": False, "can_open": False}]}
+
+
+def test_a_job_whose_language_was_unclear_says_so_and_cant_be_opened():
+```
+
+  Replace
+
+```python
+        t.set(jobs_submit={"n": 1, "paths": ["/films/a.mkv", "/films/b.mkv"]})
+        first = t.until(lambda t: listed(t) and listed(t)[0]["state"] == "running"
+                        and listed(t)[0])
+        t.set(job_cancel={"n": 2, "job": first["id"]})
+        t.until(lambda t: [j["state"] for j in listed(t)] == ["cancelled", "running"])
+
+
+def test_anything_but_full_paths_is_refused_whole_and_echoes_nothing(client, rt):
+```
+
+  with
+
+```python
+        t.set(jobs_submit={"n": 1, "paths": ["/films/a.mkv", "/films/b.mkv"]})
+        first = t.until(lambda t: listed(t) and listed(t)[0]["state"] == "running"
+                        and listed(t)[0])
+        assert first["stopping"] is False
+        t.set(job_cancel={"n": 2, "job": first["id"]})
+        t.until(lambda t: [j["state"] for j in listed(t)] == ["cancelled", "running"])
+        assert listed(t)[0]["stopping"] is False  # stopped: no longer stopping
+
+
+def test_anything_but_full_paths_is_refused_whole_and_echoes_nothing(client, rt):
+```
+
+  `tests/e2e/test_jobs.py`:
+
+```python
+"""The Jobs page in Chromium (spec §17, §19.2, §19.3; S36, S37; the plan's Decision 7): paths
+typed into a box become jobs; per-stage and per-chunk progress ("transcribing 1/2") is shown and
+announced politely; Cancel takes a queued job out, and stops the running one between chunks,
+after the chunk the server is transcribing; a finished job opens in the editor. Against
+`vid2sub serve --demo` (its canned engine, on its own clip only) and against a vid2sub.toml whose
+transcription endpoint is a fake whisper.cpp server that holds a chunk until the test lets it
+go. Run with `make e2e`."""
+
+import shutil
+import subprocess
+import threading
+
+import pytest
+from fakes import FakeServer
+from helpers import SPEECH, make_clip
+from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
+
+WORDS = {"language": "english", "language_probabilities": {"en": 0.99},
+         "segments": [{"text": " We meet at a college.", "start": 0.0, "end": 2.0,
+                       "words": [{"word": " We", "start": 0.0, "end": 0.5, "probability": 0.9},
+                                 {"word": " meet", "start": 0.5, "end": 1.0,
+                                  "probability": 0.9},
+                                 {"word": " at", "start": 1.0, "end": 1.2, "probability": 0.9},
+                                 {"word": " a", "start": 1.2, "end": 1.4, "probability": 0.9},
+                                 {"word": " college.", "start": 1.4, "end": 2.0,
+                                  "probability": 0.9}]}]}
+
+
+def open_jobs(page):
+    page.get_by_test_id("nav-jobs").click()
+    expect(page.get_by_test_id("jobs-page")).to_be_visible()
+
+
+def start(page, *paths) -> None:
+    page.get_by_test_id("jobs-paths").fill("\n".join(str(p) for p in paths))
+    page.get_by_test_id("jobs-start").click()
+
+
+def test_a_demo_job_runs_to_done_and_opens_in_the_editor_and_another_video_is_refused(
+        page, server, tmp_path):
+    copy = next(server.tmp.glob("vid2sub-demo-*/demo"))
+    open_jobs(page)
+    expect(page.get_by_text("No jobs yet.")).to_be_visible()
+    start(page, copy / "jfk.mp4", tmp_path / "mine.mkv")
+    jobs = page.get_by_test_id("job")
+    expect(jobs).to_have_count(2)
+    expect(jobs.first).to_have_attribute("data-state", "done", timeout=30_000)
+    expect(jobs.first.get_by_test_id("job-line")).to_have_text(
+        "done: the subtitles were up to date")
+    expect(jobs.nth(1)).to_have_attribute("data-state", "failed")
+    expect(jobs.nth(1).get_by_test_id("job-line")).to_have_text(
+        "failed: the demo runs only its own clip")
+    expect(jobs.nth(1).get_by_test_id("job-hint")).to_have_text(
+        "→ run vid2sub serve without --demo for your own videos")
+    expect(page.get_by_test_id("jobs-announce")).not_to_have_text("")
+    jobs.first.get_by_test_id("job-open").click()
+    expect(page.get_by_test_id("editor")).to_be_visible()
+    expect(page.get_by_test_id("cue-row")).to_have_count(4)
+
+
+def long_clip(folder):
+    """About 3 minutes 16 seconds of speech: two chunks of a 180-second engine (spec §8.7)."""
+    folder.mkdir(parents=True, exist_ok=True)
+    looped = folder / "looped.wav"
+    subprocess.run([shutil.which("ffmpeg"), "-nostdin", "-v", "error", "-y", "-stream_loop",
+                    "13", "-i", str(SPEECH), "-t", "196", "-c:a", "pcm_s16le", str(looped)],
+                   check=True)
+    return make_clip(folder, "Long talk.mkv", seconds=196, speech=looped, audio_langs=("eng",))
+
+
+TOML = """
+[endpoints.spark]
+base_url = "{url}"
+
+[models.spark-qwen]
+catalog = "qwen3-asr-1.7b"
+endpoint = "spark"
+model = "qwen"
+parser = "whisper.cpp"
+local = true
+"""
+
+
+def test_progress_is_shown_per_chunk_and_cancel_stops_between_chunks(launch, open_page,
+                                                                       tmp_path):
+    held = threading.Event()  # set once the first chunk arrives
+    go = threading.Event()  # the test lets the first chunk's answer go
+
+    def whisper(req):
+        if req.path.endswith("/models"):
+            return 200, {"object": "list", "data": [{"id": "qwen", "object": "model"}]}, {}
+        name = req.form()["file"][0]
+        if name == "chunk-0000.flac":
+            held.set()
+            assert go.wait(60)
+        return 200, WORDS, {}
+
+    clip = long_clip(tmp_path / "videos")
+    short = make_clip(tmp_path / "videos", "Short.mkv", seconds=4)
+    with FakeServer(responder=whisper) as spark:
+        server = launch(tmp_path / "server", toml=TOML.format(url=spark.url))
+        watched = open_page(server)
+        page = watched.page
+        open_jobs(page)
+        start(page, clip, short)
+        jobs = page.get_by_test_id("job")
+        expect(jobs).to_have_count(2)
+        expect(jobs.first.get_by_test_id("job-line")).to_have_text("transcribing 1/2",
+                                                                   timeout=60_000)
+        assert held.wait(30)
+        expect(page.get_by_test_id("jobs-announce")).to_have_text("Long talk.mkv: transcribing 1/2")
+        expect(jobs.first.locator("progress")).to_have_attribute("max", "2")
+        # A queued job is taken out at once; the running one stops after this chunk (Decision 7)
+        expect(jobs.nth(1).get_by_test_id("job-line")).to_have_text("waiting")
+        jobs.nth(1).get_by_test_id("job-cancel").click()
+        expect(jobs.nth(1)).to_have_attribute("data-state", "cancelled")
+        jobs.first.get_by_test_id("job-cancel").click()
+        expect(jobs.first.get_by_test_id("job-cancel")).to_have_text("Stopping…")
+        expect(jobs.first).to_have_attribute("data-stopping", "true")  # the engine has it
+        expect(jobs.first).to_have_attribute("data-state", "running")
+        go.set()
+        expect(jobs.first).to_have_attribute("data-state", "cancelled", timeout=30_000)
+        uploads = [r.form()["file"][0] for r in spark.requests if r.path.endswith("/transcriptions")]
+    assert "chunk-0000.flac" in uploads and "chunk-0001.flac" not in uploads
+    assert not clip.with_name("Long talk.vid2sub.jsonl").exists()  # nothing half-made recorded
+    assert watched.errors == [] and watched.violations() == []
+```
+
+- [ ] **Step 7: Run them; watch them fail.** `cd frontend && npx vitest run src/lib/jobs.test.ts
+  src/components/JobsPage.test.ts`. Expected: `Error: Failed to resolve import "./jobs" from
+  "src/lib/jobs.test.ts"` and `Error: Failed to resolve import "./JobsPage" from
+  "src/components/JobsPage.test.ts"`. `uv run pytest tests/test_jobs.py tests/test_web_jobs.py
+  -q`. Expected: `E       AssertionError: assert ([('running', True)] in [])` (the listener
+  meets no `stopping`), and the view tests fail on the missing `"stopping"`. `make build && uv
+  run pytest -m e2e tests/e2e/test_jobs.py -q`. Expected:
+  `playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.` with
+  `waiting for get_by_test_id("nav-jobs")`, and `2 failed`.
+- [ ] **Step 8: Write the code.** `src/vid2sub/jobs.py`:
+
+  Replace
+
+```python
+finished results are already on disk (Dan, 2026-10-14). One worker runs one job at a time,
+because the Spark's whisper serves one request at a time anyway. Cancel takes a queued job out of
+the queue, or asks the running one to stop at its next check, between chunks or translation
+batches (`pipeline.Cancelled`; the Phase 2 plan's Decision 7). Listeners are called after every
+change of state, stage or progress, on the thread that made it (the worker, or the caller of
+`submit`, `cancel` or `close`); one that raises is logged and the queue carries on, and one
+can stop listening (a tab that closed). The log names
+```
+
+  with
+
+```python
+finished results are already on disk (Dan, 2026-10-14). One worker runs one job at a time,
+because the Spark's whisper serves one request at a time anyway. Cancel takes a queued job out of
+the queue, or asks the running one to stop at its next check, between chunks or translation
+batches (`pipeline.Cancelled`; the Phase 2 plan's Decision 7), and says it is `stopping` until
+then, so every tab can tell. Listeners are called after every
+change of state, stage or progress, on the thread that made it (the worker, or the caller of
+`submit`, `cancel` or `close`); one that raises is logged and the queue carries on, and one
+can stop listening (a tab that closed). The log names
+```
+
+  Replace
+
+```python
+    progress: tuple[int, int] | None = None  # (index, of): a chunk or a translation batch
+    result: InputResult | None = None
+    hint: str | None = None
+
+
+class Queue:
+```
+
+  with
+
+```python
+    progress: tuple[int, int] | None = None  # (index, of): a chunk or a translation batch
+    result: InputResult | None = None
+    hint: str | None = None
+    stopping: bool = False  # the running job was asked to stop: before its next chunk or batch
+
+
+class Queue:
+```
+
+  Replace
+
+```python
+            job = self._jobs.get(job_id)
+            if job is None or job.state not in ("queued", "running"):
+                return False
+            if job.state == "running":
+                self._stop.set()
+                return True
+            self._waiting.remove(job_id)
+            self._set(job_id, state="cancelled")
+        self._changed()
+        return True
+
+```
+
+  with
+
+```python
+            job = self._jobs.get(job_id)
+            if job is None or job.state not in ("queued", "running"):
+                return False
+            if job.state == "running":  # it stops at its next check; every tab can say so
+                self._stop.set()
+                self._set(job_id, stopping=True)
+            else:
+                self._waiting.remove(job_id)
+                self._set(job_id, state="cancelled")
+        self._changed()
+        return True
+
+```
+
+  Replace
+
+```python
+            self._changed()
+            final = self._run(job_id, source)
+            with self._lock:
+                self._set(job_id, **final)
+                self._running = None
+            self._changed()
+
+```
+
+  with
+
+```python
+            self._changed()
+            final = self._run(job_id, source)
+            with self._lock:
+                self._set(job_id, stopping=False, **final)
+                self._running = None
+            self._changed()
+
+```
+
+  `src/vid2sub/web/views.py`:
+
+  Replace
+
+```python
+    with the path as typed, which Open in editor sends back to `open`; its state, stage and
+    progress (a chunk or a translation batch: index, of); and once it has run, the pipeline's
+    status, the reason where it didn't finish, the fix (§17.3), the files written and the
+    notes. A job opens in the editor once it is done and its subtitles are there."""
+    out = []
+    for j in jobs:
+        r = j.result
+```
+
+  with
+
+```python
+    with the path as typed, which Open in editor sends back to `open`; its state, stage and
+    progress (a chunk or a translation batch: index, of); and once it has run, the pipeline's
+    status, the reason where it didn't finish, the fix (§17.3), the files written and the
+    notes; `stopping` while a cancelled job finishes its chunk (Decision 7). A job opens in the
+    editor once it is done and its subtitles are there."""
+    out = []
+    for j in jobs:
+        r = j.result
+```
+
+  Replace
+
+```python
+                    "status": r.status if r else None,
+                    "reason": (r.reason or None) if r is not None and not finished else None,
+                    "hint": j.hint or None, "written": list(r.written) if r else [],
+                    "notes": list(r.notes) if r else [],
+                    "can_open": j.state == "done" and finished})
+    return {"jobs": out}
+
+```
+
+  with
+
+```python
+                    "status": r.status if r else None,
+                    "reason": (r.reason or None) if r is not None and not finished else None,
+                    "hint": j.hint or None, "written": list(r.written) if r else [],
+                    "notes": list(r.notes) if r else [], "stopping": j.stopping,
+                    "can_open": j.state == "done" and finished})
+    return {"jobs": out}
+
+```
+
+  `frontend/src/types.ts`:
+
+  Replace
+
+```ts
+  toml: string;
+};
+
+/** The `endpoint_test_result` message: what an endpoint's /v1/models said, or why it failed. */
+export type EndpointTestResult = { endpoint: string; n: number | null; ok: boolean; models: string[]; more: number; error: string | null };
+
+```
+
+  with
+
+```ts
+  toml: string;
+};
+
+/** One job on the engine's queue (views.jobs_view; spec §17, S36): `name` is the file's bare
+ * name, `path` the path as typed (Open in editor sends it to `open`); `progress` is the chunk or
+ * translation batch it is on; `status`, `reason`, `written` and `notes` are the pipeline's, once
+ * it has run, and `hint` names the fix (§17.3); `stopping` until a cancelled job stops. */
+export type JobItem = {
+  id: string;
+  name: string;
+  path: string;
+  state: "queued" | "running" | "done" | "failed" | "cancelled";
+  stage: string | null;
+  progress: [number, number] | null;
+  status: string | null;
+  reason: string | null;
+  hint: string | null;
+  written: string[];
+  notes: string[];
+  stopping: boolean; // cancelled while running: it stops before its next chunk or batch
+  can_open: boolean;
+};
+
+/** The `jobs` output, or null where there are no jobs (the Pages editor). */
+export type JobsView = { jobs: JobItem[] };
+
+/** The `endpoint_test_result` message: what an endpoint's /v1/models said, or why it failed. */
+export type EndpointTestResult = { endpoint: string; n: number | null; ok: boolean; models: string[]; more: number; error: string | null };
+
+```
+
+  `frontend/src/lib/jobs.ts`:
+
+```ts
+// The Jobs page's words (spec §17.2, §19.2, §19.3; S36): each job's stage, with the chunk or
+// translation batch it is on ("transcribing 7/11"), what a finished one did, why one failed (its
+// hint is shown beside it), and the one line the polite live region announces: the running job,
+// else the one that finished last. Paths are typed one a line.
+
+import type { JobItem } from "@/types";
+
+const STAGES: Record<string, string> = {
+  probe: "reading the video",
+  hash: "checking the video",
+  download: "downloading",
+  detect: "detecting the language",
+  decode: "decoding the audio",
+  speech: "finding speech",
+  transcribe: "transcribing",
+  translate: "translating",
+};
+
+export function jobLine(j: JobItem): string {
+  switch (j.state) {
+    case "queued": return "waiting";
+    case "running": {
+      if (!j.stage) return "starting";
+      const stage = STAGES[j.stage] ?? j.stage;
+      return j.progress ? `${stage} ${j.progress[0]}/${j.progress[1]}` : stage;
+    }
+    case "done":
+      if (j.status === "uncertain") return `the language is unclear: ${j.reason ?? ""}`.trim();
+      if (j.status === "skipped") return "skipped: its subtitles are already there";
+      return j.written.length ? `done: wrote ${j.written.join(", ")}` : "done: the subtitles were up to date";
+    case "failed": return `failed: ${j.reason ?? "see the log"}`;
+    case "cancelled": return "cancelled";
+  }
+}
+
+export function announcement(jobs: readonly JobItem[]): string {
+  const running = jobs.find((j) => j.state === "running");
+  const shown = running ?? [...jobs].reverse().find((j) => j.state !== "queued");
+  return shown ? `${shown.name}: ${jobLine(shown)}` : "";
+}
+
+export function typedPaths(text: string): string[] {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+```
+
+  `frontend/src/components/JobsPage.tsx`:
+
+```tsx
+import { type FormEvent, useState } from "react";
+
+import { announcement, jobLine, typedPaths } from "@/lib/jobs";
+import type { JobItem } from "@/types";
+
+const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
+
+/** The minimal Jobs page (spec §19.2, S36): full paths typed into a box, one a line, become jobs
+ * on the engine's queue, which runs one at a time (§17.1). Each job shows its stage and the chunk
+ * or translation batch it is on ("transcribing 7/11"), with a bar for the chunks; the running job,
+ * else the last to finish, is announced in a polite live region (§19.3, S37). Cancel takes a
+ * queued job out, or stops the running one before its next chunk or batch (Decision 7), so it
+ * says "Stopping…" until then, in every tab (the engine's `stopping`). A failed job shows its reason and the fix (§17.3); a finished one
+ * opens in the editor. The jobs are the engine's, so every tab shows them and closing a tab
+ * cancels nothing. Every name and reason is plain text (§6.3). */
+export function JobsPage({ jobs, onSubmit, onCancel, onOpen }: {
+  jobs: readonly JobItem[];
+  onSubmit: (paths: string[]) => void;
+  onCancel: (id: string) => void;
+  onOpen: (path: string) => void;
+}) {
+  const [text, setText] = useState("");
+  const [stopping, setStopping] = useState<ReadonlySet<string>>(new Set());
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const paths = typedPaths(text);
+    if (!paths.length) return;
+    onSubmit(paths);
+    setText("");
+  };
+  const cancel = (id: string) => {
+    setStopping((s) => new Set(s).add(id));
+    onCancel(id);
+  };
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-4" data-testid="jobs-page">
+      <form className="flex flex-col gap-2" onSubmit={submit}>
+        <label htmlFor="jobs-paths" className="text-sm font-bold">Videos to make subtitles for: one full path a line</label>
+        <textarea id="jobs-paths" rows={3} className="rounded-md border border-input bg-background px-2 py-1 font-mono text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" value={text} onChange={(e) => setText(e.target.value)} placeholder="/full/path/to/Show - S01E01.mkv" spellCheck={false} data-testid="jobs-paths" />
+        <div className="flex items-center gap-2 text-sm">
+          <button type="submit" className="rounded-md bg-primary px-3 py-1 font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50" disabled={!typedPaths(text).length} data-testid="jobs-start">Start</button>
+          <span className="text-muted-foreground">They run one at a time, with the session's targets and formats (Settings). Closing this tab cancels nothing.</span>
+        </div>
+      </form>
+      <p role="status" aria-live="polite" className="sr-only" data-testid="jobs-announce">{announcement(jobs)}</p>
+      {jobs.length === 0 ? (
+        <p className="text-muted-foreground">No jobs yet.</p>
+      ) : (
+        <ol aria-label="Jobs" className="flex flex-col gap-2" data-testid="jobs-list">
+          {jobs.map((j) => {
+            const asked = j.stopping || stopping.has(j.id); // the engine's word, or this tab's click
+            return (
+            <li key={j.id} className="flex flex-col gap-1 rounded-md border border-border bg-card p-2 text-sm" data-testid="job" data-state={j.state} data-stopping={j.stopping || undefined}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-bold break-all">{j.name}</span>
+                <span className={j.state === "failed" ? "text-destructive" : "text-muted-foreground"} data-testid="job-line">{jobLine(j)}</span>
+                <span className="ml-auto flex gap-2">
+                  {(j.state === "queued" || j.state === "running") && (
+                    <button type="button" className={button} onClick={() => cancel(j.id)} disabled={asked} data-testid="job-cancel">
+                      {asked ? "Stopping…" : "Cancel"}
+                    </button>
+                  )}
+                  {j.can_open && <button type="button" className={button} onClick={() => onOpen(j.path)} data-testid="job-open">Open in editor</button>}
+                </span>
+              </div>
+              {j.state === "running" && j.progress && (
+                <progress className="h-1.5 w-full accent-(--brand-orange)" value={j.progress[0]} max={j.progress[1]} aria-label={`${j.name}: ${jobLine(j)}`} />
+              )}
+              {j.hint && <span data-testid="job-hint">→ {j.hint}</span>}
+              {j.notes.map((note, k) => <span key={k} className="text-muted-foreground">{note}</span>)}
+            </li>
+            );
+          })}
+        </ol>
+      )}
+    </div>
+  );
+}
+```
+
+  `frontend/src/App.tsx`:
+
+  Replace
+
+```tsx
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { Editor, type Requests, type Saving } from "@/components/Editor";
+import { resultNotices } from "@/components/SaveBar";
+import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer";
+import { TopBar } from "@/components/TopBar";
+```
+
+  with
+
+```tsx
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { Editor, type Requests, type Saving } from "@/components/Editor";
+import { JobsPage } from "@/components/JobsPage";
+import { resultNotices } from "@/components/SaveBar";
+import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer";
+import { TopBar } from "@/components/TopBar";
+```
+
+  Replace
+
+```tsx
+import { retranslateNotice } from "@/lib/retranslate";
+import { pacer } from "@/lib/sends";
+import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
+
+type Ask = { episode: string; n: number };
+
+```
+
+  with
+
+```tsx
+import { retranslateNotice } from "@/lib/retranslate";
+import { pacer } from "@/lib/sends";
+import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
+
+type Ask = { episode: string; n: number };
+
+```
+
+  Replace
+
+```tsx
+  const busy = useShinyOutputValue<Busy>("busy");
+  const progress = useShinyOutputValue<Progress>("progress");
+  const settings = useShinyOutputValue<SettingsView | null>("settings");
+  // Every input is set from here too. Each request carries a count, so the same path asked for
+  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
+```
+
+  with
+
+```tsx
+  const busy = useShinyOutputValue<Busy>("busy");
+  const progress = useShinyOutputValue<Progress>("progress");
+  const settings = useShinyOutputValue<SettingsView | null>("settings");
+  const jobs = useShinyOutputValue<JobsView | null>("jobs");
+  // Every input is set from here too. Each request carries a count, so the same path asked for
+  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
+```
+
+  Replace
+
+```tsx
+  const setTypedKey = useSetShinyInput<{ endpoint: string; key: string; n: number } | null>("typed_key", null, { priority: "event", debounceMs: 0 });
+  const setEndpointTest = useSetShinyInput<{ endpoint: string; n: number } | null>("endpoint_test", null, { priority: "event", debounceMs: 0 });
+  const setDefaults = useSetShinyInput<(DefaultsChange & { n: number }) | null>("session_defaults", null, { priority: "event", debounceMs: 0 });
+  const sent = useRef(0);
+  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
+  const pace = useMemo(() => pacer(), []);
+```
+
+  with
+
+```tsx
+  const setTypedKey = useSetShinyInput<{ endpoint: string; key: string; n: number } | null>("typed_key", null, { priority: "event", debounceMs: 0 });
+  const setEndpointTest = useSetShinyInput<{ endpoint: string; n: number } | null>("endpoint_test", null, { priority: "event", debounceMs: 0 });
+  const setDefaults = useSetShinyInput<(DefaultsChange & { n: number }) | null>("session_defaults", null, { priority: "event", debounceMs: 0 });
+  const setJobsSubmit = useSetShinyInput<{ paths: string[]; n: number } | null>("jobs_submit", null, { priority: "event", debounceMs: 0 });
+  const setJobCancel = useSetShinyInput<{ job: string; n: number } | null>("job_cancel", null, { priority: "event", debounceMs: 0 });
+  const sent = useRef(0);
+  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
+  const pace = useMemo(() => pacer(), []);
+```
+
+  Replace
+
+```tsx
+    pace(() => setDefaults({ ...change, n }));
+  };
+
+  // Closing the tab with unsaved edits warns first (S34): listened for only while there are
+  // some, as MDN advises; preventDefault, and returnValue for older browsers.
+  const dirty = episode?.dirty ?? false;
+```
+
+  with
+
+```tsx
+    pace(() => setDefaults({ ...change, n }));
+  };
+
+  // The Jobs page (spec §19.2, S36), where the engine makes subtitles (`generate`; Pages hides
+  // it, §21). The editor stays mounted while it shows, so the player keeps its place.
+  const [screen, setScreen] = useState<"editor" | "jobs">("editor");
+  const generate = capabilities?.generate ?? false;
+  const onSubmitJobs = (paths: string[]) => {
+    const n = ++sent.current;
+    pace(() => setJobsSubmit({ paths, n }));
+  };
+  const onCancelJob = (job: string) => {
+    const n = ++sent.current;
+    pace(() => setJobCancel({ job, n }));
+  };
+  const onOpenJob = (path: string) => {
+    setOpen({ path, n: ++sent.current });
+    setScreen("editor");
+  };
+
+  // Closing the tab with unsaved edits warns first (S34): listened for only while there are
+  // some, as MDN advises; preventDefault, and returnValue for older browsers.
+  const dirty = episode?.dirty ?? false;
+```
+
+  Replace
+
+```tsx
+          )}
+        </div>
+      )}
+      <main className="min-h-0 flex-1" data-testid="main">
+        <Editor
+          episode={episode ?? null}
+          busy={busy ?? null}
+          progress={progress ?? null}
+          pathInput={capabilities?.path_input ?? false}
+          generate={capabilities?.generate ?? false}
+          onOpen={(path) => setOpen({ path, n: ++sent.current })}
+          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+          requests={requests}
+```
+
+  with
+
+```tsx
+          )}
+        </div>
+      )}
+      {generate && (
+        <nav aria-label="Screens" className="flex gap-1 border-b border-border bg-card px-4 text-sm">
+          {(["editor", "jobs"] as const).map((s) => (
+            <button key={s} type="button" aria-current={screen === s ? "page" : undefined} onClick={() => setScreen(s)}
+              className={`border-b-2 px-2 py-1.5 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring ${screen === s ? "border-(--brand-orange) font-bold" : "border-transparent"}`} data-testid={`nav-${s}`}>
+              {s === "editor" ? "Editor" : "Jobs"}
+            </button>
+          ))}
+        </nav>
+      )}
+      {generate && screen === "jobs" && (
+        <section aria-label="Jobs" className="min-h-0 flex-1">
+          <JobsPage jobs={jobs?.jobs ?? []} onSubmit={onSubmitJobs} onCancel={onCancelJob} onOpen={onOpenJob} />
+        </section>
+      )}
+      <main className="min-h-0 flex-1" hidden={generate && screen === "jobs"} data-testid="main">
+        <Editor
+          episode={episode ?? null}
+          busy={busy ?? null}
+          progress={progress ?? null}
+          pathInput={capabilities?.path_input ?? false}
+          generate={generate}
+          onOpen={(path) => setOpen({ path, n: ++sent.current })}
+          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+          requests={requests}
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_jobs.py
+  tests/test_web_jobs.py -q` (`22 passed`), `cd frontend && npm run typecheck && npx vitest run`
+  (`Test Files  19 passed (19)`, `Tests  88 passed (88)`), then `make build && uv run pytest -m
+  e2e tests/e2e/test_jobs.py -q` three times (`2 passed` each; the cancel test makes a 196 s
+  clip, about two seconds). `make check`. Expected: `998 passed, 2 skipped, 35 deselected`
+  (twice), `Test Files  19 passed (19)`, `Tests  88 passed (88)`, `All checks passed!`, `no
+  leaks found`. Then `make e2e`. Expected: `31 passed`.
+- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(frontend): 🤖 the Jobs page takes typed paths, shows each job's stage and chunk and announces it politely, cancels between chunks, and opens a finished job in the editor
+
+JobsPage (spec §19.2, §19.3; S36, S37), on its own screen beside the
+editor where the engine makes subtitles (capabilities.generate; §21 hides
+Jobs in Pages), the editor kept mounted meanwhile. Full paths, one a
+line, go to `jobs_submit`; each job shows its stage and the chunk or
+batch it is on ("transcribing 7/11", lib/jobs.ts's jobLine), a <progress>
+bar for the chunks, its reason and fix (§17.3) when it fails, and Open in
+editor, which sends its path to `open`, once it is done. A polite live
+region announces the running job, else the one that finished last.
+Cancel sends `job_cancel`.
+
+The page found that a Cancel of the running job could reach the engine
+after the chunk it waited on had ended, with nothing to show it hadn't:
+JobView gains `stopping` (set when the running job is asked to stop,
+cleared when it ends), the jobs view carries it, and every tab says
+"Stopping…" until the job stops; the e2e test waits for it before the
+fake server answers.
+
+The new tests failed first with: Error: Failed to resolve import
+"./jobs"; Error: Failed to resolve import "./JobsPage"; AssertionError:
+assert ([('running', True)] in []) (no stopping state); and in Chromium,
+before the frontend change: Locator.click: Timeout 30000ms exceeded ...
+waiting for get_by_test_id("nav-jobs"). The cancel test, against a fake
+whisper.cpp server holding the first of two 180-second chunks, sees
+transcribing 1/2, a queued job cancelled at once, the running one
+stopping, then cancelled with chunk-0001.flac never asked for and no
+sidecar written.
+
+Docs read: MDN on <progress>, role="status" and aria-live="polite",
+aria-current="page" and the hidden attribute; React 19's lists and keys;
+Playwright 1.64's to_have_attribute and get_by_text; the pipeline's
+chunk plan (media/chunk.py's plan_chunks, the catalog's 180-second
+Qwen3-ASR limit) and detection's chunk-9000 upload names.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 19
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/jobs.py src/vid2sub/web/views.py tests/test_jobs.py tests/test_web_jobs.py
+  frontend/src/App.tsx frontend/src/types.ts frontend/src/components/JobsPage.tsx
+  frontend/src/components/JobsPage.test.ts frontend/src/lib/jobs.ts frontend/src/lib/jobs.test.ts
+  tests/e2e/test_jobs.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1
+  --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: the threads (listeners on the worker
+  thread hand changes to each tab's loop, in that session's context, and a closed tab stops
+  listening); that a job reads the session's defaults when it starts, never `allow_cloud`; that
+  Cancel of the running job never interrupts a chunk and stops before the next one, and every
+  tab shows it stopping; that the demo runs only its own clip and writes only in its folder; that
+  `jobs_submit` refuses anything but full paths, whole, echoing nothing; that a failed job shows
+  its reason and fix; that Pages has no jobs; that the live region announces one line, politely.
+  The forward review over Tasks 21, 22 and 23 and Phase 3's Tasks 3, 5 and 6 (Task 21's CI e2e
+  job runs `tests/e2e/test_jobs.py`, which makes its clip with ffmpeg; Task 22's README says the
+  Jobs page takes full paths and uses the session's targets and formats from Settings; Phase
+  3 Task 3's `Queue.submit(…, runner=)` and `review.start(review, queue, job_ctx)` take
+  `Runtime.job_context`; Phase 3 Task 5's pause and resume tell the same listeners, and its
+  requeued job keeps `stopping` false; Phase 3 Task 6's Jobs page grows from `JobsPage` and
+  `jobs_view`, with `RunOptions.wait_on_connection_s` still M1's 600 s here). The docs this task
+  made untrue: none expected. Then the close, its own commit, holding this plan with this task's
+  boxes ticked and **Now** set to `Task 20: The Spark's Qwen3-ASR endpoint, open.`, and the
+  spec's S36 set to `built` (Proof: `tests/test_jobs.py; tests/test_web_jobs.py;
+  tests/e2e/test_jobs.py`) and S37 set to `built` (Proof: `tests/e2e/test_editor_view.py;
+  tests/e2e/test_editing.py; tests/e2e/test_jobs.py`), with the message in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 19: The Jobs page
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: none
+Tier: 2
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+Findings: none
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 19
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -25719,7 +33705,10 @@ vid2sub serve
   rewritten, and reopening shows the corrections.
 - [ ] **Step 5: [Dan] Retranslate stale cues (S30):** after Step 4, **Retranslate stale**.
   Expected: only the cues whose source changed get new English; the two translations you
-  corrected are kept.
+  corrected are kept. It uses your configured route's translation model (Decision 26); if that
+  is a cloud model, tick **Allow cloud models** first, since the box unticks after every request.
+  It asks the route's servers what they serve before it knows anything is stale, so
+  "retranslating" shows even when nothing is, and a server that's down gives an error here.
 - [ ] **Step 6: [Dan] An outside edit (S31):** edit the episode's `.en.srt` in another editor
   (change one line), save it, then reopen the episode in vid2sub. Expected: the editor says it
   kept your outside edit, and shows the changed line.
@@ -25871,3 +33860,4 @@ fi
 | Task 6 (planning) | Minor | `src/vid2sub/store.py` | A crash (not an exception) between a projection record and its file write leaves the record naming the new head while the file holds the old one; an outside edit to that file before the next Save would then replace the new head without a conflict | open |
 | Task 12 (planning) | Minor | `frontend/package.json` | `npm install` reports 8 audit findings in the pinned dev dependencies (the same pins as `recordings`); none is triaged yet, so Task 21 or the phase end checks whether any reaches the built `ui.js` | open |
 | Task 2 (planning) | Minor | `.github/workflows/ci.yml` | The floor job's hand-kept test list lacks `tests/test_edit.py` (Task 2) and `tests/test_hostile_fixtures.py` (Task 13), both pure; it could pick its files by their imports, as Phase 4 Task 6's `tests/pyodide_run.py` does (found writing Phase 4 Task 6) | open |
+| Task 18 (planning) | Minor | `src/vid2sub/engines/clients.py` | The drawer's Test has httpx's per-read timeout but no overall deadline or size cap, so a server that trickles its `/v1/models` answer holds that Test open (found by the security review of Task 18's listing) | open |
