@@ -33,8 +33,9 @@ The diagrams are in [`docs/architecture.md`](../../architecture.md).
 
 Status: **planned**, not built yet; **built**, its task closed and its proof passes; **verified**,
 checked for real, by Dan or a live test. Phase 1 was built before this table existed, so its rows
-cite the M1 plan's tasks (`docs/superpowers/plans/2026-10-14-vid2sub-m1-cli.md`). Later phases'
-task numbers are filled in when their plans are written.
+cite the M1 plan's tasks (`docs/superpowers/plans/2026-10-14-vid2sub-m1-cli.md`). A later
+phase's rows name the phase; each task's close fills in its task numbers and the proof's real
+test names.
 
 | ID | Situation | Expected | Phase and task | Proof | Status |
 |---|---|---|---|---|---|
@@ -106,6 +107,8 @@ task numbers are filled in when their plans are written.
 | S60 | speaker labels | cues name who speaks | optional | not in v1 |
 | S61 | the version history of a track | earlier versions listed and restorable | optional | the data is kept from Phase 2's Save on (§20) |
 | S62 | a sidecar after many saves | compacted without losing a head or a projection | optional | about 50 KB per saved version (§14.7) |
+| S64 | Save meets a subtitle file vid2sub didn't write | the UI asks, file by file, whether to replace it (§6.6) | optional | Save names the file and the `--overwrite-foreign` command meanwhile ([Q&A item 22](2026-10-14-vid2sub-qa.md)) |
+| S65 | a video renamed outside vid2sub, its sidecar under the old name | the sidecar re-linked by identity (§8.3) | optional | nothing is lost: renaming the video back finds it ([Q&A item 23](2026-10-14-vid2sub-qa.md)) |
 
 ## Open items and risks
 
@@ -536,7 +539,8 @@ Any script on the app's origin controls everything, so nothing hostile may run t
   equivalent create-new flags), fsync, then `os.replace`;
 - refuse a target that exists and isn't a regular file (symlinks included);
 - **never overwrite a file vid2sub didn't write** (one with no projection record in the sidecar,
-  §15.3); the UI asks per file, the CLI needs `--overwrite-foreign`;
+  §15.3); the UI leaves it and names it, with the command that replaces it, and the CLI needs
+  `--overwrite-foreign` (Dan, 2026-10-25: asking per file in the UI is on the Later table, S64);
 - each Save carries the sidecar hash it started from (compare-and-swap, §14.6), so two tabs or a
   tab and a job can't overwrite each other;
 - on Windows, a replace that fails with a sharing violation is retried with backoff, then fails
@@ -649,7 +653,8 @@ Hashing a multi-GB file over SMB on every open is impractical. A video is identi
 `{size, quick_sha256, duration_ms}`, where `quick_sha256` hashes the size, the first MiB and the
 last MiB. The full SHA-256 is computed by streaming during a job and appended to the sidecar as an
 identity record (§14.2). On a mismatch the app warns with the difference rather than discarding
-anything; it can re-link an orphaned sidecar after a rename by identity. Two videos with the same
+anything; re-linking an orphaned sidecar after a rename, by identity, waits (S65; Dan,
+2026-10-25). Two videos with the same
 stem in one folder are refused, because their sidecars and subtitles would collide.
 
 ### 8.4 Pick the audio track
@@ -1129,7 +1134,10 @@ chunk has finished.
 
 - **Connection errors pause the whole queue** (refused, reset, tunnel down, the laptop slept)
   with a **Resume** button, instead of failing every remaining episode in turn (council). Resume
-  restarts from the failed chunk.
+  restarts from the failed chunk. So does a season's folder that can't be reached (a NAS share
+  that dropped). While paused for either, the app checks the server or the folder on a backoff,
+  30 s up to 15 min, for up to 2 hours, keeping the machine awake, and resumes by itself when it
+  answers; a person's own Pause waits for Resume (Dan, 2026-10-25).
 - Other errors fail only that job, with a hint that names the fix:
   - connection refused → "is `make tunnel` running?" (linking local-ai's how-to);
   - 401 → "`SPARK_API_KEY` isn't exported in the shell vid2sub started from; restart it from one
@@ -1190,9 +1198,11 @@ UI run from a terminal or a script.
   [--allow-cloud]`: translate the current source tracks of videos that already have a sidecar
   (folders accepted).
 - `vid2sub import SUBFILE --video VIDEO [--lang LANG]` (§15.4).
-- `vid2sub write INPUT… [--format srt|ass…]`: re-write the subtitle files from the sidecar's
-  current versions. Uses: adding ASS later, or after a Pages save in a browser that could only
-  download the sidecar.
+- `vid2sub write INPUT… [--format srt|ass…] [--merge SIDECAR]`: re-write the subtitle files
+  from the sidecar's current versions. Uses: adding ASS later, or after a Pages save in a browser
+  that could only download: `--merge` first adds the downloaded sidecar's records to the one next
+  to the video (refusing one made for another video), so nothing written since is lost (Dan,
+  2026-10-25).
 - `vid2sub models [--json]`: the catalog, with which models are usable on this machine now and
   why the others aren't.
 - `vid2sub serve [--port N] [--no-browser] [--config PATH]`: start the local web app and open the
@@ -1222,7 +1232,9 @@ UI run from a terminal or a script.
 - **Shared files:** a sidecar the CLI writes opens in the editor, and an editor save is picked up
   by `vid2sub translate --stale-only`.
 - **Running both at once is safe:** a `serve` session and a CLI batch can touch the same files,
-  because of the sidecar's compare-and-swap (§14.6).
+  because of the sidecar's compare-and-swap (§14.6). Inside the app every write to a sidecar
+  takes one lock per sidecar; between the app and a CLI run, only the moment between the last
+  re-read and the rename is unguarded (Dan, 2026-10-25).
 
 ## 19. The local web app
 
@@ -1404,7 +1416,9 @@ Every action pinned by SHA with a version comment; `persist-credentials: false`;
 ### 23.3 `pages.yml`
 
 The only workflow that deploys Pages. Triggers: push to `main`, `workflow_dispatch` (Dan,
-2026-10-14), `release: published`; pull requests build and test only. Steps: build the frontend,
+2026-10-14), and a dispatch from `release.yml` once a release is published (a release made
+with `GITHUB_TOKEN` starts no `release` workflow; Dan, 2026-10-25); pull requests build and test
+only. Steps: build the frontend,
 the Shinylive export (assets cached by version), the demo, the package index (§23.4), the Pages
 Playwright test, then `upload-pages-artifact` (with `include-hidden-files: true` for `.nojekyll`)
 and `deploy-pages`. No `gh-pages` branch.
@@ -1422,7 +1436,10 @@ and `deploy-pages`. No `gh-pages` branch.
   ```
 
   An index named with `--index` is checked before PyPI, so a later `vid2sub` on PyPI can't
-  hijack installs (verified with uv 0.13.1 by the council).
+  hijack installs while the index answers (verified with uv 0.13.1 by the council). uv moves on
+  to PyPI after a 404, so if the index ever goes (Pages off, the repo renamed), PyPI's `vid2sub`
+  would install: Dan claims the name there with a minimal release pointing to the index (Dan,
+  2026-10-25).
 - A post-deploy smoke job installs from the live index on all three operating systems.
 
 ### 23.5 README
@@ -1484,11 +1501,11 @@ is Phase 1, M2 Phase 2, and so on); the Outline at the top tracks them.
 
 **M1: the CLI, end to end.**
 - The Python CLI application, installable as a uv tool and editable from a clone (§23.5), with
-  `run`, `detect`, `translate`, `import`, `write`, `models`, `doctor`, `config init` and
-  `cache clear` (§18).
+  `run`, `detect`, `translate`, `import`, `write`, `models`, `doctor` and `config init` (§18;
+  `cache clear` came with Phase 2).
 - Behind it: `subs/`, `parse/`, `catalog.py`, `media/` (probe, identity, decode, timeline offset,
-  VAD, chunking, YouTube), the endpoint engine (Spark whisper.cpp, OpenAI,
-  `mlx-qwen3-asr serve`), the in-process `mlx-qwen3-asr` engine, cue building, translation through
+  VAD, chunking, YouTube), the endpoint engine (Spark whisper.cpp, OpenAI; Qwen3-ASR servers
+  came with Phase 2), the in-process `mlx-qwen3-asr` engine, cue building, translation through
   chatlas (Spark Gemma 4), the sidecar and projections, naming, import, the glossary,
   `vid2sub.toml`, and the non-web security rules (§6.4–§6.8, §7).
 - **Exit test:**
@@ -1504,13 +1521,14 @@ is Phase 1, M2 Phase 2, and so on); the Outline at the top tracks them.
   (§20), retranslate and staleness, external-edit handling, the settings drawer with typed keys, a
   minimal Jobs page (paths in a text box, progress, cancel), and the playback audio with the cache
   and `vid2sub cache clear` (§8.8, §8.9; Dan, 2026-10-23, so M1's episodes have sound in the
-  editor).
+  editor); the endpoint engine's Qwen3-ASR parser (`mlx-qwen3-asr serve`, the Spark's).
 - **Exit test:** open an M1 episode, fix lines, retranslate stale cues, save; edit the SRT in
   another editor and see it come back as an external version.
 
 **M3: adding, reviewing, and every platform.**
 - Add with the file browser and YouTube, detect → suggest → confirm, the Models page, the queue's
-  pause and resume, sleep inhibition, the preview copy, `faster-whisper` on Windows and Linux.
+  pause and resume, sleep inhibition, the preview copy, `faster-whisper` on Windows and Linux;
+  Add replaces the Jobs page's path box, and each job re-checks its first chunk's language.
 - **Exit test:** add a season folder, review it, run it unattended; the Windows and Linux path
   passes CI and one manual run.
 
