@@ -113,7 +113,8 @@ listings are run and revised at its phase start.)
     deploy-pages' own 10 (Task 7).
 19. **The `github-pages` environment's rule, `main` only, is the real deploy gate** (Task 7): a
     run on another branch runs that branch's copy of `pages.yml`, so only the environment, Dan's
-    setting at Task 7's Step 14, stops it deploying.
+    setting at Task 7's Step 17, stops it deploying. The rule binds only a job that names the
+    environment, as the deploy job does (Task 7's build review).
 20. **The index links each wheel by repository, tag and name, with GitHub's own digest** (Task 9),
     never a URL from the listing. Only wheels are listed; drafts, tags that aren't `v` and a
     version, releases with no wheel, wheels named for another version, and assets with no
@@ -5060,20 +5061,34 @@ Co-Authored-By: <the model's own line>
   the tab's queue, for the page's `written` answer, so edits sent meanwhile wait their turn, as
   in the local engine. Only `ok` keeps the saved episode; anything else leaves the edits unsaved
   with their draft (Review Focus 1).
-- **The re-read (spec §14.6, S47).** A Save in Chrome reads the folder's files again first. Just
-  before it writes, the page reads the sidecar once more and compares its SHA-256 with the one
-  the merge read (`read`); if another writer changed it, the page sends the files as they are now
-  and Python merges again, up to three times.
-- **All or none.** `writeAll` checks the folder's permission (asking again while the Save's
-  click still counts), opens every file for writing before writing any, aborts the rest on a
-  failure (the File System Access API writes to a swap file that only `close()` puts in place),
-  and closes the sidecar first: a write cut short after that leaves a subtitle file holding an
-  earlier version, which the next open recognises as vid2sub's own (§14.6's projection hashes).
+- **Permission on the Save's click (Decision 26; the kickoff council's reliability finding 5).**
+  A Save or a pick in Chrome asks for the folder's write permission in its click handler
+  (`readForSave`: `requestPermission` needs the click's transient activation), and only then
+  reads the folder's files and asks Python to merge. So no permission prompt ever sits between
+  the sidecar's re-read and the write.
+- **The re-read (spec §14.6, S47).** Inside the write, after the permission check and just before
+  the files open, the page reads the sidecar once more and compares its SHA-256 with the one the
+  merge read (`read`), and compares again just before the sidecar's `close()`; if another writer
+  changed it, nothing is written, the page sends the files as they are now, and Python merges
+  again, up to three times.
+- **All or none.** `writeAll` checks the folder's permission (never asking: the click asked),
+  opens every file for writing before writing any, aborts the rest on a failure (the File System
+  Access API writes to a swap file that only `close()` puts in place), and closes the sidecar
+  first: a write cut short after that leaves a subtitle file holding an earlier version, which the
+  next open recognises as vid2sub's own (§14.6's projection hashes).
 - **No handle is kept.** The folder's handle lives in a React ref, in the tab's memory (spec
   §6.9): no IndexedDB, no localStorage, so a reload or a new tab asks for the folder again.
 - **Safari and Firefox (S48), and the demo, download.** `<input webkitdirectory>` reads only, so
   the request carries no files and Save builds on the files the episode last saw (Task 1's
   `BrowserEpisode.files`); `write_files` is answered by offering each file as a download.
+- **The downloads go back by merging (Decision 25; Dan, Q&A item 24).** Replacing the folder's
+  files with the downloads would drop whatever was written since the episode was opened, so
+  after a read-only folder's Save the notice gives `vid2sub write <video> --merge <downloaded
+  sidecar>` first: `write` (M1's `commands/write.py`) gains `--merge`, which adds every record
+  the sidecar on disk lacks through `store.append` (records are never removed), refusing one
+  whose header names another video (its name, size and quick hash), then projects as `write`
+  does, leaving foreign and edited files alone. The notice says to replace the files by hand only
+  if nothing else changed the episode since it was opened. Spec §18.1 says so already.
 - **Testing the write path for real.** Playwright 1.64 can't click through
   `showDirectoryPicker`'s dialog, so the Pages tests hand the page a real directory handle
   instead: a folder in the site's origin-private file system, returned by an init script's
@@ -5088,11 +5103,13 @@ Co-Authored-By: <the model's own line>
 **Files:**
 - Create: `frontend/src/lib/folder.ts`, `frontend/src/lib/folder.test.ts`,
   `frontend/src/components/FolderPicker.tsx`, `tests/pagesite.py`,
-  `tests/pages/test_pages_files.py`
+  `tests/pages/test_pages_files.py`, `tests/test_write_merge.py`
 - Modify: `src/vid2sub/web/server.py` (the `folder`, `open_files` and `written` inputs; Save and
   a pick in the browser), `frontend/src/App.tsx`, `frontend/src/components/Editor.tsx` (`pages`
   in place of `onDemo`), `frontend/src/types.ts`, `tests/test_web_browser.py`,
-  `tests/pages/test_pages_site.py` (its helpers move to `tests/pagesite.py`)
+  `tests/pages/test_pages_site.py` (its helpers move to `tests/pagesite.py`);
+  `src/vid2sub/store.py` (`merge`), `src/vid2sub/pipeline.py` (`write_one`'s `merge`),
+  `src/vid2sub/commands/write.py` (`--merge`), `README.md` (the command's line)
 - Modify at the close: this plan; the spec (S48 `built`; S47 stays `planned` until Task 4's
   Pages tests are in, as its Proof names them)
 
@@ -5111,10 +5128,16 @@ Co-Authored-By: <the model's own line>
     `WRITES = 3`, `WRITE_TIMEOUT = 300.0`, `BAD_FILES`, `KEPT_CHANGING`, `OPEN_A_FOLDER`;
     `Editor.browser`, `Editor.written(request)`.
   - `frontend/src/lib/folder.ts`: `Folder` (`name`, `writable`, `names()`, `file(name)`,
-    `write(files)`), `pickFolder()`, `handleFolder(dir)`, `filesFolder(list)`, `writeAll(dir,
-    files)`, `FolderError(why)`, `FAILURES`, `quickHash(blob)`, `sha256Hex(blob)`,
-    `nearby(video, name)`, `toBase64`, `fromBase64`, `readFiles(folder, names)`,
-    `download(files)`, `MIB`, `GLOSSARY`.
+    `allow()`, `write(files, guard?)`), `Guard` (`sidecar`, `read`, `deadline`), `pickFolder()`,
+    `handleFolder(dir)`, `filesFolder(list)`, `askToWrite(dir)`, `writeAll(dir, files, guard)`,
+    `readForSave(folder, video, {ask})`, `FolderError(why)` (`why` adds `changed`),
+    `FAILURES`, `quickHash(blob)`, `sha256Hex(blob)`, `nearby(video, name)`, `toBase64`,
+    `fromBase64`, `readFiles(folder, names)`, `download(files)`, `downloadedNotice(video,
+    sidecar)`, `MERGE_COMMAND`, `MIB`, `GLOSSARY`.
+  - `vid2sub write VIDEO --merge SIDECAR` (one video only, else exit 64);
+    `store.merge(video, identity, data) -> (Sidecar, gained)` (a projection record only where
+    the file there holds its bytes), `store.OtherVideo`;
+    `pipeline.write_one(source, ctx, *, merge=None)`. Its `--json` events name no path.
   - `FolderPicker` (`onPicked`, `onError`, `disabled`); `Editor`'s `pages` prop (`onFolder`,
     `found`, `onPick`, `onDemo`, `onError`); test ids `open-folder`, `folder-input`, `found`,
     `found-episode`.
@@ -5136,10 +5159,11 @@ root (save it to a file first).
 // @vitest-environment node
 // The browser editor's folder (spec §21, §8.3; S47, S48; the Phase 4 plan's Review Focus 1 and 2):
 // the quick hash is vid2sub's own, read from two MiB of any video, and a Save's files are written
-// all or none. Node's environment: it has crypto.subtle, Blob and DOMException as browsers do.
+// all or none, the sidecar read again just before (Decision 26). Node's environment: it has
+// crypto.subtle, Blob and DOMException as browsers do.
 import { describe, expect, it } from "vitest";
 
-import { type DirectoryHandle, FolderError, MIB, filesFolder, fromBase64, nearby, quickHash, toBase64, writeAll } from "./folder";
+import { type DirectoryHandle, FolderError, MIB, filesFolder, fromBase64, handleFolder, nearby, quickHash, readForSave, toBase64, writeAll } from "./folder";
 
 /** Byte k is k % 251, as the Python side of these cases has it. */
 const pattern = (n: number) => Uint8Array.from({ length: n }, (_, k) => k % 251);
@@ -5197,14 +5221,18 @@ describe("a folder read through <input webkitdirectory> (Safari, Firefox)", () =
   });
 });
 
-/** A directory handle over a Map, recording what happens to each file. */
-function fakeFolder({ permission = "granted", request = "granted", missing = "" }: { permission?: string; request?: string; missing?: string } = {}) {
-  const files = new Map<string, Uint8Array<ArrayBuffer>>([["a.vid2sub.jsonl", new Uint8Array([1])]]);
+/** A directory handle over a Map, recording what happens to each file: a read, a permission
+ * asked for, a file opened, put in place or let go. `changeOn` names a file whose opening
+ * stands for another writer replacing the sidecar meanwhile. */
+function fakeFolder({ permission = "granted", request = "granted", missing = "", changeOn = "" }: { permission?: string; request?: string; missing?: string; changeOn?: string } = {}) {
+  const files = new Map<string, Uint8Array<ArrayBuffer>>([["a.vid2sub.jsonl", new Uint8Array([1])], ["a.en.srt", new Uint8Array([4])]]);
   const log: string[] = [];
   const dir = {
     kind: "directory",
     name: "show",
-    async *entries() {},
+    async *entries() {
+      for (const name of [...files.keys()]) yield [name, { kind: "file", name }];
+    },
     queryPermission: async () => permission,
     requestPermission: async () => { log.push("asked"); return request; },
     async getFileHandle(name: string) {
@@ -5212,10 +5240,11 @@ function fakeFolder({ permission = "granted", request = "granted", missing = "" 
       return {
         kind: "file",
         name,
-        getFile: async () => new File([files.get(name) ?? new Uint8Array()], name),
+        getFile: async () => { log.push(`read ${name}`); return new File([files.get(name) ?? new Uint8Array()], name); },
         async createWritable() {
           let pending: Uint8Array<ArrayBuffer> | null = null;
           log.push(`open ${name}`);
+          if (name === changeOn) files.set("a.vid2sub.jsonl", new Uint8Array([9]));
           return {
             write: async (data: Uint8Array<ArrayBuffer>) => { pending = data; },
             close: async () => { if (pending) files.set(name, pending); log.push(`close ${name}`); },
@@ -5232,36 +5261,80 @@ const SAVE = [
   { name: "a.vid2sub.jsonl", data: new Uint8Array([2]) },
   { name: "a.en.srt", data: new Uint8Array([3]) },
 ];
+/** The sidecar as Python's merge read it: the SHA-256 of the fake folder's first bytes, [1]. */
+const GUARD = { sidecar: "a.vid2sub.jsonl", read: "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a" };
 
 describe("writing a Save's files (Review Focus 1)", () => {
-  it("opens every file, then puts them in place, the sidecar first", async () => {
+  it("reads the sidecar again just before it opens the files, and once more before it puts them in place, the sidecar first", async () => {
     const { dir, files, log } = fakeFolder();
-    await writeAll(dir, SAVE);
-    expect(log).toEqual(["open a.vid2sub.jsonl", "open a.en.srt", "close a.vid2sub.jsonl", "close a.en.srt"]);
+    await writeAll(dir, SAVE, GUARD);
+    expect(log).toEqual(["read a.vid2sub.jsonl", "open a.vid2sub.jsonl", "open a.en.srt", "read a.vid2sub.jsonl", "close a.vid2sub.jsonl", "close a.en.srt"]);
     expect(files.get("a.vid2sub.jsonl")).toEqual(new Uint8Array([2]));
     expect(files.get("a.en.srt")).toEqual(new Uint8Array([3]));
   });
 
-  it("asks for the folder's permission again where it lapsed, while the click still counts", async () => {
-    const { dir, log } = fakeFolder({ permission: "prompt" });
-    await writeAll(dir, SAVE);
-    expect(log[0]).toBe("asked");
+  it("never asks for permission itself, so no prompt sits between the re-read and the write", async () => {
+    // why: Decision 26: the Save's click asks (readForSave); a prompt here would hold the write
+    // open while another writer changes the sidecar after its re-read.
+    const { dir, files, log } = fakeFolder({ permission: "prompt" });
+    await expect(writeAll(dir, SAVE, GUARD)).rejects.toEqual(new FolderError("permission"));
+    expect(log).toEqual([]);
+    expect(files.get("a.vid2sub.jsonl")).toEqual(new Uint8Array([1]));
+  });
+
+  it("writes nothing when the sidecar changed since Python's merge read it", async () => {
+    // why: spec §14.6: another writer's sidecar is merged again, never written over.
+    const { dir, files, log } = fakeFolder();
+    files.set("a.vid2sub.jsonl", new Uint8Array([5]));
+    await expect(writeAll(dir, SAVE, GUARD)).rejects.toEqual(new FolderError("changed"));
+    expect(log).toEqual(["read a.vid2sub.jsonl"]);
+    expect(files.get("a.vid2sub.jsonl")).toEqual(new Uint8Array([5]));
+  });
+
+  it("lets go of every file when the sidecar changes while they are open", async () => {
+    // why: the second compare, just before the sidecar's close(), catches a writer between the
+    // re-read and the write.
+    const { dir, files, log } = fakeFolder({ changeOn: "a.en.srt" });
+    await expect(writeAll(dir, SAVE, GUARD)).rejects.toEqual(new FolderError("changed"));
+    expect(log).toEqual(["read a.vid2sub.jsonl", "open a.vid2sub.jsonl", "open a.en.srt", "read a.vid2sub.jsonl", "abort a.vid2sub.jsonl", "abort a.en.srt"]);
+    expect(files.get("a.vid2sub.jsonl")).toEqual(new Uint8Array([9]));
+    expect(files.get("a.en.srt")).toEqual(new Uint8Array([4]));
   });
 
   it("writes nothing when the permission was taken back", async () => {
     // why: a revoked permission must leave the folder as it was, and say so.
-    const { dir, files, log } = fakeFolder({ permission: "prompt", request: "denied" });
-    await expect(writeAll(dir, SAVE)).rejects.toEqual(new FolderError("permission"));
-    expect(log).toEqual(["asked"]);
+    const { dir, files, log } = fakeFolder({ permission: "denied" });
+    await expect(writeAll(dir, SAVE, GUARD)).rejects.toEqual(new FolderError("permission"));
+    expect(log).toEqual([]);
     expect(files.get("a.vid2sub.jsonl")).toEqual(new Uint8Array([1]));
   });
 
   it("writes nothing when the folder has moved, and lets go of what it had opened", async () => {
     // why: a file of the Save missing mid-way must not leave the sidecar put in place without it.
     const { dir, files, log } = fakeFolder({ missing: "a.en.srt" });
-    await expect(writeAll(dir, SAVE)).rejects.toEqual(new FolderError("gone"));
-    expect(log).toEqual(["open a.vid2sub.jsonl", "abort a.vid2sub.jsonl"]);
+    await expect(writeAll(dir, SAVE, GUARD)).rejects.toEqual(new FolderError("gone"));
+    expect(log).toEqual(["read a.vid2sub.jsonl", "open a.vid2sub.jsonl", "abort a.vid2sub.jsonl"]);
     expect(files.get("a.vid2sub.jsonl")).toEqual(new Uint8Array([1]));
+  });
+});
+
+describe("a Save's click (Decision 26)", () => {
+  it("asks for write permission first, then reads the files for Python's merge", async () => {
+    // why: requestPermission needs the click (transient activation), and asked here no prompt
+    // can sit inside the compare-and-swap between the re-read and the write (spec §14.6).
+    const { dir, log } = fakeFolder({ permission: "prompt" });
+    const read = await readForSave(handleFolder(dir), "a.mkv");
+    expect(log).toEqual(["asked", "read a.en.srt", "read a.vid2sub.jsonl"]);
+    expect(read.names).toEqual(["a.en.srt", "a.vid2sub.jsonl"]);
+    expect(Object.keys(read.files ?? {})).toEqual(["a.en.srt", "a.vid2sub.jsonl"]);
+  });
+
+  it("reads nothing when the person refuses, and nothing at all from a folder it can't write", async () => {
+    const { dir, log } = fakeFolder({ permission: "prompt", request: "denied" });
+    await expect(readForSave(handleFolder(dir), "a.mkv")).rejects.toEqual(new FolderError("permission"));
+    expect(log).toEqual(["asked"]);
+    expect(await readForSave(filesFolder([]), "a.mkv")).toEqual({ files: null, names: null });
+    expect(await readForSave(null, "")).toEqual({ files: null, names: null });
   });
 });
 ```
@@ -5286,8 +5359,9 @@ export const MIB = 1 << 20;
 export const GLOSSARY = "vid2sub.glossary.toml";
 
 /** Why a write failed, for the person: the folder's permission was taken back, or the folder
- * isn't where it was (moved, renamed or deleted), or anything else (Review Focus 1). */
-export type WriteFailure = "permission" | "gone" | "write";
+ * isn't where it was (moved, renamed or deleted), or anything else (Review Focus 1); or, for
+ * Python, that the sidecar changed since its merge read it (spec §14.6), so it merges again. */
+export type WriteFailure = "permission" | "gone" | "write" | "changed";
 
 export class FolderError extends Error {
   constructor(readonly why: WriteFailure) {
@@ -5299,6 +5373,7 @@ export const FAILURES: Record<WriteFailure, string> = {
   permission: "vid2sub may no longer write to that folder, so nothing was saved: open the folder again to save your edits",
   gone: "the folder isn't where it was (moved or renamed?), so nothing was saved: open it again to save your edits",
   write: "the browser couldn't write to that folder, so nothing was saved: open it again to save your edits",
+  changed: "the sidecar changed while it was being saved, so nothing was saved: save again",
 };
 
 /** A folder the page reads, and writes where the browser lets it. */
@@ -5307,10 +5382,16 @@ export interface Folder {
   readonly writable: boolean;
   names(): Promise<string[]>;
   file(name: string): Promise<File>;
-  write(files: readonly Written[]): Promise<void>;
+  /** Asks for write permission where it lapsed: on a Save's click, while the click counts. */
+  allow(): Promise<void>;
+  write(files: readonly Written[], guard?: Guard): Promise<void>;
 }
 
 export type Written = { name: string; data: Uint8Array<ArrayBuffer> };
+
+/** What a write checks first: the sidecar's name and its SHA-256 as Python's merge read it, null
+ * where the page couldn't read it (spec §14.6). */
+export type Guard = { sidecar?: string; read?: string | null };
 
 // The File System Access API's shapes, which TypeScript's DOM library leaves out (MDN).
 type Permission = "granted" | "denied" | "prompt";
@@ -5372,24 +5453,49 @@ export function handleFolder(dir: DirectoryHandle): Folder {
         throw new FolderError(why(err));
       }
     },
-    write: (files) => writeAll(dir, files),
+    allow: () => askToWrite(dir),
+    write: (files, guard) => writeAll(dir, files, guard),
   };
 }
 
-/** Every file, or none: the folder's permission is checked (and asked again, while the Save's
- * click still counts), every file is opened for writing before any is written, and a failure
- * aborts the files not yet closed, whose writes the browser then throws away (createWritable
- * writes a swap file that only close() puts in place, MDN). The sidecar comes first, as Save
- * lists it, so a cut-short write leaves at most a subtitle file holding an earlier version,
- * which the next open recognises as vid2sub's own (spec §14.6). */
-export async function writeAll(dir: DirectoryHandle, files: readonly Written[]): Promise<void> {
-  const writables: Writable[] = [];
+/** Asks for the folder's write permission where it lapsed. Called on a Save's click, while the
+ * click still counts (requestPermission needs transient activation, MDN), and before Python is
+ * asked to merge, so no prompt ever sits between the sidecar's re-read and the write (the kickoff
+ * council's reliability finding 5, Phase 4 Decision 26). */
+export async function askToWrite(dir: DirectoryHandle): Promise<void> {
   try {
     let state = await dir.queryPermission?.({ mode: "readwrite" });
     if (state === "prompt") state = await dir.requestPermission?.({ mode: "readwrite" });
     if (state !== undefined && state !== "granted") throw new FolderError("permission");
+  } catch (err) {
+    throw err instanceof FolderError ? err : new FolderError(why(err));
+  }
+}
+
+/** Throws "changed" when the sidecar's SHA-256 isn't the one Python's merge read (spec §14.6). */
+async function unchanged(dir: DirectoryHandle, guard: Guard): Promise<void> {
+  if (!guard.sidecar || !guard.read) return;
+  const now = await sha256Hex(await (await dir.getFileHandle(guard.sidecar)).getFile());
+  if (now !== guard.read) throw new FolderError("changed");
+}
+
+/** Every file, or none: the folder's permission is checked, never asked for (the Save's click
+ * asked, askToWrite); the sidecar is read again just before the files open, and once more just
+ * before it is put in place, and a change since Python's merge read it writes nothing
+ * ("changed", spec §14.6); every file is opened for writing before any is written; and a failure
+ * aborts the files not yet closed, whose writes the browser then throws away (createWritable
+ * writes a swap file that only close() puts in place, MDN). The sidecar comes first, as Save
+ * lists it, so a cut-short write leaves at most a subtitle file holding an earlier version,
+ * which the next open recognises as vid2sub's own (spec §14.6). */
+export async function writeAll(dir: DirectoryHandle, files: readonly Written[], guard: Guard = {}): Promise<void> {
+  const writables: Writable[] = [];
+  try {
+    const state = await dir.queryPermission?.({ mode: "readwrite" });
+    if (state !== undefined && state !== "granted") throw new FolderError("permission");
+    await unchanged(dir, guard);
     for (const f of files) writables.push(await (await dir.getFileHandle(f.name, { create: true })).createWritable());
     for (const [k, f] of files.entries()) await writables[k].write(f.data);
+    await unchanged(dir, guard);
   } catch (err) {
     await Promise.all(writables.map((w) => w.abort().catch(() => undefined)));
     throw err instanceof FolderError ? err : new FolderError(why(err));
@@ -5422,6 +5528,9 @@ export function filesFolder(list: FileList | readonly File[]): Folder {
       const f = files.get(n);
       if (!f) throw new FolderError("gone");
       return f;
+    },
+    allow: async () => {
+      throw new FolderError("permission");
     },
     write: async () => {
       throw new FolderError("permission");
@@ -5480,6 +5589,17 @@ export async function readFiles(folder: Folder, names: readonly string[]): Promi
   return out;
 }
 
+/** The files a Save or a pick hands Python, read on its click: write permission first, asked for
+ * while the click still counts and before Python merges (Decision 26), then the folder's names
+ * and the video's own files (spec §14.6). None where the page can't write the folder (Safari,
+ * Firefox) or has none (the demo): the Save then builds on the files the episode last saw. */
+export async function readForSave(folder: Folder | null, video: string): Promise<{ files: Record<string, string> | null; names: string[] | null }> {
+  if (!folder?.writable) return { files: null, names: null };
+  await folder.allow();
+  const names = await folder.names();
+  return { files: await readFiles(folder, names.filter((n) => nearby(video, n))), names };
+}
+
 /** Offers each file as a download (where the browser can't write the folder: Safari, Firefox,
  * the demo), through a blob URL revoked once the click has started it. */
 export function download(files: readonly Written[], doc: Document = document): void {
@@ -5497,22 +5617,36 @@ export function download(files: readonly Written[], doc: Document = document): v
 }
 ```
 
-- [ ] **Step 4: Run them; they pass, and each write guard fails without its fix.** `npx vitest
-  run src/lib/folder.test.ts`: `Tests  9 passed (9)`; `npm run typecheck`: no error. Then delete
-  `writeAll`'s line `if (state !== undefined && state !== "granted") throw new
-  FolderError("permission");`, run the file, and restore it: `× writing a Save's files (Review
-  Focus 1) > writes nothing when the permission was taken back`; then delete the `await
-  Promise.all(writables.map((w) => w.abort().catch(() => undefined)));` in its `catch`, run, and
-  restore: `× … > writes nothing when the folder has moved, and lets go of what it had opened`.
-  Then `make test-js`: `Test Files  26 passed (26)`, `Tests  127 passed (127)`.
+- [ ] **Step 4: Run them; they pass, and each guard fails without its fix.** `npx vitest run
+  src/lib/folder.test.ts`: `Tests  13 passed (13)`; `npm run typecheck`: no error. Then, each
+  made in `folder.ts`, run with the file, and restored:
+  - `writeAll` asking again: its line `const state = await dir.queryPermission?.({ mode:
+    "readwrite" });` made `let state = …`, with `if (state === "prompt") state = await
+    dir.requestPermission?.({ mode: "readwrite" });` below it: `× writing a Save's files (Review
+    Focus 1) > never asks for permission itself, so no prompt sits between the re-read and the
+    write` (`1 failed | 12 passed`);
+  - the first `await unchanged(dir, guard);` (before the `for` that opens the files) deleted:
+    `× … > writes nothing when the sidecar changed since Python's merge read it`, among four;
+  - the second (after the writes) deleted: `× … > lets go of every file when the sidecar changes
+    while they are open`, and the order test;
+  - `writeAll`'s `if (state !== undefined && state !== "granted") throw new
+    FolderError("permission");` deleted: `× … > writes nothing when the permission was taken
+    back`;
+  - the `await Promise.all(writables.map((w) => w.abort().catch(() => undefined)));` in its
+    `catch` deleted: `× … > writes nothing when the folder has moved, and lets go of what it had
+    opened`;
+  - `readForSave`'s `await folder.allow();` deleted: `× a Save's click (Decision 26) > asks for
+    write permission first, then reads the files for Python's merge`.
+
+  Then `make test-js`: `Test Files  26 passed (26)`, `Tests  131 passed (131)`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
-feat(pages): 🤖 the page reads a picked folder, hashes a video from its two ends as vid2sub does, and writes a Save's files all or none
+feat(pages): 🤖 the page reads a picked folder, hashes a video from its two ends as vid2sub does, and writes a Save's files all or none, asking for permission on the Save's click
 
-Spec §21, §8.3 and §14.6 (S47, S48), and the Phase 4 plan's Review Focus 1 and 2: Python runs in
-a Web Worker without the folder's handles, so the page holds them. frontend/src/lib/folder.ts,
-after meanwhile's src/viewer/media/folder.ts (f1279d9):
+Spec §21, §8.3 and §14.6 (S47, S48), the Phase 4 plan's Review Focus 1 and 2, and its Decision
+26: Python runs in a Web Worker without the folder's handles, so the page holds them.
+frontend/src/lib/folder.ts, after meanwhile's src/viewer/media/folder.ts (f1279d9):
 
 - pickFolder: showDirectoryPicker({mode: "readwrite"}) where the browser has it (Chrome, Edge);
   a cancel is null. handleFolder reads the folder's top-level names and files through the handle
@@ -5523,19 +5657,32 @@ after meanwhile's src/viewer/media/folder.ts (f1279d9):
   first MiB and, past one MiB, the last MiB from no earlier than one MiB in. The test's four
   hashes were made by quick_sha256 itself, at the sizes it reads differently; on a five-gigabyte
   video it reads [0, 1 MiB) and the last MiB, nothing else (Review Focus 2).
-- writeAll: the folder's permission is checked, and asked for again if it lapsed; every file is
-  opened (createWritable) before any is written; a failure aborts the files not yet closed,
-  whose writes the browser then drops; the sidecar is closed first. A NotAllowedError or
-  SecurityError is "permission", NotFoundError or InvalidStateError "gone" (the folder moved,
-  renamed or deleted), anything else "write", each with a sentence that says nothing was saved
-  and to open the folder again (FAILURES). With the permission check taken out, "writes nothing
-  when the permission was taken back" fails; without the abort, "writes nothing when the folder
-  has moved, and lets go of what it had opened" fails.
+- readForSave, a Save's or a pick's click: write permission first (askToWrite: queried, asked for
+  where it lapsed, while the click still counts), then the folder's names and the video's own
+  files for Python's merge; none from a folder the page can't write. So no permission prompt
+  ever sits between the sidecar's re-read and the write (the kickoff council's reliability
+  finding 5, Decision 26).
+- writeAll: the permission is checked, never asked for; the sidecar is read again just before the
+  files open and compared with the SHA-256 Python's merge read, and once more just before it is
+  put in place ("changed", so Python merges again, spec §14.6); every file is opened
+  (createWritable) before any is written; a failure aborts the files not yet closed, whose writes
+  the browser then drops; the sidecar is closed first. A NotAllowedError or SecurityError is
+  "permission", NotFoundError or InvalidStateError "gone" (the folder moved, renamed or deleted),
+  anything else "write", each with a sentence that says nothing was saved and to open the folder
+  again (FAILURES).
 - nearby (the files a Save reads again: the video's sidecar, subtitle files and the glossary, in
   any case; Python takes those that are), base64 both ways (in 32 KiB pieces, a BOM kept),
   readFiles, sha256Hex, and download (a blob URL per file, revoked after the click).
 - The test runs in Vitest's node environment (crypto.subtle, Blob and DOMException as browsers
-  have them). It failed first: "Error: Cannot find module './folder'".
+  have them), over a fake directory handle that logs each read, request, open, close and abort.
+  It failed first: "Error: Cannot find module './folder'". Each guard, taken out in turn, fails
+  its test: writeAll asking for permission again ("never asks for permission itself, so no
+  prompt sits between the re-read and the write"); the re-read before the files open ("writes
+  nothing when the sidecar changed since Python's merge read it"); the compare before the close
+  ("lets go of every file when the sidecar changes while they are open"); the permission check
+  ("writes nothing when the permission was taken back"); the abort ("writes nothing when the
+  folder has moved, and lets go of what it had opened"); readForSave's ask ("asks for write
+  permission first, then reads the files for Python's merge").
 
 Docs read: MDN on Window.showDirectoryPicker (mode, AbortError on cancel, transient activation),
 FileSystemDirectoryHandle (entries, getFileHandle with create), FileSystemFileHandle.createWritable
@@ -6079,7 +6226,7 @@ index 221b669..8b3b3d9 100644
   restore it, and make `if isinstance(answer, dict) and answer.get("why") == "changed":` read
   `if False:`: `FAILED …test_a_sidecar_that_changed_before_the_page_wrote_is_merged_again`;
   restore it. Then `make check`: `1373 passed, 9 skipped, 50 deselected` (twice), `Test Files
-  26 passed (26)`, `Tests  127 passed (127)`, `All checks passed!`, `no leaks found`.
+  26 passed (26)`, `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -6766,14 +6913,14 @@ index fcbba86..4be4e0f 100644
 ```
 ```diff
 diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
-index 24e1022..0695003 100644
+index 24e1022..b7a07d6 100644
 --- a/frontend/src/App.tsx
 +++ b/frontend/src/App.tsx
-@@ -11,14 +11,20 @@ import { TopBar } from "@/components/TopBar";
+@@ -11,14 +11,17 @@ import { TopBar } from "@/components/TopBar";
  import { type AddRequest, type BrowseState, NOT_ASKED, answered, asked } from "@/lib/browse";
  import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
  import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, dropRetranslation, loadDraft, replayable } from "@/lib/draft";
-+import { FAILURES, type Folder, FolderError, download, fromBase64, nearby, quickHash, readFiles, sha256Hex } from "@/lib/folder";
++import { FAILURES, type Folder, FolderError, download, fromBase64, quickHash, readFiles, readForSave } from "@/lib/folder";
  import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
  import { retranslateNotice } from "@/lib/retranslate";
  import { type Changes, isReview } from "@/lib/review";
@@ -6783,15 +6930,12 @@ index 24e1022..0695003 100644
 +import type { AddResultMessage, BrowseResult, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, FolderListingMessage, FoundItem, JobsView, ModelsView, PreviewProgress, Progress, RetranslateResultMessage, QueueState, ReviewOutput, ReviewStartedMessage, SaveResultMessage, SettingsView, Status, WriteFilesMessage } from "@/types";
  
  type Ask = { episode: string; n: number };
-+/** The browser editor's files for a Save or a pick: the folder's, read again, or none where the
-+ * page can't read it again (a read-only folder, the demo). */
-+type Fresh = { files: Record<string, string> | null; names: string[] | null };
 +type OpenFiles = { video: string; size: number; quick_sha256: string; url: string; files: Record<string, string>; names: string[]; n: number };
 +type Written = { episode: string; n: number | null; ok: boolean; why?: string; files?: Record<string, string>; names?: string[] };
  
  const SCREENS = { editor: "Editor", add: "Add", review: "Review", jobs: "Jobs", models: "Models" } as const;
  type Screen = keyof typeof SCREENS;
-@@ -48,6 +54,9 @@ export default function App() {
+@@ -48,6 +51,9 @@ export default function App() {
    // twice is still two requests, and "event" sends it at once, never merged with the next.
    const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
    const setDemo = useSetShinyInput<{ n: number } | null>("demo", null, { priority: "event", debounceMs: 0 });
@@ -6801,7 +6945,7 @@ index 24e1022..0695003 100644
    const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
    const setPreview = useSetShinyInput<{ episode: string; n: number } | null>("preview", null, { priority: "event", debounceMs: 0 });
    const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
-@@ -112,6 +121,20 @@ export default function App() {
+@@ -112,6 +118,17 @@ export default function App() {
    // "Retranslate stale", for the notice.
    const asking = useRef(new Map<number, { track: string; stale: boolean }>());
    const episodeId = episode?.id ?? null;
@@ -6813,16 +6957,13 @@ index 24e1022..0695003 100644
 +  const blob = useRef<string | null>(null);
 +  const [found, setFound] = useState<FoundItem[] | null>(null);
 +  const fail = (err: unknown) => setNotices((shown) => addNotice(shown, { kind: "error", text: FAILURES[err instanceof FolderError ? err.why : "write"] }, nextId.current++));
-+  const fresh = useCallback(async (): Promise<Fresh> => {
-+    const from = source.current;
-+    if (!from?.folder?.writable) return { files: null, names: null };
-+    const names = await from.folder.names();
-+    return { files: await readFiles(from.folder, names.filter((n) => nearby(from.video, n))), names };
-+  }, []);
++  // A Save's or a pick's files, read on its click: write permission first, while the click
++  // counts and before Python merges (Decision 26), then the folder's files as they are now.
++  const fresh = useCallback(() => readForSave(source.current?.folder ?? null, source.current?.video ?? ""), []);
    const requests = useMemo<Requests>(() => {
      const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
      const send = <T,>(set: (v: T) => void, value: T | null) => value && pace(() => set(value));
-@@ -119,8 +142,14 @@ export default function App() {
+@@ -119,8 +136,14 @@ export default function App() {
        edit: (op) => { record({ edit: op }); const a = ask(); send(setEdit, a && { ...a, op }); },
        undo: () => { record({ undo: true }); send(setUndo, ask()); },
        redo: () => { record({ redo: true }); send(setRedo, ask()); },
@@ -6839,7 +6980,7 @@ index 24e1022..0695003 100644
        retranslate: (track, ids, allowCloud) => {
          const a = ask();
          if (!a) return;
-@@ -129,7 +158,68 @@ export default function App() {
+@@ -129,7 +152,71 @@ export default function App() {
          send(setRetranslate, { ...a, track, ids, allow_cloud: allowCloud });
        },
      };
@@ -6880,8 +7021,9 @@ index 24e1022..0695003 100644
 +    setDemo({ n: ++sent.current });
 +  };
 +  // A Save's or a pick's files (spec §14.6): written next to the video where the folder is
-+  // writable, the sidecar read again first, and if it changed since, sent back for Python to
-+  // merge again; else offered as downloads (Safari, Firefox, the demo: S48).
++  // writable, the sidecar read again inside the write, just before the files open and once more
++  // before it is put in place, and if it changed since, the files as they are now go back for
++  // Python to merge again; else offered as downloads (Safari, Firefox, the demo: S48).
 +  useShinyMessageHandler("write_files", (data: WriteFilesMessage) => {
 +    const answer = (x: Omit<Written, "episode" | "n">) => pace(() => setWritten({ episode: data.episode, n: data.n, ...x }));
 +    const files = data.files.map((f) => ({ name: f.name, data: fromBase64(f.data) }));
@@ -6893,12 +7035,14 @@ index 24e1022..0695003 100644
 +    }
 +    void (async () => {
 +      try {
-+        if (data.read !== null && (await sha256Hex(await into.file(data.sidecar))) !== data.read) {
++        try {
++          await into.write(files, { sidecar: data.sidecar, read: data.read });
++        } catch (err) {
++          if (!(err instanceof FolderError && err.why === "changed")) throw err;
 +          const again = await fresh();
 +          answer({ ok: false, why: "changed", files: again.files ?? {}, names: again.names ?? [] });
 +          return;
 +        }
-+        await into.write(files);
 +        answer({ ok: true });
 +      } catch (err) {
 +        fail(err);
@@ -6909,7 +7053,7 @@ index 24e1022..0695003 100644
    useShinyMessageHandler("retranslate_result", (data: RetranslateResultMessage) => {
      if (!episode || data.episode !== episode.id || data.n === null) return;
      const asked = asking.current.get(data.n);
-@@ -343,7 +433,7 @@ export default function App() {
+@@ -343,7 +430,7 @@ export default function App() {
            pathInput={capabilities?.path_input ?? false}
            generate={generate}
            onOpen={(path) => setOpen({ path, n: ++sent.current })}
@@ -6921,9 +7065,9 @@ index 24e1022..0695003 100644
 ```
 
 - [ ] **Step 15: Run the checks; they pass.** `cd frontend && npm run typecheck && npx vitest
-  run`: `Test Files  26 passed (26)`, `Tests  127 passed (127)`. `make pages`, then `make
+  run`: `Test Files  26 passed (26)`, `Tests  131 passed (131)`. `make pages`, then `make
   pages-test`: `9 passed` (about 50 s). Then `make check`: `1373 passed, 9 skipped, 55
-  deselected` (twice), `Test Files  26 passed (26)`, `Tests  127 passed (127)`, `All checks
+  deselected` (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks
   passed!`, `no leaks found`; and `make e2e`: `40 passed`.
 - [ ] **Step 16: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -6942,13 +7086,15 @@ Spec §21 and §14.6, S47 and S48, and the Phase 4 plan's Review Focus 1 and 2, 
   (spec §6.9), so a new tab or a reload asks for the folder again. `source` remembers where the
   open episode came from, so a Save writes only into its own folder and the demo's only
   downloads.
-- Save and a pick read the folder's files again first, where it is writable, and send them;
-  `write_files` is answered with `written`: where the folder is writable, the sidecar is read
-  again just before the write and, if its SHA-256 isn't the one the merge read, the files as they
-  are now go back for Python to merge again (§14.6); else every file is written or none
-  (writeAll). Where the folder is read-only (Safari, Firefox) or the episode is the demo, the
-  files are offered as downloads (S48). A failure says what happened and to open the folder again
-  (FAILURES), and the edits stay unsaved, with their draft.
+- Save and a pick, on their click, ask for the folder's write permission first, then read its
+  files again and send them (readForSave, Decision 26), so no permission prompt sits inside the
+  compare-and-swap; `write_files` is answered with `written`: where the folder is writable, the
+  write reads the sidecar again just before the files open and once more before the sidecar is
+  put in place and, if its SHA-256 isn't the one the merge read, the files as they are now go
+  back for Python to merge again (§14.6); else every file is written or none (writeAll). Where
+  the folder is read-only (Safari, Firefox) or the episode is the demo, the files are offered as
+  downloads (S48). A failure says what happened and to open the folder again (FAILURES), and the
+  edits stay unsaved, with their draft.
 - Editor's `onDemo` prop is now `pages` (onFolder, found, onPick, onDemo, onError); types gain
   FoundItem, FolderListingMessage and WriteFilesMessage.
 - tests/pages/test_pages_files.py writes for real through a directory handle in the site's
@@ -7102,19 +7248,19 @@ index a041006..e56b480 100644
 ```
 ```diff
 diff --git a/frontend/src/lib/folder.test.ts b/frontend/src/lib/folder.test.ts
-index 1a59725..29c1ab4 100644
+index cea77cb..8d9f578 100644
 --- a/frontend/src/lib/folder.test.ts
 +++ b/frontend/src/lib/folder.test.ts
-@@ -4,7 +4,7 @@
- // all or none. Node's environment: it has crypto.subtle, Blob and DOMException as browsers do.
+@@ -5,7 +5,7 @@
+ // crypto.subtle, Blob and DOMException as browsers do.
  import { describe, expect, it } from "vitest";
  
--import { type DirectoryHandle, FolderError, MIB, filesFolder, fromBase64, nearby, quickHash, toBase64, writeAll } from "./folder";
-+import { type DirectoryHandle, type Folder, FolderError, MIB, filesFolder, fromBase64, nearby, quickHash, toBase64, writeAll, writePlan } from "./folder";
+-import { type DirectoryHandle, FolderError, MIB, filesFolder, fromBase64, handleFolder, nearby, quickHash, readForSave, toBase64, writeAll } from "./folder";
++import { type DirectoryHandle, type Folder, FolderError, MIB, filesFolder, fromBase64, handleFolder, nearby, quickHash, readForSave, toBase64, writeAll, writePlan } from "./folder";
  
  /** Byte k is k % 251, as the Python side of these cases has it. */
  const pattern = (n: number) => Uint8Array.from({ length: n }, (_, k) => k % 251);
-@@ -41,6 +41,13 @@ describe("which files are a video's own", () => {
+@@ -42,6 +42,13 @@ describe("which files are a video's own", () => {
        expect(nearby(video, name)).toBe(false);
      }
    });
@@ -7128,20 +7274,20 @@ index 1a59725..29c1ab4 100644
  });
  
  describe("files on the wire", () => {
-@@ -62,8 +69,9 @@ describe("a folder read through <input webkitdirectory> (Safari, Firefox)", () =
-   });
- });
+@@ -65,8 +72,9 @@ describe("a folder read through <input webkitdirectory> (Safari, Firefox)", () =
  
--/** A directory handle over a Map, recording what happens to each file. */
--function fakeFolder({ permission = "granted", request = "granted", missing = "" }: { permission?: string; request?: string; missing?: string } = {}) {
-+/** A directory handle over a Map, recording what happens to each file: `create` makes an empty
-+ * file at once, as the File System spec's getFileHandle does. */
-+function fakeFolder({ permission = "granted", request = "granted", missing = "", failClose = "" }: { permission?: string; request?: string; missing?: string; failClose?: string } = {}) {
-   const files = new Map<string, Uint8Array<ArrayBuffer>>([["a.vid2sub.jsonl", new Uint8Array([1])]]);
+ /** A directory handle over a Map, recording what happens to each file: a read, a permission
+  * asked for, a file opened, put in place or let go. `changeOn` names a file whose opening
+- * stands for another writer replacing the sidecar meanwhile. */
+-function fakeFolder({ permission = "granted", request = "granted", missing = "", changeOn = "" }: { permission?: string; request?: string; missing?: string; changeOn?: string } = {}) {
++ * stands for another writer replacing the sidecar meanwhile; `create` makes an empty file at
++ * once, as the File System spec's getFileHandle does. */
++function fakeFolder({ permission = "granted", request = "granted", missing = "", changeOn = "", failClose = "" }: { permission?: string; request?: string; missing?: string; changeOn?: string; failClose?: string } = {}) {
+   const files = new Map<string, Uint8Array<ArrayBuffer>>([["a.vid2sub.jsonl", new Uint8Array([1])], ["a.en.srt", new Uint8Array([4])]]);
    const log: string[] = [];
    const dir = {
-@@ -72,8 +80,14 @@ function fakeFolder({ permission = "granted", request = "granted", missing = ""
-     async *entries() {},
+@@ -77,8 +85,14 @@ function fakeFolder({ permission = "granted", request = "granted", missing = "",
+     },
      queryPermission: async () => permission,
      requestPermission: async () => { log.push("asked"); return request; },
 -    async getFileHandle(name: string) {
@@ -7156,8 +7302,8 @@ index 1a59725..29c1ab4 100644
        return {
          kind: "file",
          name,
-@@ -83,7 +97,11 @@ function fakeFolder({ permission = "granted", request = "granted", missing = ""
-           log.push(`open ${name}`);
+@@ -89,7 +103,11 @@ function fakeFolder({ permission = "granted", request = "granted", missing = "",
+           if (name === changeOn) files.set("a.vid2sub.jsonl", new Uint8Array([9]));
            return {
              write: async (data: Uint8Array<ArrayBuffer>) => { pending = data; },
 -            close: async () => { if (pending) files.set(name, pending); log.push(`close ${name}`); },
@@ -7169,29 +7315,19 @@ index 1a59725..29c1ab4 100644
              abort: async () => { log.push(`abort ${name}`); },
            };
          },
-@@ -102,7 +120,7 @@ describe("writing a Save's files (Review Focus 1)", () => {
-   it("opens every file, then puts them in place, the sidecar first", async () => {
-     const { dir, files, log } = fakeFolder();
-     await writeAll(dir, SAVE);
--    expect(log).toEqual(["open a.vid2sub.jsonl", "open a.en.srt", "close a.vid2sub.jsonl", "close a.en.srt"]);
-+    expect(log).toEqual(["open a.vid2sub.jsonl", "create a.en.srt", "open a.en.srt", "close a.vid2sub.jsonl", "close a.en.srt"]);
-     expect(files.get("a.vid2sub.jsonl")).toEqual(new Uint8Array([2]));
-     expect(files.get("a.en.srt")).toEqual(new Uint8Array([3]));
-   });
-@@ -129,3 +147,37 @@ describe("writing a Save's files (Review Focus 1)", () => {
-     expect(files.get("a.vid2sub.jsonl")).toEqual(new Uint8Array([1]));
+@@ -160,6 +178,40 @@ describe("writing a Save's files (Review Focus 1)", () => {
    });
  });
-+
+ 
 +describe("a Save cut short (the Task 3 security review)", () => {
 +  it("removes the file it had just created, and keeps the sidecar it had put in place", async () => {
 +    // why: getFileHandle's create makes an empty file at once, which later Saves would call
 +    // someone else's; the sidecar, closed first, holds the version the next Save builds on.
-+    const { dir, files, log } = fakeFolder({ failClose: "a.en.srt" });
-+    await expect(writeAll(dir, SAVE)).rejects.toEqual(new FolderError("write"));
-+    expect(files.has("a.en.srt")).toBe(false);
++    const { dir, files, log } = fakeFolder({ failClose: "a.ja.srt" });
++    await expect(writeAll(dir, [...SAVE, { name: "a.ja.srt", data: new Uint8Array([6]) }], GUARD)).rejects.toEqual(new FolderError("write"));
++    expect(files.has("a.ja.srt")).toBe(false);
 +    expect(files.get("a.vid2sub.jsonl")).toEqual(new Uint8Array([2]));
-+    expect(log.at(-1)).toBe("remove a.en.srt");
++    expect(log.at(-1)).toBe("remove a.ja.srt");
 +  });
 +});
 +
@@ -7216,6 +7352,10 @@ index 1a59725..29c1ab4 100644
 +    expect(writePlan(source, { ...message, files: [{ name: "other.vid2sub.jsonl" }] })).toEqual({ kind: "refuse" });
 +  });
 +});
++
+ describe("a Save's click (Decision 26)", () => {
+   it("asks for write permission first, then reads the files for Python's merge", async () => {
+     // why: requestPermission needs the click (transient activation), and asked here no prompt
 ```
 ```diff
 diff --git a/tests/pages/test_pages_files.py b/tests/pages/test_pages_files.py
@@ -7290,7 +7430,7 @@ index 0f8b542..f96008b 100644
   the download's (not the whole set), the ideographic space's, the eight odd names' (each
   refused), the "changed" answer without files, the page that never answers, the demo's
   download and the sidecar's spelling. `cd frontend && npx vitest run
-  src/lib/folder.test.ts`: `Tests  4 failed | 9 passed (13)`: `nearby`'s season case, the
+  src/lib/folder.test.ts`: `Tests  4 failed | 13 passed (17)`: `nearby`'s season case, the
   cut-short Save's removal, and both of `writePlan`'s.
 - [ ] **Step 19: The fixes.** In `src/vid2sub/web/browser.py`, `src/vid2sub/web/server.py`,
   `frontend/src/lib/folder.ts`, `frontend/src/types.ts`, `frontend/src/components/Editor.tsx`,
@@ -7427,38 +7567,40 @@ index 8b3b3d9..c0e843a 100644
 ```
 ```diff
 diff --git a/frontend/src/lib/folder.ts b/frontend/src/lib/folder.ts
-index 4e96ce7..8d8e5ad 100644
+index 8723022..8032897 100644
 --- a/frontend/src/lib/folder.ts
 +++ b/frontend/src/lib/folder.ts
-@@ -13,7 +13,7 @@ export const GLOSSARY = "vid2sub.glossary.toml";
- 
+@@ -14,7 +14,7 @@ export const GLOSSARY = "vid2sub.glossary.toml";
  /** Why a write failed, for the person: the folder's permission was taken back, or the folder
-  * isn't where it was (moved, renamed or deleted), or anything else (Review Focus 1). */
--export type WriteFailure = "permission" | "gone" | "write";
-+export type WriteFailure = "permission" | "gone" | "write" | "elsewhere" | "late";
+  * isn't where it was (moved, renamed or deleted), or anything else (Review Focus 1); or, for
+  * Python, that the sidecar changed since its merge read it (spec §14.6), so it merges again. */
+-export type WriteFailure = "permission" | "gone" | "write" | "changed";
++export type WriteFailure = "permission" | "gone" | "write" | "changed" | "elsewhere" | "late";
  
  export class FolderError extends Error {
    constructor(readonly why: WriteFailure) {
-@@ -25,6 +25,8 @@ export const FAILURES: Record<WriteFailure, string> = {
-   permission: "vid2sub may no longer write to that folder, so nothing was saved: open the folder again to save your edits",
+@@ -27,6 +27,8 @@ export const FAILURES: Record<WriteFailure, string> = {
    gone: "the folder isn't where it was (moved or renamed?), so nothing was saved: open it again to save your edits",
    write: "the browser couldn't write to that folder, so nothing was saved: open it again to save your edits",
+   changed: "the sidecar changed while it was being saved, so nothing was saved: save again",
 +  elsewhere: "the open episode changed while it was being saved, so nothing was saved: save again",
 +  late: "the folder took too long to answer, so nothing was saved: save again",
  };
  
  /** A folder the page reads, and writes where the browser lets it. */
-@@ -33,7 +35,8 @@ export interface Folder {
-   readonly writable: boolean;
-   names(): Promise<string[]>;
-   file(name: string): Promise<File>;
--  write(files: readonly Written[]): Promise<void>;
-+  /** Writes every file or none; `deadline` (performance.now()'s ms) stops it starting late. */
-+  write(files: readonly Written[], deadline?: number): Promise<void>;
- }
- 
+@@ -43,8 +45,9 @@ export interface Folder {
  export type Written = { name: string; data: Uint8Array<ArrayBuffer> };
-@@ -47,6 +50,7 @@ export interface DirectoryHandle {
+ 
+ /** What a write checks first: the sidecar's name and its SHA-256 as Python's merge read it, null
+- * where the page couldn't read it (spec §14.6). */
+-export type Guard = { sidecar?: string; read?: string | null };
++ * where the page couldn't read it (spec §14.6); and `deadline` (performance.now()'s ms), past
++ * which Python has stopped waiting, so the write doesn't start. */
++export type Guard = { sidecar?: string; read?: string | null; deadline?: number };
+ 
+ // The File System Access API's shapes, which TypeScript's DOM library leaves out (MDN).
+ type Permission = "granted" | "denied" | "prompt";
+@@ -55,6 +58,7 @@ export interface DirectoryHandle {
    name: string;
    entries(): AsyncIterableIterator<[string, FileHandle | DirectoryHandle]>;
    getFileHandle(name: string, options?: { create?: boolean }): Promise<FileHandle>;
@@ -7466,27 +7608,18 @@ index 4e96ce7..8d8e5ad 100644
    queryPermission?(descriptor: { mode: "readwrite" }): Promise<Permission>;
    requestPermission?(descriptor: { mode: "readwrite" }): Promise<Permission>;
  }
-@@ -98,33 +102,52 @@ export function handleFolder(dir: DirectoryHandle): Folder {
-         throw new FolderError(why(err));
-       }
-     },
--    write: (files) => writeAll(dir, files),
-+    write: (files, deadline) => writeAll(dir, files, deadline),
-   };
- }
- 
- /** Every file, or none: the folder's permission is checked (and asked again, while the Save's
-  * click still counts), every file is opened for writing before any is written, and a failure
+@@ -137,27 +141,46 @@ async function unchanged(dir: DirectoryHandle, guard: Guard): Promise<void> {
+  * before it is put in place, and a change since Python's merge read it writes nothing
+  * ("changed", spec §14.6); every file is opened for writing before any is written; and a failure
   * aborts the files not yet closed, whose writes the browser then throws away (createWritable
 - * writes a swap file that only close() puts in place, MDN). The sidecar comes first, as Save
 - * lists it, so a cut-short write leaves at most a subtitle file holding an earlier version,
 - * which the next open recognises as vid2sub's own (spec §14.6). */
--export async function writeAll(dir: DirectoryHandle, files: readonly Written[]): Promise<void> {
 + * writes a swap file that only close() puts in place, MDN), and removes the ones this Save
 + * created, since getFileHandle's `create` makes an empty file at once. The sidecar comes first,
 + * as Save lists it, so a write cut short after it leaves at most a subtitle file holding an
 + * earlier version, which the next open recognises as vid2sub's own (spec §14.6). */
-+export async function writeAll(dir: DirectoryHandle, files: readonly Written[], deadline?: number): Promise<void> {
+ export async function writeAll(dir: DirectoryHandle, files: readonly Written[], guard: Guard = {}): Promise<void> {
    const writables: Writable[] = [];
 +  const created: string[] = [];
 +  // Aborts the writables from `from` on, and removes each file this Save created but didn't put
@@ -7497,12 +7630,12 @@ index 4e96ce7..8d8e5ad 100644
 +    await Promise.all(created.filter((n) => !placed.has(n)).map((n) => dir.removeEntry(n).catch(() => undefined)));
 +  };
    try {
-     let state = await dir.queryPermission?.({ mode: "readwrite" });
-     if (state === "prompt") state = await dir.requestPermission?.({ mode: "readwrite" });
+     const state = await dir.queryPermission?.({ mode: "readwrite" });
      if (state !== undefined && state !== "granted") throw new FolderError("permission");
++    // Python has stopped waiting (a folder slow to answer): the Save already counts as not saved.
++    if (guard.deadline !== undefined && performance.now() > guard.deadline) throw new FolderError("late");
+     await unchanged(dir, guard);
 -    for (const f of files) writables.push(await (await dir.getFileHandle(f.name, { create: true })).createWritable());
-+    // A permission prompt left open past Python's wait: the Save already counts as not saved.
-+    if (deadline !== undefined && performance.now() > deadline) throw new FolderError("late");
 +    for (const f of files) {
 +      const there = await dir.getFileHandle(f.name).then(() => true, (err) => {
 +        if (err instanceof DOMException && err.name === "NotFoundError") return false;
@@ -7513,6 +7646,7 @@ index 4e96ce7..8d8e5ad 100644
 +      writables.push(await handle.createWritable());
 +    }
      for (const [k, f] of files.entries()) await writables[k].write(f.data);
+     await unchanged(dir, guard);
    } catch (err) {
 -    await Promise.all(writables.map((w) => w.abort().catch(() => undefined)));
 +    await undo(0, 0);
@@ -7527,7 +7661,7 @@ index 4e96ce7..8d8e5ad 100644
        throw new FolderError(why(err));
      }
    }
-@@ -178,14 +201,33 @@ export async function sha256Hex(blob: Blob, digest: Digest = (d) => crypto.subtl
+@@ -214,14 +237,33 @@ export async function sha256Hex(blob: Blob, digest: Digest = (d) => crypto.subtl
    return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
  }
  
@@ -7565,7 +7699,7 @@ index 4e96ce7..8d8e5ad 100644
  }
  
  /** Bytes as base64, in pieces small enough for String.fromCharCode's arguments. */
-@@ -207,9 +249,11 @@ export async function readFiles(folder: Folder, names: readonly string[]): Promi
+@@ -254,9 +296,11 @@ export async function readForSave(folder: Folder | null, video: string): Promise
  }
  
  /** Offers each file as a download (where the browser can't write the folder: Safari, Firefox,
@@ -7636,19 +7770,19 @@ index 4be4e0f..de0fa97 100644
 ```
 ```diff
 diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
-index 0695003..5710edc 100644
+index b7a07d6..46dd873 100644
 --- a/frontend/src/App.tsx
 +++ b/frontend/src/App.tsx
 @@ -11,7 +11,7 @@ import { TopBar } from "@/components/TopBar";
  import { type AddRequest, type BrowseState, NOT_ASKED, answered, asked } from "@/lib/browse";
  import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
  import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, dropRetranslation, loadDraft, replayable } from "@/lib/draft";
--import { FAILURES, type Folder, FolderError, download, fromBase64, nearby, quickHash, readFiles, sha256Hex } from "@/lib/folder";
-+import { FAILURES, type Folder, FolderError, type Source, download, fromBase64, nearby, quickHash, readFiles, sha256Hex, writePlan } from "@/lib/folder";
+-import { FAILURES, type Folder, FolderError, download, fromBase64, quickHash, readFiles, readForSave } from "@/lib/folder";
++import { FAILURES, type Folder, FolderError, type Source, download, fromBase64, quickHash, readFiles, readForSave, writePlan } from "@/lib/folder";
  import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
  import { retranslateNotice } from "@/lib/retranslate";
  import { type Changes, isReview } from "@/lib/review";
-@@ -123,9 +123,17 @@ export default function App() {
+@@ -120,9 +120,17 @@ export default function App() {
    const episodeId = episode?.id ?? null;
    // The browser editor's folder (spec §21, §6.9): its handle lives only here, in this tab's
    // memory, never in storage, so a reload asks for it again. `source` is where the open episode
@@ -7668,7 +7802,7 @@ index 0695003..5710edc 100644
    const blob = useRef<string | null>(null);
    const [found, setFound] = useState<FoundItem[] | null>(null);
    const fail = (err: unknown) => setNotices((shown) => addNotice(shown, { kind: "error", text: FAILURES[err instanceof FolderError ? err.why : "write"] }, nextId.current++));
-@@ -168,6 +176,10 @@ export default function App() {
+@@ -162,6 +170,10 @@ export default function App() {
      setFound(null);
      try {
        const names = await picked.names();
@@ -7679,7 +7813,7 @@ index 0695003..5710edc 100644
        pace(() => setFolder({ names, n: ++sent.current }));
      } catch (err) {
        fail(err);
-@@ -182,7 +194,7 @@ export default function App() {
+@@ -176,7 +188,7 @@ export default function App() {
        const [quick, files, names] = await Promise.all([quickHash(video), readFiles(from, item.reads), from.names()]);
        if (blob.current) URL.revokeObjectURL(blob.current);
        blob.current = URL.createObjectURL(video);
@@ -7688,7 +7822,7 @@ index 0695003..5710edc 100644
        setFound(null);
        pace(() => setOpenFiles({ video: item.name, size: video.size, quick_sha256: quick, url: blob.current ?? "", files, names, n: ++sent.current }));
      } catch (err) {
-@@ -190,29 +202,37 @@ export default function App() {
+@@ -184,26 +196,34 @@ export default function App() {
      }
    };
    const onDemo = () => {
@@ -7697,13 +7831,15 @@ index 0695003..5710edc 100644
      setDemo({ n: ++sent.current });
    };
 -  // A Save's or a pick's files (spec §14.6): written next to the video where the folder is
--  // writable, the sidecar read again first, and if it changed since, sent back for Python to
--  // merge again; else offered as downloads (Safari, Firefox, the demo: S48).
+-  // writable, the sidecar read again inside the write, just before the files open and once more
+-  // before it is put in place, and if it changed since, the files as they are now go back for
+-  // Python to merge again; else offered as downloads (Safari, Firefox, the demo: S48).
 +  // A Save's or a pick's files (spec §14.6): written next to the video where the episode's
-+  // folder is writable, the sidecar read again first, and if it changed since, sent back for
-+  // Python to merge again; else offered as downloads (Safari, Firefox, the demo: S48); refused
-+  // when they aren't the open episode's (writePlan). Nothing starts once Python has stopped
-+  // waiting (`seconds`, less a margin).
++  // folder is writable, the sidecar read again inside the write, just before the files open and
++  // once more before it is put in place, and if it changed since, the files as they are now go
++  // back for Python to merge again; else offered as downloads (Safari, Firefox, the demo: S48);
++  // refused when they aren't the open episode's (writePlan). Nothing starts once Python has
++  // stopped waiting (`seconds`, less a margin).
    useShinyMessageHandler("write_files", (data: WriteFilesMessage) => {
      const answer = (x: Omit<Written, "episode" | "n">) => pace(() => setWritten({ episode: data.episode, n: data.n, ...x }));
 +    const deadline = performance.now() + (data.seconds - 15) * 1000;
@@ -7725,17 +7861,12 @@ index 0695003..5710edc 100644
 +    const into = plan.folder;
      void (async () => {
        try {
--        if (data.read !== null && (await sha256Hex(await into.file(data.sidecar))) !== data.read) {
-+        if ((await sha256Hex(await into.file(data.sidecar))) !== data.read) {
+         try {
+-          await into.write(files, { sidecar: data.sidecar, read: data.read });
++          await into.write(files, { sidecar: data.sidecar, read: data.read, deadline });
+         } catch (err) {
+           if (!(err instanceof FolderError && err.why === "changed")) throw err;
            const again = await fresh();
-           answer({ ok: false, why: "changed", files: again.files ?? {}, names: again.names ?? [] });
-           return;
-         }
--        await into.write(files);
-+        await into.write(files, deadline);
-         answer({ ok: true });
-       } catch (err) {
-         fail(err);
 ```
 ```diff
 diff --git a/docs/superpowers/specs/2026-10-14-vid2sub-design.md b/docs/superpowers/specs/2026-10-14-vid2sub-design.md
@@ -7773,10 +7904,13 @@ index c6fbcee..82848b9 100644
   tests/test_web_browser.py -q`: `45 passed`. In turn: the sidecar's `on_disk = next(…)` made
   `on_disk = sidecar if files and sidecar in files else None`: `FAILED
   …test_the_sidecar_is_read_again_as_the_folder_spells_it`; the `WRITE_LATE` notice taken out:
-  `FAILED …test_a_page_that_never_answers_saves_nothing_and_says_so`. `cd frontend && npm run
-  typecheck && npx vitest run`: `Test Files  26 passed (26)`, `Tests  131 passed (131)`. `make
+  `FAILED …test_a_page_that_never_answers_saves_nothing_and_says_so`; `writeAll`'s
+  `await Promise.all(created.filter(…)…removeEntry(n)…));` taken out: `× a Save cut short (the
+  Task 3 security review) > removes the file it had just created, and keeps the sidecar it had
+  put in place` (`AssertionError: expected true to be false`). `cd frontend && npm run
+  typecheck && npx vitest run`: `Test Files  26 passed (26)`, `Tests  135 passed (135)`. `make
   pages`, then `make pages-test`: `9 passed`. `make check`: `1378 passed, 9 skipped, 55
-  deselected` (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks
+  deselected` (twice), `Test Files  26 passed (26)`, `Tests  135 passed (135)`, `All checks
   passed!`, `no leaks found`; `make e2e`: `40 passed`.
 - [ ] **Step 21: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -7795,8 +7929,8 @@ seven Important; each is fixed here, with a test that failed without it:
   `show - s01e01.vid2sub.jsonl`), so §14.6's compare isn't skipped: "FAILED
   …test_the_sidecar_is_read_again_as_the_folder_spells_it" without it.
 - A page that doesn't answer within five minutes saves nothing and says so (WRITE_LATE); the
-  page is told the wait (`seconds`) and starts no write after it, a permission prompt left open
-  included: "FAILED …test_a_page_that_never_answers_saves_nothing_and_says_so" without the notice.
+  page is told the wait (`seconds`) and starts no write after it (writeAll's Guard.deadline):
+  "FAILED …test_a_page_that_never_answers_saves_nothing_and_says_so" without the notice.
 - A download Save offers the whole set each time (the sidecar, every subtitle file it projects,
   the glossary), so one the browser blocked comes again with the next Save; downloads go a
   quarter second apart.
@@ -7835,19 +7969,882 @@ Co-Authored-By: <the model's own line>
   tests/pages/test_pages_files.py docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git
   commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 22: Review, look forward, close.** The Tier 1 review from
+#### Round 3e: `vid2sub write --merge`, and the notice after a Save offered as downloads
+
+Decision 25 (the kickoff council's reliability finding 4; Dan, Q&A item 24): a Save in Safari or
+Firefox downloads the sidecar and its subtitle files, built on the files the episode last saw, so
+replacing the folder's files with them would drop whatever was written there since it was opened
+(a `vid2sub translate`, a Save in `vid2sub serve`). `vid2sub write` (M1's `commands/write.py`)
+gains `--merge PATH`, which adds every record the sidecar on disk lacks through `store.append`,
+and the notice after such a Save gives that command first. Spec §18.1 says so already.
+
+- [ ] **Step 22: Write the failing tests,** `tests/test_write_merge.py`:
+
+```python
+"""`vid2sub write VIDEO --merge SIDECAR` (spec §18.1; Phase 4 Decision 25, Q&A item 24): a
+sidecar that a Pages save downloaded in Safari or Firefox is added to the one next to the video,
+record by record, so whatever was written there since the episode was opened stays, and then the
+subtitle files are written as `write` writes them. A sidecar made for another video is refused,
+and nothing changes. Each guard here fails without its fix.
+
+The download is made as the Pages editor makes it: the episode's files as it last saw them, plus
+the Save's own version, written with the same store the browser backend runs (Phase 4 Task 1).
+"""
+
+import json
+import shutil
+
+import pytest
+from episodes import LINES, make_episode, source_cues, translation_cues, write_track
+from test_cli_run import CONFIG
+
+from vid2sub import store
+from vid2sub.cli import main
+from vid2sub.subs.rendition import cues_from_body
+
+pytestmark = pytest.mark.media
+SIDECAR = "Show - S01E01.vid2sub.jsonl"
+
+
+@pytest.fixture
+def cfg(tmp_path):
+    path = tmp_path / "vid2sub.toml"
+    path.write_text(CONFIG)
+    return path
+
+
+def downloaded(video, tmp_path, text: str):
+    """What a Pages save in Safari downloads: the sidecar as the episode last saw it, plus the
+    Save's own version of the Japanese track, its first line set to `text`."""
+    there = tmp_path / "Downloads"
+    shutil.copytree(video.parent, there)
+    copy = there / video.name
+    side = store.load(copy)[0]
+    head = side.head("ja").rendition
+    cues = cues_from_body(side.renditions()[head].body)
+    mine = write_track(copy, "ja", [cues[0].model_copy(update={"text": text}), *cues[1:]],
+                       role="source", parents=[head], replaces=head, by="editor")
+    return there / SIDECAR, mine
+
+
+def test_a_merge_keeps_what_the_folder_gained_and_adds_what_the_download_holds(tmp_path, cfg,
+                                                                                capsys):
+    # why: Q&A item 24: replacing the folder's sidecar with the download would drop whatever was
+    # written since the episode was opened, here a translation's new English.
+    video = make_episode(tmp_path / "show")
+    sidecar, mine = downloaded(video, tmp_path, "おはよう！")
+    head = store.load(video)[0].head("en").rendition
+    theirs = write_track(video, "en", [c.model_copy(update={"text": c.text + "!"})
+                                       for c in translation_cues(source_cues(len(LINES)))],
+                         role="translation", parents=[head], replaces=head)
+    assert main(["write", str(video), "--merge", str(sidecar), "--config", str(cfg),
+                 "--json"]) == 0
+    side = store.load(video)[0]
+    assert side.head("ja").rendition == mine.id and side.head("en").rendition == theirs.id
+    assert "おはよう！" in video.with_name("Show - S01E01.ja.srt").read_text(encoding="utf-8")
+    assert "Good morning!" in video.with_name("Show - S01E01.en.srt").read_text(encoding="utf-8")
+    out = capsys.readouterr().out
+    assert "Show" not in out and str(tmp_path) not in out  # spec §6.8: no names in --json
+    assert json.loads(out.splitlines()[0])["status"] == "done"
+
+
+@pytest.mark.parametrize("field", ["name", "size", "quick_sha256"])
+def test_a_sidecar_made_for_another_video_is_refused_and_nothing_changes(tmp_path, cfg, capsys,
+                                                                         field):
+    # why: another episode's records (or a replaced video's) would land in this sidecar for good,
+    # since a sidecar is append-only (spec §14.1).
+    video = make_episode(tmp_path / "show")
+    sidecar, _ = downloaded(video, tmp_path, "おはよう！")
+    first, rest = sidecar.read_text(encoding="utf-8").split("\n", 1)
+    header = json.loads(first)
+    named = header["video"]
+    named[field] = {"name": "Show - S01E02.mkv", "size": named["size"] + 1,
+                    "quick_sha256": "0" * 64}[field]
+    sidecar.write_text(json.dumps(header) + "\n" + rest, encoding="utf-8")
+    before = {p.name: p.read_bytes() for p in video.parent.iterdir()}
+    assert main(["write", str(video), "--merge", str(sidecar), "--config", str(cfg)]) == 1
+    assert {p.name: p.read_bytes() for p in video.parent.iterdir()} == before
+    assert "OtherVideo" in capsys.readouterr().out
+
+
+def test_a_file_that_isnt_a_sidecar_merges_nothing(tmp_path, cfg):
+    video = make_episode(tmp_path / "show")
+    notes = tmp_path / "notes.txt"
+    notes.write_text("not a sidecar\n", encoding="utf-8")
+    before = {p.name: p.read_bytes() for p in video.parent.iterdir()}
+    assert main(["write", str(video), "--merge", str(notes), "--config", str(cfg)]) == 1
+    assert {p.name: p.read_bytes() for p in video.parent.iterdir()} == before
+
+
+def test_merge_takes_one_video(tmp_path, cfg):
+    video = make_episode(tmp_path / "show")
+    make_episode(tmp_path / "show", "Show - S01E02.mkv")
+    assert main(["write", str(video.parent), "--merge", str(video.with_name(SIDECAR)),
+                 "--config", str(cfg)]) == 64
+```
+
+  and the notice's wording, and its place in the Pages test:
+
+```diff
+diff --git a/frontend/src/lib/folder.test.ts b/frontend/src/lib/folder.test.ts
+index 8d9f578..5aa60a1 100644
+--- a/frontend/src/lib/folder.test.ts
++++ b/frontend/src/lib/folder.test.ts
+@@ -5,7 +5,7 @@
+ // crypto.subtle, Blob and DOMException as browsers do.
+ import { describe, expect, it } from "vitest";
+ 
+-import { type DirectoryHandle, type Folder, FolderError, MIB, filesFolder, fromBase64, handleFolder, nearby, quickHash, readForSave, toBase64, writeAll, writePlan } from "./folder";
++import { type DirectoryHandle, type Folder, FolderError, MIB, downloadedNotice, filesFolder, fromBase64, handleFolder, nearby, quickHash, readForSave, toBase64, writeAll, writePlan } from "./folder";
+ 
+ /** Byte k is k % 251, as the Python side of these cases has it. */
+ const pattern = (n: number) => Uint8Array.from({ length: n }, (_, k) => k % 251);
+@@ -212,6 +212,19 @@ describe("what the page does with a Save's files", () => {
+   });
+ });
+ 
++describe("a Save offered as downloads (Decision 25)", () => {
++  it("gives the merge command first, and replacing the files only where nothing else changed the episode", () => {
++    // why: Q&A item 24: replacing the folder's files with the downloads drops whatever was
++    // written there since the episode was opened.
++    const text = downloadedNotice("Show - S01E01.mkv", "Show - S01E01.vid2sub.jsonl");
++    expect(text).toBe(
++      'Saved as downloads. Merge them into the video\'s folder with vid2sub write "Show - S01E01.mkv" --merge "<the downloaded Show - S01E01.vid2sub.jsonl>", run in that folder: it keeps anything else written there since you opened the episode. ' +
++        "Or, only if nothing else changed the episode since then, put the downloads next to the video, replacing the old ones.",
++    );
++    expect(text.indexOf("--merge")).toBeLessThan(text.indexOf("replacing the old ones"));
++  });
++});
++
+ describe("a Save's click (Decision 26)", () => {
+   it("asks for write permission first, then reads the files for Python's merge", async () => {
+     // why: requestPermission needs the click (transient activation), and asked here no prompt
+diff --git a/tests/pages/test_pages_files.py b/tests/pages/test_pages_files.py
+index f96008b..aea3521 100644
+--- a/tests/pages/test_pages_files.py
++++ b/tests/pages/test_pages_files.py
+@@ -208,6 +208,11 @@ def test_a_folder_safari_can_only_read_is_saved_as_downloads(page: Page, site_ur
+     # The whole set: the sidecar and every subtitle file it projects, so a download the browser
+     # blocked comes again with the next Save.
+     assert sorted(d.suggested_filename for d in downloads) == [EN, "jfk.ja.srt", SIDECAR]
++    # The notice gives the merge first (Decision 25); nothing else changed the episode since it
++    # was opened, so replacing the files by hand is safe here too.
++    expect(app.get_by_test_id("notice").filter(
++        has_text='vid2sub write "jfk.mp4" --merge "<the downloaded jfk.vid2sub.jsonl>"')
++    ).to_have_count(1)
+     for d in downloads:
+         d.save_as(episode / d.suggested_filename)  # what the person does with them
+     assert local_open(episode).tracks.source[0].text == "I am glad to be here."
+```
+
+- [ ] **Step 23: Run them; watch them fail.** `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest
+  tests/test_write_merge.py -q`. Expected: `6 failed`, each `SystemExit: 64` after `vid2sub: error:
+  unrecognized arguments: --merge …`. `cd frontend && npx vitest run src/lib/folder.test.ts`: `Tests
+  1 failed | 17 passed (18)`, `TypeError: downloadedNotice is not a function`.
+- [ ] **Step 24: The merge, and the notice.** In `src/vid2sub/store.py`,
+  `src/vid2sub/pipeline.py`, `src/vid2sub/commands/write.py`, `frontend/src/lib/folder.ts`,
+  `frontend/src/App.tsx` and `README.md`:
+
+```diff
+diff --git a/README.md b/README.md
+index e1caae4..4be39a0 100644
+--- a/README.md
++++ b/README.md
+@@ -113,6 +113,7 @@ vid2sub detect ~/TV/Show/Season\ 1                    # detect each file's langu
+ vid2sub import fansub.srt --video ep1.mkv --lang ja   # use an existing SRT as the source
+ vid2sub translate ep1.mkv --to zh-Hant --stale-only   # translate only what changed
+ vid2sub write ep1.mkv --format ass                    # add ASS files from the sidecar
++vid2sub write ep1.mkv --merge ~/Downloads/ep1.vid2sub.jsonl   # after a Pages save that downloaded
+ vid2sub models                                        # what can run on this machine now
+ vid2sub cache clear                                   # empty the cache of playback audio and preview copies
+ vid2sub serve                                         # the editor, in your browser (below)
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index 46dd873..5a61008 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -11,7 +11,7 @@ import { TopBar } from "@/components/TopBar";
+ import { type AddRequest, type BrowseState, NOT_ASKED, answered, asked } from "@/lib/browse";
+ import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
+ import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, dropRetranslation, loadDraft, replayable } from "@/lib/draft";
+-import { FAILURES, type Folder, FolderError, type Source, download, fromBase64, quickHash, readFiles, readForSave, writePlan } from "@/lib/folder";
++import { FAILURES, type Folder, FolderError, type Source, download, downloadedNotice, fromBase64, quickHash, readFiles, readForSave, writePlan } from "@/lib/folder";
+ import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
+ import { retranslateNotice } from "@/lib/retranslate";
+ import { type Changes, isReview } from "@/lib/review";
+@@ -216,7 +216,12 @@ export default function App() {
+       return;
+     }
+     if (plan.kind === "download") {
+-      void download(files).then(() => answer({ ok: true }));
++      // A read-only folder's (Safari, Firefox): the notice gives the merge command (Decision 25).
++      const from = source.current;
++      void download(files).then(() => {
++        answer({ ok: true });
++        if (from?.folder) setNotices((shown) => addNotice(shown, { kind: "info", text: downloadedNotice(from.video, data.sidecar) }, nextId.current++));
++      });
+       return;
+     }
+     const into = plan.folder;
+diff --git a/frontend/src/lib/folder.ts b/frontend/src/lib/folder.ts
+index 8032897..4950460 100644
+--- a/frontend/src/lib/folder.ts
++++ b/frontend/src/lib/folder.ts
+@@ -266,6 +266,14 @@ export function writePlan(source: Source | null, message: { episode: string; rea
+   return { kind: "write", folder: source.folder };
+ }
+ 
++/** The notice after a Save offered as downloads from a folder the page can only read (Safari,
++ * Firefox): the merge command first, which keeps whatever else was written next to the video
++ * since the episode was opened, and only then replacing the files by hand, if nothing was (spec
++ * §18.1; Phase 4 Decision 25, Dan's answer to Q&A item 24). */
++export function downloadedNotice(video: string, sidecar: string): string {
++  return `Saved as downloads. Merge them into the video's folder with vid2sub write "${video}" --merge "<the downloaded ${sidecar}>", run in that folder: it keeps anything else written there since you opened the episode. Or, only if nothing else changed the episode since then, put the downloads next to the video, replacing the old ones.`;
++}
++
+ /** Bytes as base64, in pieces small enough for String.fromCharCode's arguments. */
+ export function toBase64(bytes: Uint8Array): string {
+   let text = "";
+diff --git a/src/vid2sub/commands/write.py b/src/vid2sub/commands/write.py
+index 241e9ed..a5c76a6 100644
+--- a/src/vid2sub/commands/write.py
++++ b/src/vid2sub/commands/write.py
+@@ -1,8 +1,14 @@
+-"""`vid2sub write`: re-write subtitle files from the sidecar's current versions (spec §18.1)."""
++"""`vid2sub write`: re-write subtitle files from the sidecar's current versions (spec §18.1).
++
++With `--merge`, a sidecar that a Pages save downloaded (Safari and Firefox can only download) is
++first added to the one next to the video, record by record, so nothing written there since the
++episode was opened is lost (Phase 4 Decision 25; Dan, Q&A item 24).
++"""
+ 
+ from __future__ import annotations
+ 
+ import argparse
++from pathlib import Path
+ 
+ from vid2sub import exitcodes
+ from vid2sub.commands import _common
+@@ -20,6 +26,9 @@ def add_parser(sub) -> None:
+     p.add_argument("--format", dest="formats", action="append", choices=["srt", "ass"])
+     p.add_argument("--overwrite-foreign", action="store_true",
+                    help="replace subtitle files vid2sub didn't write")
++    p.add_argument("--merge", metavar="SIDECAR",
++                   help="first add a downloaded sidecar's records (a Pages save in Safari or "
++                        "Firefox) to the one next to the video")
+     add_common(p)
+     p.set_defaults(handler=run)
+ 
+@@ -32,6 +41,9 @@ def run(args: argparse.Namespace) -> int:
+         if not inputs:
+             raise CommandError(exitcodes.USAGE, "nothing to do",
+                                "give a video, a folder, or --from-file")
++        if args.merge is not None and len(inputs) != 1:
++            raise CommandError(exitcodes.USAGE, "--merge takes one video",
++                               "give the video the downloaded sidecar was saved for")
+         options = RunOptions(formats=args.formats or list(config.defaults.formats),
+                              overwrite_foreign=args.overwrite_foreign)
+         ctx = _common.new_context(config, options, out)
+@@ -45,7 +57,7 @@ def run(args: argparse.Namespace) -> int:
+     code = exitcodes.OK
+     try:
+         for n, item in enumerate(inputs, 1):
+-            result = write_one(item, ctx)
++            result = write_one(item, ctx, merge=Path(args.merge) if args.merge else None)
+             results.append(result)
+             report(out, n, len(inputs), result)
+     except KeyboardInterrupt:
+diff --git a/src/vid2sub/pipeline.py b/src/vid2sub/pipeline.py
+index 0d68e2f..37b3338 100644
+--- a/src/vid2sub/pipeline.py
++++ b/src/vid2sub/pipeline.py
+@@ -803,10 +803,14 @@ def translate_one(source: str, ctx: RunContext, *, fresh: bool) -> InputResult:
+     return _guarded(result, work)
+ 
+ 
+-def write_one(source: str, ctx: RunContext) -> InputResult:
++def write_one(source: str, ctx: RunContext, *, merge: Path | None = None) -> InputResult:
++    """`vid2sub write` for one video; with `merge`, a downloaded sidecar's records are added to
++    the one next to it first (spec §18.1; Phase 4 Decision 25)."""
+     result = InputResult(input=source)
+ 
+     def work(scratch: Path) -> None:
++        if merge is not None:
++            _merge(source, merge, result)
+         video, header, sidecar = _existing(source, ctx, scratch, result)
+         _write(video, header, sidecar, sidecar.tracks(), ctx, result)
+         result.status = "done"
+@@ -814,6 +818,17 @@ def write_one(source: str, ctx: RunContext) -> InputResult:
+     return _guarded(result, work)
+ 
+ 
++def _merge(source: str, downloaded: Path, result: InputResult) -> None:
++    """The downloaded sidecar's records, added to the video's; the note names no file."""
++    video = resolve_input(source)
++    sidecar = resolve_input(str(downloaded))
++    if not video.is_file() or not sidecar.is_file():
++        raise InputError("both the video and the sidecar to merge must exist")
++    _, gained = store.merge(video, identify(video), sidecar.read_bytes())
++    result.notes.append(f"merged {gained} record{'' if gained == 1 else 's'} from the "
++                        "downloaded sidecar")
++
++
+ def import_one(sub_path: str, video_path: str, track: str | None,
+                ctx: RunContext) -> InputResult:
+     result = InputResult(input=sub_path)
+diff --git a/src/vid2sub/store.py b/src/vid2sub/store.py
+index f151da9..93ba6cc 100644
+--- a/src/vid2sub/store.py
++++ b/src/vid2sub/store.py
+@@ -75,6 +75,12 @@ class EditedOnDisk(ForeignFile):
+                   "run again to keep the edit as a version")
+ 
+ 
++class OtherVideo(StoreError):
++    def __init__(self) -> None:
++        super().__init__("that sidecar was made for another video (its name, size or quick hash "
++                         "isn't this one's), so nothing was merged")
++
++
+ def now() -> str:
+     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+ 
+@@ -121,6 +127,28 @@ def append(video: Path, header: Header, records: Sequence) -> Sidecar:
+     raise StoreError("the sidecar kept changing while vid2sub saved it; try again")
+ 
+ 
++def merge(video: Path, identity: VideoIdentity, data: bytes) -> tuple[Sidecar, int]:
++    """Adds a downloaded sidecar's records to the one next to `video`: every record it lacks,
++    through `append`, so the union is by record and nothing there is removed (spec §14.1). For a
++    Pages save in a browser that could only download (spec §18.1; Phase 4 Decision 25, Dan's
++    answer to Q&A item 24): replacing the sidecar with the download would drop whatever was
++    written since the episode was opened. A sidecar whose header names another video (its name,
++    size and quick hash, §8.3) is refused, and so is one vid2sub can't read: nothing is merged.
++    Returns the sidecar and how many records it gained."""
++    try:
++        theirs, _ = parse_sidecar(data.decode("utf-8"))
++    except (UnicodeDecodeError, SidecarError):
++        raise StoreError("that file isn't a sidecar vid2sub can read, so nothing was merged") \
++            from None
++    named = theirs.header.video
++    if (named.name, named.size, named.quick_sha256) != (video.name, identity.size,
++                                                        identity.quick_sha256):
++        raise OtherVideo()
++    mine, _ = load(video)
++    lacking = [r for r in theirs.records if mine is None or r not in mine.records]
++    return append(video, mine.header if mine else theirs.header, lacking), len(lacking)
++
++
+ def head_record(sidecar: Sidecar, track: str, rendition_id: str, by: str, *,
+                 replace_person: bool = False) -> HeadRecord | None:
+     """None when nothing should change; a track in Conflict is resolved in the editor."""
+```
+
+- [ ] **Step 25: Run the checks; they pass, and each guard fails without its fix.**
+  `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest tests/test_write_merge.py -q`:
+  `6 passed`. The guards, each made in the code, run with that file, and reverted:
+  - `store.merge`'s `if (named.name, named.size, named.quick_sha256) != (video.name,
+    identity.size, identity.quick_sha256):` and its `raise OtherVideo()` deleted: `FAILED
+    …test_a_sidecar_made_for_another_video_is_refused_and_nothing_changes[name]`, `[size]` and
+    `[quick_sha256]` (`3 failed, 3 passed`);
+  - the comparison made `(named.name, named.size) != (video.name, identity.size)`: `FAILED
+    …refused_and_nothing_changes[quick_sha256]` (`1 failed, 5 passed`);
+  - `write_one`'s `if merge is not None:` and its `_merge(source, merge, result)` deleted: `5
+    failed, 1 passed`;
+  - `store.merge`'s last line made `safe_write(sidecar_path(video), data, overwrite=True)` and
+    `return load(video)[0], len(lacking)` (the download written over the sidecar): `FAILED
+    tests/test_write_merge.py::test_a_merge_keeps_what_the_folder_gained_and_adds_what_the_download_holds`.
+
+  `cd frontend && npm run typecheck && npx vitest run src/lib/folder.test.ts`: `Tests  18 passed
+  (18)`. `make pages`, then `make pages-test`: `9 passed`; with App.tsx's `if (from?.folder)
+  setNotices(…downloadedNotice(…)…);` line taken out, `make pages` again, then `uv run pytest -m
+  pages tests/pages/test_pages_files.py -k safari -q`: `AssertionError: Locator expected to have
+  count '1'`; restore it and `make pages`. `make check`: `1384 passed, 9 skipped, 55 deselected`
+  (twice), `Test Files  26 passed (26)`, `Tests  136 passed (136)`, `All checks passed!`, `no leaks
+  found`; `make e2e`: `40 passed`.
+- [ ] **Step 26: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(cli): 🤖 vid2sub write --merge adds a downloaded sidecar's records to the one next to the video, and a Save offered as downloads gives that command first
+
+Spec §18.1, Phase 4 Decision 25 (the kickoff council's reliability finding 4; Dan's answer to Q&A
+item 24): a Pages save in Safari or Firefox downloads the sidecar and its subtitle files, built on
+the files the episode last saw, so replacing the folder's files with them would drop whatever
+was written since it was opened.
+
+- store.merge(video, identity, data): reads the downloaded sidecar, refuses one whose header
+  names another video (its name, size and quick hash, against the video's own identity: OtherVideo)
+  or one vid2sub can't read, and adds every record the sidecar on disk lacks through
+  store.append, the compare-and-swap union (records are never removed, spec §14.1). Nothing is
+  written on a refusal.
+- pipeline.write_one(source, ctx, merge=PATH) merges first, then projects as `write` does, so a
+  subtitle file someone else wrote, or one edited since vid2sub wrote it, is left alone. Its
+  note ("merged N records from the downloaded sidecar") names no file.
+- `vid2sub write VIDEO --merge SIDECAR`: one video only (else exit 64); `--json` events stay
+  counts and kinds, naming no path (spec §6.8).
+- The page: after a Save offered as downloads from a folder it can only read, an info notice
+  (folder.ts's downloadedNotice) gives `vid2sub write "<video>" --merge "<the downloaded
+  sidecar>"` first, run in the video's folder, and says to put the downloads next to the video,
+  replacing the old ones, only if nothing else changed the episode since it was opened. The
+  demo's downloads get none. README's command list gains the merge.
+
+tests/test_write_merge.py (media: it makes episodes with ffmpeg, as tests/episodes.py does):
+a merge keeps the English a translation wrote on disk after the episode was opened and adds the
+download's Japanese edit, and `--json` names nothing; a downloaded sidecar whose header names
+another video's name, size or quick hash is refused (OtherVideo), as is a file that isn't a
+sidecar, each leaving the folder byte for byte; --merge with two videos is a usage error. They
+failed first, all six, "vid2sub: error: unrecognized arguments: --merge …" (SystemExit: 64); the
+notice's Vitest test with "TypeError: downloadedNotice is not a function". Guards, each taken out
+in turn: the header check ("3 failed, 3 passed", the three refusals), the quick hash alone in it
+("FAILED …refused_and_nothing_changes[quick_sha256]"), the merge skipped ("5 failed, 1 passed"),
+the download written over the sidecar instead of merged ("FAILED tests/test_write_merge.py::
+test_a_merge_keeps_what_the_folder_gained_and_adds_what_the_download_holds"), and the page's
+notice ("AssertionError: Locator expected to have count '1'" in the Safari Pages test).
+
+Docs read: the spec's §14.1, §14.6 and §18.1; store.append's compare-and-swap and Sidecar.add's
+union (this repository's). Not re-read: argparse, used as the other commands use it.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 3
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/store.py src/vid2sub/pipeline.py src/vid2sub/commands/write.py
+  tests/test_write_merge.py frontend/src/lib/folder.ts frontend/src/lib/folder.test.ts
+  frontend/src/App.tsx tests/pages/test_pages_files.py README.md`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+#### Round 3f: the Tier 1 review's fixes
+
+When this listing was built, one independent Tier 1 reviewer went over rounds 3a to 3e with
+`AGENTS.md`'s security checklist (read-only, each finding with file and line). It found no Critical
+and three Important: the download's projection records came in with a merge (an outside edit made
+since the open was adopted as built on the Save, and someone else's file at a name the Save
+projected was imported); the notice's command held the video's name, so a name holding `$(…)` or a
+backtick would run when pasted (the command now has placeholders only, the files named beside it,
+the rule for every command shown with a file name); and only the sidecar is compared before a write
+(it predates Decisions 25 and 26, and round 3d's review had listed it for the phase end, where it
+stays). Five of its Minor are fixed here too. Its checklist: secrets n/a (no keys or variables
+touched); permissions a Minor (the "changed" path's re-read asked again, outside the click); network
+exposure fine; failing closed a finding (the subtitle files' compare, Important, deferred; a named
+sidecar with no hash; the deadline checked once); injection a finding (the notice's quoting);
+logging fine.
+
+- [ ] **Step 27: Write the failing tests.** Apply:
+
+```diff
+diff --git a/frontend/src/lib/folder.test.ts b/frontend/src/lib/folder.test.ts
+index 5aa60a1..41b0d74 100644
+--- a/frontend/src/lib/folder.test.ts
++++ b/frontend/src/lib/folder.test.ts
+@@ -3,9 +3,9 @@
+ // the quick hash is vid2sub's own, read from two MiB of any video, and a Save's files are written
+ // all or none, the sidecar read again just before (Decision 26). Node's environment: it has
+ // crypto.subtle, Blob and DOMException as browsers do.
+-import { describe, expect, it } from "vitest";
++import { describe, expect, it, vi } from "vitest";
+ 
+-import { type DirectoryHandle, type Folder, FolderError, MIB, downloadedNotice, filesFolder, fromBase64, handleFolder, nearby, quickHash, readForSave, toBase64, writeAll, writePlan } from "./folder";
++import { type DirectoryHandle, type Folder, FolderError, MERGE_COMMAND, MIB, downloadedNotice, filesFolder, fromBase64, handleFolder, nearby, quickHash, readForSave, toBase64, writeAll, writePlan } from "./folder";
+ 
+ /** Byte k is k % 251, as the Python side of these cases has it. */
+ const pattern = (n: number) => Uint8Array.from({ length: n }, (_, k) => k % 251);
+@@ -218,11 +218,48 @@ describe("a Save offered as downloads (Decision 25)", () => {
+     // written there since the episode was opened.
+     const text = downloadedNotice("Show - S01E01.mkv", "Show - S01E01.vid2sub.jsonl");
+     expect(text).toBe(
+-      'Saved as downloads. Merge them into the video\'s folder with vid2sub write "Show - S01E01.mkv" --merge "<the downloaded Show - S01E01.vid2sub.jsonl>", run in that folder: it keeps anything else written there since you opened the episode. ' +
++      "Saved as downloads. In the video's folder, run vid2sub write <video> --merge <downloaded sidecar>, where <video> is the video, Show - S01E01.mkv, and <downloaded sidecar> the Show - S01E01.vid2sub.jsonl you downloaded: it adds your edits to the sidecar there and writes the subtitle files, keeping anything else written since you opened the episode. " +
+         "Or, only if nothing else changed the episode since then, put the downloads next to the video, replacing the old ones.",
+     );
+     expect(text.indexOf("--merge")).toBeLessThan(text.indexOf("replacing the old ones"));
+   });
++
++  it("puts no file name in the command, only beside it", () => {
++    // why: a file name is anyone's text: `$(…)`, a backtick or a quote in it would run or break
++    // a command a person pastes (the Task 3 review), so the command has placeholders only.
++    const video = "a$(touch x)`b\"c'.mkv";
++    const text = downloadedNotice(video, "a$(touch x)`b\"c'.vid2sub.jsonl");
++    const command = text.indexOf(MERGE_COMMAND);
++    expect(command).toBeGreaterThan(-1);
++    expect(text.indexOf(video)).toBeGreaterThan(command + MERGE_COMMAND.length);
++    expect(text.slice(0, command + MERGE_COMMAND.length)).not.toContain("$(");
++  });
++});
++
++describe("the Task 3 review's write guards", () => {
++  it("writes nothing for a named sidecar with nothing to compare it with", async () => {
++    const { dir, files, log } = fakeFolder();
++    await expect(writeAll(dir, SAVE, { sidecar: "a.vid2sub.jsonl", read: null })).rejects.toEqual(new FolderError("write"));
++    expect(log).toEqual([]);
++    expect(files.get("a.vid2sub.jsonl")).toEqual(new Uint8Array([1]));
++  });
++
++  it("puts nothing in place once Python has stopped waiting, even mid-write", async () => {
++    // why: a write that ends past the deadline would land after Python said nothing was saved.
++    const now = vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(1e9);
++    const { dir, files, log } = fakeFolder();
++    await expect(writeAll(dir, SAVE, { ...GUARD, deadline: 1000 })).rejects.toEqual(new FolderError("late"));
++    now.mockRestore();
++    expect(log.filter((l) => l.startsWith("close"))).toEqual([]);
++    expect(files.get("a.vid2sub.jsonl")).toEqual(new Uint8Array([1]));
++  });
++
++  it("reads the files again without asking, once the click has passed", async () => {
++    // why: after a "changed" answer no click counts any more; asking then is refused anyway.
++    const { dir, log } = fakeFolder({ permission: "prompt" });
++    await readForSave(handleFolder(dir), "a.mkv", { ask: false });
++    expect(log).toEqual(["read a.en.srt", "read a.vid2sub.jsonl"]);
++  });
+ });
+ 
+ describe("a Save's click (Decision 26)", () => {
+diff --git a/tests/pages/test_pages_files.py b/tests/pages/test_pages_files.py
+index aea3521..d421591 100644
+--- a/tests/pages/test_pages_files.py
++++ b/tests/pages/test_pages_files.py
+@@ -211,7 +211,8 @@ def test_a_folder_safari_can_only_read_is_saved_as_downloads(page: Page, site_ur
+     # The notice gives the merge first (Decision 25); nothing else changed the episode since it
+     # was opened, so replacing the files by hand is safe here too.
+     expect(app.get_by_test_id("notice").filter(
+-        has_text='vid2sub write "jfk.mp4" --merge "<the downloaded jfk.vid2sub.jsonl>"')
++        has_text="vid2sub write <video> --merge <downloaded sidecar>, where <video> is the "
++                 "video, jfk.mp4, and <downloaded sidecar> the jfk.vid2sub.jsonl you downloaded")
+     ).to_have_count(1)
+     for d in downloads:
+         d.save_as(episode / d.suggested_filename)  # what the person does with them
+diff --git a/tests/test_write_merge.py b/tests/test_write_merge.py
+index 9f791d7..a0a36fc 100644
+--- a/tests/test_write_merge.py
++++ b/tests/test_write_merge.py
+@@ -5,7 +5,9 @@ subtitle files are written as `write` writes them. A sidecar made for another vi
+ and nothing changes. Each guard here fails without its fix.
+ 
+ The download is made as the Pages editor makes it: the episode's files as it last saw them, plus
+-the Save's own version, written with the same store the browser backend runs (Phase 4 Task 1).
++the Save's own version and its projection, written with the same store the browser backend runs
++(Phase 4 Task 1). Its projection records name bytes that were never next to the video, so a
++merge keeps only those the file there holds (the Task 3 review).
+ """
+ 
+ import json
+@@ -18,6 +20,7 @@ from test_cli_run import CONFIG
+ from vid2sub import store
+ from vid2sub.cli import main
+ from vid2sub.subs.rendition import cues_from_body
++from vid2sub.subs.sidecar import Conflict
+ 
+ pytestmark = pytest.mark.media
+ SIDECAR = "Show - S01E01.vid2sub.jsonl"
+@@ -30,9 +33,10 @@ def cfg(tmp_path):
+     return path
+ 
+ 
+-def downloaded(video, tmp_path, text: str):
++def downloaded(video, tmp_path, text: str, *, chinese: bool = False):
+     """What a Pages save in Safari downloads: the sidecar as the episode last saw it, plus the
+-    Save's own version of the Japanese track, its first line set to `text`."""
++    Save's own version of the Japanese track, its first line set to `text`, projected as the
++    browser backend projects it (and, with `chinese`, a Traditional Chinese track too)."""
+     there = tmp_path / "Downloads"
+     shutil.copytree(video.parent, there)
+     copy = there / video.name
+@@ -41,6 +45,14 @@ def downloaded(video, tmp_path, text: str):
+     cues = cues_from_body(side.renditions()[head].body)
+     mine = write_track(copy, "ja", [cues[0].model_copy(update={"text": text}), *cues[1:]],
+                        role="source", parents=[head], replaces=head, by="editor")
++    tracks = ["ja"]
++    if chinese:
++        write_track(copy, "zh-Hant", translation_cues(source_cues(len(LINES))),
++                    role="translation", parents=[mine.id])
++        tracks.append("zh-Hant")
++    for track in tracks:
++        side = store.load(copy)[0]
++        store.project(copy, side.header, side, track, "srt", overwrite_foreign=False)
+     return there / SIDECAR, mine
+ 
+ 
+@@ -84,13 +96,55 @@ def test_a_sidecar_made_for_another_video_is_refused_and_nothing_changes(tmp_pat
+     assert "OtherVideo" in capsys.readouterr().out
+ 
+ 
+-def test_a_file_that_isnt_a_sidecar_merges_nothing(tmp_path, cfg):
++def test_a_file_that_isnt_a_sidecar_merges_nothing(tmp_path, cfg, capsys):
+     video = make_episode(tmp_path / "show")
+     notes = tmp_path / "notes.txt"
+     notes.write_text("not a sidecar\n", encoding="utf-8")
+     before = {p.name: p.read_bytes() for p in video.parent.iterdir()}
+     assert main(["write", str(video), "--merge", str(notes), "--config", str(cfg)]) == 1
+     assert {p.name: p.read_bytes() for p in video.parent.iterdir()} == before
++    assert "StoreError" in capsys.readouterr().out  # merge's own refusal, which names no file
++
++
++def test_a_download_cut_short_merges_nothing(tmp_path, cfg, capsys):
++    # why: spec §14.6 reports a truncated last line; merged anyway, part of a Save would land
++    # with only "merged N records" said (the Task 3 review).
++    video = make_episode(tmp_path / "show")
++    sidecar, _ = downloaded(video, tmp_path, "おはよう！")
++    sidecar.write_bytes(sidecar.read_bytes()[:-20])
++    before = {p.name: p.read_bytes() for p in video.parent.iterdir()}
++    assert main(["write", str(video), "--merge", str(sidecar), "--config", str(cfg)]) == 1
++    assert {p.name: p.read_bytes() for p in video.parent.iterdir()} == before
++    assert "StoreError" in capsys.readouterr().out
++
++
++def test_an_edit_made_outside_since_the_open_diverges_from_the_download_and_is_kept(tmp_path,
++                                                                                  cfg):
++    # why: the download's projection records name bytes never next to the video; taken as the
++    # file's latest, a person's edit to it would be adopted as built on the Save and quietly
++    # replace it, where spec §14.4 has the two diverge (the Task 3 review).
++    video = make_episode(tmp_path / "show")
++    sidecar, mine = downloaded(video, tmp_path, "おはよう！")
++    ja = video.with_name("Show - S01E01.ja.srt")
++    ja.write_text(ja.read_text(encoding="utf-8").replace("元気ですか", "元気？"),
++                  encoding="utf-8")
++    assert main(["write", str(video), "--merge", str(sidecar), "--config", str(cfg)]) == 0
++    head = store.load(video)[0].head("ja")
++    assert isinstance(head, Conflict) and mine.id in head.leaves
++    assert "元気？" in ja.read_text(encoding="utf-8")
++
++
++def test_someone_elses_file_where_the_download_projected_is_left_alone(tmp_path, cfg):
++    # why: spec §15.3: a subtitle file vid2sub didn't write is never imported or overwritten,
++    # and the download's record for that name would make it look like vid2sub's own.
++    video = make_episode(tmp_path / "show")
++    sidecar, _ = downloaded(video, tmp_path, "おはよう！", chinese=True)
++    theirs = video.with_name("Show - S01E01.zh-TW.srt")
++    theirs.write_text("1\n00:00:00,000 --> 00:00:02,000\n別人的字幕\n", encoding="utf-8")
++    assert main(["write", str(video), "--merge", str(sidecar), "--config", str(cfg)]) == 0
++    assert theirs.read_text(encoding="utf-8") == "1\n00:00:00,000 --> 00:00:02,000\n別人的字幕\n"
++    side = store.load(video)[0]
++    assert not any(r.body.get("engine") == "external" for r in side.renditions().values())
+ 
+ 
+ def test_merge_takes_one_video(tmp_path, cfg):
+```
+
+  Run them on the code as it is: `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest
+  tests/test_write_merge.py -q`: `3 failed, 6 passed`: the cut-short download (`assert 0 == 1`),
+  the outside edit (`AssertionError: assert (False)`, its head a `HeadRecord` by `external`, not
+  a `Conflict`) and someone else's file (an `external` rendition imported). `cd frontend && npx
+  vitest run src/lib/folder.test.ts`: `Tests  5 failed | 17 passed (22)`: the notice's wording,
+  `× a Save offered as downloads (Decision 25) > puts no file name in the command, only beside
+  it`, and the three write guards'.
+- [ ] **Step 28: The fixes,** in `src/vid2sub/store.py`, `frontend/src/lib/folder.ts` and
+  `frontend/src/App.tsx`:
+
+```diff
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index 5a61008..f5dfb45 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -136,7 +136,7 @@ export default function App() {
+   const fail = (err: unknown) => setNotices((shown) => addNotice(shown, { kind: "error", text: FAILURES[err instanceof FolderError ? err.why : "write"] }, nextId.current++));
+   // A Save's or a pick's files, read on its click: write permission first, while the click
+   // counts and before Python merges (Decision 26), then the folder's files as they are now.
+-  const fresh = useCallback(() => readForSave(source.current?.folder ?? null, source.current?.video ?? ""), []);
++  const fresh = useCallback((ask = true) => readForSave(source.current?.folder ?? null, source.current?.video ?? "", { ask }), []);
+   const requests = useMemo<Requests>(() => {
+     const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+     const send = <T,>(set: (v: T) => void, value: T | null) => value && pace(() => set(value));
+@@ -231,7 +231,7 @@ export default function App() {
+           await into.write(files, { sidecar: data.sidecar, read: data.read, deadline });
+         } catch (err) {
+           if (!(err instanceof FolderError && err.why === "changed")) throw err;
+-          const again = await fresh();
++          const again = await fresh(false);
+           answer({ ok: false, why: "changed", files: again.files ?? {}, names: again.names ?? [] });
+           return;
+         }
+diff --git a/frontend/src/lib/folder.ts b/frontend/src/lib/folder.ts
+index 4950460..052dc1b 100644
+--- a/frontend/src/lib/folder.ts
++++ b/frontend/src/lib/folder.ts
+@@ -146,6 +146,8 @@ async function unchanged(dir: DirectoryHandle, guard: Guard): Promise<void> {
+  * as Save lists it, so a write cut short after it leaves at most a subtitle file holding an
+  * earlier version, which the next open recognises as vid2sub's own (spec §14.6). */
+ export async function writeAll(dir: DirectoryHandle, files: readonly Written[], guard: Guard = {}): Promise<void> {
++  // A named sidecar with nothing to compare it with is never written (writePlan refuses it too).
++  if (guard.sidecar && !guard.read) throw new FolderError("write");
+   const writables: Writable[] = [];
+   const created: string[] = [];
+   // Aborts the writables from `from` on, and removes each file this Save created but didn't put
+@@ -172,6 +174,8 @@ export async function writeAll(dir: DirectoryHandle, files: readonly Written[],
+     }
+     for (const [k, f] of files.entries()) await writables[k].write(f.data);
+     await unchanged(dir, guard);
++    // And once more: nothing is put in place after Python has stopped waiting.
++    if (guard.deadline !== undefined && performance.now() > guard.deadline) throw new FolderError("late");
+   } catch (err) {
+     await undo(0, 0);
+     throw err instanceof FolderError ? err : new FolderError(why(err));
+@@ -266,12 +270,18 @@ export function writePlan(source: Source | null, message: { episode: string; rea
+   return { kind: "write", folder: source.folder };
+ }
+ 
++/** The command a Save offered as downloads asks for, with placeholders only: a file name is
++ * anyone's text, and inside a command a person pastes, `$(…)`, a backtick or a quote in it would
++ * run or break it (the Task 3 review), so the notice names the files outside the command. */
++export const MERGE_COMMAND = "vid2sub write <video> --merge <downloaded sidecar>";
++
+ /** The notice after a Save offered as downloads from a folder the page can only read (Safari,
+  * Firefox): the merge command first, which keeps whatever else was written next to the video
+  * since the episode was opened, and only then replacing the files by hand, if nothing was (spec
+- * §18.1; Phase 4 Decision 25, Dan's answer to Q&A item 24). */
++ * §18.1; Phase 4 Decision 25, Dan's answer to Q&A item 24). The video and the downloaded sidecar
++ * are named as plain text, after the command, never in it. */
+ export function downloadedNotice(video: string, sidecar: string): string {
+-  return `Saved as downloads. Merge them into the video's folder with vid2sub write "${video}" --merge "<the downloaded ${sidecar}>", run in that folder: it keeps anything else written there since you opened the episode. Or, only if nothing else changed the episode since then, put the downloads next to the video, replacing the old ones.`;
++  return `Saved as downloads. In the video's folder, run ${MERGE_COMMAND}, where <video> is the video, ${video}, and <downloaded sidecar> the ${sidecar} you downloaded: it adds your edits to the sidecar there and writes the subtitle files, keeping anything else written since you opened the episode. Or, only if nothing else changed the episode since then, put the downloads next to the video, replacing the old ones.`;
+ }
+ 
+ /** Bytes as base64, in pieces small enough for String.fromCharCode's arguments. */
+@@ -296,9 +306,10 @@ export async function readFiles(folder: Folder, names: readonly string[]): Promi
+  * while the click still counts and before Python merges (Decision 26), then the folder's names
+  * and the video's own files (spec §14.6). None where the page can't write the folder (Safari,
+  * Firefox) or has none (the demo): the Save then builds on the files the episode last saw. */
+-export async function readForSave(folder: Folder | null, video: string): Promise<{ files: Record<string, string> | null; names: string[] | null }> {
++export async function readForSave(folder: Folder | null, video: string, { ask = true } = {}): Promise<{ files: Record<string, string> | null; names: string[] | null }> {
+   if (!folder?.writable) return { files: null, names: null };
+-  await folder.allow();
++  // Not once the click has passed (a "changed" answer's re-read): asking then is refused anyway.
++  if (ask) await folder.allow();
+   const names = await folder.names();
+   return { files: await readFiles(folder, names.filter((n) => nearby(video, n))), names };
+ }
+diff --git a/src/vid2sub/store.py b/src/vid2sub/store.py
+index 93ba6cc..9c08e28 100644
+--- a/src/vid2sub/store.py
++++ b/src/vid2sub/store.py
+@@ -133,22 +133,34 @@ def merge(video: Path, identity: VideoIdentity, data: bytes) -> tuple[Sidecar, i
+     Pages save in a browser that could only download (spec §18.1; Phase 4 Decision 25, Dan's
+     answer to Q&A item 24): replacing the sidecar with the download would drop whatever was
+     written since the episode was opened. A sidecar whose header names another video (its name,
+-    size and quick hash, §8.3) is refused, and so is one vid2sub can't read: nothing is merged.
+-    Returns the sidecar and how many records it gained."""
++    size and quick hash, §8.3) is refused, and so is one vid2sub can't read or one cut short:
++    nothing is merged. A projection record comes in only where the file next to the video holds
++    the bytes it names: the download's others name files that were never there, and taken as a
++    file's latest they would make an edit made outside since look built on the Save, or someone
++    else's file look like vid2sub's (spec §14.4, §15.3; the Task 3 review). Returns the sidecar
++    and how many records it gained."""
+     try:
+-        theirs, _ = parse_sidecar(data.decode("utf-8"))
++        theirs, warnings = parse_sidecar(data.decode("utf-8"))
+     except (UnicodeDecodeError, SidecarError):
+         raise StoreError("that file isn't a sidecar vid2sub can read, so nothing was merged") \
+             from None
++    if warnings:
++        raise StoreError("that sidecar was cut short, so nothing was merged: download it again")
+     named = theirs.header.video
+     if (named.name, named.size, named.quick_sha256) != (video.name, identity.size,
+                                                         identity.quick_sha256):
+         raise OtherVideo()
+     mine, _ = load(video)
+-    lacking = [r for r in theirs.records if mine is None or r not in mine.records]
++    lacking = [r for r in theirs.records if (mine is None or r not in mine.records)
++               and (not isinstance(r, ProjectionRecord) or _holds(video.with_name(r.path),
++                                                                   r.sha256))]
+     return append(video, mine.header if mine else theirs.header, lacking), len(lacking)
+ 
+ 
++def _holds(path: Path, sha256: str) -> bool:
++    return path.is_file() and not path.is_symlink() and sha256_hex(path.read_bytes()) == sha256
++
++
+ def head_record(sidecar: Sidecar, track: str, rendition_id: str, by: str, *,
+                 replace_person: bool = False) -> HeadRecord | None:
+     """None when nothing should change; a track in Conflict is resolved in the editor."""
+```
+
+- [ ] **Step 29: Run the checks; they pass, and each guard fails without its fix.**
+  `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest tests/test_write_merge.py -q`: `9 passed`. In turn, each
+  reverted after: `store.merge`'s `lacking` without its `and (not isinstance(r, ProjectionRecord) or
+  _holds(…))`: `FAILED …test_an_edit_made_outside_since_the_open_diverges_
+  from_the_download_and_is_kept` and `FAILED …test_someone_elses_file_where_the_download_
+  projected_is_left_alone`; its `if warnings:` refusal deleted: `FAILED
+  …test_a_download_cut_short_merges_nothing`. `cd frontend && npm run typecheck && npx vitest run
+  src/lib/folder.test.ts`: `Tests  22 passed (22)`; in turn, `downloadedNotice`'s `run
+  ${MERGE_COMMAND}` made `run vid2sub write "${video}" --merge <downloaded sidecar>` (the name back
+  in the command): `Tests  2 failed | 20 passed (22)`, its wording's and `× … > puts no file name in
+  the command, only beside it`; `writeAll`'s `if (guard.sidecar && !guard.read) throw …` deleted,
+  its second deadline check deleted, and `readForSave`'s `if (ask) await folder.allow();` made
+  `await folder.allow();`: each `Tests  1 failed | 21 passed (22)`, naming its test. `make pages`,
+  then `make pages-test`: `9 passed`. `make check`: `1387 passed, 9 skipped, 55 deselected` (twice),
+  `Test Files  26 passed (26)`, `Tests  140 passed (140)`, `All checks passed!`, `no leaks found`;
+  `make e2e`: `40 passed`.
+- [ ] **Step 30: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(cli): 🤖 the Tier 1 review's fixes: a merge takes no projection record for a file that isn't there, and the notice's command names no file
+
+The Tier 1 review of Task 3 (one independent reviewer, AGENTS.md's security checklist, over
+rounds 3a to 3e) found no Critical and three Important; two are fixed here, with five of its
+Minor, each with a test that failed without it:
+
+- Important: a merge brought in the download's projection records, which name subtitle bytes
+  that were never next to the video. Taken as each file's latest, they made an edit made outside
+  since the open look built on the Save (adopted as its child, quietly replacing it, where spec
+  §14.4 has the two diverge), and someone else's file at a name the Save projected look like
+  vid2sub's (imported as an external version, against §15.3). store.merge now keeps a projection
+  record only where the file there holds its bytes; `write` records the rest as it projects.
+  The test's download now carries the projections a Pages download has. Without the filter:
+  "FAILED tests/test_write_merge.py::test_an_edit_made_outside_since_the_open_diverges_from_the_
+  download_and_is_kept" and "...::test_someone_elses_file_where_the_download_projected_is_left_
+  alone".
+- Important: the notice put the video's name inside a command a person pastes, so a name
+  holding `$(…)`, a backtick or a quote would run or break it. The command now has placeholders
+  only, `vid2sub write <video> --merge <downloaded sidecar>` (MERGE_COMMAND), and the notice names
+  the video and the downloaded sidecar after it, as plain text (the rule for every command shown
+  beside a file name, Phase 2's Save notice's too). With a video named a$(touch x)`b"c'.mkv,
+  the test finds the name only after the command: with the name back inside the command, "× a
+  Save offered as downloads (Decision 25) > puts no file name in the command, only beside it".
+- Minor: a download cut short (a truncated last line, which §14.6 reports) is refused, nothing
+  merged: "FAILED ...::test_a_download_cut_short_merges_nothing" without it. The test of a file
+  that isn't a sidecar checks that the refusal is merge's own (StoreError).
+- Minor: writeAll writes nothing for a named sidecar with no hash to compare it with, besides
+  writePlan's refusal; it checks the deadline again before anything is put in place; and after
+  a "changed" answer the page reads the files again without asking for permission, since no
+  click counts then. Each without its fix: "× the Task 3 review's write guards > writes nothing
+  for a named sidecar with nothing to compare it with", "… > puts nothing in place once Python
+  has stopped waiting, even mid-write", "… > reads the files again without asking, once the
+  click has passed".
+
+Left for the phase end (on its list): only the sidecar is compared before a write, so a subtitle
+file or the glossary changed in the seconds between the click's read and the write is written
+over (Important by the reviewer's reading; it predates Decisions 25 and 26, §14.6 asks for the
+sidecar's compare only, and round 3d's review already listed it); the Pages test's stand-in
+picker grants permission without checking the click's activation, which Task 11's exit test
+covers by hand; `_bare` admits format, separator and unassigned characters beyond the
+ideographic space it was widened for.
+
+Docs read: none new. Not re-read: Vitest's vi.spyOn (mockReturnValueOnce, mockRestore) and
+performance.now, used as their usual API.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 3
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/store.py tests/test_write_merge.py frontend/src/lib/folder.ts
+  frontend/src/lib/folder.test.ts frontend/src/App.tsx tests/pages/test_pages_files.py`, `git
+  commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 31: Review, look forward, close.** The Tier 1 review from
   `$(cat .git/TASK_BASE)` (`AGENTS.md`, *Reviews*: Matt Pocock's `code-review`, two axes in two
   subagents, plus the security checklist, each item a line under `Rounds:`), at most one
-  re-review. Worth checking, beyond what the build's own review found (Step 17): no folder
+  re-review. Worth checking, beyond what the build's own review found (Step 17): that no
+  permission prompt can sit between the sidecar's re-read and the write (`requestPermission` is
+  reached only from a Save's or a pick's click, through `readForSave`), and that a merge can
+  neither drop a record on disk nor take another video's (Decisions 25 and 26); no folder
   handle reaches storage (`grep -rn "indexedDB\|localStorage\|sessionStorage\|caches\."
   frontend/src` finds only the draft's and the theme's storage); a Save can write only into the
   folder its episode came from; every refusal echoes nothing the page sent. The forward review
   over Tasks 4, 5, 10 and 11: Task 4's `Watch` replaces `tests/pagesite.py`'s `Errors` in every
   Pages test; Task 5's clip replaces the demo the files tests use as a person's folder (they need
   a video Chromium plays); Task 10's docs say how to open a folder and what Save does in each
-  browser; Task 11's Steps 3 and 4 use Open folder, Save and the downloads. The docs this task
-  made untrue are fixed in Step 19 (§14.6 and §21: the files' bytes, not text); S48's Proof
-  gains `tests/pages/test_pages_files.py` (in Chromium, with `showDirectoryPicker` taken away).
+  browser; Task 11's Steps 3 and 4 use Open folder, Save, the downloads and the merge command
+  the notice gives. The docs this task made untrue are fixed in Step 19 (§14.6 and §21: the
+  files' bytes, not text) and Step 24 (the README's command list); §18.1 already names
+  `--merge`; S48's Proof gains `tests/pages/test_pages_files.py` (in Chromium, with
+  `showDirectoryPicker` taken away) and `tests/test_write_merge.py`.
   Then the close, its own commit, holding this plan with this task's boxes ticked and **Now** set
   to `Task 4: No frames, no network: the Pages test, open.`, the spec's S48 row set to `built`,
   with the message in `.git/CLOSE_MSG`:
@@ -8196,7 +9193,7 @@ index 4e1c566..62389d8 100644
 ```
 ```diff
 diff --git a/tests/pages/test_pages_files.py b/tests/pages/test_pages_files.py
-index f96008b..cb07cdc 100644
+index d421591..9404a8e 100644
 --- a/tests/pages/test_pages_files.py
 +++ b/tests/pages/test_pages_files.py
 @@ -20,7 +20,7 @@ from pathlib import Path
@@ -8257,7 +9254,7 @@ index f96008b..cb07cdc 100644
      # S48: no showDirectoryPicker (Safari, Firefox): <input webkitdirectory> reads the folder,
      # and Save offers the sidecar and the subtitle files as downloads.
      page.context.add_init_script(NO_PICKER)
-@@ -211,12 +212,12 @@ def test_a_folder_safari_can_only_read_is_saved_as_downloads(page: Page, site_ur
+@@ -217,12 +218,12 @@ def test_a_folder_safari_can_only_read_is_saved_as_downloads(page: Page, site_ur
      for d in downloads:
          d.save_as(episode / d.suggested_filename)  # what the person does with them
      assert local_open(episode).tracks.source[0].text == "I am glad to be here."
@@ -8272,7 +9269,7 @@ index f96008b..cb07cdc 100644
      # why: Review Focus 1: the folder's permission taken back, or the folder moved, while an
      # episode is open: Save writes nothing half-way, says what happened and to open the folder
      # again, and the edits stay in the tab and its draft; with the folder back, the same tab
-@@ -255,4 +256,4 @@ def test_a_folder_lost_mid_edit_saves_nothing_says_why_and_keeps_the_edits(
+@@ -261,4 +262,4 @@ def test_a_folder_lost_mid_edit_saves_nothing_says_why_and_keeps_the_edits(
      expect(app.get_by_test_id("save-state")).to_have_text("All changes saved", timeout=RENDER)
      read_back(page, tmp_path / "saved")
      assert local_open(tmp_path / "saved").tracks.source[0].text == "I am glad to be here."
@@ -8354,8 +9351,8 @@ if (window.top !== window.self) {
   copy) make `if (window.top !== window.self) {` read `if (false) {`, run `uv run pytest -m
   pages tests/pages -q -k frame`, and copy `pages/site/start.js` back over it: `E
   AssertionError: Locator expected to have text 'vid2sub's editor doesn't run inside another
-  page. …'`, `1 failed`. Then `make check`: `1378 passed, 9 skipped, 60 deselected` (twice),
-  `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks passed!`, `no leaks
+  page. …'`, `1 failed`. Then `make check`: `1387 passed, 9 skipped, 60 deselected` (twice),
+  `Test Files  26 passed (26)`, `Tests  140 passed (140)`, `All checks passed!`, `no leaks
   found`; and `make e2e`: `40 passed`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -8646,8 +9643,8 @@ index 1ef669f..29e10d4 100644
 
 - [ ] **Step 9: Run the checks; they pass.** `make pages`, then `uv run pytest -m pages
   tests/pages/test_pages_origin.py -q`: `6 passed`; `make pages-test`: `15 passed`, about 67 s;
-  `make check`: `1378 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
-  `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`; `make e2e`: `40 passed`.
+  `make check`: `1387 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
+  `Tests  140 passed (140)`, `All checks passed!`, `no leaks found`; `make e2e`: `40 passed`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -9199,7 +10196,7 @@ index e10f05e..d715dfe 100644
  
  pages-serve: ## Serve _site/ as GitHub Pages does: under /vid2sub/, with Range requests, on 127.0.0.1
 diff --git a/README.md b/README.md
-index e1caae4..e453097 100644
+index 4be39a0..e5ab0fb 100644
 --- a/README.md
 +++ b/README.md
 @@ -65,8 +65,8 @@ cd ..
@@ -9230,7 +10227,7 @@ index 54b043b..9771566 100644
    and keeps them when the job fails.
  - Some of the file browser's tests (`tests/test_browse.py`) run on one system only: junctions,
 diff --git a/tests/pages/test_pages_files.py b/tests/pages/test_pages_files.py
-index cb07cdc..6a8687d 100644
+index 9404a8e..3972415 100644
 --- a/tests/pages/test_pages_files.py
 +++ b/tests/pages/test_pages_files.py
 @@ -86,7 +86,7 @@ def site_url():
@@ -9292,8 +10289,8 @@ index 3b775db..be58db8 100644
   take out `        tools.need("ffmpeg")` and `        tools.need("ffprobe")`, rerun, restore.
   Expected: `FAILED tests/test_demo_clip.py::test_serve_demo_still_says_it_needs_ffmpeg_before_it_starts`
   with `Failed: DID NOT RAISE CommandError` (`1 failed, 4 passed`). Then `make check`.
-  Expected: `1383 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
-  `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`. Then `make pages`
+  Expected: `1392 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
+  `Tests  140 passed (140)`, `All checks passed!`, `no leaks found`. Then `make pages`
   (`build_pages: wrote _site/ (44.1 MB) with Shinylive 0.8.12 (assets 0.10.15), Pyodide 0.27.7,
   Python 3.12.7. …`), `make pages-test` (`15 passed`) and `make e2e` (`40 passed`).
 - [ ] **Step 8: Commit.** Write the message to `.git/COMMIT_MSG`:
@@ -9745,8 +10742,8 @@ test-pyodide: ## Run the pure packages' tests inside Pyodide 0.27.7, as Pages ru
   `======================== 1 failed, 260 passed in 3.93s =========================` and
   `make: *** [test-pyodide] Error 1`.
 - [ ] **Step 9: Run the checks; they pass.** `make actionlint`, then `make check`. Expected:
-  actionlint prints only its command line and exits 0; `1383 passed, 9 skipped, 61 deselected`
-  (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks passed!`,
+  actionlint prints only its command line and exits 0; `1392 passed, 9 skipped, 61 deselected`
+  (twice), `Test Files  26 passed (26)`, `Tests  140 passed (140)`, `All checks passed!`,
   `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -9840,27 +10837,24 @@ Spec §23.3 with Phase 4 Decision 2: the only workflow that deploys Pages builds
 pages`, tests it with `make pages-test`, and deploys it from `main` alone; pull requests build and
 test only. Task 9 adds the install index and the post-deploy smoke job to it.
 
-**Why it is built this way** (read 2026-10-24):
-- **`workflow_run` is a trigger with write tokens for anyone's run.** GitHub's "Events that trigger
-  workflows": it fires "regardless of the conclusion of the previous workflow", for any workflow
-  by the name in `workflows:`, and "the workflow started by the `workflow_run` event is able to
-  access secrets and write tokens, even if the previous workflow was not", with a warning about
-  cache poisoning. So both jobs run for it only when the run succeeded, was a `push`, and came
-  from this repository (`head_repository.full_name == github.repository`); a fork's or a pull
-  request's run of a workflow named `release` builds nothing.
-- **It builds `main`'s own files.** For `workflow_run`, `GITHUB_SHA` and `GITHUB_REF` are the
-  default branch's newest commit and the branch itself, and the file runs from the default
-  branch. Checkout takes no `ref:`, and no `head_sha` appears in the file, so the site is main's,
-  never the commit the release run built. The release tag is on `main` already (Task 8 refuses
-  one that isn't).
-- **Each job's condition holds on its own, and the environment is the gate.** The deploy job
-  checks `refs/heads/main` and the event too, rather than leaning on the build job's skip, so
-  main's copy never deploys a manual run on another branch. But a run on another ref (a pull
-  request from this repository, a manual run on a branch) uses that ref's own copy of
-  `pages.yml`, which anyone who can push can edit: only the `github-pages` environment's rule,
-  `main` alone (Dan's, Step 14), stops it deploying (round 7b, found by the security review).
-  The test evaluates both conditions, each alone, against ten events, with a small evaluator of
-  the expression syntax they use (strings compared ignoring case, as Actions compares them).
+**Why it is built this way** (read 2026-10-25):
+- **A release starts it by hand, as Dan can (Decision 2; Dan, Q&A item 26).** A release made
+  with the GITHUB_TOKEN starts no workflow but a dispatch (GitHub's "GITHUB_TOKEN" page:
+  "`workflow_dispatch` and `repository_dispatch` events always create workflow runs"), so
+  `release.yml` ends with `gh workflow run pages.yml --ref main` (Task 8). This workflow has only
+  its own three triggers, push to `main`, pull requests and `workflow_dispatch`, and follows no
+  other workflow's runs: no `workflow_run`, whose runs get write tokens whatever started them, so
+  no guard conditions and no naming rule between workflows.
+- **It builds the commit its event names.** Checkout takes no `ref:`: a push's commit, or for a
+  manual run on `main` (a release's), main's newest. The release tag is on `main` already (Task 8
+  refuses one that isn't).
+- **The deploy condition is main's, and the environment is the gate.** The deploy job runs only
+  for `refs/heads/main` after a push or a manual run, never for a pull request (whose ref is
+  `refs/pull/N/merge`) or a manual run on another branch. But a run on another ref uses that
+  ref's own copy of `pages.yml`, which anyone who can push can edit: only the `github-pages`
+  environment's rule, `main` alone (Dan's, Step 17), stops it deploying (round 7b, found by the
+  security review). Each condition is a plain comparison of the event and the ref, so the test
+  pins it as written.
 - **No repository code runs with the write permissions.** The deploy job holds `pages: write`
   and `id-token: write` (deploy-pages' README: the minimum) and runs deploy-pages alone, on the
   artifact the build job uploaded; the build job holds `contents: read`.
@@ -9876,30 +10870,27 @@ test only. Task 9 adds the install index and the post-deploy smoke job to it.
   saved. A restored entry can still write any path in the workspace (actions/cache extracts
   every member), so CI trusts what main's own runs saved; restoring caches only on pull requests
   would close that, on the phase-end list (round 7c).
-- **One run per ref at a time, in order** (round 7b): a push, a manual run on `main` and a
-  release's run all have `main`'s ref, so with workflow-level concurrency the newest deploys
+- **One run per ref at a time, in order** (round 7b): a push and a manual run on `main` (a
+  release's included) share `main`'s ref, so with workflow-level concurrency the newest deploys
   last; a deploy is never cancelled midway, and the deploy job's 15 minutes outlast
   deploy-pages' own 10. A link in `_site/` stops the upload (upload-pages-artifact's tar follows
   links; Pages takes none), checked with `find -print -quit`, which pipefail can't misread.
 - **ffmpeg, and a skip fails.** `make pages` needs no ffmpeg since Task 5, but
   `tests/pages/test_pages_files.py` is a `media` test (it probes the episode), so the job installs
   ffmpeg and sets `VID2SUB_REQUIRE_FFMPEG=1`.
-- **Pages' settings are Dan's** (`AGENTS.md`, *Stops*: Pages settings and repo settings): Step 14
+- **Pages' settings are Dan's** (`AGENTS.md`, *Stops*: Pages settings and repo settings): Step 17
   lists them; the agent checks them only by reading.
 
 **Files:**
 - Create: `.github/workflows/pages.yml`, `tests/test_pages_workflow.py`
 - Modify (round 7b): `scripts/shinylive_local.py` (`assets()` keeps the tarball),
   `tests/test_build_pages.py`
-- Modify at the close: this plan; the spec (§23.3's triggers, Decision 2; S50)
+- Modify at the close: this plan; the spec (S50; §23.3 says Decision 2's dispatch already)
 
 **Interfaces:**
-- Consumes: spec §23.3's triggers, with Decision 2's `workflow_run` in place of
-  `release: published`. Task 8's `release.yml` is named `release` and runs on `v*` tag pushes
-  only. `workflow_run` fires for any completed run of a workflow by that name, a fork's pull
-  request included, so the deploy job runs only when `github.event.workflow_run.conclusion` is
-  `success`, its `event` is `push`, and its `head_repository.full_name` is
-  `github.repository`. It checks out `main`, never the triggering run's `head_sha`.
+- Consumes: spec §23.3's triggers: push to `main`, `workflow_dispatch`, and the dispatch Task 8's
+  `release.yml` makes once a release is published (`gh workflow run pages.yml --ref main`,
+  Decision 2); pull requests build and test only.
 - Consumes, from Tasks 2–5: `make pages` (Node from `frontend/.nvmrc`, `npm ci`, uv; no ffmpeg
   since Task 5), then `make pages-test` (after `uv run playwright install --with-deps chromium`;
   it needs ffmpeg), then `_site/` uploaded with hidden files. `.cache/shinylive/` keyed by
@@ -9907,10 +10898,10 @@ test only. Task 9 adds the install index and the post-deploy smoke job to it.
   `test_pages_site.py`'s new-deploy test, which `make pages-test` runs; Phase 2 Task 21's pins
   (checkout v7.0.1, setup-uv v10.3.0 with uv 0.13.1, setup-node v7.1.0) and `make actionlint`.
 - Produces:
-  - `pages.yml`, `name: pages`, on `push: branches: [main]`, `pull_request`,
-    `workflow_dispatch` and `workflow_run: {workflows: [release], types: [completed]}`; jobs
-    `build` (`contents: read`; uploads the `github-pages` artifact except on a pull request) and
-    `deploy` (`pages: write`, `id-token: write`; `needs: build`; environment `github-pages`;
+  - `pages.yml`, `name: pages`, on `push: branches: [main]`, `pull_request` and
+    `workflow_dispatch`; jobs `build` (`contents: read`; no `if:`; uploads the `github-pages`
+    artifact except on a pull request) and `deploy` (`pages: write`, `id-token: write`;
+    `needs: build`; `if:` main after a push or a manual run; environment `github-pages`;
     deploy-pages alone, its step id `deployment`); concurrency `pages-${{ github.ref }}`, never
     cancelled; a step `the site holds no symbolic links` just before the upload.
   - `scripts/shinylive_local.assets()` keeps the tarball beside the unpacked folder (it deleted
@@ -9918,8 +10909,8 @@ test only. Task 9 adds the install index and the post-deploy smoke job to it.
   - For Task 9: the index is built in the build job after `make pages-test` (`make pages`
     empties `_site/`) and before the link check, and the smoke job follows `deploy`; Task 9
     extends `tests/test_pages_workflow.py` (its job set, the build job's order).
-  - `tests/test_pages_workflow.py`: `evaluate(expression, context)`, `EVENTS`, and the
-    hardening checks Task 9's jobs must keep.
+  - `tests/test_pages_workflow.py`: `steps`, `runs`, `uses`, `MAIN_ONLY` (the deploy job's
+    condition, pinned as written), and the hardening checks Task 9's jobs must keep.
 
 The counts below come from a replay on Phase 3's end with this phase's Tasks 1 to 6 in. What
 matters is no failure, ruff's `All checks passed!` and gitleaks' `no leaks found`; the new tests'
@@ -9933,10 +10924,11 @@ own counts are exact.
 
 GitHub Actions can't run here, so this pins what only a live run would otherwise show: the only
 workflow that deploys Pages builds and tests the site on every pull request and push, and deploys
-from main alone, after a push, a manual run, or a successful release in this repository (Phase 4
-Decision 2's workflow_run, whose conditions are evaluated here against the events that could
-start it); the deploy job holds the only write permissions and runs no code of the repository's;
-and every job keeps §23.1's hardening. `make actionlint` checks the file's syntax and expressions.
+from main alone, after a push or a manual run, which is how a release starts it (release.yml's
+`gh workflow run`, Phase 4 Decision 2); the deploy job holds the only write permissions and runs
+no code of the repository's; and every job keeps §23.1's hardening. Each condition is a plain
+comparison of the event and the ref, so the test pins it as written. `make actionlint` checks the
+file's syntax and expressions.
 """
 
 from __future__ import annotations
@@ -9953,7 +10945,9 @@ REPO = Path(__file__).resolve().parents[1]
 WORKFLOWS = REPO / ".github" / "workflows"
 PAGES = WORKFLOWS / "pages.yml"
 PINNED = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+(\.\d+)*$")
-REPOSITORY = "chendaniely/vid2sub"
+# The deploy job's condition: main only, after a push or a manual run (a release's included).
+MAIN_ONLY = ("github.ref == 'refs/heads/main' && "
+             "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')")
 
 
 @pytest.fixture(scope="module")
@@ -9973,160 +10967,21 @@ def uses(workflow: dict, job: str) -> list[str]:
     return [s["uses"].split("@")[0] for s in steps(workflow, job) if "uses" in s]
 
 
-# ---- GitHub's expressions, as far as pages.yml's `if:` conditions use them ----------------------
-
-TOKEN = re.compile(r"\s*(?:(?P<str>'[^']*')|(?P<op>==|!=|&&|\|\||[()!])|(?P<name>[A-Za-z_][\w.-]*))")
-
-
-def evaluate(expression: str, context: dict) -> bool:
-    """`expression`, in as much of GitHub's syntax as pages.yml's conditions use (names,
-    single-quoted strings, ==, !=, &&, ||, ! and brackets), with each name looked up in `context`
-    by its dotted path, missing as None, as Actions reads a missing property as null. Anything
-    else fails the test."""
-    tokens, at, text = [], 0, expression.strip()
-    while at < len(text):
-        match = TOKEN.match(text, at)
-        assert match and match.end() > at, f"can't read {text[at:]!r}"
-        tokens.append(match.groupdict())
-        at = match.end()
-    tokens.append({"op": "end"})
-    pos = 0
-
-    def peek(op: str) -> bool:
-        return tokens[pos].get("op") == op
-
-    def take(op: str) -> None:
-        nonlocal pos
-        assert peek(op), f"expected {op!r} in {expression!r}"
-        pos += 1
-
-    def either():
-        value = both()
-        while peek("||"):
-            take("||")
-            right = both()
-            value = value or right
-        return value
-
-    def both():
-        value = compare()
-        while peek("&&"):
-            take("&&")
-            right = compare()
-            value = value and right
-        return value
-
-    def compare():
-        left = unary()
-        for op in ("==", "!="):
-            if peek(op):
-                take(op)
-                right = unary()
-                return (left == right) is (op == "==")
-        return left
-
-    def unary():
-        if peek("!"):
-            take("!")
-            return not unary()
-        return atom()
-
-    def atom():
-        nonlocal pos
-        token = tokens[pos]
-        if peek("("):
-            take("(")
-            value = either()
-            take(")")
-            return value
-        pos += 1
-        if token.get("str") is not None:
-            return token["str"][1:-1]
-        name = token.get("name")
-        assert name is not None, f"can't read {expression!r}"
-        if name in ("true", "false", "null"):
-            return {"true": True, "false": False, "null": None}[name]
-        value = context
-        for part in name.split("."):
-            value = value.get(part) if isinstance(value, dict) else None
-        return value
-
-    value = either()
-    take("end")
-    return bool(value)
-
-
-def event(name: str, *, ref: str = "refs/heads/main", run: dict | None = None) -> dict:
-    github = {"event_name": name, "ref": ref, "repository": REPOSITORY, "event": {}}
-    if run is not None:
-        github["event"]["workflow_run"] = run
-    return {"github": github}
-
-
-def release_run(conclusion: str = "success", trigger: str = "push",
-                repository: str = REPOSITORY) -> dict:
-    return {"conclusion": conclusion, "event": trigger,
-            "head_repository": {"full_name": repository}}
-
-
-EVENTS = {
-    # name: (context, builds, deploys)
-    "a push to main": (event("push"), True, True),
-    "a manual run on main": (event("workflow_dispatch"), True, True),
-    "a release that succeeded": (event("workflow_run", run=release_run()), True, True),
-    "a pull request": (event("pull_request", ref="refs/pull/7/merge"), True, False),
-    "a manual run on another branch": (event("workflow_dispatch", ref="refs/heads/phase-4"),
-                                       True, False),
-    "a release run that failed": (event("workflow_run", run=release_run("failure")), False,
-                                  False),
-    "a release run that was cancelled": (event("workflow_run", run=release_run("cancelled")),
-                                         False, False),
-    "a run of a workflow named release on a fork's pull request": (
-        event("workflow_run", run=release_run(trigger="pull_request",
-                                              repository="someone/vid2sub")), False, False),
-    "a run of a workflow named release on a pull request here": (
-        event("workflow_run", run=release_run(trigger="pull_request")), False, False),
-    "a fork's push to a workflow named release": (
-        event("workflow_run", run=release_run(repository="someone/vid2sub")), False, False),
-}
-
-
-# ---- the tests ------------------------------------------------------------------------------------
-
-
-def test_the_evaluator_reads_expressions_as_actions_does():
-    context = {"github": {"event_name": "push", "event": {}}}
-    assert evaluate("github.event_name == 'push' && !(github.ref == 'x')", context)
-    assert evaluate("github.event.workflow_run.conclusion == null", context)
-    assert not evaluate("github.event_name != 'push' || false", context)
-    with pytest.raises(AssertionError):
-        evaluate("contains(github.ref, 'main')", context)
-
-
-def test_pages_yml_triggers_on_main_pull_requests_by_hand_and_after_a_release(workflow):
+def test_pages_yml_triggers_on_main_pull_requests_and_by_hand(workflow):
     # why: spec §23.3 with Phase 4 Decision 2: a release made with the GITHUB_TOKEN starts no
-    # workflow, so `release: published` would never fire for release.yml's releases.
+    # workflow but a dispatch, so release.yml runs this one by hand, as Dan can (Task 8), and
+    # nothing here follows another workflow's runs.
     assert workflow["name"] == "pages"
     assert workflow[True] == {  # PyYAML reads the key `on` as True
-        "push": {"branches": ["main"]}, "pull_request": None, "workflow_dispatch": None,
-        "workflow_run": {"workflows": ["release"], "types": ["completed"]}}
+        "push": {"branches": ["main"]}, "pull_request": None, "workflow_dispatch": None}
 
 
-def test_release_yml_if_present_is_the_workflow_pages_follows():
-    release = WORKFLOWS / "release.yml"
-    if release.is_file():  # Phase 4 Task 8 makes it, and pins its name too
-        assert yaml.safe_load(release.read_text(encoding="utf-8"))["name"] == "release"
-
-
-@pytest.mark.parametrize("name", EVENTS)
-def test_the_site_is_built_and_deployed_only_for_the_events_that_should(workflow, name):
-    # why: workflow_run fires for every completed run of any workflow named `release`, a
-    # failure's and a fork pull request's included, and its jobs get write tokens; and only main
-    # may deploy (spec §23.3), whoever starts a manual run. Each job's condition holds alone.
-    context, builds, deploys = EVENTS[name]
+def test_every_event_builds_and_only_main_deploys(workflow):
+    # why: only main may deploy (spec §23.3), whoever starts a manual run, and never a pull
+    # request, whose ref is refs/pull/N/merge; pull requests and runs elsewhere build and test.
     jobs = workflow["jobs"]
-    assert evaluate(jobs["build"]["if"], context) is builds
-    assert evaluate(jobs["deploy"]["if"], context) is deploys
+    assert "if" not in jobs["build"]
+    assert jobs["deploy"]["if"] == MAIN_ONLY
 
 
 def test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys(workflow):
@@ -10141,11 +10996,9 @@ def test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys(wo
     assert [s.get("uses", "").split("@")[0] for s in deploy["steps"]] == ["actions/deploy-pages"]
 
 
-def test_it_builds_mains_own_files_never_the_commit_a_release_run_built(workflow):
-    # why: checkout's default is the event's commit, for workflow_run main's newest; a `ref:`
-    # set to the triggering run's head would build whatever that run checked out.
-    text = PAGES.read_text(encoding="utf-8")
-    assert "head_sha" not in text and "head_branch" not in text
+def test_it_builds_the_commit_its_event_names(workflow):
+    # why: checkout's default is the event's commit: a push's, or for a manual run on main (a
+    # release's) main's newest; a `ref:` would build something else.
     checkouts = [s for s in steps(workflow, "build") if s.get("uses", "").startswith(
         "actions/checkout@")]
     assert len(checkouts) == 1 and set(checkouts[0]["with"]) == {"persist-credentials"}
@@ -10204,41 +11057,28 @@ def test_every_action_is_pinned_and_every_job_is_hardened(workflow):
 ```
 
 - [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_pages_workflow.py -q`.
-  Expected: `3 passed, 16 errors`, each error `FileNotFoundError: [Errno 2] No such file or
-  directory: '…/.github/workflows/pages.yml'` (the evaluator's test, the release-name test and the
-  only-deployer scan pass without the file).
+  Expected: `1 passed, 7 errors`, each error `FileNotFoundError: [Errno 2] No such file or
+  directory: '…/.github/workflows/pages.yml'` (the only-deployer scan passes without the file).
 - [ ] **Step 3: Write the workflow,** `.github/workflows/pages.yml`:
 
 ```yaml
 # The Pages editor (spec §21, §23.3; S50): build the site with make pages, test it with make
 # pages-test, and deploy it to GitHub Pages. This is the only workflow that deploys Pages, and
 # there is no gh-pages branch. Pull requests build and test only. A deploy comes from main alone:
-# a push to main, a manual run on main, or a release (spec §23.4). A release made with the
-# GITHUB_TOKEN starts no workflow, so this one follows release.yml by its name through
-# workflow_run (Phase 4 Decision 2), and runs only for a successful tag push in this repository;
-# workflow_run runs main's own copy of this file, on main's newest commit, never the commit the
-# release built.
+# a push to main or a manual run on main. A release made with the GITHUB_TOKEN starts no workflow
+# but a dispatch, so release.yml starts the manual run itself once it has published (gh workflow
+# run pages.yml --ref main; Phase 4 Decision 2), and the redeploy lists the release (spec §23.4).
 name: pages
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  workflow_run:
-    workflows: [release]
-    types: [completed]
 permissions:
   contents: read
 
 jobs:
   build:
-    # A workflow_run for any other run of a workflow named `release` (a failure, a fork's) builds
-    # nothing.
-    if: >-
-      github.event_name != 'workflow_run' || (
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -10248,7 +11088,7 @@ jobs:
       # tests/pages/test_pages_files.py is a media test (it probes the episode): a skip fails.
       VID2SUB_REQUIRE_FFMPEG: "1"
     steps:
-      # No ref: the event's own commit, which for workflow_run is main's newest.
+      # No ref: the event's own commit, a push's, or main's newest for a manual run on main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -10286,12 +11126,8 @@ jobs:
     needs: build
     # main only, and never a pull request; the github-pages environment allows main alone too.
     if: >-
-      github.ref == 'refs/heads/main' && (
-        github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (
-          github.event_name == 'workflow_run' &&
-          github.event.workflow_run.conclusion == 'success' &&
-          github.event.workflow_run.event == 'push' &&
-          github.event.workflow_run.head_repository.full_name == github.repository))
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -10310,85 +11146,75 @@ jobs:
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_pages_workflow.py -q`:
-  `19 passed`. `make actionlint`: its command line only, exit 0 (with shellcheck installed, it
+  `8 passed`. `make actionlint`: its command line only, exit 0 (with shellcheck installed, it
   checks the run steps too). The guards, each made in the workflow, run, and reverted:
-  - the deploy job's `github.event.workflow_run.event == 'push' &&` taken out: `FAILED
-    tests/test_pages_workflow.py::test_the_site_is_built_and_deployed_only_for_the_events_that_should[a run of a workflow named release on a pull request here]`;
-  - the build job's `&& github.event.workflow_run.head_repository.full_name == github.repository`
-    taken out: `FAILED …[a fork's push to a workflow named release]`;
-  - the deploy job's `github.ref == 'refs/heads/main' && (` made `(`: `FAILED …[a manual run on
-    another branch]`;
-  - checkout given `ref: "${{ github.event.workflow_run.head_sha }}"`: `FAILED
-    tests/test_pages_workflow.py::test_it_builds_mains_own_files_never_the_commit_a_release_run_built`;
+  - the deploy job's `github.ref == 'refs/heads/main' &&` taken out: `FAILED
+    tests/test_pages_workflow.py::test_every_event_builds_and_only_main_deploys`;
+  - the build job given `if: github.event_name != 'pull_request'`: the same;
+  - checkout given `ref: main` beside `persist-credentials: false`: `FAILED
+    tests/test_pages_workflow.py::test_it_builds_the_commit_its_event_names`;
   - the build job given `contents: write`: `FAILED
     tests/test_pages_workflow.py::test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys`.
 
-  Each prints `1 failed, 18 passed`. The build job's commands are Tasks 2–5's, run here: `make
-  pages` and `make pages-test` (`15 passed`). Then `make check`. Expected: `1402 passed, 9
-  skipped, 61 deselected` (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All
-  checks passed!`, `no leaks found`.
+  Each prints `1 failed, 7 passed`. The build job's commands are Tasks 2–5's, run here: `make pages`
+  and `make pages-test` (`15 passed`). Then `make check`. Expected: `1400 passed, 9 skipped, 61
+  deselected` (twice), `Test Files  26 passed (26)`, `Tests  140 passed (140)`, `All checks
+  passed!`, `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
-ci(pages): 🤖 pages.yml builds and tests the Pages site on every pull request and push, and deploys it from main alone, after a push, a manual run or a successful release
+ci(pages): 🤖 pages.yml builds and tests the Pages site on every pull request and push, and deploys it from main alone, after a push or a manual run, which is how a release starts it
 
-Spec §21, §23.3 and S50, with Phase 4 Decision 2: pages.yml is the only workflow that deploys
-Pages, from an Actions artifact (no gh-pages branch).
+Spec §21, §23.3 and S50, with Phase 4 Decision 2 (Dan, Q&A item 26): pages.yml is the only
+workflow that deploys Pages, from an Actions artifact (no gh-pages branch).
 
-- Triggers: push to main, pull_request, workflow_dispatch, and workflow_run on the workflow named
-  `release` (Task 8's release.yml), completed. A release made with the GITHUB_TOKEN starts no
-  workflow, so `release: published` would never fire for release.yml's releases.
-- workflow_run fires for every completed run of any workflow by that name, a failed one's and a
-  fork pull request's included, and its jobs get write tokens: both jobs run for it only when
-  the run's conclusion is success, its event is push, and its head repository is this one.
-- build (contents: read, 30 minutes, UV_FROZEN=1, VID2SUB_REQUIRE_FFMPEG=1): checkout with no
-  ref and no credentials (for workflow_run, main's newest commit, never the run's head_sha);
-  uv 0.13.1; Node from .nvmrc; ffmpeg (tests/pages/test_pages_files.py is a media test, so a
-  skip fails); Shinylive's assets cached by the version scripts/shinylive_local.py pins and the
-  vendored wheels by uv.lock's hash (build_pages.py checks each wheel's hash on every build);
-  npm ci; uv sync --group dev; Playwright's Chromium with its system packages; make pages; make
-  pages-test; then, except on a pull request, upload-pages-artifact with _site/ and its hidden
-  files (.nojekyll).
-- deploy (pages: write and id-token: write only, 10 minutes): needs build, runs only on main
-  (refs/heads/main; a manual run on another branch builds and tests but never deploys) and
-  never for a pull request; the github-pages environment; one deploy at a time, never cancelled
-  midway; deploy-pages, and nothing else: no checkout, no code of the repository's runs with
-  those permissions.
+- Triggers: push to main, pull_request and workflow_dispatch, and nothing else. A release made
+  with the GITHUB_TOKEN starts no workflow but a dispatch, so release.yml starts this one with
+  `gh workflow run pages.yml --ref main` once it has published (Task 8); this file follows no
+  other workflow's runs (no workflow_run, whose runs get write tokens whatever started them).
+- build (contents: read, 30 minutes, UV_FROZEN=1, VID2SUB_REQUIRE_FFMPEG=1; no `if:`, so every
+  event builds and tests): checkout with no ref and no credentials (a push's commit, or main's
+  newest for a manual run on main); uv 0.13.1; Node from .nvmrc; ffmpeg
+  (tests/pages/test_pages_files.py is a media test, so a skip fails); Shinylive's assets cached
+  by the version scripts/shinylive_local.py pins and the vendored wheels by uv.lock's hash
+  (build_pages.py checks each wheel's hash on every build); npm ci; uv sync --group dev;
+  Playwright's Chromium with its system packages; make pages; make pages-test; then, except on a
+  pull request, upload-pages-artifact with _site/ and its hidden files (.nojekyll).
+- deploy (pages: write and id-token: write only, 10 minutes): needs build, and runs only for
+  refs/heads/main after a push or a manual run (a pull request, whose ref is refs/pull/N/merge,
+  or a manual run on another branch builds and tests but never deploys); the github-pages
+  environment; one deploy at a time, never cancelled midway; deploy-pages, and nothing else: no
+  checkout, no code of the repository's runs with those permissions.
 - Every action pinned by commit with its version beside it (git ls-remote: cache v6.1.0,
   upload-pages-artifact v5.0.0, deploy-pages v5.0.1, all lightweight tags; checkout, setup-uv
   and setup-node as ci.yml pins them).
 
-tests/test_pages_workflow.py reads the file as Actions does (PyYAML) and evaluates both jobs'
-`if:` conditions, each on its own, against ten events (a push to main, a manual run on main or
-on another branch, a pull request, and workflow_run for a success, a failure, a cancel, a pull
-request here and a fork's pull request or push); it pins the permissions, the deploy job's lone
-step, the checkout with no ref and no head_sha anywhere, the order make pages, make pages-test,
-upload, the caches' keys (running the version step's script against shinylive_local.py's
-ASSETS), pages.yml as the only workflow that deploys Pages, the pins, timeouts and token-free
-checkouts. It failed first with FileNotFoundError for .github/workflows/pages.yml (16 errors).
-Guard checks, each reverted: the deploy condition without `event == 'push'` ("FAILED ...[a run
-of a workflow named release on a pull request here]"), the build condition without the head
-repository ("...[a fork's push to a workflow named release]"), the deploy condition without
-the main ref ("...[a manual run on another branch]"), a checkout of the run's head_sha
-("FAILED ...test_it_builds_mains_own_files_never_the_commit_a_release_run_built"), the build job
-given contents: write ("FAILED ...test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_
-repositorys"). make actionlint (with shellcheck): no findings.
+tests/test_pages_workflow.py reads the file as Actions does (PyYAML) and pins the triggers, the
+deploy job's condition as written (a plain comparison of the ref and the event, MAIN_ONLY) and
+no condition on the build job, the permissions, the deploy job's lone step, the checkout with
+no ref, the order make pages, make pages-test, upload, the caches' keys (running the version
+step's script against shinylive_local.py's ASSETS), pages.yml as the only workflow that deploys
+Pages, the pins, timeouts and token-free checkouts. It failed first with FileNotFoundError for
+.github/workflows/pages.yml ("1 passed, 7 errors"). Guard checks, each reverted: the deploy
+condition without the main ref ("FAILED tests/test_pages_workflow.py::test_every_event_builds_
+and_only_main_deploys"), a checkout given a ref ("FAILED ...::test_it_builds_the_commit_its_
+event_names"), the build job given contents: write ("FAILED ...::test_only_the_deploy_job_can_
+write_and_it_runs_nothing_of_the_repositorys"). make actionlint (with shellcheck): no findings.
 
 What only a live run shows: the first deploy, Pages' source and the github-pages environment's
-rule (Dan's, the [Dan] steps in Task 7's listing), and a release's workflow_run (Task 12, step 9).
+rule (Dan's, the [Dan] steps in Task 7's listing), and a release's dispatched run (Task 12,
+step 9).
 
-Docs read: GitHub's "Events that trigger workflows" (workflow_run: completed whatever the
-conclusion, GITHUB_SHA and GITHUB_REF the default branch's, the file must be on the default
-branch, its runs get secrets and write tokens, the cache-poisoning warning; GITHUB_TOKEN events
-start no run but workflow_dispatch and repository_dispatch); the REST workflow-run object
-(event, conclusion, head_repository.full_name); "Deployments and environments" (deployment
-branch rules match GITHUB_REF); Pages' "Using custom workflows" (pages: write and id-token:
-write; a gzip of one tar, no symlinks or hard links) and "Configuring a publishing source" (the
-github-pages environment, created if missing; protect it so only the default branch deploys);
-upload-pages-artifact v5.0.0's action.yml and release notes (include-hidden-files, default
-false, new in v5; tar --dereference; upload-artifact v7.0.0); deploy-pages v5.0.1's README
-and release notes; actions/cache v6.1.0's README (the default branch's caches are readable by
-other branches; a key, once saved, isn't saved again).
+Docs read: GitHub's "Events that trigger workflows" (workflow_dispatch: the workflow file must be
+on the ref; GITHUB_SHA the ref's newest commit) and its "GITHUB_TOKEN" page ("workflow_dispatch
+and repository_dispatch events always create workflow runs"); "Deployments and environments"
+(deployment branch rules match GITHUB_REF); Pages' "Using custom workflows" (pages: write and
+id-token: write; a gzip of one tar, no symlinks or hard links) and "Configuring a publishing
+source" (the github-pages environment, created if missing; protect it so only the default branch
+deploys); upload-pages-artifact v5.0.0's action.yml and release notes (include-hidden-files,
+default false, new in v5; tar --dereference; upload-artifact v7.0.0); deploy-pages v5.0.1's
+README and release notes; actions/cache v6.1.0's README (the default branch's caches are
+readable by other branches; a key, once saved, isn't saved again).
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 7
 Co-Authored-By: <the model's own line>
@@ -10399,65 +11225,38 @@ Co-Authored-By: <the model's own line>
 
 #### Round 7b: the security review's fixes
 
-When this listing was built, one independent Tier 1 reviewer went over round 7a with `AGENTS.md`'s
-security checklist (28 mutations of the workflow against the test, every pin checked with `git
-ls-remote`). It found no Critical. Its findings, each fixed in this round: the Shinylive cache
-held the unpacked folder, which `shinylive_local.assets()` trusts unchecked, keyed by the version
-alone, so the SHA-256 pin was checked only on a cache miss (Important); the `github-pages`
-environment's rule is the only gate for a run on any other ref, since such a run uses that ref's
-own copy of `pages.yml`, and no step set it (Important: Step 14 below); concurrency on the deploy
-job let an older run deploy over a newer one (Minor); the deploy job's timeout equalled
-deploy-pages' own (Minor); `continue-on-error`, the deploy job's exact step and env, `*.yaml`
-and `write-all` were untested (Minor); the evaluator compared strings with case, where Actions
-ignores it (Minor); two comments overstated (Minor). Its checklist: secrets fine; permissions a
-finding (the environment rule); network exposure fine; failing closed a finding (the cache;
-`continue-on-error`); injection fine; logging fine.
+When this listing was first built, one independent Tier 1 reviewer went over round 7a with
+`AGENTS.md`'s security checklist (28 mutations of the workflow against the test, every pin checked
+with `git ls-remote`); round 7a then also had a `workflow_run` trigger, which Decision 2's dispatch
+has since replaced, and the findings about it and its conditions' evaluator went with it. It found
+no Critical. Its findings, each fixed in this round: the Shinylive cache held the unpacked folder,
+which `shinylive_local.assets()` trusts unchecked, keyed by the version alone, so the SHA-256 pin
+was checked only on a cache miss (Important); the `github-pages` environment's rule is the only
+gate for a run on any other ref, since such a run uses that ref's own copy of `pages.yml`, and no
+step set it (Important: Step 17 below); concurrency on the deploy job let an older run deploy over
+a newer one (Minor); the deploy job's timeout equalled deploy-pages' own (Minor);
+`continue-on-error`, the deploy job's exact step and env, `*.yaml` and `write-all` were untested
+(Minor). Its checklist: secrets fine; permissions a finding (the environment rule); network
+exposure fine; failing closed a finding (the cache; `continue-on-error`); injection fine; logging
+fine.
 
 - [ ] **Step 6: Write the failing tests.** Apply to `tests/test_pages_workflow.py`:
 
 ```diff
 diff --git a/tests/test_pages_workflow.py b/tests/test_pages_workflow.py
-index 3d97957..e1b5eed 100644
+index ea9ae50..f01e2b7 100644
 --- a/tests/test_pages_workflow.py
 +++ b/tests/test_pages_workflow.py
-@@ -23,6 +23,8 @@ WORKFLOWS = REPO / ".github" / "workflows"
- PAGES = WORKFLOWS / "pages.yml"
- PINNED = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+(\.\d+)*$")
- REPOSITORY = "chendaniely/vid2sub"
+@@ -26,6 +26,8 @@ PINNED = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+(\.\d+)*$")
+ # The deploy job's condition: main only, after a push or a manual run (a release's included).
+ MAIN_ONLY = ("github.ref == 'refs/heads/main' && "
+              "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')")
 +# The run steps are bash on ubuntu-24.04; the Linux and macOS jobs run them here, not Windows'.
 +bash_steps = pytest.mark.skipif(os.name == "nt", reason="pages.yml's run steps are bash")
  
  
  @pytest.fixture(scope="module")
-@@ -50,8 +52,8 @@ TOKEN = re.compile(r"\s*(?:(?P<str>'[^']*')|(?P<op>==|!=|&&|\|\||[()!])|(?P<name
- def evaluate(expression: str, context: dict) -> bool:
-     """`expression`, in as much of GitHub's syntax as pages.yml's conditions use (names,
-     single-quoted strings, ==, !=, &&, ||, ! and brackets), with each name looked up in `context`
--    by its dotted path, missing as None, as Actions reads a missing property as null. Anything
--    else fails the test."""
-+    by its dotted path, missing as None, as Actions reads a missing property as null, and strings
-+    compared ignoring case, as Actions compares them. Anything else fails the test."""
-     tokens, at, text = [], 0, expression.strip()
-     while at < len(text):
-         match = TOKEN.match(text, at)
-@@ -91,6 +93,8 @@ def evaluate(expression: str, context: dict) -> bool:
-             if peek(op):
-                 take(op)
-                 right = unary()
-+                if isinstance(left, str) and isinstance(right, str):  # Actions ignores case
-+                    left, right = left.casefold(), right.casefold()
-                 return (left == right) is (op == "==")
-         return left
- 
-@@ -168,6 +172,7 @@ def test_the_evaluator_reads_expressions_as_actions_does():
-     assert evaluate("github.event_name == 'push' && !(github.ref == 'x')", context)
-     assert evaluate("github.event.workflow_run.conclusion == null", context)
-     assert not evaluate("github.event_name != 'push' || false", context)
-+    assert evaluate("github.event_name == 'PUSH'", context)  # Actions ignores case
-     with pytest.raises(AssertionError):
-         evaluate("contains(github.ref, 'main')", context)
- 
-@@ -206,8 +211,19 @@ def test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys(wo
+@@ -70,8 +72,19 @@ def test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys(wo
      assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
      assert deploy["needs"] == "build"
      assert deploy["environment"]["name"] == "github-pages"
@@ -10478,8 +11277,8 @@ index 3d97957..e1b5eed 100644
 +    assert "continue-on-error" not in PAGES.read_text(encoding="utf-8")
  
  
- def test_it_builds_mains_own_files_never_the_commit_a_release_run_built(workflow):
-@@ -234,11 +250,19 @@ def test_the_build_job_makes_tests_and_uploads_the_site_in_that_order(workflow):
+ def test_it_builds_the_commit_its_event_names(workflow):
+@@ -96,11 +109,19 @@ def test_the_build_job_makes_tests_and_uploads_the_site_in_that_order(workflow):
      assert "sudo apt-get update && sudo apt-get install -y ffmpeg" in runs(workflow, "build")
  
  
@@ -10501,7 +11300,7 @@ index 3d97957..e1b5eed 100644
      step = next(s for s in steps(workflow, "build") if s.get("id") == "shinylive")
      output = tmp_path / "output"
      subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
-@@ -250,12 +274,45 @@ def test_the_caches_follow_the_pinned_shinylive_assets_and_uv_lock(workflow, tmp
+@@ -112,12 +133,45 @@ def test_the_caches_follow_the_pinned_shinylive_assets_and_uv_lock(workflow, tmp
  
  def test_pages_yml_is_the_only_workflow_that_deploys_pages():
      # why: spec §23.3, and no gh-pages branch.
@@ -10625,15 +11424,14 @@ index 5d5b09b..bf7b461 100644
 ```
 
 - [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_pages_workflow.py
-  tests/test_build_pages.py -q`. Expected: `5 failed, 27 passed`: `FAILED
+  tests/test_build_pages.py -q`. Expected: `5 failed, 16 passed`: `FAILED
   tests/test_pages_workflow.py::test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys`
   (the deploy job's own concurrency), `FAILED …::test_runs_wait_their_turn_per_ref_and_a_failing_step_fails_the_run`
   (no workflow concurrency), `FAILED …::test_the_caches_follow_the_pinned_shinylive_assets_and_uv_lock`
   (the folder cached, by the version), `FAILED …::test_the_site_is_uploaded_only_once_it_holds_no_link`
   (no such step), and `FAILED
   tests/test_build_pages.py::test_shinylives_assets_are_unpacked_only_with_the_pinned_hash`
-  (the tarball deleted after unpacking). The evaluator's new case check passes already: the
-  evaluator is the test's own.
+  (the tarball deleted after unpacking).
 - [ ] **Step 8: The fixes.** Apply the rest of Step 6's second diff (`git apply --include
   scripts/shinylive_local.py`), and replace `.github/workflows/pages.yml` with:
 
@@ -10641,24 +11439,19 @@ index 5d5b09b..bf7b461 100644
 # The Pages editor (spec §21, §23.3; S50): build the site with make pages, test it with make
 # pages-test, and deploy it to GitHub Pages. This is the only workflow that deploys Pages, and
 # there is no gh-pages branch. Pull requests build and test only. A deploy comes from main alone:
-# a push to main, a manual run on main, or a release (spec §23.4). A release made with the
-# GITHUB_TOKEN starts no workflow, so this one follows release.yml by its name through
-# workflow_run (Phase 4 Decision 2), and builds only after a successful push run of a workflow
-# named release in this repository; workflow_run runs main's own copy of this file, on main's
-# newest commit, never the commit the release built. Another branch's run uses that branch's
-# copy of this file, so the github-pages environment's rule, main only (Dan's setting, Phase 4
-# Task 7), is what keeps it from deploying.
+# a push to main or a manual run on main. A release made with the GITHUB_TOKEN starts no workflow
+# but a dispatch, so release.yml starts the manual run itself once it has published (gh workflow
+# run pages.yml --ref main; Phase 4 Decision 2), and the redeploy lists the release (spec §23.4).
+# Another branch's run uses that branch's copy of this file, so the github-pages environment's
+# rule, main only (Dan's setting, Phase 4 Task 7), is what keeps it from deploying.
 name: pages
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  workflow_run:
-    workflows: [release]
-    types: [completed]
-# One run per ref at a time, in the order they started, never cancelled midway: a push, a manual
-# run on main and a release's run all have main's ref, so the newest deploys last.
+# One run per ref at a time, in the order they started, never cancelled midway: a push and a
+# manual run on main (a release's) share main's ref, so the newest deploys last.
 concurrency:
   group: pages-${{ github.ref }}
   cancel-in-progress: false
@@ -10667,13 +11460,6 @@ permissions:
 
 jobs:
   build:
-    # A workflow_run for any other run of a workflow named `release` (a failure, a fork's) builds
-    # nothing.
-    if: >-
-      github.event_name != 'workflow_run' || (
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -10683,7 +11469,7 @@ jobs:
       # tests/pages/test_pages_files.py is a media test (it probes the episode): a skip fails.
       VID2SUB_REQUIRE_FFMPEG: "1"
     steps:
-      # No ref: the event's own commit, which for workflow_run is main's newest.
+      # No ref: the event's own commit, a push's, or main's newest for a manual run on main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       # No uv cache: uv trusts what it unpacked there, and the site is built from pinned,
@@ -10732,12 +11518,8 @@ jobs:
     needs: build
     # main only, and never a pull request (this copy's rule; the environment's is the gate).
     if: >-
-      github.ref == 'refs/heads/main' && (
-        github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (
-          github.event_name == 'workflow_run' &&
-          github.event.workflow_run.conclusion == 'success' &&
-          github.event.workflow_run.event == 'push' &&
-          github.event.workflow_run.head_repository.full_name == github.repository))
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     # Longer than deploy-pages' own 10-minute limit, so its error is the one that shows.
     timeout-minutes: 15
@@ -10753,7 +11535,7 @@ jobs:
 ```
 
 - [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_pages_workflow.py
-  tests/test_build_pages.py -q`: `32 passed`. The guards, each made, run, and reverted:
+  tests/test_build_pages.py -q`: `21 passed`. The guards, each made, run, and reverted:
   - the Shinylive cache's `path:` back to `.cache/shinylive`: `FAILED
     tests/test_pages_workflow.py::test_the_caches_follow_the_pinned_shinylive_assets_and_uv_lock`;
   - `tarball.unlink()` back after `_utils.tar_safe_extractall(…)` in `shinylive_local.py`:
@@ -10764,9 +11546,9 @@ jobs:
   - the link check's `exit 1` made `exit 0`: `FAILED
     …::test_the_site_is_uploaded_only_once_it_holds_no_link`.
 
-  Each prints `1 failed, 31 passed`. `make actionlint`: its command line only. Then `make check`.
-  Expected: `1404 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
-  `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`. `make pages` still builds
+  Each prints `1 failed, 20 passed`. `make actionlint`: its command line only. Then `make check`.
+  Expected: `1402 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
+  `Tests  140 passed (140)`, `All checks passed!`, `no leaks found`. `make pages` still builds
   from the unpacked folder already in `.cache/shinylive/` (an existing checkout keeps its folder;
   a fresh one now keeps the tarball beside it).
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
@@ -10798,9 +11580,6 @@ each finding is fixed here:
   deploy job's step and env not pinned exactly, *.yaml and write-all not seen by the
   only-deployer scan. All pinned now. And a step before the upload refuses a symbolic link in
   _site/ (upload-pages-artifact's tar follows links; Pages takes none).
-- Minor: the test's evaluator compared strings with case; Actions ignores it, and so does it now.
-- Minor: the header said "a successful tag push"; it is any successful push run of a workflow
-  named release in this repository (main's newest commit is built either way).
 
 The new and changed tests fail without their fixes, each tried and reverted: the folder cached
 again ("FAILED tests/test_pages_workflow.py::test_the_caches_follow_the_pinned_shinylive_assets_
@@ -10813,9 +11592,8 @@ findings.
 
 Docs read: actions/cache v6.1.0's README and action.yml (a saved key isn't saved again; the
 save runs only when the job succeeded, post-if: success(), so a refused tarball is never saved);
-setup-uv v10.3.0's README (enable-cache: auto is on for push and dispatch); GitHub's expressions
-reference ("GitHub ignores case when comparing strings"); deploy-pages v5.0.1's action.yml
-(timeout 600000 ms, "10 minutes").
+setup-uv v10.3.0's README (enable-cache: auto is on for push and dispatch); deploy-pages
+v5.0.1's action.yml (timeout 600000 ms, "10 minutes").
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 7
 Co-Authored-By: <the model's own line>
@@ -10838,10 +11616,10 @@ closing that goes to the phase-end list, below).
 
 ```diff
 diff --git a/.github/workflows/pages.yml b/.github/workflows/pages.yml
-index e583cc4..7fb16ae 100644
+index 04c54e3..d617cc0 100644
 --- a/.github/workflows/pages.yml
 +++ b/.github/workflows/pages.yml
-@@ -54,9 +54,10 @@ jobs:
+@@ -42,9 +42,10 @@ jobs:
          with: { node-version-file: frontend/.nvmrc, cache: npm, cache-dependency-path: frontend/package-lock.json }
        - run: sudo apt-get update && sudo apt-get install -y ffmpeg
        # Shinylive's assets (about 435 MB) are cached as the tarball, keyed by the file that pins
@@ -10855,7 +11633,7 @@ index e583cc4..7fb16ae 100644
        - name: the Shinylive assets' version
          id: shinylive
          run: echo "assets=$(sed -n 's/^ASSETS = "\(.*\)"$/\1/p' scripts/shinylive_local.py)" >> "$GITHUB_OUTPUT"
-@@ -77,8 +78,9 @@ jobs:
+@@ -65,8 +66,9 @@ jobs:
        # Pages takes no links, and upload-pages-artifact's tar follows them.
        - name: the site holds no symbolic links
          run: |
@@ -10868,10 +11646,10 @@ index e583cc4..7fb16ae 100644
            fi
        # Hidden files too, for .nojekyll (spec §23.3).
 diff --git a/tests/test_pages_workflow.py b/tests/test_pages_workflow.py
-index e1b5eed..f81c0ce 100644
+index f01e2b7..ca37137 100644
 --- a/tests/test_pages_workflow.py
 +++ b/tests/test_pages_workflow.py
-@@ -311,6 +311,10 @@ def test_the_site_is_uploaded_only_once_it_holds_no_link(workflow, tmp_path):
+@@ -170,6 +170,10 @@ def test_the_site_is_uploaded_only_once_it_holds_no_link(workflow, tmp_path):
      refused = check()
      assert refused.returncode == 1
      assert refused.stdout.startswith("::error::_site/ holds a symbolic link")
@@ -10885,11 +11663,11 @@ index e1b5eed..f81c0ce 100644
 ```
 
 - [ ] **Step 12: Run the checks; they pass.** `uv run pytest tests/test_pages_workflow.py -q`:
-  `21 passed`. The guard: the old check back (`if find _site -type l | grep -q .; then` with
+  `10 passed`. The guard: the old check back (`if find _site -type l | grep -q .; then` with
   its `$(find _site -type l | head -1)` message), `FAILED
   tests/test_pages_workflow.py::test_the_site_is_uploaded_only_once_it_holds_no_link`
-  (`1 failed, 20 passed`); restore. `make actionlint`, then `make check`: `1404 passed, 9
-  skipped, 61 deselected` (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`,
+  (`1 failed, 9 passed`); restore. `make actionlint`, then `make check`: `1402 passed, 9
+  skipped, 61 deselected` (twice), `Test Files  26 passed (26)`, `Tests  140 passed (140)`,
   `All checks passed!`, `no leaks found`.
 - [ ] **Step 13: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -10922,11 +11700,99 @@ Co-Authored-By: <the model's own line>
   `git add .github/workflows/pages.yml tests/test_pages_workflow.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 14: [Dan] Pages' settings, before the phase PR merges** (`AGENTS.md`, *Stops*: Pages
+#### Round 7d: the Tier 1 review's two test fixes
+
+When this listing was built, one independent Tier 1 reviewer went over rounds 7a to 7c with
+`AGENTS.md`'s security checklist (read-only). It found no Critical. Its findings: two Minor test
+gaps, closed here (the many-links guard fit Linux's 64 KiB pipe buffer, so on CI's Ubuntu the old
+`find | grep -q .` would pass it; the caches test let a `restore-keys` prefix in); the Phase-end
+list's cache row understates what a restored entry can do (any code that ran in a job on `main`
+can save one, and a restored entry is extracted unchecked after checkout), and the `github-pages`
+environment's rule binds only a job that names it (both Minor, for Dan, on the phase-end list).
+Its checklist: secrets fine; permissions fine in the file, the gate across refs resting on Step 17;
+network exposure fine; failing closed a finding (the cache row); injection fine; logging fine.
+
+- [ ] **Step 14: Apply:**
+
+```diff
+diff --git a/tests/test_pages_workflow.py b/tests/test_pages_workflow.py
+index ca37137..619f1c5 100644
+--- a/tests/test_pages_workflow.py
++++ b/tests/test_pages_workflow.py
+@@ -113,8 +113,10 @@ def test_the_build_job_makes_tests_and_uploads_the_site_in_that_order(workflow):
+ def test_the_caches_follow_the_pinned_shinylive_assets_and_uv_lock(workflow, tmp_path):
+     # why: shinylive_local.py trusts an unpacked folder, and checks the tarball before every
+     # unpack; so CI caches the tarball alone, under a key that changes with the pin itself.
+-    caches = {s["with"]["path"]: s["with"]["key"] for s in steps(workflow, "build")
+-              if s.get("uses", "").startswith("actions/cache@")}
++    cached = [s for s in steps(workflow, "build") if s.get("uses", "").startswith("actions/cache@")]
++    # Exactly a path and a key: a `restore-keys` prefix would let another key's entry in.
++    assert [set(s["with"]) for s in cached] == [{"path", "key"}] * 2
++    caches = {s["with"]["path"]: s["with"]["key"] for s in cached}
+     assert caches == {
+         ".cache/shinylive/shinylive-${{ steps.shinylive.outputs.assets }}.tar.gz":
+             "shinylive-${{ hashFiles('scripts/shinylive_local.py') }}",
+@@ -170,9 +172,11 @@ def test_the_site_is_uploaded_only_once_it_holds_no_link(workflow, tmp_path):
+     refused = check()
+     assert refused.returncode == 1
+     assert refused.stdout.startswith("::error::_site/ holds a symbolic link")
+-    # Many links: a `find | grep -q` would end on SIGPIPE, which pipefail reads as a pass.
++    # Many links: a `find | grep -q` would end on SIGPIPE, which pipefail reads as a pass. Their
++    # names are long, so find's output (about 200 KB) outgrows any pipe's buffer, Linux's 64 KB
++    # included, and find is still writing when grep has its match.
+     for n in range(3000):
+-        (site / f"link{n}").symlink_to(tmp_path / "outside")
++        (site / f"link{n:04d}-{'x' * 60}").symlink_to(tmp_path / "outside")
+     assert check().returncode == 1
+ 
+ 
+```
+
+- [ ] **Step 15: Run the checks; they pass, and each fails without its fix.** `uv run pytest
+  tests/test_pages_workflow.py -q`: `10 passed`. In turn, each reverted after: the old link check
+  back (as in Step 12): `FAILED
+  tests/test_pages_workflow.py::test_the_site_is_uploaded_only_once_it_holds_no_link`;
+  `restore-keys: wheels-` under the wheels cache's `key:`: `FAILED
+  tests/test_pages_workflow.py::test_the_caches_follow_the_pinned_shinylive_assets_and_uv_lock`;
+  each `1 failed, 9 passed`. `make actionlint`, then `make check`: `1402 passed, 9 skipped, 61
+  deselected` (twice), `Test Files  26 passed (26)`, `Tests  140 passed (140)`, `All checks
+  passed!`, `no leaks found`.
+- [ ] **Step 16: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+test(pages): 🤖 the Tier 1 review's fixes: the link check's guard holds on Linux, and a cache step can carry no restore-keys
+
+The Tier 1 review of Task 7 (one independent reviewer, AGENTS.md's security checklist, over
+rounds 7a to 7c) found no Critical, and two Minor test gaps, closed here:
+
+- The many-links guard made 3,000 short names, about 44 KB of find's output, which fits Linux's
+  64 KB pipe buffer: there the old `find | grep -q .` finishes without SIGPIPE and passes, so on
+  CI's Ubuntu the test wouldn't catch it. The names are long now (about 200 KB), so find is still
+  writing when grep has its match, on Linux as on macOS. With the old check back: "FAILED
+  tests/test_pages_workflow.py::test_the_site_is_uploaded_only_once_it_holds_no_link".
+- The caches test pinned each step's path and key only; a `restore-keys` prefix would let another
+  key's entry in when the exact key misses. Each cache step's `with` must be exactly a path and a
+  key; with `restore-keys: wheels-` added: "FAILED ...::test_the_caches_follow_the_pinned_
+  shinylive_assets_and_uv_lock".
+
+Its other findings: the Phase-end list's cache row understates what a restored entry can do,
+and the environment gate binds only a job that names it (both for Dan, on the phase-end list).
+
+Docs read: pipe(7) ("the default pipe capacity is 16 pages", 64 KiB with 4 KiB pages);
+actions/cache v6.1.0's README (restore-keys: prefix matches when the key misses).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 7
+Co-Authored-By: <the model's own line>
+```
+
+  `git add tests/test_pages_workflow.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1
+  --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 17: [Dan] Pages' settings, before the phase PR merges** (`AGENTS.md`, *Stops*: Pages
   and repo settings are Dan's; the agent reads them, never writes). The first push to `main`
   after the merge deploys, and fails if these aren't set. Set **Now** to `waiting on Dan: Task 7,
-  Step 14` in a wip commit (`chore(plan): 🤖 wip Task 7: waiting on Dan for Pages' settings`;
-  `Done so far:` rounds 7a to 7c, `Stopped at:` Step 14, `Tests:` `make check` green), then
+  Step 17` in a wip commit (`chore(plan): 🤖 wip Task 7: waiting on Dan for Pages' settings`;
+  `Done so far:` rounds 7a to 7d, `Stopped at:` Step 17, `Tests:` `make check` green), then
   list the steps for Dan, one at a time (*Asking Dan*):
   1. **Settings → Pages → Build and deployment → Source: GitHub Actions** (no branch).
   2. **Settings → Environments → `github-pages`** (choosing the source creates it; if it isn't
@@ -10953,43 +11819,41 @@ gh api repos/chendaniely/vid2sub/actions/permissions/workflow --jq .default_work
   (Unverified here: no repository settings could be read while writing this listing; the
   field names are from GitHub's REST reference for Pages, environments' deployment branch
   policies and workflow permissions.)
-- [ ] **Step 15: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
-  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review). Worth the
-  reviewers' time: each `if:` against every event that can start the workflow (a fork's pull
-  request, a manual run on another branch, a failed or cancelled or forked run of any workflow
-  named `release`), and what a run on another ref can do with its own copy of the file (only
-  the environment's rule, Step 14, stops a deploy); what code runs while `pages: write` and
-  `id-token: write` are held (deploy-pages alone); what the caches can hand the build (a re-pin
-  reaches CI and a changed tarball stops it, but a restored entry can write any path, so CI
-  trusts what main's own runs saved: the Phase-end list's Task 7 row); `tar --dereference` and links
-  in `_site/`; that every guard test fails without its fix. The checklist, as the listing's review
-  and re-review left it: secrets fine (none used; checkout without credentials); permissions fine
-  once Step 14's rule is set; network exposure fine (nothing listens; outbound to GitHub, npm, PyPI,
-  Pyodide's CDN through Shinylive's pinned assets, Playwright's CDN, apt); failing closed fine but
-  for one Minor gap (a cache entry saved by a main-ref run is trusted; a changed tarball, a link, a
-  failing step, a failed or foreign release run each stop the deploy); injection fine (no `${{` in a
-  run step; the only event data read are the run's conclusion, event and head repository, in `if:`);
-  logging fine (versions, sizes and public file names).
+- [ ] **Step 18: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review). Worth the reviewers'
+  time: each `if:` against every event that can start the workflow (a push to `main`, a pull
+  request, a fork's pull request, a manual run on `main` or on another branch, the dispatch a
+  release makes), and what a run on another ref can do with its own copy of the file (only the
+  environment's rule, Step 17, stops a deploy); what code runs while `pages: write` and `id-token:
+  write` are held (deploy-pages alone); what the caches can hand the build (a re-pin reaches CI and
+  a changed tarball stops it, but a restored entry can write any path, so CI trusts what main's own
+  runs saved: the Phase-end list's Task 7 row); `tar --dereference` and links in `_site/`; that
+  every guard test fails without its fix. The checklist, as the listing's review and re-review left
+  it: secrets fine (none used; checkout without credentials); permissions fine once Step 17's rule
+  is set; network exposure fine (nothing listens; outbound to GitHub, npm, PyPI, Pyodide's CDN
+  through Shinylive's pinned assets, Playwright's CDN, apt); failing closed fine but for one Minor
+  gap (a cache entry saved by a main-ref run is trusted; a changed tarball, a link or a failing step
+  each stop the deploy); injection fine (no `${{` in a run step; the conditions read only the ref
+  and the event's name); logging fine (versions, sizes and public file names).
 
   The forward review over Tasks 9, 10, 11 and 12:
   - Task 9 adds the index step after `make pages-test` (`make pages` empties `_site/`) and before
     the link check and the upload, the build job's `outputs`, the deploy job's `page_url`
-    output, and the `smoke` job; it extends `tests/test_pages_workflow.py` (the job set, the
-    build job's order, a `value()` beside `evaluate()` for the smoke job's `EXTRA`).
+    output, and the `smoke` job, which runs only on a manual run once a release exists; it
+    extends `tests/test_pages_workflow.py` (the job set, the build job's order, the smoke job's
+    condition pinned as written).
   - Task 10's README and `tests/README.md` name `pages.yml`, `make pages-test` in CI, and the
     environment rule; `docs/architecture.md` draws the workflow.
   - Task 11 needs nothing from here (it runs on the site `make pages` builds).
   - Task 12's step 9a: `pages.yml`'s run on the merge commit is green (build and deploy; the
-    smoke job is skipped until the first release); step 9c: the run `release`'s success starts.
+    smoke job is skipped, since a push isn't a manual run); step 9c: the run `release.yml`'s
+    dispatch starts.
 
-  The docs this task made untrue: spec §23.3's "Triggers: push to `main`, `workflow_dispatch`
-  (Dan, 2026-10-14), `release: published`" becomes "Triggers: push to `main`,
-  `workflow_dispatch` (Dan, 2026-10-14), and `workflow_run` when `release.yml`'s run succeeds
-  (Phase 4 Decision 2: a release made with the GITHUB_TOKEN starts no workflow); it deploys from
-  `main` only, which the `github-pages` environment enforces". Then the close, its own commit,
+  The docs this task made untrue: none in the spec, whose §23.3 already names the dispatch from
+  `release.yml` (Dan's answer to Q&A item 26, commit 6ce7434). Then the close, its own commit,
   holding this plan with this task's boxes ticked and **Now** set to ``Task 8: `release.yml`,
   open.`` (the cache finding the listing's re-review deferred is on the Phase-end list already, as
-  a planning row), and the spec's §23.3 line and its S50 row set to `built`, its Proof reading
+  a planning row), and the spec's S50 row set to `built`, its Proof reading
   `the Pages Playwright test (tests/pages/test_pages_site.py), run by pages.yml before every
   deploy`, with the message in `.git/CLOSE_MSG`:
 
@@ -11079,15 +11943,25 @@ Focus 4).
   and `attestations: write`; `artifact-metadata: write` is for storage records, which need
   `push-to-registry` and an organisation's repository, so it isn't asked for.
 - **Permissions:** the build job (`contents: read`) runs the repository's code and npm's install
-  scripts; the publish job alone has `contents: write`, `id-token: write` and `attestations:
-  write`, and runs no repository code (no checkout): it downloads the run's `dist` artifact
-  (download-artifact fails on a digest mismatch by default), attests and publishes.
+  scripts; the publish job alone has `contents: write`, `id-token: write`, `attestations: write`
+  and `actions: write`, and runs no repository code (no checkout): it downloads the run's
+  `dist` artifact (download-artifact fails on a digest mismatch by default), attests, publishes
+  and starts `pages.yml`.
 - **The tag reaches a shell only as `"$TAG"`** (env): a ref name may hold `$(…)`, so no
   `${{ … }}` appears in a `run:` step.
-- **Pages:** a release made with the GITHUB_TOKEN starts no workflow (GitHub's GITHUB_TOKEN docs:
-  only `workflow_dispatch` and `repository_dispatch` are exempt), so `pages.yml` follows this
-  workflow by its name, `release`, through `workflow_run` (Phase 4 Decision 2, Task 7). The name
-  is pinned by the test.
+- **Pages, by a dispatch** (Decision 2; Dan, Q&A item 26): a release made with the GITHUB_TOKEN
+  starts no workflow but a dispatch (GitHub's "GITHUB_TOKEN" page: "`workflow_dispatch` and
+  `repository_dispatch` events always create workflow runs"), so the publish job's last step,
+  once the release is published, runs `gh workflow run pages.yml --ref main` (gh 2.103.1's `gh
+  workflow run --help`: the workflow must have `on.workflow_dispatch`, which Task 7's has), and
+  `pages.yml`'s redeploy lists the release in the index (Task 9). The dispatch endpoint, `POST
+  /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches`, needs the "Actions"
+  repository permission, write (GitHub's REST reference, "Permissions required for GitHub
+  Apps": write, for installation access tokens, which the GITHUB_TOKEN is), and the workflow
+  syntax's `permissions` sets every one it leaves out to `none`, so the job asks for
+  `actions: write` beside its three. gh reads `GH_TOKEN` and `GH_REPO` from the job's `env`, never
+  an expression in the step. If the dispatch fails, the release stands, the step says to run
+  `pages.yml` by hand, and the run is red.
 
 **Files:**
 - Create: `.github/workflows/release.yml`, `scripts/release_check.py`, `build-constraints.txt`,
@@ -11102,15 +11976,15 @@ Focus 4).
   `[project].version` and `src/vid2sub/__init__.py`'s `__version__`; PyYAML (the dev group's
   `pyyaml==6.0.3`) for the workflow tests.
 - Produces:
-  - `release.yml`, `name: release` (Task 7's `pages.yml` follows it by this name through
-    `workflow_run`, Phase 4 Decision 2), on `push: tags: ["v*"]` only; jobs `build`
+  - `release.yml`, `name: release`, on `push: tags: ["v*"]` only; jobs `build`
     (`contents: read`) and `publish` (`contents: write`, `id-token: write`, `attestations:
-    write`), the run's artifact `dist` between them; it publishes a release named
-    `vid2sub <version>` whose assets are `vid2sub-<version>-py3-none-any.whl` and
-    `vid2sub-<version>.tar.gz`, each with a build-provenance attestation. It fails, before
-    anything is made, on a tag that isn't the package's version, isn't on `main`, has a release
-    already (published or draft) or moved during the run. Every run step is `shell: bash`
-    (`-eo pipefail`).
+    write`, `actions: write`), the run's artifact `dist` between them; it publishes a release
+    named `vid2sub <version>` whose assets are `vid2sub-<version>-py3-none-any.whl` and
+    `vid2sub-<version>.tar.gz`, each with a build-provenance attestation, then starts
+    `pages.yml` on `main` (its step `update the site and its index`: `gh workflow run pages.yml
+    --ref main`, Decision 2). It fails, before anything is made, on a tag that isn't the
+    package's version, isn't on `main`, has a release already (published or draft) or moved
+    during the run. Every run step is `shell: bash` (`-eo pipefail`).
   - `make dist`: the frontend, then the wheel and sdist into `dist/`, both with
     `vid2sub/web/www/ui.js` and `ui.css`; `make build-constraints`: re-pins hatchling and its
     dependencies, with hashes, in `build-constraints.txt`.
@@ -11293,8 +12167,8 @@ tar -tzf dist/*.tar.gz | grep 'www/ui'
   `uv build --no-sources --clear --build-constraints build-constraints.txt --require-hashes`,
   then `git checkout build-constraints.txt` (or regenerate it). Expected: ``cause: Hash mismatch
   for `hatchling==<version>` ``, exit 2, even with hatchling in uv's cache. Then `make check`.
-  Expected: `1405 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
-  `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`.
+  Expected: `1403 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
+  `Tests  140 passed (140)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -11597,8 +12471,8 @@ if __name__ == "__main__":
   check: v0.1.0.dev0 names the package's version` (exit 0); `uv run scripts/release_check.py
   v0.1.0` prints `release check: the tag 'v0.1.0' isn't v0.1.0.dev0, pyproject.toml's version`
   (exit 1); `uv run scripts/release_check.py 'v$(touch /tmp/x)'` is refused the same way and
-  creates nothing. Then `make check`. Expected: `1411 passed, 9 skipped, 61 deselected`
-  (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks passed!`, `no
+  creates nothing. Then `make check`. Expected: `1409 passed, 9 skipped, 61 deselected`
+  (twice), `Test Files  26 passed (26)`, `Tests  140 passed (140)`, `All checks passed!`, `no
   leaks found`.
 - [ ] **Step 11: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -11797,24 +12671,37 @@ def steps(job: str) -> list[dict]:
     return workflow()["jobs"][job]["steps"]
 
 
-def test_release_yml_is_named_release_and_runs_only_on_a_v_tag():
-    # why: Task 7's pages.yml follows it by this name (workflow_run, Phase 4 Decision 2), and only
-    # a tag Dan pushes makes a release (AGENTS.md: tags and releases are Dan's).
+def test_release_yml_runs_only_on_a_v_tag():
+    # why: only a tag Dan pushes makes a release (AGENTS.md: tags and releases are Dan's).
     wf = workflow()
-    assert wf["name"] == "release"
     assert wf[True] == {"push": {"tags": ["v*"]}}  # PyYAML reads the key `on` as True
 
 
 def test_only_the_publish_job_can_write():
     # why: the build job runs the repository's code and npm's install scripts, so it gets
-    # nothing it could misuse; publishing needs these three and nothing else (spec §23.1).
+    # nothing it could misuse; publishing needs these four and nothing else (spec §23.1), the
+    # fourth, actions: write, to start pages.yml (GitHub's REST reference: a workflow dispatch
+    # needs Actions write).
     wf = workflow()
     assert wf["permissions"] == {"contents": "read"}
     assert set(wf["jobs"]) == {"build", "publish"}
     assert wf["jobs"]["build"]["permissions"] == {"contents": "read"}
     assert wf["jobs"]["publish"]["permissions"] == {
-        "contents": "write", "id-token": "write", "attestations": "write"}
+        "contents": "write", "id-token": "write", "attestations": "write", "actions": "write"}
     assert not any("uses" in s and "checkout" in s["uses"] for s in steps("publish"))
+
+
+def test_a_published_release_starts_pages_yml_on_main():
+    # why: a release made with the GITHUB_TOKEN starts no workflow but a dispatch (GitHub's
+    # GITHUB_TOKEN docs), so without this the install index would never list it (S52; Phase 4
+    # Decision 2). gh reads the token and the repository from the job's env, never from an
+    # expression in the step.
+    publish = workflow()["jobs"]["publish"]
+    assert publish["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert publish["env"]["GH_REPO"] == "${{ github.repository }}"
+    last = publish["steps"][-1]
+    assert last["name"] == "update the site and its index"
+    assert last["run"].splitlines()[0] == "gh workflow run pages.yml --ref main || {"
 
 
 def test_a_published_release_is_never_overwritten():
@@ -11862,15 +12749,16 @@ def test_every_action_is_pinned_and_no_run_step_expands_an_expression():
 ```
 
 - [ ] **Step 13: Run them; watch them fail.** `uv run pytest tests/test_release.py -q`.
-  Expected: `5 failed, 7 passed`, each failure `FileNotFoundError: [Errno 2] No such file or
+  Expected: `6 failed, 7 passed`, each failure `FileNotFoundError: [Errno 2] No such file or
   directory: '…/.github/workflows/release.yml'`.
 - [ ] **Step 14: Write the workflow,** `.github/workflows/release.yml`:
 
 ```yaml
 # Releases (spec §23.4, S52): on a v* tag, build the frontend, then the wheel and the sdist with
 # www/ inside (make dist), check them against the tag, and publish a GitHub Release with
-# build-provenance attestations. It never deploys Pages: pages.yml follows this workflow by its
-# name (Phase 4 Decision 2), since a release made with the GITHUB_TOKEN starts no workflow itself.
+# build-provenance attestations. It never deploys Pages itself: once the release is published it
+# starts pages.yml on main, since a release made with the GITHUB_TOKEN starts no workflow but a
+# dispatch (Phase 4 Decision 2), and pages.yml's redeploy lists the release in the install index.
 # A release is never overwritten: a tag that has one fails here (Review Focus 4). Only the
 # publish job can write, and it runs no code from the repository.
 name: release
@@ -11923,6 +12811,7 @@ jobs:
       contents: write # create the release
       id-token: write # sign the attestations through Sigstore
       attestations: write # store them
+      actions: write # start pages.yml (gh workflow run), which lists the release in the index
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -11946,9 +12835,18 @@ jobs:
           --notes "vid2sub ${TAG#v}: the wheel and the sdist, each with a build-provenance
           attestation (gh attestation verify <file> --repo $GH_REPO). What changed is in
           CHANGELOG.md."
+      # A release made with the GITHUB_TOKEN starts no workflow but a dispatch: start pages.yml on
+      # main, so the install index lists this release (Phase 4 Decision 2). If it can't, the
+      # release stands and the run fails, saying to run pages.yml by hand.
+      - name: update the site and its index
+        run: |
+          gh workflow run pages.yml --ref main || {
+            echo "::error::$TAG is published, but pages.yml didn't start: run it by hand (Actions, pages, Run workflow, on main) so the index lists it"
+            exit 1
+          }
 ```
 
-- [ ] **Step 15: Run the checks; they pass.** `uv run pytest tests/test_release.py -q`: `12
+- [ ] **Step 15: Run the checks; they pass.** `uv run pytest tests/test_release.py -q`: `13
   passed`. `make actionlint`: its command line only, exit 0. The build job's steps, here, with
   Node 22:
 
@@ -11961,34 +12859,43 @@ uv run scripts/release_check.py "$TAG" dist
 unset UV_FROZEN TAG
 ```
 
-  Expected: `release check: v0.1.0.dev0 names the package's version`, the two
-  `Successfully built` lines, then `release check: v0.1.0.dev0 names the package's version, and
-  dist holds its wheel and sdist with the frontend`. uv also prints ``warning: No lockfile found
-  for Python script (ignoring `--frozen`)``: the check script has no dependencies and no lock,
-  and UV_FROZEN stays for §23.1. The guards, each reverted after: with the publish step's first
-  line changed to `gh release upload "$TAG" dist/vid2sub-* --clobber`, `FAILED
+  Expected: `release check: v0.1.0.dev0 names the package's version`, the two `Successfully built`
+  lines, then `release check: v0.1.0.dev0 names the package's version, and dist holds its wheel and
+  sdist with the frontend`. uv also prints ``warning: No lockfile found for Python script (ignoring
+  `--frozen`)``: the check script has no dependencies and no lock, and UV_FROZEN stays for §23.1.
+  The guards, each reverted after: with the publish step's first line changed to `gh release upload
+  "$TAG" dist/vid2sub-* --clobber`, `FAILED
   tests/test_release.py::test_a_published_release_is_never_overwritten`; with the build job's
-  `contents: read` changed to `contents: write`, `FAILED
-  tests/test_release.py::test_only_the_publish_job_can_write`. Then `make check`. Expected:
-  `1416 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`, `Tests  131
-  passed (131)`, `All checks passed!`, `no leaks found`.
+  `contents: read` changed to `contents: write`, or the publish job's `actions: write` line taken
+  out, `FAILED tests/test_release.py::test_only_the_publish_job_can_write`; with the last step,
+  `update the site and its index`, taken out (and its comment), `FAILED
+  tests/test_release.py::test_a_published_release_starts_pages_yml_on_main`. Each prints `1 failed,
+  12 passed`. The dispatch step's script, against a stand-in `gh` that prints its arguments
+  (`TAG=v0.1.0.dev0 GH_REPO=owner/repo bash --noprofile --norc -eo pipefail`): it prints
+  `workflow|run|pages.yml|--ref|main|` and exits 0; against one that fails, `::error::v0.1.0.dev0 is
+  published, but pages.yml didn't start: run it by hand (Actions, pages, Run workflow, on main) so
+  the index lists it` and exit 1. Then `make check`. Expected: `1415 passed, 9 skipped, 61
+  deselected` (twice), `Test Files  26 passed (26)`, `Tests  140 passed (140)`, `All checks
+  passed!`, `no leaks found`.
 - [ ] **Step 16: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 ci(release): 🤖 a v* tag builds the wheel and sdist, checks them against the tag, and publishes a GitHub Release with build-provenance attestations, never over an existing one
 
-Spec §23.4, S52, and Phase 4's Review Focus 4. release.yml, named `release` (Task 7's pages.yml
-follows it by that name, Phase 4 Decision 2), runs on `push: tags: ["v*"]` only:
+Spec §23.4, S52, and Phase 4's Review Focus 4. release.yml runs on `push: tags: ["v*"]` only:
 
 - build (contents: read): checkout without credentials; uv 0.13.1 and Node from .nvmrc, both
   with caching off, so a release is made from the tag's tree and pinned downloads only;
   `release_check.py "$TAG"` before anything is built; npm ci; make dist; `release_check.py
   "$TAG" dist`; dist/vid2sub-* uploaded as the run's `dist` artifact.
-- publish (contents, id-token and attestations: write, and nothing else; no checkout, so no
-  repository code runs with them): download `dist` (download-artifact fails on a digest
+- publish (contents, id-token, attestations and actions: write, and nothing else; no checkout,
+  so no repository code runs with them): download `dist` (download-artifact fails on a digest
   mismatch by default); stop if `gh release view "$TAG"` finds a release, before anything is
   made; actions/attest, build provenance for both files; `gh release create "$TAG"
-  dist/vid2sub-* --verify-tag`. gh release create refuses a tag whose release is published
+  dist/vid2sub-* --verify-tag`; then `gh workflow run pages.yml --ref main` (Phase 4 Decision 2:
+  a release made with the GITHUB_TOKEN starts no workflow but a dispatch, so this is how the
+  index comes to list it), with GH_TOKEN and GH_REPO from the job's env; if it fails, the
+  release stands and the step says to run pages.yml by hand. gh release create refuses a tag whose release is published
   ("a release with the same tag name already exists", read in cli/cli's
   pkg/cmd/release/create/create.go) and uploads only into the draft it creates; --verify-tag
   stops it creating a tag. It never runs gh release upload, whose --clobber replaces assets.
@@ -12000,21 +12907,25 @@ follows it by that name, Phase 4 Decision 2), runs on `push: tags: ["v*"]` only:
   provenance example needs only id-token and attestations: write (artifact-metadata is for
   registry storage records, which need push-to-registry).
 
-tests/test_release.py pins it: the name and trigger; only publish can write, exactly those three,
-with no checkout; one gh release create with --verify-tag and no --clobber, gh release upload,
+tests/test_release.py pins it: the trigger; only publish can write, exactly those four, with no
+checkout; the dispatch of pages.yml on main as publish's last step, gh's token and repository
+from the job's env; one gh release create with --verify-tag and no --clobber, gh release upload,
 edit, delete, gh api or `overwrite:`, the actions an allowlist, and the release looked up
 before the attestation and the create; the tag checked before make dist and the files after;
 every action pinned and no `${{` in a run step. They failed with no release.yml
-(FileNotFoundError, 5 failed); with the create swapped for `gh release upload "$TAG"
+(FileNotFoundError, 6 failed); with the create swapped for `gh release upload "$TAG"
 dist/vid2sub-* --clobber`, "FAILED tests/test_release.py::test_a_published_release_is_never_
 overwritten"; with the build job given contents: write, "FAILED
-tests/test_release.py::test_only_the_publish_job_can_write".
+tests/test_release.py::test_only_the_publish_job_can_write"; with publish's `actions: write`
+taken out, the same; with the dispatch step taken out, "FAILED
+tests/test_release.py::test_a_published_release_starts_pages_yml_on_main".
 
 Run locally: the build job's steps with TAG=v0.1.0.dev0 ("release check: v0.1.0.dev0 names the
 package's version, and dist holds its wheel and sdist with the frontend"; uv warns that it
 ignores UV_FROZEN for a script, which has no lockfile); the publish job's two shell steps
 against a stand-in gh: with no release, one create with both files, --verify-tag, the title and
-notes as one argument each; with one, "::error::v0.1.0.dev0 has a release already" and exit 1.
+notes as one argument each; with one, "::error::v0.1.0.dev0 has a release already" and exit 1;
+and the dispatch step, `workflow run pages.yml --ref main` as gh's arguments.
 make actionlint: no findings.
 
 Docs read: actions/attest v4.2.2's README and action.yml; attest-build-provenance v4.2.2's and
@@ -12022,8 +12933,12 @@ v3.2.0's READMEs and action.yml; actions/download-artifact v8.0.2's README (name
 digest-mismatch); actions/upload-artifact v7.0.2's README; setup-uv v10.3.0's README
 (enable-cache, off by default on tag pushes anyway); setup-node v7.1.0's README
 (package-manager-cache); the gh manual for release create and `gh release create --help`
-(gh 2.103.1; the ubuntu-24.04 image has 2.102.0); GitHub's GITHUB_TOKEN docs (events it
-triggers start no workflow).
+(gh 2.103.1; the ubuntu-24.04 image has 2.102.0) and `gh workflow run --help` (the workflow
+must have on.workflow_dispatch; --ref); GitHub's GITHUB_TOKEN page ("workflow_dispatch and
+repository_dispatch events always create workflow runs") and the workflow syntax's
+`permissions` (each one left out is none); the REST reference's "Create a workflow dispatch
+event" and "Permissions required for GitHub Apps" (the dispatch needs Actions: write, for
+installation access tokens).
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 8
 Co-Authored-By: <the model's own line>
@@ -12244,11 +13159,9 @@ def run_step(script: str, cwd: Path, env: dict[str, str],
 bash_steps = pytest.mark.skipif(os.name == "nt", reason="release.yml's run steps are bash")
 
 
-def test_release_yml_is_named_release_and_runs_only_on_a_v_tag():
-    # why: Task 7's pages.yml follows it by this name (workflow_run, Phase 4 Decision 2), and only
-    # a tag Dan pushes makes a release (AGENTS.md: tags and releases are Dan's).
+def test_release_yml_runs_only_on_a_v_tag():
+    # why: only a tag Dan pushes makes a release (AGENTS.md: tags and releases are Dan's).
     wf = workflow()
-    assert wf["name"] == "release"
     assert wf[True] == {"push": {"tags": ["v*"]}}  # PyYAML reads the key `on` as True
     # one run per tag at a time, never cancelled midway (a cancel could leave a draft behind)
     assert wf["concurrency"] == {"group": "release-${{ github.ref }}", "cancel-in-progress": False}
@@ -12257,14 +13170,29 @@ def test_release_yml_is_named_release_and_runs_only_on_a_v_tag():
 
 def test_only_the_publish_job_can_write():
     # why: the build job runs the repository's code and npm's install scripts, so it gets
-    # nothing it could misuse; publishing needs these three and nothing else (spec §23.1).
+    # nothing it could misuse; publishing needs these four and nothing else (spec §23.1), the
+    # fourth, actions: write, to start pages.yml (GitHub's REST reference: a workflow dispatch
+    # needs Actions write).
     wf = workflow()
     assert wf["permissions"] == {"contents": "read"}
     assert set(wf["jobs"]) == {"build", "publish"}
     assert wf["jobs"]["build"]["permissions"] == {"contents": "read"}
     assert wf["jobs"]["publish"]["permissions"] == {
-        "contents": "write", "id-token": "write", "attestations": "write"}
+        "contents": "write", "id-token": "write", "attestations": "write", "actions": "write"}
     assert not any("uses" in s and "checkout" in s["uses"] for s in steps("publish"))
+
+
+def test_a_published_release_starts_pages_yml_on_main():
+    # why: a release made with the GITHUB_TOKEN starts no workflow but a dispatch (GitHub's
+    # GITHUB_TOKEN docs), so without this the install index would never list it (S52; Phase 4
+    # Decision 2). gh reads the token and the repository from the job's env, never from an
+    # expression in the step.
+    publish = workflow()["jobs"]["publish"]
+    assert publish["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert publish["env"]["GH_REPO"] == "${{ github.repository }}"
+    last = publish["steps"][-1]
+    assert last["name"] == "update the site and its index"
+    assert last["run"].splitlines()[0] == "gh workflow run pages.yml --ref main || {"
 
 
 def test_a_published_release_is_never_overwritten():
@@ -12287,7 +13215,8 @@ def test_a_published_release_is_never_overwritten():
     order = [s.get("name") or s.get("uses", "").split("@")[0] for s in steps("publish")]
     assert order == ["actions/download-artifact", "the tag has no release yet",
                      "the tag still names the commit this run built", "actions/attest",
-                     "publish the release"]  # nothing is made before both checks pass
+                     "publish the release", "update the site and its index"]  # nothing is
+    # made before both checks pass, and the site is updated only once the release is out
 
 
 @bash_steps
@@ -12325,6 +13254,21 @@ def test_the_release_is_made_from_the_two_files_with_verify_tag(tmp_path):
         ("vid2sub 1.0.0: the wheel and the sdist, each with a build-provenance attestation (gh "
          "attestation verify <file> --repo owner/repo --signer-workflow "
          "owner/repo/.github/workflows/release.yml). What changed is in CHANGELOG.md.")]
+
+
+@bash_steps
+def test_the_site_is_updated_by_starting_pages_yml_on_main_and_a_failure_says_so(tmp_path):
+    record = tmp_path / "argv"
+    gh = f'for a in "$@"; do printf "%s\\0" "$a"; done > {shlex.quote(str(record))}'
+    script = step("publish", "update the site and its index")["run"]
+    done = run_step(script, tmp_path, {"TAG": "v1.0.0", "GH_REPO": "owner/repo"}, gh=gh)
+    assert done.returncode == 0, done.stderr
+    assert record.read_text(encoding="utf-8").split("\0")[:-1] == [
+        "workflow", "run", "pages.yml", "--ref", "main"]
+    failed = run_step(script, tmp_path, {"TAG": "v1.0.0", "GH_REPO": "owner/repo"},
+                      gh='echo "HTTP 403: Resource not accessible by integration" >&2; exit 1')
+    assert failed.returncode == 1  # the release stands; the run is red, and says what to do
+    assert failed.stdout.startswith("::error::v1.0.0 is published, but pages.yml didn't start")
 
 
 @bash_steps
@@ -12396,8 +13340,8 @@ def test_every_action_is_pinned_and_no_run_step_expands_an_expression():
 ```
 
 - [ ] **Step 18: Run them; watch them fail.** `uv run pytest tests/test_release.py -q`.
-  Expected: `7 failed, 9 passed`: `FAILED
-  tests/test_release.py::test_release_yml_is_named_release_and_runs_only_on_a_v_tag`,
+  Expected: `7 failed, 11 passed`: `FAILED
+  tests/test_release.py::test_release_yml_runs_only_on_a_v_tag`,
   `…::test_a_published_release_is_never_overwritten`,
   `…::test_a_tag_with_a_release_published_or_draft_stops_the_run_and_so_does_a_gh_error`,
   `…::test_the_release_is_made_from_the_two_files_with_verify_tag`,
@@ -12409,8 +13353,9 @@ def test_every_action_is_pinned_and_no_run_step_expands_an_expression():
 ```yaml
 # Releases (spec §23.4, S52): on a v* tag, build the frontend, then the wheel and the sdist with
 # www/ inside (make dist), check them against the tag, and publish a GitHub Release with
-# build-provenance attestations. It never deploys Pages: pages.yml follows this workflow by its
-# name (Phase 4 Decision 2), since a release made with the GITHUB_TOKEN starts no workflow itself.
+# build-provenance attestations. It never deploys Pages itself: once the release is published it
+# starts pages.yml on main, since a release made with the GITHUB_TOKEN starts no workflow but a
+# dispatch (Phase 4 Decision 2), and pages.yml's redeploy lists the release in the install index.
 # A release is never overwritten: a tag that has one, published or draft, fails here (Review
 # Focus 4). Only the publish job can write, and it runs no code from the repository.
 name: release
@@ -12474,6 +13419,7 @@ jobs:
       contents: write # create the release
       id-token: write # sign the attestations through Sigstore
       attestations: write # store them
+      actions: write # start pages.yml (gh workflow run), which lists the release in the index
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -12509,10 +13455,19 @@ jobs:
           --notes "vid2sub ${TAG#v}: the wheel and the sdist, each with a build-provenance
           attestation (gh attestation verify <file> --repo $GH_REPO --signer-workflow
           $GH_REPO/.github/workflows/release.yml). What changed is in CHANGELOG.md."
+      # A release made with the GITHUB_TOKEN starts no workflow but a dispatch: start pages.yml on
+      # main, so the install index lists this release (Phase 4 Decision 2). If it can't, the
+      # release stands and the run fails, saying to run pages.yml by hand.
+      - name: update the site and its index
+        run: |
+          gh workflow run pages.yml --ref main || {
+            echo "::error::$TAG is published, but pages.yml didn't start: run it by hand (Actions, pages, Run workflow, on main) so the index lists it"
+            exit 1
+          }
 ```
 
-- [ ] **Step 20: Run the checks; they pass.** `uv run pytest tests/test_release.py -q`: `16
-  passed` (on Windows the five bash-step tests skip; the Linux and macOS jobs run them). The
+- [ ] **Step 20: Run the checks; they pass.** `uv run pytest tests/test_release.py -q`: `18
+  passed` (on Windows the six bash-step tests skip; the Linux and macOS jobs run them). The
   guards, each reverted after:
   - the pre-check's two lines `tags=$(gh release list …)` and `if grep -Fxq -- "$TAG" <<<
     "$tags"; then` replaced by `if gh release view "$TAG" > /dev/null 2>&1; then`: `FAILED
@@ -12522,14 +13477,18 @@ jobs:
   - the moved-tag step's `<<< "$refs" || {` changed to `<<< "$refs" || true || {`: `FAILED
     tests/test_release.py::test_a_tag_moved_during_the_run_stops_it`;
   - `cancel-in-progress: false` changed to `true`: `FAILED
-    tests/test_release.py::test_release_yml_is_named_release_and_runs_only_on_a_v_tag`;
+    tests/test_release.py::test_release_yml_runs_only_on_a_v_tag`;
   - `--exclude-drafts` added to the pre-check's `gh release list`: `FAILED
     tests/test_release.py::test_a_tag_with_a_release_published_or_draft_stops_the_run_and_so_does_a_gh_error`
     (the stand-in gh answers only the exact call).
 
-  Each prints `1 failed, 15 passed`. Then `make actionlint` (its command line only, exit 0) and
-  `make check`. Expected: `1420 passed, 9 skipped, 61 deselected` (twice), `Test Files  26
-  passed (26)`, `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`.
+  Each prints `1 failed, 17 passed`. And the dispatch's `gh workflow run pages.yml --ref main ||
+  {` made `… || true || {`: `FAILED
+  tests/test_release.py::test_the_site_is_updated_by_starting_pages_yml_on_main_and_a_failure_says_so`
+  and `FAILED tests/test_release.py::test_a_published_release_starts_pages_yml_on_main` (`2
+  failed, 16 passed`). Then `make actionlint` (its command line only, exit 0) and `make check`.
+  Expected: `1420 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
+  `Tests  140 passed (140)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 21: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -12563,6 +13522,11 @@ finding fixed here:
   (with cancel-in-progress true, the name-and-trigger test fails).
 - Minor: the notes' verify command now names the signer workflow (`--signer-workflow
   <repo>/.github/workflows/release.yml`), as gh's attestation manual advises.
+- And with the scripts now run as the runner runs them, the dispatch step too: gh is given
+  exactly `workflow run pages.yml --ref main`, and a gh that fails leaves the run red with
+  "::error::v1.0.0 is published, but pages.yml didn't start"; with its `|| {` made `|| true ||
+  {`, "FAILED tests/test_release.py::test_the_site_is_updated_by_starting_pages_yml_on_main_and_
+  a_failure_says_so".
 
 Left to repo settings (Dan's), for the phase end's step 9b: immutable releases, a tag ruleset on
 refs/tags/v* (creation, update and deletion by Dan only), branch protection on main. A modified
@@ -12586,41 +13550,21 @@ Co-Authored-By: <the model's own line>
 When this listing was replayed on Tasks 1–7, one independent Tier 1 reviewer went over the
 replayed rounds and their interplay with Task 7's `pages.yml`. It found the files and messages
 the listing's (round 8d's plan-copy bullet aside, rightly dropped), no path for a tag, a fork, a
-draft or a failed run to publish or deploy, and two Minor gaps, closed here: a step-level `if:`
-or `continue-on-error:` would switch a guard off with every test green, and nothing checked that
-`release.yml` is the only workflow named `release`, which `pages.yml` follows. Its checklist:
-secrets fine; permissions fine; network exposure fine; failing closed fine but for the first gap;
-injection fine; logging fine.
+draft or a failed run to publish or deploy, and a Minor gap, closed here: a step-level `if:` or
+`continue-on-error:` would switch a guard off with every test green, the dispatch step's
+included. (Its second gap, that nothing checked `release.yml` was the only workflow named
+`release`, went with Decision 2's dispatch: `pages.yml` follows no workflow by name now.) Its
+checklist: secrets fine; permissions fine; network exposure fine; failing closed fine but for
+the gap; injection fine; logging fine.
 
-- [ ] **Step 22: Write the tests.** Apply:
+- [ ] **Step 22: Write the test.** Apply:
 
 ```diff
-diff --git a/tests/test_pages_workflow.py b/tests/test_pages_workflow.py
-index f81c0ce..a64d447 100644
---- a/tests/test_pages_workflow.py
-+++ b/tests/test_pages_workflow.py
-@@ -186,10 +186,12 @@ def test_pages_yml_triggers_on_main_pull_requests_by_hand_and_after_a_release(wo
-         "workflow_run": {"workflows": ["release"], "types": ["completed"]}}
- 
- 
--def test_release_yml_if_present_is_the_workflow_pages_follows():
--    release = WORKFLOWS / "release.yml"
--    if release.is_file():  # Phase 4 Task 8 makes it, and pins its name too
--        assert yaml.safe_load(release.read_text(encoding="utf-8"))["name"] == "release"
-+def test_release_yml_is_the_only_workflow_pages_follows():
-+    # why: workflow_run follows every workflow by that name, so a second one (on branch pushes,
-+    # say) would start deploys too; release.yml runs on v* tags only (Phase 4 Task 8).
-+    named = [p.name for p in sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")])
-+             if yaml.safe_load(p.read_text(encoding="utf-8")).get("name") == "release"]
-+    assert named == ["release.yml"]
- 
- 
- @pytest.mark.parametrize("name", EVENTS)
 diff --git a/tests/test_release.py b/tests/test_release.py
-index 229a651..ab61912 100644
+index 9e9cae6..4e5d02d 100644
 --- a/tests/test_release.py
 +++ b/tests/test_release.py
-@@ -332,6 +332,17 @@ def test_the_tag_is_checked_before_the_build_and_the_files_after():
+@@ -361,6 +361,17 @@ def test_the_tag_is_checked_before_the_build_and_the_files_after():
          "run"] == 'uv run scripts/release_check.py "$TAG" dist'
  
  
@@ -12640,48 +13584,156 @@ index 229a651..ab61912 100644
      text = RELEASE.read_text(encoding="utf-8")
 ```
 
-- [ ] **Step 23: Run them; they pass, and fail with the holes opened.** `uv run pytest
-  tests/test_release.py tests/test_pages_workflow.py -q`: `38 passed`. With `        continue-on-error:
-  true` under `      - name: the tag has no release yet`, or `        if: false` under `      -
-  name: the tag is on main`: `FAILED
-  tests/test_release.py::test_no_step_or_job_can_be_switched_off_or_allowed_to_fail` (`1
-  failed, 16 passed`); with a second workflow, `.github/workflows/other.yml`, named `release`:
-  `FAILED tests/test_pages_workflow.py::test_release_yml_is_the_only_workflow_pages_follows`
-  (`1 failed, 20 passed`). Revert each. Then `make check`. Expected: `1421 passed, 9 skipped, 61
-  deselected` (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks
-  passed!`, `no leaks found`.
+- [ ] **Step 23: Run it; it passes, and fails with the holes opened.** `uv run pytest
+  tests/test_release.py tests/test_pages_workflow.py -q`: `29 passed`. With `
+  continue-on-error: true` under `      - name: the tag has no release yet`, or `        if: false`
+  under `      - name: the tag is on main`, or `        continue-on-error: true` under `      -
+  name: update the site and its index`: `FAILED
+  tests/test_release.py::test_no_step_or_job_can_be_switched_off_or_allowed_to_fail` (`uv run pytest
+  tests/test_release.py -q`: `1 failed, 18 passed`). Revert each. Then `make check`. Expected: `1421
+  passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`, `Tests  140 passed
+  (140)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 24: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
-test(release): 🤖 no release step can be switched off or allowed to fail, and release.yml is the only workflow pages.yml follows
+test(release): 🤖 no release step can be switched off or allowed to fail
 
 The Tier 1 review of this task's replay (one independent reviewer, AGENTS.md's checklist) found
-nothing Critical or Important, and two Minor gaps, both closed here:
+nothing Critical or Important, and a Minor gap, closed here: the guard tests run each step's
+script, so an `if: false` or `continue-on-error: true` on a step (or an `if:` on a job) would
+switch a guard off and leave them green (the reviewer tried both on four guarding steps), and
+so would they on the step that starts pages.yml. A new test forbids continue-on-error anywhere
+in release.yml, any job `if:`, and any step key beyond name, run, uses, with and
+working-directory (Phase 4 Decision 22). With `continue-on-error: true` on "the tag has no
+release yet", or `if: false` on "the tag is on main": "FAILED tests/test_release.py::test_no_
+step_or_job_can_be_switched_off_or_allowed_to_fail".
 
-- The guard tests run each step's script, so an `if: false` or `continue-on-error: true` on a
-  step (or an `if:` on a job) would switch a guard off and leave them green (the reviewer tried
-  both on four guarding steps). A new test forbids continue-on-error anywhere in release.yml,
-  any job `if:`, and any step key beyond name, run, uses, with and working-directory. With
-  `continue-on-error: true` on "the tag has no release yet", or `if: false` on "the tag is on
-  main": "FAILED tests/test_release.py::test_no_step_or_job_can_be_switched_off_or_allowed_to_
-  fail".
-- pages.yml follows every workflow named `release`; a second one, on branch pushes, would start
-  deploys too (of main's own files, so no code of its reaches Pages, but Decision 2's "a tag
-  push" would rest on release.yml alone). Task 7's test now checks, unconditionally, that
-  release.yml is the only workflow by that name; with a second one added: "FAILED
-  tests/test_pages_workflow.py::test_release_yml_is_the_only_workflow_pages_follows".
+(Its second gap, that nothing checked release.yml was the only workflow named `release`, went
+with Decision 2's dispatch: pages.yml follows no workflow by name now.)
 
 The reviewer's checklist: secrets fine; permissions fine; network exposure fine; failing closed
-fine but for the first gap, now closed; injection fine; logging fine.
+fine but for the gap, now closed; injection fine; logging fine.
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 8
 Co-Authored-By: <the model's own line>
 ```
 
-  `git add tests/test_release.py tests/test_pages_workflow.py`, `git commit -F .git/COMMIT_MSG`,
-  then `git log -1 --format='%(trailers)'` shows `Plan:`.
+  `git add tests/test_release.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1
+  --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 25: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+#### Round 8f: the Tier 1 review's fixes
+
+When this listing was built, one independent Tier 1 reviewer went over rounds 8a to 8e with
+`AGENTS.md`'s security checklist (read-only). It found no Critical. It confirmed that a dispatch
+needs `actions: write`, that only `main`'s `pages.yml` can be started (a literal `--ref main`, no
+inputs), and that a failed dispatch leaves the release standing with the run red. Its Minor, two
+fixed here: `git ls-remote` matches a pattern against a ref's tail, so a branch named
+`x/refs/tags/v1.0.0` let a moved tag pass; a job's own `defaults` (a shell without `-e`) would
+keep every test green. Not built, for Dan: `actions: write` shares the publish job with
+`contents: write` and `id-token: write`; a third job holding it alone would narrow what a
+compromised action there could do, but Decision 2 puts it in the publish job. Its checklist:
+secrets fine; permissions a finding (that one, Dan's); network exposure fine; failing closed a
+finding (the two fixed here); injection fine; logging fine.
+
+- [ ] **Step 25: Write the failing tests.** Apply:
+
+```diff
+diff --git a/tests/test_release.py b/tests/test_release.py
+index 4e5d02d..85a1ee9 100644
+--- a/tests/test_release.py
++++ b/tests/test_release.py
+@@ -345,6 +345,13 @@ def test_a_tag_moved_during_the_run_stops_it(tmp_path):
+     unread = run_step(script, tmp_path, {**env, "GITHUB_SHA": built,
+                                          "REPO_URL": str(tmp_path / "missing")})
+     assert unread.returncode != 0
++    # git ls-remote matches a pattern against each ref's tail, so a branch named
++    # x/refs/tags/v1.0.0 at the built commit must not pass for the tag (the Task 8 review).
++    git(repo, "tag", "-f", "-a", "v1.0.0", later, "-m", "vid2sub 1.0.0, moved")
++    git(repo, "branch", "x/refs/tags/v1.0.0", built)
++    decoy = run_step(script, tmp_path, {**env, "GITHUB_SHA": built})
++    assert decoy.returncode == 1
++    assert decoy.stdout.startswith("::error::v1.0.0 no longer names")
+ 
+ 
+ def test_the_tag_is_checked_before_the_build_and_the_files_after():
+@@ -368,6 +375,9 @@ def test_no_step_or_job_can_be_switched_off_or_allowed_to_fail():
+     assert "continue-on-error" not in RELEASE.read_text(encoding="utf-8")
+     for name, job in workflow()["jobs"].items():
+         assert "if" not in job, name
++        # nor a job's own `defaults` (a shell without -e would let a failed lookup through)
++        assert set(job) <= {"needs", "runs-on", "timeout-minutes", "permissions", "env",
++                            "steps"}, name
+         for s in job["steps"]:
+             assert set(s) <= {"name", "run", "uses", "with", "working-directory"}, s
+ 
+```
+
+  Run them: `uv run pytest tests/test_release.py -q`: `1 failed, 18 passed`, `FAILED
+  tests/test_release.py::test_a_tag_moved_during_the_run_stops_it` (`assert 0 == 1`: the decoy
+  branch passed). The job-keys check passes at once: no job has other keys yet.
+- [ ] **Step 26: The fix,** in `.github/workflows/release.yml`:
+
+```diff
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 866fa12..4a1c9bf 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -87,7 +87,7 @@ jobs:
+       - name: the tag still names the commit this run built
+         run: |
+           refs=$(git ls-remote "$REPO_URL" "refs/tags/$TAG" "refs/tags/$TAG^{}")
+-          awk -v sha="$GITHUB_SHA" '$1 == sha { found = 1 } END { exit !found }' <<< "$refs" || {
++          awk -v sha="$GITHUB_SHA" -v ref="refs/tags/$TAG" '$1 == sha && ($2 == ref || $2 == ref "^{}") { found = 1 } END { exit !found }' <<< "$refs" || {
+             echo "::error::$TAG no longer names $GITHUB_SHA, the commit this run built"
+             exit 1
+           }
+```
+
+- [ ] **Step 27: Run the checks; they pass, and each fails without its fix.** `uv run pytest
+  tests/test_release.py -q`: `19 passed`. In turn, each reverted after: the old `awk -v
+  sha="$GITHUB_SHA" '$1 == sha { found = 1 } END { exit !found }'` back: `FAILED
+  tests/test_release.py::test_a_tag_moved_during_the_run_stops_it`; `    defaults:`, `      run:`,
+  `        shell: bash {0}` under the publish job's `needs: build`: `FAILED
+  tests/test_release.py::test_no_step_or_job_can_be_switched_off_or_allowed_to_fail`; each `1
+  failed, 18 passed`. `make actionlint`, then `make check`: `1421 passed, 9 skipped, 61
+  deselected` (twice), `Test Files  26 passed (26)`, `Tests  140 passed (140)`, `All checks
+  passed!`, `no leaks found`.
+- [ ] **Step 28: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(release): 🤖 the Tier 1 review's fixes: the moved-tag check takes only the tag's own ref, and no job can carry its own defaults
+
+The Tier 1 review of Task 8 (one independent reviewer, AGENTS.md's security checklist, over
+rounds 8a to 8e and the dispatch) found no Critical, and two Minor gaps, closed here:
+
+- `git ls-remote` matches a pattern against each ref's tail, so a branch named
+  x/refs/tags/v1.0.0 at the built commit let a moved tag pass "the tag still names the commit
+  this run built" (the reviewer reproduced it). The awk now takes only refs/tags/$TAG and its
+  peeled ^{}. The test adds that decoy branch; with the old awk: "FAILED
+  tests/test_release.py::test_a_tag_moved_during_the_run_stops_it".
+- A job's own `defaults: run: shell: bash {0}` (no -e) would have kept every test green, since
+  the tests run each script with -eo pipefail, while on the runner a failed release lookup would
+  read as "no release". A job may now hold only needs, runs-on, timeout-minutes, permissions, env
+  and steps; with such a `defaults` on publish: "FAILED tests/test_release.py::test_no_step_or_
+  job_can_be_switched_off_or_allowed_to_fail".
+
+Not built, for Dan: the reviewer's other Minor, that `actions: write` shares the publish job
+with `contents: write` and `id-token: write`, where download-artifact and attest also run, so a
+compromised action could re-run an old pages.yml or delete runs; a third job holding only
+`actions: write` would narrow it, but Decision 2 says the publish job holds it, so that is
+Dan's call.
+
+Docs read: git-ls-remote's manual (each pattern "is matched against the \"tail\" of a ref", git
+2.x as installed here).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 8
+Co-Authored-By: <the model's own line>
+```
+
+  `git add .github/workflows/release.yml tests/test_release.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 29: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review). Worth the
   reviewers' time: the GITHUB_TOKEN's permissions in each job and what code runs while they are
   held (the publish job has no checkout); what a tag pushed from a fork can do (nothing here: a
@@ -12691,9 +13743,11 @@ Co-Authored-By: <the model's own line>
   integrity; that no path replaces a published release's files: a re-run, the same tag pushed
   again after a delete (its release is then a draft), a cancel mid-create, two runs at once;
   that a failed lookup never reads as "no release"; that each guard test fails without its
-  fix. The checklist, as the listing's own review found it: secrets fine (none used;
-  `GH_TOKEN` by reference, in the publish job only; checkout without credentials); permissions
-  fine (build `contents: read`; publish exactly the three, no repository code); network
+  fix; what `actions: write` lets the publish job do (start `pages.yml` on `main`, which builds
+  main's own files; it runs no repository code itself). The checklist, as the listing's own
+  review found it: secrets fine (none used; `GH_TOKEN` by reference, in the publish job only;
+  checkout without credentials); permissions fine (build `contents: read`; publish exactly the
+  four, no repository code); network
   exposure fine (nothing listens; outbound to GitHub, npm, PyPI for hash-pinned hatchling, the
   uv download, Sigstore); failing closed fine after round 8d; injection fine (env only, no
   `${{` in a run step, ref names can't hold `:` or a newline); logging fine (the tag, file
@@ -12702,8 +13756,9 @@ Co-Authored-By: <the model's own line>
   CI can't run this workflow before a tag, so the first proof is Task 12's step 9c.
 
   The forward review over Tasks 7, 9, 10, 11 and 12:
-  - Task 7's `pages.yml` follows `workflows: [release]`, so this workflow's `name: release`
-    must not change; it deploys only when that run succeeded.
+  - Task 7's `pages.yml` runs on the dispatch this workflow's last step makes (`gh workflow run
+    pages.yml --ref main`), which needs its `workflow_dispatch` trigger and `actions: write`
+    here; it deploys main's own files.
   - Task 9's index lists `vid2sub-<version>-py3-none-any.whl` from each release; a release
     holds only that wheel and the sdist, and the build refuses anything else in `dist/`.
   - Task 10's README and docs: `make dist`, `make build-constraints`, how a release is cut
@@ -12758,41 +13813,51 @@ Spec §23.4, S51 and S52's second half: `pages.yml` builds a PEP 503 simple inde
 fragment, and a post-deploy smoke job installs the newest release from the live index on all
 three operating systems. There is no PyPI (Dan, 2026-10-14).
 
-**Why it is built this way** (read 2026-10-24):
+**Why it is built this way** (read 2026-10-25):
 - **The hash comes from GitHub, the link from the repository.** GitHub computes every release
   asset's SHA-256 at upload ("immutable", its changelog of 2025-06-03), and the REST API gives it
   as each asset's `digest` (the reference types it "string or null", with no example; the
-  builder reads `sha256:<64 hex>`, the form the API returns, and leaves out anything else, so a
-  different form shows as an empty index, which Task 12's step 9c catches). Each link is made
-  from the repository, the tag and the wheel's name, never taken from the listing's
+  builder reads `sha256:<64 hex>`, the form the API returns). Each link is made from the
+  repository, the tag and the wheel's name, never taken from the listing's
   `browser_download_url`.
 - **Only what is certainly there is linked** (Review Focus 5): a draft (the listing shows drafts
   only to a token with push access, but the builder doesn't rely on that), a tag that isn't `v` +
   a version, a release without its `vid2sub-<version>-py3-none-any.whl` (deleted, or never
-  made), a wheel named for another version, and one GitHub gives no SHA-256 for (or still
-  uploading) are left out, each with a line on stderr. The index is rebuilt on every deploy, so a
-  deleted release leaves it at the next. Wheels only: an sdist would build with hatchling from
-  PyPI.
+  made) and a wheel named for another version are left out, each with a line on stderr. The
+  index is rebuilt on every deploy, so a deleted release leaves it at the next. Wheels only: an
+  sdist would build with hatchling from PyPI.
+- **A published release's wheel is indexed, or the build fails** (Decision 27; the kickoff
+  council's reliability finding 6). A published `v` release whose
+  `vid2sub-<version>-py3-none-any.whl` has no SHA-256 from GitHub, a digest of another form, or
+  isn't uploaded stops the builder (exit 1, naming the release and the reason, writing nothing),
+  so `pages.yml` never deploys an index that has lost a release's wheel: left out, it would
+  vanish on the next push to `main` with every check green, and installs would fall through to
+  PyPI (Decision 28).
 - **uv is the proof.** The last test serves an index and a wheel on this machine and has the real
   uv install from it, then refuses a wheel whose bytes aren't the indexed ones (`Hash mismatch`):
   the page is one uv reads, and the fragment one it checks. No test reaches GitHub or PyPI.
 - **In `pages.yml`:** the listing is `gh api --paginate --slurp` with the build job's read-only
   token (`--slurp` wraps the pages in one array; gh 2.103.1's `gh api --help`), after `make
   pages-test` (`make pages` empties `_site/`, and the index isn't part of the editor's files);
-  the builder prints `wheels=` and `newest=` into `$GITHUB_OUTPUT`. `newest` is the most
-  recently published release in the index.
-- **The smoke job installs as a person does:** `uv tool install "vid2sub$EXTRA" --index
-  "$INDEX"` (`[mac]` on macos-14, none on Ubuntu and Windows), from the deploy's own `page_url`,
-  after the deploy; then `vid2sub --version` must be the newest release's, and the tool's own
-  Python must find `www/ui.js` and `ui.css`. It runs no repository code (no checkout,
-  `permissions: {}`), waits up to three minutes for the live index to list the wheel, and is
-  skipped while the index is empty (before the first release). Its three steps were run on macOS
+  the builder prints `wheels=`, `newest=` and `releases=` into `$GITHUB_OUTPUT`. `newest` is
+  the most recently published release in the index; `releases` counts the published `v`
+  releases, with a wheel or not.
+- **The smoke job runs after a dispatched deploy, once a release exists** (Decision 21; the
+  kickoff council's simplicity finding 12): only on a `workflow_dispatch` run (the one
+  `release.yml` starts, or Dan's own) whose listing has a published release, never after an
+  ordinary push. A release with no wheel at all still runs it, and it fails at once, saying the
+  index lists no wheel (round 9c), since nothing it could install is listed.
+- **The smoke job installs as a person does:** `uv tool install "vid2sub$EXTRA" --index "$INDEX"`
+  (`[mac]` on macos-14, none on Ubuntu and Windows), from the deploy's own `page_url`, after the
+  deploy; then `vid2sub --version` must be the newest release's, and the tool's own Python must find
+  `www/ui.js` and `ui.css`. It runs no repository code (no checkout, `permissions: {}`), and waits
+  up to three minutes for the live index to list the wheel. Its three steps were run on macOS
   against an index and a wheel served on this machine (the wheel built as `make dist` builds it,
-  with the frontend; uv installing its dependencies from PyPI): all three pass; with `ui.js`
-  gone, "the wheel has no frontend"; with another version, the version check fails; with a wheel the
-  index doesn't list, the wait fails with `::error::…doesn't list vid2sub 9.9.9`. Windows' step
-  differs only in the tool's Python path (`Scripts/python.exe`, through `cygpath`) and is proven by
-  the first real run.
+  with the frontend; uv installing its dependencies from PyPI): all three pass; with `ui.js` gone,
+  "the wheel has no frontend"; with another version, the version check fails; with a wheel the index
+  doesn't list, the wait fails with `::error::…doesn't list vid2sub 9.9.9`. Windows' step differs
+  only in the tool's Python path (`Scripts/python.exe`, through `cygpath`) and is proven by the
+  first real run.
 
 **Files:**
 - Create: `scripts/build_index.py`, `tests/test_build_index.py`
@@ -12804,21 +13869,21 @@ three operating systems. There is no PyPI (Dan, 2026-10-14).
 - Consumes: Task 8's releases, whose assets are exactly `vid2sub-<version>-py3-none-any.whl`
   and `vid2sub-<version>.tar.gz`; Task 8 sets S52 to `built`, and the index keeps its "the index
   lists it" half true. Task 7's `pages.yml` (its build job, after `make pages-test`; the deploy
-  job's `deployment` step) and `tests/test_pages_workflow.py` (`evaluate`, `steps`, `runs`,
-  `uses`).
+  job's `deployment` step) and `tests/test_pages_workflow.py` (`steps`, `runs`, `uses`), and
+  Task 8's dispatch: `release.yml` starts `pages.yml` on `main` once a release is published.
 - Produces:
   - `scripts/build_index.py RELEASES.json OUT --repo OWNER/REPO` (PEP 723, no dependencies; `uv
     run scripts/build_index.py …`): writes `OUT/index.html` and `OUT/vid2sub/index.html`, prints
-    `wheels=<n>` and `newest=<version>`, a line per release or wheel left out on stderr; exit 2
-    on a usage error or an unreadable listing, writing nothing. Functions `releases_of(listing)`,
-    `wheels(releases, repo) -> (list[Wheel], list[str])`, `project_page(found)`,
-    `root_page()`, `write(out, found)`, `main(argv)`; `Wheel(version, name, url, sha256,
-    published)`.
-  - `pages.yml`: the build job's step `the install index` (id `index`), its outputs `wheels`
-    and `newest`; the deploy job's output `page_url`; job `smoke` (needs build and deploy; if
-    the index has a wheel; ubuntu-24.04, macos-14, windows-2022; 20 minutes; no permissions).
-  - `tests/test_pages_workflow.py`: `value_of(expression, context)`, an expression's value
-    (its `${{ }}` optional), which `evaluate` makes a bool.
+    `wheels=<n>`, `newest=<version>` and `releases=<n>`, a line per release or wheel left out on
+    stderr; exit 1, writing nothing, when a published release's wheel can't be indexed (each
+    reason on stderr), and 2 on a usage error or an unreadable listing. Functions
+    `releases_of(listing)`, `published(releases)`, `wheels(releases, repo) -> (list[Wheel],
+    list[str])` (raises `Unindexed(problems)`), `project_page(found)`, `root_page()`,
+    `write(out, found)`, `main(argv)`; `Wheel(version, name, url, sha256, published)`.
+  - `pages.yml`: the build job's step `the install index` (id `index`), its outputs `wheels`,
+    `newest` and `releases`; the deploy job's output `page_url`; job `smoke` (needs build and
+    deploy; only on `workflow_dispatch` with a published release; ubuntu-24.04, macos-14,
+    windows-2022; 20 minutes; no permissions).
   - For Task 12's step 9c and 9d: the build log's `build_index: 1 wheel from 1 release into
     _site/simple`; `curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c
     '#sha256='` is 1; the smoke job's three entries green.
@@ -12841,7 +13906,8 @@ The release listings here are written by hand in the shape GitHub's REST API giv
 --paginate --slurp repos/OWNER/REPO/releases`); no test reaches GitHub. The last test serves an
 index and a wheel on this machine and has the real uv install from it, so the page is one uv
 reads and its `#sha256=` fragment is one uv checks (the Phase 4 plan's Review Focus 5: a link to a
-file that isn't there, or isn't the file the index names, never installs).
+file that isn't there, or isn't the file the index names, never installs). A published release
+whose wheel the index can't link stops the build instead (Decision 27).
 """
 
 from __future__ import annotations
@@ -12908,21 +13974,34 @@ def test_each_releases_wheel_is_linked_on_github_with_its_sha256():
     assert '<a href="vid2sub/">vid2sub</a>' in index.root_page()
 
 
-def test_a_draft_a_release_with_no_wheel_and_a_wheel_with_no_sha256_are_left_out_and_said():
-    # why: Review Focus 5. The index never links a file that isn't there, or one uv couldn't
-    # check, and an install still gets the newest good release.
+def test_a_draft_and_a_release_with_no_wheel_are_left_out_and_said():
+    # why: Review Focus 5. The index never links a file that isn't there, and an install still
+    # gets the newest good release.
     found, notes = build_index().wheels([
-        release("v0.4.0", asset("vid2sub-0.4.0-py3-none-any.whl"), draft=True),
+        release("v0.4.0", asset("vid2sub-0.4.0-py3-none-any.whl", None), draft=True),
         release("v0.3.0", asset("vid2sub-0.3.0.tar.gz")),  # its wheel deleted, or never made
-        release("v0.2.1", asset("vid2sub-0.2.1-py3-none-any.whl", None)),
-        release("v0.2.2", asset("vid2sub-0.2.2-py3-none-any.whl", state="open")),  # mid-upload
         release("v0.2.0", asset("vid2sub-0.2.0-py3-none-any.whl")),
     ], OWNER_REPO)
     assert [w.version for w in found] == ["0.2.0"]
     assert notes == ["v0.4.0: a draft, left out",
-                     "v0.3.0: no vid2sub-0.3.0-py3-none-any.whl, left out",
-                     "v0.2.1: vid2sub-0.2.1-py3-none-any.whl has no SHA-256 from GitHub, left out",
-                     "v0.2.2: vid2sub-0.2.2-py3-none-any.whl has no SHA-256 from GitHub, left out"]
+                     "v0.3.0: no vid2sub-0.3.0-py3-none-any.whl, left out"]
+
+
+@pytest.mark.parametrize(("wheel", "why"), [
+    (asset("vid2sub-0.2.1-py3-none-any.whl", None), " has no SHA-256 from GitHub"),
+    ({**asset("vid2sub-0.2.1-py3-none-any.whl"), "digest": "sha512:" + "1" * 128},
+     "'s digest isn't sha256:<64 hex>"),
+    (asset("vid2sub-0.2.1-py3-none-any.whl", state="open"), " isn't uploaded yet"),
+], ids=["no digest", "a digest of another form", "not uploaded"])
+def test_a_published_releases_wheel_the_index_cant_link_stops_the_build(wheel, why):
+    # why: Decision 27 (the kickoff council's reliability finding 6): left out, the release would
+    # vanish from the index on the next push to main, with every check green, and every install
+    # and upgrade from the index would fall back to PyPI.
+    index = build_index()
+    with pytest.raises(index.Unindexed) as refused:
+        index.wheels([release("v0.2.1", wheel),
+                      release("v0.2.0", asset("vid2sub-0.2.0-py3-none-any.whl"))], OWNER_REPO)
+    assert refused.value.problems == [f"v0.2.1: vid2sub-0.2.1-py3-none-any.whl{why}"]
 
 
 def test_a_wheel_named_for_another_version_or_a_tag_that_isnt_a_version_is_left_out():
@@ -12977,7 +14056,7 @@ def test_main_writes_both_pages_and_prints_the_count_and_the_newest_version(tmp_
     page = (out / "vid2sub" / "index.html").read_text(encoding="utf-8")
     assert page.count("#sha256=") == 2
     printed = capsys.readouterr()
-    assert printed.out == "wheels=2\nnewest=0.2.0\n"
+    assert printed.out == "wheels=2\nnewest=0.2.0\nreleases=2\n"
     assert printed.err == ("build_index: v0.3.0: a draft, left out\n"
                            f"build_index: 2 wheels from 3 releases into {out}\n")
 
@@ -12987,9 +14066,25 @@ def test_with_no_release_yet_the_index_is_empty_and_says_so(tmp_path, capsys):
     listing.write_text("[[]]", encoding="utf-8")
     assert build_index().main([str(listing), str(tmp_path / "simple"), "--repo",
                                OWNER_REPO]) == 0
-    assert capsys.readouterr().out == "wheels=0\nnewest=\n"
+    assert capsys.readouterr().out == "wheels=0\nnewest=\nreleases=0\n"
     assert "#sha256=" not in (tmp_path / "simple" / "vid2sub" / "index.html").read_text(
         encoding="utf-8")
+
+
+def test_main_writes_nothing_and_exits_1_when_a_published_releases_wheel_isnt_indexed(
+        tmp_path, capsys):
+    listing = tmp_path / "releases.json"
+    listing.write_text(json.dumps([[
+        release("v0.2.0", asset("vid2sub-0.2.0-py3-none-any.whl", None)),
+        release("v0.1.0", asset("vid2sub-0.1.0-py3-none-any.whl", ONE))]]), encoding="utf-8")
+    out = tmp_path / "_site" / "simple"
+    assert build_index().main([str(listing), str(out), "--repo", OWNER_REPO]) == 1
+    printed = capsys.readouterr()
+    assert printed.out == ""  # nothing for pages.yml's GITHUB_OUTPUT: the step fails
+    assert printed.err == (
+        "build_index: v0.2.0: vid2sub-0.2.0-py3-none-any.whl has no SHA-256 from GitHub\n"
+        "build_index: nothing written: the index would leave out a published release's wheel\n")
+    assert not out.exists()
 
 
 def test_main_refuses_a_bad_repository_name_or_a_listing_it_cant_read(tmp_path, capsys):
@@ -13079,7 +14174,7 @@ def test_uv_installs_the_indexed_wheel_and_refuses_one_whose_bytes_arent_the_ind
 ```
 
 - [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_build_index.py -q`.
-  Expected: `9 failed`, each `FileNotFoundError: [Errno 2] No such file or directory:
+  Expected: `13 failed`, each `FileNotFoundError: [Errno 2] No such file or directory:
   '…/scripts/build_index.py'`.
 - [ ] **Step 3: Write the builder,** `scripts/build_index.py`:
 
@@ -13098,13 +14193,18 @@ Why: there is no PyPI (Dan, 2026-10-14). `uv tool install 'vid2sub[mac]' --index
 https://chendaniely.github.io/vid2sub/simple/` reads simple/vid2sub/, which links each release's
 wheel on GitHub Releases with its `#sha256=` fragment, so uv checks every byte it downloads.
 Only what is certainly there is linked (the Phase 4 plan's Review Focus 5): a draft, a release
-whose tag isn't `v` + a version, one with no wheel, a wheel named for another version, and a
-wheel GitHub gives no SHA-256 for are left out, each with a line on stderr; and each link is made
-from the repository, the tag and the wheel's name, never taken from the listing. pages.yml
-builds the index on every deploy, so a deleted release or wheel leaves it at the next one.
+whose tag isn't `v` + a version, one with no wheel, and a wheel named for another version are
+left out, each with a line on stderr; and each link is made from the repository, the tag and the
+wheel's name, never taken from the listing. But a published release's own wheel that can't be
+linked (no SHA-256 from GitHub, a digest of another form, or not yet uploaded) stops the build,
+writing nothing, so pages.yml never deploys an index that has lost a release's wheel (the
+kickoff council's reliability finding 6, Phase 4 Decision 27). pages.yml builds the index on
+every deploy, so a deleted release or wheel leaves it at the next one.
 
-Prints `wheels=<count>` and `newest=<version>` (the most recently published release in the
-index), for pages.yml's GITHUB_OUTPUT; exits 2 on a usage error or a listing it can't read.
+Prints `wheels=<count>`, `newest=<version>` (the most recently published release in the index)
+and `releases=<count>` (published `v` releases, with a wheel or not), for pages.yml's
+GITHUB_OUTPUT; exits 1, writing nothing, when a published release's wheel can't be indexed, and 2
+on a usage error or a listing it can't read.
 """
 
 from __future__ import annotations
@@ -13121,6 +14221,14 @@ PROJECT = "vid2sub"
 WHEEL = re.compile(r"vid2sub-(?P<version>[0-9][0-9A-Za-z.!+]*)-py3-none-any\.whl")
 DIGEST = re.compile(r"sha256:(?P<hex>[0-9a-f]{64})")
 REPOSITORY = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
+
+
+class Unindexed(Exception):
+    """Published releases' wheels the index can't link, each a line naming the release and why."""
+
+    def __init__(self, problems: list[str]):
+        super().__init__("; ".join(problems))
+        self.problems = problems
 
 
 @dataclass(frozen=True)
@@ -13144,17 +14252,29 @@ def releases_of(listing) -> list[dict]:
     return flat
 
 
+def published(releases: list[dict]) -> list[dict]:
+    """The releases that aren't drafts and whose tag is `v` + a version."""
+    return [r for r in releases
+            if r.get("draft") is False and _versioned(str(r.get("tag_name")))]
+
+
+def _versioned(tag: str) -> bool:
+    return (tag.startswith("v")
+            and WHEEL.fullmatch(f"vid2sub-{tag[1:]}-py3-none-any.whl") is not None)
+
+
 def wheels(releases: list[dict], repo: str) -> tuple[list[Wheel], list[str]]:
     """The wheels the index links, newest release first, and a line for each release or wheel
-    left out."""
+    left out. Raises Unindexed when a published release's own wheel can't be linked."""
     found: list[Wheel] = []
     notes: list[str] = []
+    problems: list[str] = []
     for release in releases:
         tag = str(release.get("tag_name", ""))
         if release.get("draft") is not False:
             notes.append(f"{tag or 'a release'}: a draft, left out")
             continue
-        if not tag.startswith("v") or not WHEEL.fullmatch(f"vid2sub-{tag[1:]}-py3-none-any.whl"):
+        if not _versioned(tag):
             notes.append(f"{tag!r}: not v + a version, left out")
             continue
         version = tag[1:]
@@ -13169,11 +14289,18 @@ def wheels(releases: list[dict], repo: str) -> tuple[list[Wheel], list[str]]:
             notes.append(f"{tag}: no {name}, left out")
             continue
         digest = DIGEST.fullmatch(str(wheel.get("digest")))
-        if wheel.get("state") != "uploaded" or digest is None:
-            notes.append(f"{tag}: {name} has no SHA-256 from GitHub, left out")
-            continue
-        url = f"https://github.com/{repo}/releases/download/{tag}/{name}"
-        found.append(Wheel(version, name, url, digest["hex"], str(release.get("published_at"))))
+        if wheel.get("state") != "uploaded":
+            problems.append(f"{tag}: {name} isn't uploaded yet")
+        elif wheel.get("digest") is None:
+            problems.append(f"{tag}: {name} has no SHA-256 from GitHub")
+        elif digest is None:
+            problems.append(f"{tag}: {name}'s digest isn't sha256:<64 hex>")
+        else:
+            url = f"https://github.com/{repo}/releases/download/{tag}/{name}"
+            found.append(Wheel(version, name, url, digest["hex"],
+                               str(release.get("published_at"))))
+    if problems:
+        raise Unindexed(problems)
     found.sort(key=lambda w: w.published, reverse=True)
     return found, notes
 
@@ -13209,7 +14336,14 @@ def main(argv: list[str]) -> int:
     except (OSError, ValueError, TypeError) as err:
         print(f"build_index: can't read the release listing: {err}", file=sys.stderr)
         return 2
-    found, notes = wheels(releases, argv[3])
+    try:
+        found, notes = wheels(releases, argv[3])
+    except Unindexed as err:
+        for problem in err.problems:
+            print(f"build_index: {problem}", file=sys.stderr)
+        print("build_index: nothing written: the index would leave out a published release's "
+              "wheel", file=sys.stderr)
+        return 1
     for note in notes:
         print(f"build_index: {note}", file=sys.stderr)
     write(Path(argv[1]), found)
@@ -13218,6 +14352,7 @@ def main(argv: list[str]) -> int:
           f"into {argv[1]}", file=sys.stderr)
     print(f"wheels={len(found)}")
     print(f"newest={found[0].version if found else ''}")
+    print(f"releases={len(published(releases))}")
     return 0
 
 
@@ -13225,35 +14360,40 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_build_index.py -q`: `9
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_build_index.py -q`: `13
   passed` (the last runs the real uv against an index served on 127.0.0.1; nothing leaves the
   machine). The guards, each made in the script, run, and reverted:
-  - `if wheel.get("state") != "uploaded" or digest is None:` made `if False:`, and the
-    `Wheel(…)` line given `digest["hex"] if digest else ""`: `FAILED
-    tests/test_build_index.py::test_a_draft_a_release_with_no_wheel_and_a_wheel_with_no_sha256_are_left_out_and_said`
-    (`1 failed, 8 passed`);
+  - `if problems:` (above `raise Unindexed(problems)`) made `if False:`: `FAILED
+    tests/test_build_index.py::test_a_published_releases_wheel_the_index_cant_link_stops_the_build[no digest]`,
+    `…[a digest of another form]`, `…[not uploaded]` and `FAILED
+    …::test_main_writes_nothing_and_exits_1_when_a_published_releases_wheel_isnt_indexed` (`4
+    failed, 9 passed`);
   - the `url = …` line made `url = str(wheel.get("browser_download_url"))`: `FAILED
     …::test_each_releases_wheel_is_linked_on_github_with_its_sha256`, `FAILED
     …::test_a_link_is_made_from_the_repository_and_never_taken_from_the_listing`, `FAILED
     …::test_uv_installs_the_indexed_wheel_and_refuses_one_whose_bytes_arent_the_indexed_ones`
-    (`3 failed, 6 passed`);
+    (`3 failed, 10 passed`);
   - `if release.get("draft") is not False:` made `if False:`: `FAILED
-    …::test_a_draft_a_release_with_no_wheel_and_a_wheel_with_no_sha256_are_left_out_and_said`,
-    `FAILED …::test_main_writes_both_pages_and_prints_the_count_and_the_newest_version` (`2
-    failed, 7 passed`).
+    …::test_a_draft_and_a_release_with_no_wheel_are_left_out_and_said`, `FAILED
+    …::test_main_writes_both_pages_and_prints_the_count_and_the_newest_version` (`2 failed, 11
+    passed`).
 
   By hand, with a listing holding one release (its wheel with a `sha256:` digest, its sdist with
   none) and a draft, saved as `.git/releases.json`: `uv run scripts/build_index.py
   .git/releases.json .git/simple --repo chendaniely/vid2sub` prints `build_index: v0.2.0: a
   draft, left out`, `build_index: 1 wheel from 2 releases into .git/simple`, `wheels=1`,
-  `newest=0.1.0.dev0`, and `.git/simple/vid2sub/index.html` links the wheel alone; then `rm -r
-  .git/simple .git/releases.json`. Then `make check`. Expected: `1430 passed, 9 skipped, 61
-  deselected` (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks
-  passed!`, `no leaks found`.
+  `newest=0.1.0.dev0`, `releases=1` (exit 0), and `.git/simple/vid2sub/index.html` links the
+  wheel alone; with the wheel's digest null instead (`.git/releases-bad.json`), it prints
+  `build_index: v0.1.0.dev0: vid2sub-0.1.0.dev0-py3-none-any.whl has no SHA-256 from GitHub` and
+  `build_index: nothing written: the index would leave out a published release's wheel`, exits
+  1, and makes no `.git/simple-bad`; then `rm -r .git/simple .git/releases.json
+  .git/releases-bad.json`. Then `make check`. Expected: `1434 passed, 9 skipped, 61 deselected`
+  (twice), `Test Files  26 passed (26)`, `Tests  140 passed (140)`, `All checks passed!`, `no
+  leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
-build(index): 🤖 scripts/build_index.py writes the install index from GitHub's release listing, linking each release's wheel with its SHA-256 and leaving out anything not certainly there
+build(index): 🤖 scripts/build_index.py writes the install index from GitHub's release listing, linking each release's wheel with its SHA-256, and stops rather than leave a published release's wheel out
 
 Spec §23.4, S51 and S52's second half, and the Phase 4 plan's Review Focus 5: no PyPI (Dan,
 2026-10-14), so `uv tool install 'vid2sub[mac]' --index https://chendaniely.github.io/vid2sub/simple/`
@@ -13265,24 +14405,31 @@ reads a PEP 503 simple index that pages.yml publishes with the site.
   https://github.com/<repo>/releases/download/<tag>/<name> with `#sha256=` and GitHub's own
   SHA-256 of it (the asset's `digest`, `sha256:<64 hex>`, computed at upload).
 - Left out, each with a line on stderr: a draft; a tag that isn't `v` + a version; a release
-  without its wheel (deleted, or never made); a wheel named for another version; a wheel GitHub
-  has no SHA-256 for, or one still uploading. The link is made from the repository, the tag and
-  the name, never taken from the listing's browser_download_url. Wheels only: an sdist would
-  build with hatchling from PyPI. Names are escaped, though the patterns already allow no markup.
-- It prints `wheels=<n>` and `newest=<version>` (the most recently published release indexed)
-  for pages.yml's GITHUB_OUTPUT, and exits 2, writing nothing, on a usage error, a repository
-  name that isn't OWNER/REPO, or a listing it can't read (an API error's JSON object included).
+  without its wheel (deleted, or never made); a wheel named for another version. The link is
+  made from the repository, the tag and the name, never taken from the listing's
+  browser_download_url. Wheels only: an sdist would build with hatchling from PyPI. Names are
+  escaped, though the patterns already allow no markup.
+- A published `v` release whose own wheel can't be linked (no SHA-256 from GitHub, a digest that
+  isn't sha256:<64 hex>, or not uploaded) stops it: exit 1, each release and reason on stderr,
+  nothing written (Phase 4 Decision 27, the kickoff council's reliability finding 6). Left out,
+  that wheel would vanish from the index on the next push to main with every check green, and
+  installs would fall through to PyPI.
+- It prints `wheels=<n>`, `newest=<version>` (the most recently published release indexed) and
+  `releases=<n>` (published `v` releases, with a wheel or not) for pages.yml's GITHUB_OUTPUT,
+  and exits 2, writing nothing, on a usage error, a repository name that isn't OWNER/REPO, or a
+  listing it can't read (an API error's JSON object included).
 
 tests/test_build_index.py uses listings written by hand in the API's shape; no test reaches
 GitHub. Its last test serves an index and a minimal wheel on 127.0.0.1 and has the real uv
 (`uv pip install --no-config --no-cache --no-deps --index-url …`) install from it, then refuse
 the same wheel under another SHA-256 ("Hash mismatch"): the page is one uv reads and the
-fragment one it checks. They failed first with FileNotFoundError for scripts/build_index.py (9
-failed). Guard checks, each reverted: the digest check skipped (a wheel without a SHA-256
-indexed): "FAILED tests/test_build_index.py::test_a_draft_a_release_with_no_wheel_and_a_wheel_
-with_no_sha256_are_left_out_and_said"; the link taken from browser_download_url: "FAILED
+fragment one it checks. They failed first with FileNotFoundError for scripts/build_index.py (13
+failed). Guard checks, each reverted: the refusal not raised (such a wheel dropped without a
+word): "FAILED tests/test_build_index.py::test_a_published_releases_wheel_the_
+index_cant_link_stops_the_build[no digest]", "[a digest of another form]" and "[not
+uploaded]", and the main test's exit 1; the link taken from browser_download_url: "FAILED
 ...::test_a_link_is_made_from_the_repository_and_never_taken_from_the_listing"; drafts let
-through: the left-out test again.
+through: "FAILED ...::test_a_draft_and_a_release_with_no_wheel_are_left_out_and_said".
 
 Docs read: PEP 503 (the root and project pages, one anchor per file, `#sha256=<hex>`
 fragments) and PEP 629's `<meta name="pypi:repository-version" content="1.0">`; GitHub's REST
@@ -13302,48 +14449,7 @@ Co-Authored-By: <the model's own line>
 
 #### Round 9b: the index in `pages.yml`, and the smoke job
 
-- [ ] **Step 6: Write the failing tests.** In `tests/test_pages_workflow.py`, split the evaluator
-  (from the repository's root):
-
-```python
-"""Task 9: split the test's evaluator into value_of (an expression's value) and evaluate (a bool)."""
-from pathlib import Path
-
-p = Path("tests/test_pages_workflow.py")
-t = p.read_text(encoding="utf-8")
-reps = [
-    ('''def evaluate(expression: str, context: dict) -> bool:
-    """`expression`, in as much of GitHub's syntax''',
-     '''def value_of(expression: str, context: dict):
-    """The value of `expression` (with or without its `${{ }}`), in as much of GitHub's syntax'''),
-    ('''    tokens, at, text = [], 0, expression.strip()
-''',
-     '''    tokens, at = [], 0
-    text = expression.strip().removeprefix("${{").removesuffix("}}").strip()
-'''),
-    ('''    value = either()
-    take("end")
-    return bool(value)
-''',
-     '''    value = either()
-    take("end")
-    return value
-
-
-def evaluate(expression: str, context: dict) -> bool:
-    """`expression` as an `if:` reads it: its value, true or false."""
-    return bool(value_of(expression, context))
-'''),
-]
-for a, b in reps:
-    assert t.count(a) == 1, a[:60]
-    t = t.replace(a, b)
-p.write_text(t, encoding="utf-8")
-print("patched")
-```
-
-  (save it as `.git/evalpatch.py`, run `python3 .git/evalpatch.py`, then delete it), and append
-  to the file:
+- [ ] **Step 6: Write the failing tests.** Append to `tests/test_pages_workflow.py`:
 
 ```python
 
@@ -13366,29 +14472,32 @@ def test_the_index_is_built_after_the_pages_tests_and_uploaded_with_the_site(wor
          '"$GH_REPO" >> "$GITHUB_OUTPUT"')]
     assert workflow["jobs"]["build"]["outputs"] == {
         "wheels": "${{ steps.index.outputs.wheels }}",
-        "newest": "${{ steps.index.outputs.newest }}"}
+        "newest": "${{ steps.index.outputs.newest }}",
+        "releases": "${{ steps.index.outputs.releases }}"}
     assert workflow["jobs"]["deploy"]["outputs"] == {
         "page_url": "${{ steps.deployment.outputs.page_url }}"}
 
 
 def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_system(workflow):
     # why: S51. A person installs with `uv tool install 'vid2sub[mac]' --index <site>/simple/`;
-    # this does the same after each deploy, and checks the release's version and frontend.
+    # this does the same after a release's deploy, and checks the release's version and
+    # frontend. Only on a manual run (the one release.yml starts, Decision 2, or Dan's own) once
+    # a release exists, never after an ordinary push (the kickoff council's simplicity
+    # finding 12).
     smoke = workflow["jobs"]["smoke"]
     assert smoke["needs"] == ["build", "deploy"]
-    assert smoke["if"] == "needs.build.outputs.wheels != '0'"  # nothing to install before v1
+    assert smoke["if"] == (
+        "github.event_name == 'workflow_dispatch' && needs.build.outputs.releases != '0'")
     assert smoke["strategy"] == {"fail-fast": False, "matrix": {
         "os": ["ubuntu-24.04", "macos-14", "windows-2022"]}}
     assert smoke["runs-on"] == "${{ matrix.os }}"
     assert smoke["permissions"] == {}
     assert smoke["defaults"] == {"run": {"shell": "bash"}}
     assert uses(workflow, "smoke") == ["astral-sh/setup-uv"]  # no checkout: no repository code
-    assert smoke["env"]["INDEX"] == "${{ needs.deploy.outputs.page_url }}simple/"
-    assert smoke["env"]["NEWEST"] == "${{ needs.build.outputs.newest }}"
-    extra = smoke["env"]["EXTRA"]
-    assert value_of(extra, {"matrix": {"os": "macos-14"}}) == "[mac]"
-    assert value_of(extra, {"matrix": {"os": "ubuntu-24.04"}}) == ""
-    assert value_of(extra, {"matrix": {"os": "windows-2022"}}) == ""
+    assert smoke["env"] == {
+        "INDEX": "${{ needs.deploy.outputs.page_url }}simple/",
+        "NEWEST": "${{ needs.build.outputs.newest }}",
+        "EXTRA": "${{ matrix.os == 'macos-14' && '[mac]' || '' }}"}  # [mac] on the Mac alone
     scripts = "\n".join(runs(workflow, "smoke"))
     assert 'uv tool install "vid2sub$EXTRA" --index "$INDEX"' in scripts
     assert 'test "$(vid2sub --version | tr -d \'\\r\')" = "vid2sub $NEWEST"' in scripts
@@ -13401,7 +14510,7 @@ def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_
   `        assert job["runs-on"] == "ubuntu-24.04", name` with
   `        assert job["runs-on"] in ("ubuntu-24.04", "${{ matrix.os }}"), name`.
 - [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_pages_workflow.py -q`.
-  Expected: `3 failed, 20 passed`: `FAILED
+  Expected: `3 failed, 9 passed`: `FAILED
   tests/test_pages_workflow.py::test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys`
   (`Extra items in the right set: 'smoke'`), `FAILED
   …::test_the_index_is_built_after_the_pages_tests_and_uploaded_with_the_site` (`ValueError:
@@ -13413,8 +14522,9 @@ def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_
 
 ```yaml
       # The install index (spec §23.4, S51, S52): every release's wheel, linked on GitHub
-      # Releases with its SHA-256 (scripts/build_index.py). After the Pages tests, since make
-      # pages empties _site/; its counts go to the smoke job.
+      # Releases with its SHA-256 (scripts/build_index.py), and the build fails rather than leave
+      # a published release's wheel out (Decision 27). After the Pages tests, since make pages
+      # empties _site/; its counts go to the smoke job.
       - name: the install index
         id: index
         env:
@@ -13432,6 +14542,7 @@ def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_
     outputs:
       wheels: ${{ steps.index.outputs.wheels }}
       newest: ${{ steps.index.outputs.newest }}
+      releases: ${{ steps.index.outputs.releases }}
 ```
 
   between the deploy job's `      url: ${{ steps.deployment.outputs.page_url }}` and its
@@ -13448,10 +14559,12 @@ def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_
 
   smoke:
     # S51: the newest release installs from the live index, frontend included, on all three
-    # operating systems, as a person installs it (spec §23.4). Before the first release the index
-    # is empty and there is nothing to install. No checkout: it runs nothing of the repository's.
+    # operating systems, as a person installs it (spec §23.4). Only on a manual run, which is
+    # what a release starts (release.yml's gh workflow run, Decision 2) or Dan's own, and once a
+    # release exists; never after an ordinary push (the kickoff council's simplicity finding 12).
+    # No checkout: it runs nothing of the repository's.
     needs: [build, deploy]
-    if: needs.build.outputs.wheels != '0'
+    if: github.event_name == 'workflow_dispatch' && needs.build.outputs.releases != '0'
     strategy:
       fail-fast: false
       matrix:
@@ -13495,43 +14608,48 @@ def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_
 ```
 
 - [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_pages_workflow.py -q`:
-  `23 passed`. `make actionlint`: its command line only. The guards, each made, run, and
-  reverted: the smoke job's `permissions: {}` made `contents: read`, a checkout step added to it,
-  or its `if:` dropped: `FAILED
+  `12 passed`. `make actionlint`: its command line only. The guards, each made, run, and
+  reverted: the smoke job's `permissions: {}` made `contents: read`, a checkout step added
+  before its setup-uv, or its `if:` without `github.event_name == 'workflow_dispatch' && `:
+  `FAILED
   tests/test_pages_workflow.py::test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_system`;
   the index step moved below the upload: `FAILED
   …::test_the_index_is_built_after_the_pages_tests_and_uploaded_with_the_site`. Each prints `1
-  failed, 22 passed`. The smoke job's three steps were run as the commit below says. Then
-  `make check`. Expected: `1432 passed, 9 skipped, 61 deselected` (twice), `Test Files  26
-  passed (26)`, `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`.
+  failed, 11 passed`. The smoke job's three steps were run as the commit below says. Then
+  `make check`. Expected: `1436 passed, 9 skipped, 61 deselected` (twice), `Test Files  26
+  passed (26)`, `Tests  140 passed (140)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
-ci(pages): 🤖 pages.yml publishes the install index with the site, and a smoke job installs the newest release from the live index on macOS, Windows and Linux
+ci(pages): 🤖 pages.yml publishes the install index with the site, and after a release's deploy a smoke job installs the newest release from the live index on macOS, Windows and Linux
 
 Spec §23.4 and S51: the index is built on every deploy, and "a post-deploy smoke job installs
-from the live index on all three operating systems".
+from the live index on all three operating systems"; Phase 4 Decision 21 (the kickoff council's
+simplicity finding 12): only after the deploy a release starts.
 
 - The build job's step `the install index` (after make pages-test, since make pages empties
   _site/, and before the link check and the upload) lists the releases with `gh api --paginate
   --slurp` and the job's read-only token (GH_TOKEN, GH_REPO by env, never an expression in the
-  run step) and runs scripts/build_index.py into _site/simple; its `wheels` and `newest` become
-  the build job's outputs, and the deploy job's `page_url` its output.
-- Job `smoke` (needs build and deploy; only when the index has a wheel, so nothing runs before
-  the first release; ubuntu-24.04, macos-14 and windows-2022, fail-fast off; 20 minutes; no
+  run step) and runs scripts/build_index.py into _site/simple, which fails the run rather than
+  leave a published release's wheel out (Decision 27); its `wheels`, `newest` and `releases`
+  become the build job's outputs, and the deploy job's `page_url` its output.
+- Job `smoke` (needs build and deploy; only on a workflow_dispatch run, the one release.yml
+  starts or Dan's own, whose listing has a published release, so never after an ordinary push
+  and never before the first release; ubuntu-24.04, macos-14 and windows-2022, fail-fast off;
+  20 minutes; no
   permissions at all; bash; no checkout, so no repository code runs): setup-uv 0.13.1 with its
   cache off; waits up to three minutes for the live index to list the newest wheel; `uv tool
   install "vid2sub$EXTRA" --index "$INDEX"` (`[mac]` on macos-14, as the README installs it
   there), adding uv's tool folder to GITHUB_PATH; then `vid2sub --version` must be the newest
   release's, and the tool's own Python must find www/ui.js and ui.css.
 - tests/test_pages_workflow.py: the index step's place, env and commands, the outputs, and the
-  smoke job's needs, condition, matrix, permissions, steps and EXTRA (through value_of, the
-  evaluator's value, which evaluate now makes a bool); the job set and runs-on checks take the
-  smoke job in. They failed first (3 failed, 20 passed): the job set without 'smoke',
-  "ValueError: list.index(x): x not in list" (no index step) and "KeyError: 'smoke'". Guard
-  checks, each reverted: the smoke job given `contents: read`, or a checkout, or its condition
-  dropped: "FAILED tests/test_pages_workflow.py::test_the_smoke_job_installs_the_newest_release_
-  from_the_live_index_on_every_system"; the index step moved after the upload: "FAILED
+  smoke job's needs, condition (pinned as written), matrix, permissions, steps and env, EXTRA
+  among it; the job set and runs-on checks take the smoke job in. They failed first (3 failed, 9 passed):
+  the job set without 'smoke', "ValueError: list.index(x): x not in list" (no index step) and
+  "KeyError: 'smoke'". Guard checks, each reverted: the smoke job given `contents: read`, or a
+  checkout, or its condition without `github.event_name == 'workflow_dispatch' && `: "FAILED
+  tests/test_pages_workflow.py::test_the_smoke_job_installs_the_newest_release_from_the_live_
+  index_on_every_system"; the index step moved after the upload: "FAILED
   ...::test_the_index_is_built_after_the_pages_tests_and_uploaded_with_the_site".
 
 The smoke job's three steps were run on macOS against an index and a wheel served on 127.0.0.1
@@ -13553,21 +14671,173 @@ Co-Authored-By: <the model's own line>
 
   `git add .github/workflows/pages.yml tests/test_pages_workflow.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
-- [ ] **Step 11: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+#### Round 9c: the Tier 1 review's fixes
+
+When this listing was built, one independent Tier 1 reviewer went over rounds 9a and 9b with
+`AGENTS.md`'s security checklist (read-only). It found no Critical. It confirmed that a link can
+only point at this repository's releases with GitHub's own SHA-256, that a refusal writes nothing
+and stops the run before the upload and the deploy, and when the smoke job runs. Its Important
+was a slip in that build, not in this listing (the test file copied whole from before round 7d,
+dropping round 7d's guards; Step 6 edits the file in place, which keeps them). Its Minor: an API
+error slurped as one "release" read as a draft, so the index went empty with every check green;
+with releases but no wheel indexed, the smoke job looked three minutes for an empty version
+(both fixed here); a wheel-shaped asset named for another version is only noted, and a push can
+replace a release's waiting dispatched run (both for Dan or the phase end; Task 10's release
+steps say to run `pages.yml` by hand when that run shows cancelled). Its checklist: secrets
+fine; permissions fine; network exposure fine; failing closed a finding (the first two Minor,
+fixed; the replaced run, documented); injection fine; logging fine.
+
+- [ ] **Step 11: Write the failing tests.** Apply:
+
+```diff
+diff --git a/tests/test_build_index.py b/tests/test_build_index.py
+index 2ddf6e3..19d52ed 100644
+--- a/tests/test_build_index.py
++++ b/tests/test_build_index.py
+@@ -136,7 +136,11 @@ def test_gh_slurps_pages_of_releases_and_both_shapes_read_as_one_list():
+     assert index.releases_of([[a], [b]]) == [a, b]
+     assert index.releases_of([a, b]) == [a, b]
+     assert index.releases_of([[]]) == []
+-    for bad in ({"message": "Not Found"}, [1, 2], [[a], b]):
++    # An API error slurped as one "release", or a release without its tag or draft flag, is no
++    # listing: read as a draft it would leave the index empty, with every check green (the
++    # Task 9 review).
++    for bad in ({"message": "Not Found"}, [1, 2], [[a], b], [{"message": "Not Found"}],
++                [[{"tag_name": "v1.0.0", "assets": []}]], [[{**a, "draft": "false"}]]):
+         with pytest.raises(TypeError):
+             index.releases_of(bad)
+ 
+diff --git a/tests/test_pages_workflow.py b/tests/test_pages_workflow.py
+index 66723c6..f8fb319 100644
+--- a/tests/test_pages_workflow.py
++++ b/tests/test_pages_workflow.py
+@@ -243,3 +243,17 @@ def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_
+     scripts = "\n".join(runs(workflow, "smoke"))
+     assert 'uv tool install "vid2sub$EXTRA" --index "$INDEX"' in scripts
+     assert 'test "$(vid2sub --version | tr -d \'\\r\')" = "vid2sub $NEWEST"' in scripts
++
++
++@bash_steps
++def test_with_releases_but_no_wheel_in_the_index_the_smoke_job_says_so_at_once(workflow):
++    # why: a release whose wheel is missing still runs the smoke job (Decision 21: once a
++    # release exists), and its wait would look three minutes for "vid2sub-" and say the index
++    # doesn't list "vid2sub " (the Task 9 review).
++    wait = next(s["run"] for s in steps(workflow, "smoke")
++                if s.get("name") == "the live index lists the newest wheel")
++    done = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-c", wait],
++                          env={**os.environ, "NEWEST": "", "INDEX": "http://127.0.0.1:9/"},
++                          capture_output=True, text=True, check=False, timeout=20)
++    assert done.returncode == 1
++    assert done.stdout.startswith("::error::a release exists, but the index lists no wheel")
+```
+
+  Run them: `uv run pytest tests/test_build_index.py tests/test_pages_workflow.py -q`: `2 failed,
+  24 passed`: `FAILED
+  tests/test_build_index.py::test_gh_slurps_pages_of_releases_and_both_shapes_read_as_one_list`
+  and `FAILED
+  tests/test_pages_workflow.py::test_with_releases_but_no_wheel_in_the_index_the_smoke_job_says_so_at_once`
+  (`subprocess.TimeoutExpired: … timed out after 20 seconds`: the wait's loop).
+- [ ] **Step 12: The fixes,** in `scripts/build_index.py` and `.github/workflows/pages.yml`:
+
+```diff
+diff --git a/.github/workflows/pages.yml b/.github/workflows/pages.yml
+index 450c960..84b1eb7 100644
+--- a/.github/workflows/pages.yml
++++ b/.github/workflows/pages.yml
+@@ -144,6 +144,10 @@ jobs:
+       # Pages may take a moment to serve the new deploy everywhere.
+       - name: the live index lists the newest wheel
+         run: |
++          if [ -z "$NEWEST" ]; then
++            echo "::error::a release exists, but the index lists no wheel: a release without its vid2sub wheel installs nothing"
++            exit 1
++          fi
+           for _ in 1 2 3 4 5 6; do
+             if curl -fsS --max-time 30 "${INDEX}vid2sub/" | grep -Fq "vid2sub-$NEWEST-py3-none-any.whl#sha256="; then
+               exit 0
+diff --git a/scripts/build_index.py b/scripts/build_index.py
+index 284a27b..eb919c2 100644
+--- a/scripts/build_index.py
++++ b/scripts/build_index.py
+@@ -68,6 +68,10 @@ def releases_of(listing) -> list[dict]:
+         isinstance(p, list) for p in listing) else listing
+     if not all(isinstance(r, dict) for r in flat):
+         raise TypeError("each release in the listing is a JSON object")
++    # An API error slurped as one "release" would read as a draft and leave the index empty.
++    if not all(isinstance(r.get("tag_name"), str) and isinstance(r.get("draft"), bool)
++               for r in flat):
++        raise TypeError("each release in the listing has a tag_name and a draft flag")
+     return flat
+ 
+ 
+```
+
+- [ ] **Step 13: Run the checks; they pass, and each fails without its fix.** `uv run pytest
+  tests/test_build_index.py tests/test_pages_workflow.py -q`: `26 passed`. `make actionlint`:
+  its command line only. In turn, each reverted after: `releases_of`'s `if not
+  all(isinstance(r.get("tag_name"), str) and …)` check deleted: `FAILED
+  tests/test_build_index.py::test_gh_slurps_pages_of_releases_and_both_shapes_read_as_one_list`
+  (`1 failed, 12 passed`); the wait step's `if [ -z "$NEWEST" ]; then … fi` deleted: `FAILED
+  tests/test_pages_workflow.py::test_with_releases_but_no_wheel_in_the_index_the_smoke_job_says_so_at_once`
+  (`1 failed, 12 passed`, after 20 s). Then `make check`: `1437 passed, 9 skipped, 61
+  deselected` (twice), `Test Files  26 passed (26)`, `Tests  140 passed (140)`, `All checks
+  passed!`, `no leaks found`.
+- [ ] **Step 14: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(index): 🤖 the Tier 1 review's fixes: a listing that isn't one stops the index build, and a smoke run with no wheel to install says so at once
+
+The Tier 1 review of Task 9 (one independent reviewer, AGENTS.md's security checklist, over
+rounds 9a and 9b) found no Critical. Two of its Minor are fixed here:
+
+- releases_of took any list of objects, so an API error slurped as one "release" (`[{"message":
+  …}]`) read as a draft: an empty index, exit 0, every check green, the case Decision 27 exists
+  to stop. Each release must have a string tag_name and a boolean draft, else the listing is
+  unreadable (exit 2). Without the check: "FAILED tests/test_build_index.py::test_gh_slurps_
+  pages_of_releases_and_both_shapes_read_as_one_list".
+- With published releases but no wheel in the index, the smoke job ran with an empty NEWEST,
+  looked three minutes for "vid2sub-" and said the index "doesn't list vid2sub ". It now stops at
+  once: "::error::a release exists, but the index lists no wheel: a release without its vid2sub
+  wheel installs nothing". The test runs the step with NEWEST empty; without the check it times
+  out (subprocess.TimeoutExpired after 20 s): "FAILED tests/test_pages_workflow.py::test_with_
+  releases_but_no_wheel_in_the_index_the_smoke_job_says_so_at_once".
+
+Left for Dan or the phase end: a wheel-shaped asset named for another version is only noted,
+so a published release whose own wheel is missing that way vanishes green (narrowing WHEEL, or
+refusing it, goes beyond Decision 27's letter); and a push that arrives while a release's
+dispatched pages.yml run waits replaces it, so that release's smoke run never happens (Task
+10's release steps now say to run pages.yml by hand when that run shows cancelled).
+
+Docs read: GitHub's REST reference for List releases (tag_name a string, draft a boolean, on
+every release object).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 9
+Co-Authored-By: <the model's own line>
+```
+
+  `git add scripts/build_index.py .github/workflows/pages.yml tests/test_build_index.py
+  tests/test_pages_workflow.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1
+  --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 15: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
   kickoff council, because it edits pages.yml and decides what users install: Matt's `code-review`,
   two axes in two subagents; fix Critical and Important). Worth the reviewers' time: Review Focus 5
   (a release with no wheel, a deleted wheel, a draft: never linked; an install still gets the newest
-  good release); that a link can only point at this repository's releases; the smoke job's
-  permissions (none) and that it runs no repository code; that an empty index skips it rather than
-  failing every push before the first release. The forward review over Tasks 10, 11 and 12: Task
+  good release); that a published release's wheel the index can't link fails the build rather
+  than deploy without it (Decision 27); that a link can only point at this repository's releases;
+  the smoke job's permissions (none), that it runs no repository code, and that it runs only on a
+  manual run (a release's dispatch, or Dan's) once a release exists. The forward review over
+  Tasks 10, 11 and 12: Task
   10's README gives the install from the index and the release process; Task 12's step 9c looks for
   `build_index: 1 wheel from 1 release into _site/simple` in the `pages.yml` run the release starts,
   and checks the live index with `curl … | grep -c '#sha256='`; its step 9d is the smoke job's three
   green entries (they replace the manual install on a clean machine only if Dan says so: S51's exit
   test is his). The docs this task made untrue: spec §23.4's index line gains "links each release's
   wheel on GitHub Releases with GitHub's SHA-256 of it, leaving out a draft or a release without its
-  wheel; built on every deploy", and its smoke line "after each deploy, once a release exists". Then
+  wheel, and failing the build rather than leave out a published release's wheel; built on every
+  deploy", and its smoke line "after a release's deploy (the run `release.yml` starts, or a manual
+  one), once a release exists". Then
   the close, its own commit, holding this plan with this task's boxes ticked and **Now** set to
   `Task 10: The README and the docs, open.`, and the spec's §23.4 lines, S51's Proof (`the
   post-deploy smoke job (pages.yml's smoke); tests/test_build_index.py; the exit test`) and S52's
@@ -13618,7 +14888,12 @@ status line and scenario rows are each task's close.
   http://127.0.0.1:8008/vid2sub/` (`scripts/rangeserver.py`); the install banner links
   `…/vid2sub#install` (`TopBar.tsx`'s `INSTALL_URL`), which is the README's `## Install`.
 - **The index is empty until the first release**, so the README keeps the install from a clone
-  beside the one from the index.
+  beside the one from the index; and it protects an install only while it answers, which the
+  install section says beside the command (Decision 28; Dan, Q&A item 25).
+- **Safari's downloads go back by merging** (Decision 25): the Pages section gives the notice's
+  `vid2sub write <video> --merge <downloaded sidecar>` first, its placeholders and no file name
+  in it, and replacing the files by hand only if nothing else changed the episode since it was
+  opened.
 - **On Phase 3's README:** the install from the index offers `[whisper]` and `[nvidia]` beside
   `[mac]`, as Phase 3's install from a clone does; the Pages section names Phase 3's screens,
   Models and Make preview copy among what the Pages editor leaves out (each is shown only where
@@ -13627,7 +14902,8 @@ status line and scenario rows are each task's close.
   The new diagram draws only what is built, every name taken from the files (ci.yml's seven jobs,
   Phase 3's `whisper` among them,
   release.yml's `build` and `publish`, pages.yml's `build`, `deploy` and `smoke`, the
-  `workflow_run` between them, `start.js`, the bundle's parts, `simple/vid2sub/`). Mermaid 11's
+  `workflow_dispatch` release.yml makes on `main`, `start.js`, the bundle's parts,
+  `simple/vid2sub/`). Mermaid 11's
   own parser read all four diagrams while this listing was written (a scratch script beside the
   repository, not part of it); GitHub's rendering of them in the PR is the check here.
 
@@ -13642,11 +14918,13 @@ status line and scenario rows are each task's close.
   frame; and that a reload asks for the folder again (handles are never kept).
   `docs/architecture.md` draws the Pages site (Task 1 drew `web.folder` and the browser backend).
 - Consumes, from Tasks 5–9: the demo's committed clip and `demo/CREDITS.md`; `make test-pyodide`
-  and CI's `pyodide` job; `pages.yml` (deploys from `main`, after a push, a manual run or a
-  release; the `github-pages` environment's rule); `make dist`, `make build-constraints`, how a
+  and CI's `pyodide` job; `pages.yml` (deploys from `main`, after a push or a manual run, which a
+  release starts, Decision 2; the `github-pages` environment's rule); `make dist`, `make
+  build-constraints`, how a
   release is cut (both versions, merge, Dan tags `main`'s merge commit, Task 8) and `gh
   attestation verify … --signer-workflow chendaniely/vid2sub/.github/workflows/release.yml`; the
-  index at `/simple/` and the smoke job (Task 9).
+  index at `/simple/`, which fails its build rather than leave out a release's wheel, and the
+  smoke job (Task 9); Task 3's `vid2sub write --merge` and its notice.
 - Produces: nothing later tasks consume but the docs Task 11 and Dan read.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
@@ -13654,7 +14932,7 @@ status line and scenario rows are each task's close.
 
 ````diff
 diff --git a/README.md b/README.md
-index e453097..1ddad72 100644
+index e5ab0fb..e234b3d 100644
 --- a/README.md
 +++ b/README.md
 @@ -6,9 +6,9 @@ optionally ASS) next to the video, named the way Plex and Jellyfin expect. It ru
@@ -13670,7 +14948,7 @@ index e453097..1ddad72 100644
  Design: [`docs/superpowers/specs/2026-10-14-vid2sub-design.md`](docs/superpowers/specs/2026-10-14-vid2sub-design.md),
  whose Outline and Scenarios say what is built. Diagrams:
  [`docs/architecture.md`](docs/architecture.md). How it is built: [`AGENTS.md`](AGENTS.md).
-@@ -26,7 +26,27 @@ build; `vid2sub doctor` tells you.
+@@ -26,7 +26,28 @@ build; `vid2sub doctor` tells you.
  | ffmpeg | `brew install ffmpeg` | `winget install Gyan.FFmpeg` | your package manager |
  | deno | `brew install deno` | `winget install DenoLand.Deno` | `curl -fsSL https://deno.land/install.sh \| sh` |
  
@@ -13688,9 +14966,10 @@ index e453097..1ddad72 100644
 +uv tool upgrade vid2sub   # later: uv keeps the index and the extra in its tool receipt
 +```
 +
-+An index named with `--index` is checked before PyPI, so a `vid2sub` someone else puts on PyPI
-+can't take its place. Each release's files have a build-provenance attestation: `gh attestation
-+verify <file> --repo chendaniely/vid2sub --signer-workflow
++An index named with `--index` is checked before PyPI, but only while it answers: after a 404
++(Pages switched off, the repository renamed, a mistyped address) uv moves on to PyPI and would
++install whatever `vid2sub` is there. Each release's files have a build-provenance attestation:
++`gh attestation verify <file> --repo chendaniely/vid2sub --signer-workflow
 +chendaniely/vid2sub/.github/workflows/release.yml` checks a download was built by this
 +repository's `release.yml`.
 +
@@ -13699,7 +14978,7 @@ index e453097..1ddad72 100644
  
  ```bash
  git clone https://github.com/chendaniely/vid2sub && cd vid2sub
-@@ -52,8 +72,8 @@ names it and the fix. The first run downloads the model from Hugging Face (1.6 G
+@@ -52,8 +73,8 @@ names it and the fix. The first run downloads the model from Hugging Face (1.6 G
  large-v3-turbo, 3.1 GB for large-v3); with no network then, the episode fails at once, naming the
  download, and later runs load the model from its cache.
  
@@ -13710,7 +14989,7 @@ index e453097..1ddad72 100644
  first. The build needs Node 22 or later, such as Homebrew's `node`, or nvm's: `nvm install` in
  `frontend/` reads its `.nvmrc`. In your clone, in any shell:
  
-@@ -278,7 +298,40 @@ under the names they stand in for (Whisper large-v3-turbo and Gemma 4), and jobs
+@@ -279,7 +300,45 @@ under the names they stand in for (Whisper large-v3-turbo and Gemma 4), and jobs
  demo's own clip.
  
  Retranslate, **Make preview copy**, Settings, Add, Review, Jobs and Models need an engine that
@@ -13734,7 +15013,12 @@ index e453097..1ddad72 100644
 +  the editor says why, and your edits stay in the tab.
 +- In **Safari and Firefox** the folder is read only, so **Save** downloads the sidecar and every
 +  subtitle file it projects (and the glossary), a quarter second apart; your browser may ask once
-+  to allow several downloads. Put them next to the video, replacing the old ones.
++  to allow several downloads. Then, in the video's folder, run the command the notice gives,
++  `vid2sub write <video> --merge <downloaded sidecar>`, with the video's name and the
++  downloaded sidecar in place of the two placeholders. It adds your edits to the sidecar there
++  and writes the subtitle files, keeping anything else written since you opened the episode.
++  Put the downloads next to the video, replacing the old ones, only if nothing else changed the
++  episode since then.
 +- **Open the demo** plays the demo clip in `demo/` with its subtitles and translation; its Save
 +  downloads.
 +- The editor never keeps a folder: after a reload, open it again. It refuses to run inside
@@ -13752,7 +15036,7 @@ index e453097..1ddad72 100644
  
  ## Models
  
-@@ -307,7 +360,11 @@ make build         # build the frontend into src/vid2sub/web/www/ (vid2sub serve
+@@ -308,7 +367,11 @@ make build         # build the frontend into src/vid2sub/web/www/ (vid2sub serve
  make test          # pytest, without the live and browser tests (media tests need ffmpeg)
  make test-utc      # the same under TZ=UTC, as on CI's Ubuntu runners
  make test-js       # typecheck the frontend and run its Vitest tests
@@ -13764,7 +15048,7 @@ index e453097..1ddad72 100644
  make check         # everything CI checks: the suite, again under UTC, the frontend's tests,
                     # lint, the leak scan
  make lint          # ruff
-@@ -315,6 +372,8 @@ make actionlint    # lint the GitHub workflows
+@@ -316,6 +379,8 @@ make actionlint    # lint the GitHub workflows
  make leaks         # gitleaks over the whole history
  make demo          # build, then vid2sub serve --demo
  make demo-sidecar  # remake demo/'s canned sidecar and subtitles with the pipeline
@@ -13773,7 +15057,7 @@ index e453097..1ddad72 100644
  make brand         # regenerate frontend/src/theme.css from _brand.yml
  make skills        # install the shinyreact and shadcn agent skills (never committed)
  make hooks         # install the git hooks (none are built yet)
-@@ -324,6 +383,23 @@ make readme        # refresh the model table above from the catalog
+@@ -325,6 +390,27 @@ make readme        # refresh the model table above from the catalog
  
  `make readme` keeps the model table in step with `src/vid2sub/catalog.py`: run it whenever the
  catalog changes (`make check` fails while the table is stale). The tests, and the variables that
@@ -13798,10 +15082,14 @@ index e453097..1ddad72 100644
 +   and the sdist with the frontend inside (`make dist`, its build backend pinned by hash),
 +   attests them, and publishes the release. It refuses a tag that already has a release,
 +   published or draft: a release's files are never replaced, so a mistake takes a new version.
-+4. `pages.yml` follows it: the index at `/simple/` gains the release's wheel, and the smoke job
-+   installs it from there on macOS, Windows and Linux.
++4. Then `release.yml` starts `pages.yml` on `main` (`gh workflow run`): the index at `/simple/`
++   gains the release's wheel (the build fails rather than leave it out), and the smoke job
++   installs it from there on macOS, Windows and Linux. If that start fails, or the run it
++   started shows cancelled (a push to `main` came while it waited, and only the push's run went
++   on, without the smoke job), the release stands: run `pages.yml` by hand (Actions, pages, Run
++   workflow, on `main`).
 diff --git a/docs/architecture.md b/docs/architecture.md
-index 58f78e6..43497d8 100644
+index 58f78e6..f765ed8 100644
 --- a/docs/architecture.md
 +++ b/docs/architecture.md
 @@ -25,7 +25,7 @@ flowchart LR
@@ -13834,16 +15122,16 @@ index 58f78e6..43497d8 100644
 +handles, hands Python the sidecar's and subtitles' bytes, and writes back the files Python
 +returns, so a video's bytes never reach Python. `start.js` refuses to run in a frame and
 +revalidates the deploy's files before the app starts. `pages.yml` is the only workflow that
-+deploys it, from `main`: after a push, a manual run, or a release, which it follows by
-+`release.yml`'s name (Decision 2). The index under `simple/` links each release's wheel on GitHub
-+Releases with its SHA-256, for `uv tool install … --index`.
++deploys it, from `main`: after a push or a manual run, which is how a release starts it
++(`release.yml`'s `gh workflow run`, Decision 2). The index under `simple/` links each release's
++wheel on GitHub Releases with its SHA-256, for `uv tool install … --index`.
 +
 +```mermaid
 +flowchart LR
 +  subgraph repo["github.com/chendaniely/vid2sub"]
 +    ci["ci.yml<br/>python · whisper · floor · pyodide ·<br/>frontend · e2e · leaks"]
-+    release["release.yml, named release<br/>on a v* tag: build (make dist) ·<br/>publish (attest, gh release create)"]
-+    pagesyml["pages.yml<br/>build: make pages · make pages-test · the index<br/>deploy, main only · smoke, 3 systems"]
++    release["release.yml<br/>on a v* tag: build (make dist) ·<br/>publish (attest, gh release create,<br/>gh workflow run pages.yml)"]
++    pagesyml["pages.yml<br/>build: make pages · make pages-test · the index<br/>deploy, main only · smoke, 3 systems, on a manual run"]
 +    releases[("GitHub Releases<br/>wheel and sdist, www/ inside,<br/>build-provenance attestations")]
 +  end
 +  subgraph site["chendaniely.github.io/vid2sub/"]
@@ -13854,7 +15142,7 @@ index 58f78e6..43497d8 100644
 +    simple["simple/vid2sub/<br/>PEP 503: each wheel #sha256="]
 +  end
 +  dan["a v* tag on main (Dan)"] --> release --> releases
-+  release -->|"workflow_run: completed, success, push"| pagesyml
++  release -->|"workflow_dispatch, on main"| pagesyml
 +  push["push to main · manual run"] --> pagesyml
 +  releases -->|"gh api: release assets and digests"| pagesyml
 +  pagesyml -->|"upload-pages-artifact · deploy-pages"| site
@@ -13865,10 +15153,10 @@ index 58f78e6..43497d8 100644
 +  simple -->|"wheel, checked by its SHA-256"| releases
 +```
 diff --git a/tests/README.md b/tests/README.md
-index 9771566..ef82ca0 100644
+index 9771566..ecc66d5 100644
 --- a/tests/README.md
 +++ b/tests/README.md
-@@ -41,4 +41,25 @@
+@@ -41,4 +41,26 @@
    the hidden attribute, 8.3 short names and `\\?\` names on Windows; the hidden flag and the
    other Unicode form on macOS; a name that isn't valid Unicode on Linux. CI's `python` job runs
    the whole suite on all three, so each runs there.
@@ -13890,9 +15178,10 @@ index 9771566..ef82ca0 100644
 +  project; the first run downloads hatchling and its dependencies, pinned by hash in
 +  `build-constraints.txt`. Its workflow tests read `release.yml`, and run its guarding steps'
 +  scripts with a stand-in `gh` and a scratch git repository; they skip on Windows, where there is
-+  no bash. `tests/test_pages_workflow.py` reads `pages.yml` and evaluates its jobs' conditions
-+  against the events that can start it. `tests/test_build_index.py` builds the install index
-+  from release listings written by hand, and has uv install from it, served on this machine.
++  no bash. `tests/test_pages_workflow.py` reads `pages.yml` and pins its triggers, its jobs'
++  conditions and permissions, and §23.1's hardening. `tests/test_build_index.py` builds the
++  install index from release listings written by hand, and has uv install from it, served on
++  this machine.
  - Fixtures are synthetic or public domain (`tests/fixtures/CREDITS.md`).
 ````
 
@@ -13905,8 +15194,8 @@ index 9771566..ef82ca0 100644
   `demo/CREDITS.md`'s "(Phase 4 Task 5)". Nothing says a Phase 4 part is to come.
 - [ ] **Step 3: Run the checks; they pass.** `uv run pytest tests/test_readme.py -q`: `1
   passed` (the model table is untouched). `make help` lists every target the README names. Then
-  `make check`. Expected: `1432 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed
-  (26)`, `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`.
+  `make check`. Expected: `1437 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed
+  (26)`, `Tests  140 passed (140)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 4: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -13915,26 +15204,31 @@ docs: 🤖 the README, tests/README.md and the architecture page describe the Pa
 Phase 4 Task 10. What Tasks 1–9 built, written where a person looks for it:
 
 - README: installing from a release through the index (`uv tool install 'vid2sub[mac]' --index
-  https://chendaniely.github.io/vid2sub/simple/`, `uv tool upgrade`, why the index outranks
-  PyPI, checking a download's attestation with `gh attestation verify … --signer-workflow`),
+  https://chendaniely.github.io/vid2sub/simple/`, `uv tool upgrade`, that the index comes before
+  PyPI only while it answers, since uv moves on to PyPI after a 404 (Decision 28), checking a
+  download's attestation with `gh attestation verify … --signer-workflow`),
   with `[whisper]` and `[nvidia]` for Windows and Linux as the clone's install has them, and a
   clone as the other way; release wheels carry the frontend; a "Pages editor" section
   (Open folder; Save writing next to the video in Chrome and Edge after re-reading the sidecar,
-  or downloading the set in Safari and Firefox; the demo; no folder kept across a reload; no
+  or downloading the set in Safari and Firefox, then the notice's `vid2sub write <video> --merge
+  <downloaded sidecar>` first, and replacing the files by hand only if nothing else changed the
+  episode since it was opened (Decision 25); the demo; no folder kept across a reload; no
   frames; nothing fetched beyond its own files; make pages, pages-serve, pages-test; Add,
   Review, Jobs, Models, Retranslate, Make preview copy and the settings not there); the
   Develop list gains test-pyodide, pages, pages-serve, pages-test, dist and build-constraints;
   CI's sentence names the Pyodide job, pages.yml and release.yml; a "Releases" section says how
-  a release is cut (both versions, merge, Dan tags main's merge commit) and what follows. The
-  status line names Phase 4 after Phase 3.
+  a release is cut (both versions, merge, Dan tags main's merge commit) and what follows:
+  release.yml starts pages.yml (Decision 2), and if that start fails or its run shows cancelled,
+  Dan runs pages.yml by hand. The status line names Phase 4 after Phase 3.
 - tests/README.md: the Pages tests (`make pages-test`, the `pages` marker, how a folder is
   handed to the page, what only the exit test covers), make test-pyodide, and the release,
-  workflow and index tests.
+  workflow and index tests (the workflow test pins pages.yml's triggers, conditions and
+  permissions).
 - docs/architecture.md: the first diagram's Pages node is built, so solid; a new section draws
   the Pages site (start.js, Shinylive and Pyodide in a worker, the app bundle, the demo clip,
   simple/), the workflows (ci.yml's seven jobs, Phase 3's whisper among them, release.yml's
-  build and publish, pages.yml's build, deploy and smoke, the workflow_run between them) and the
-  index's links to GitHub Releases.
+  build and publish, pages.yml's build, deploy and smoke, the workflow_dispatch release.yml makes
+  on main) and the index's links to GitHub Releases.
   Every name in it was checked against the code; mermaid 11's parser reads all four diagrams.
 
 The words "not yet", "planned", "Phase 4" and "unverified" were grepped in README.md,
@@ -13955,7 +15249,8 @@ Co-Authored-By: <the model's own line>
   §23.5's README list (install per OS, configure, endpoints, the model table, upgrading yt-dlp,
   installing the CLI three ways, the web UI from a clone, plain uv and npm commands beside the
   Makefile) still holds with the index's install first. The forward review over Tasks 11 and 12:
-  Task 11's Step 4 names Safari's **Save**, which downloads (there is no Download button);
+  Task 11's Step 4 names Safari's **Save**, which downloads (there is no Download button), and
+  the merge the notice gives;
   Task 12's step 8 PR body links the README's Pages section; its step 9e's
   `CHANGELOG.md` entry names the release. Then the close, its own commit, holding this plan with
   this task's boxes ticked and **Now** set to `Task 11: The M4 exit test (with Dan), open.`, with
@@ -14164,9 +15459,10 @@ fi
 - [ ] **9. After the merge: the live site, the first release and the install (S47, S51, S52).**
   Tags, releases and repo settings are Dan's (`AGENTS.md`, *Stops*), so the agent lists these
   steps, presents them one at a time (*Asking Dan*), and runs only the read-only checks.
-  - [ ] **9a. The live site:** Task 7's Step 14 settings were set before the merge (without
+  - [ ] **9a. The live site:** Task 7's Step 17 settings were set before the merge (without
     them the first deploy fails). `pages.yml`'s run on the merge commit is green, its build and
-    deploy jobs, with the smoke job skipped (no release has a wheel yet, Task 9), and
+    deploy jobs, with the smoke job skipped (it runs only on a manual run once a release exists,
+    Task 9), and
     `https://chendaniely.github.io/vid2sub/` serves the editor. `curl -sSI
     https://chendaniely.github.io/vid2sub/ | grep -i '^cache-control'` prints the header Pages
     sends (Decision 15 expects `max-age=600`); record it in §29's M4 bullet, and if it differs,
@@ -14180,7 +15476,9 @@ fi
     `git fetch origin`, `git tag -a v<version> origin/main -m "vid2sub <version>"`, then
     `git push origin v<version>`.
   - [ ] **9c. The release and the index (S52):** `release.yml` and the `pages.yml` run its
-    dispatch starts (Decision 2) are green; then the read-only checks:
+    dispatch starts (Decision 2) are green (if that run shows cancelled, a push to `main`
+    replaced it while it waited: **[Dan]** run `pages.yml` by hand on `main`, so the smoke job
+    runs); then the read-only checks:
 
 ```bash
 gh release view "v<version>" --json assets --jq '.assets[].name'
@@ -14192,8 +15490,9 @@ curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c '#sha2
 
     Expected: the wheel and the sdist; the attestation verifies; the `pages.yml` run's index step
     logged `build_index: 1 wheel from 1 release into _site/simple` (Task 9); the count is `1`,
-    the wheel with its `#sha256=` fragment (`0` would mean GitHub's asset digest isn't in the
-    `sha256:<hex>` form Task 9 accepts, so the index left the wheel out). Then
+    the wheel with its `#sha256=` fragment. (Had GitHub's asset digest not been in the
+    `sha256:<hex>` form Task 9 accepts, the index step would have failed the run, naming the
+    release, rather than deploy an index without it: Decision 27.) Then
     `rm -r .git/release-check`.
   - [ ] **9d. The install from the index (S51):** in that same `pages.yml` run, the smoke job
     (Task 9) is green on ubuntu-24.04, macos-14 (which installs the `[mac]` extra) and
@@ -14230,3 +15529,6 @@ curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c '#sha2
 | Task 8 (planning) | Minor | `.github/workflows/release.yml` | `npm ci` runs install scripts in the jobs that build what is released and deployed; check whether `npm ci --ignore-scripts` still builds (esbuild's binary comes in optional packages) in `release.yml`, `pages.yml` and `ci.yml` (security finding 7) | open |
 | Task 3 (planning) | Minor | `frontend/src/lib/draft.ts` | In Pages, crash drafts sit in `localStorage` on the shared `chendaniely.github.io` origin, readable by Dan's other sites there, and never expire; expire them (after 7 days, by their time), and say so in §6.9 (security finding 9) | open |
 | Task 3 (planning) | Minor | `src/vid2sub/web/server.py` | A browser Save whose sidecar was placed but a later file failed, or that ran past the server's wait, leaves the tab on the old heads, so the next Save conflicts with the person's own version; the page reports what it placed, and the server keeps the saved episode when the sidecar is among it (reliability finding 11) | open |
+| Task 7 (planning) | Minor | `.github/workflows/release.yml` | The dispatch runs in the publish job, so `actions: write` sits beside its other write permissions; a third job holding only `actions: write` would narrow that. It rewords Decision 2, so it is Dan's call (Task 8's build review) | open |
+| Task 9 (planning) | Minor | `scripts/build_index.py` | A wheel-shaped asset named for another version is only noted, so a release whose own wheel is missing beside it drops out of the index quietly; narrow the pattern, or refuse that release (Task 9's build review) | open |
+| Task 3 (planning) | Minor | `tests/pages/test_pages_files.py` | The Pages test's stand-in folder picker ignores user activation, and `_bare` strips more than the ideographic space it was widened for (Task 3's build review) | open |
