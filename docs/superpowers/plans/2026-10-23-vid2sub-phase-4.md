@@ -116,6 +116,12 @@ listings are run and revised at its phase start.)
     it waits up to 3 minutes for the live index to list the newest wheel.
 22. **No `release.yml` step may carry `if:` or `continue-on-error`, and it is the only workflow
     named `release`** (Task 8, round 8e), since `pages.yml` follows every workflow by that name.
+23. **`BrowserRuntime` refuses Phase 3's local-only calls itself** (Task 1, round 1e): browsing,
+    Add, Review, the models check and the preview copy each raise their own "install vid2sub"
+    refusal, as defence in depth beside the server's `capabilities.generate` gate (the replay's
+    security review found the runtime inheriting them, so `roots()` would list the home folder).
+24. **The README's install from the index offers `[whisper]` and `[nvidia]` beside `[mac]`**
+    (Task 10), as Phase 3's README does for a clone.
 
 ## Global Constraints
 
@@ -181,6 +187,12 @@ plus:
 - **Which files are an episode's is Python's call**, from the folder's names alone (`listing`),
   so the rules stay in one place; a name vid2sub writes, in another case, is staged under
   vid2sub's (macOS and Windows see one file), so someone else's `Show.EN.SRT` is still left alone.
+- **The staging folder's read skips only `safe_write`'s temporary files** (`.<name>.<12 hex>.tmp`):
+  a video named `.clip.mkv` has its sidecar and subtitle files named `.clip.…` too, so skipping
+  every name that starts with "." would leave them out of a Save while the Save said it had
+  written them. A Save whose sidecar or written file the read left out fails ("couldn't hand back
+  …: nothing was saved") rather than say so. (Task 3's security review found this as a Critical
+  that escaped from this task; the plan builds it here.)
 - **Pyodide's WebLoop.** `runtime.blocking` works in Pyodide with or without `runtime.INLINE`:
   Pyodide 0.27.7's `run_in_executor` runs the call synchronously on the loop's thread
   (`pyodide/webloop.py`: "Best we can do is to run func(args) in this thread"). INLINE only skips
@@ -248,14 +260,19 @@ plus:
     `Session()`, whose defaults give Save's SRT; `reachable()` `{}`; `media_for(ep)` the page's
     blob URL, and with `audio_only` no playback audio but `CANT_PLAY` (no ffmpeg);
     `retranslate` raises `RetranslateError(LOCAL_ONLY, INSTALL)` and `endpoint_models`
-    `EndpointError(LOCAL_ONLY, INSTALL)`, neither offered since `generate` is false.
+    `EndpointError(LOCAL_ONLY, INSTALL)`, neither offered since `generate` is false; Phase 3's
+    parts refuse too (round 1e): `roots`, `listing` and `expand` with `AddError(INSTALL)`,
+    `prepare`, `sample`, `with_row`, `choose`, `apply_to_all`, `allow_cloud`, `problems` and
+    `start_review` with `ReviewRefused(INSTALL)`, `models` with `EndpointError(NO_MODELS,
+    INSTALL)` and `make_preview` with `PreviewError(INSTALL)`.
   - The server: `status` is an explicit null, and the endpoint check never starts, where
     `capabilities.generate` is false.
 
-The `make check` counts below come from a clone of the finished Phase 2 with only this phase's
-Tasks 1 to 4; yours are higher once Phase 3 is in. What matters is no failure, ruff's
-`All checks passed!` and gitleaks' `no leaks found`; the new tests' own counts are exact. Each
-`diff` block applies with `git apply` from the repository's root (save it to a file first).
+The counts below come from a replay on Phase 3's end (its Task 11's close: `make check` `1312
+passed, 9 skipped, 46 deselected`, Vitest 24 files and 115 tests, `make e2e` `40 passed`), with
+this task's earlier rounds in. What matters is no failure, ruff's `All checks passed!` and
+gitleaks' `no leaks found`; the new tests' own counts are exact. Each `diff` block applies with
+`git apply` from the repository's root (save it to a file first).
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
@@ -361,8 +378,8 @@ test("the Pages editor's Pyodide runs blocking calls inline and stages files in 
   `INLINE = sys.platform == "emscripten"` to `INLINE = sys.platform == "pyodide"`, run Step 3's
   command, then `git checkout src/vid2sub/web/runtime.py`. Expected: `AssertionError: expected
   false to be true // Object.is equality` and `Tests  1 failed (1)`.
-- [ ] **Step 5: Run the checks; they pass.** `make check`. Expected: `1037 passed, 2 skipped, 36
-  deselected` (twice), `Test Files  20 passed (20)`, `Tests  89 passed (89)`, `All checks
+- [ ] **Step 5: Run the checks; they pass.** `make check`. Expected: `1312 passed, 9 skipped, 46
+  deselected` (twice), `Test Files  25 passed (25)`, `Tests  116 passed (116)`, `All checks
   passed!`, `no leaks found`.
 - [ ] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -512,7 +529,7 @@ index 726f9ba..b98a0b7 100644
 ```
 ```diff
 diff --git a/src/vid2sub/pipeline.py b/src/vid2sub/pipeline.py
-index 186341d..3d81163 100644
+index 2eb6ffd..8daa33e 100644
 --- a/src/vid2sub/pipeline.py
 +++ b/src/vid2sub/pipeline.py
 @@ -66,8 +66,8 @@ from vid2sub.subs.sidecar import (
@@ -525,7 +542,7 @@ index 186341d..3d81163 100644
  )
  from vid2sub.subs.translate_shape import stale_ids
  from vid2sub.translate.run import (
-@@ -234,39 +234,6 @@ def _check_external(video: Path, header, sidecar: Sidecar, result: InputResult)
+@@ -240,39 +240,6 @@ def _check_external(video: Path, header, sidecar: Sidecar, result: InputResult)
      return sidecar
  
  
@@ -1465,9 +1482,9 @@ def _lang(track: str) -> str:
   unchanged: `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest tests/test_backend_open.py
   tests/test_backend_edit.py tests/test_backend_save.py tests/test_backend_retranslate.py
   tests/test_views.py tests/test_web_server.py tests/test_demo_guard.py tests/test_pipeline.py
-  tests/test_pages_imports.py tests/test_purity.py tests/test_sidecar.py -q`: `239 passed`.
-  Then `make check`: `1038 passed, 2 skipped, 36 deselected` (twice), `Test Files  20 passed
-  (20)`, `Tests  89 passed (89)`, `All checks passed!`, `no leaks found`.
+  tests/test_pages_imports.py tests/test_purity.py tests/test_sidecar.py -q`: `246 passed`.
+  Then `make check`: `1313 passed, 9 skipped, 46 deselected` (twice), `Test Files  25 passed
+  (25)`, `Tests  116 passed (116)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 13: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -1870,6 +1887,22 @@ def test_in_the_browser_the_runtime_plays_the_pages_own_video_and_has_nothing_lo
     assert rt.session.defaults().formats == ("srt",)  # Save's default formats
     assert (rt.queue, rt.config, rt.keys, rt.job_context) == (None, None, None, None)
     assert rt.backend.capabilities().generate is False
+
+
+def test_a_video_whose_name_starts_with_a_dot_is_saved_whole(tmp_path, local):
+    # why: a video named `.clip.mkv` has its files named `.clip.…` too, so a read of the staging
+    # folder that skipped every name starting with "." (to skip safe_write's temporary files)
+    # would leave its sidecar and subtitle files out of a Save while the Save said it had
+    # written them.
+    video = make_episode(tmp_path / "show", ".clip.mkv")
+    browser = BrowserBackend()
+    ep = edit(browser, open_in_browser(browser, video), op="set_text", cue=sid(0), text="朝")
+    files, names = read_again(video, browser)
+    saved, result, writes = browser.save(ep, formats=["srt"], files=files, names=names)
+    assert list(writes) == [".clip.vid2sub.jsonl", ".clip.ja.srt"]
+    assert result.written == (".clip.ja.srt",) and not saved.dirty
+    write_out(video, writes)
+    assert local.open(str(video)).tracks.source[0].text == "朝"
 ```
 
 - [ ] **Step 15: Run them; watch them fail.** `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest
@@ -1880,13 +1913,13 @@ def test_in_the_browser_the_runtime_plays_the_pages_own_video_and_has_nothing_lo
 
 ```diff
 diff --git a/src/vid2sub/subs/naming.py b/src/vid2sub/subs/naming.py
-index 179b74e..49eb40b 100644
+index bb174db..bd8344a 100644
 --- a/src/vid2sub/subs/naming.py
 +++ b/src/vid2sub/subs/naming.py
-@@ -13,6 +13,10 @@ from pathlib import PurePath
- 
- GLOSSARY_NAME = "vid2sub.glossary.toml"
+@@ -17,6 +17,10 @@ GLOSSARY_NAME = "vid2sub.glossary.toml"
  SIDECAR_SUFFIX = ".vid2sub.jsonl"
+ _EPISODE = re.compile(r"[Ss](\d{1,3})[ ._-]*[Ee](\d{1,4})")
+ _DIGITS = re.compile(r"(\d+)")
 +# The files vid2sub takes as videos (and audio): here, not in the pipeline, so the Pages editor
 +# finds a folder's videos by the same list (Phase 4 Task 1).
 +MEDIA_SUFFIXES = frozenset({".mkv", ".mp4", ".m4v", ".mov", ".webm", ".avi", ".ts", ".m2ts",
@@ -1897,7 +1930,7 @@ index 179b74e..49eb40b 100644
 ```
 ```diff
 diff --git a/src/vid2sub/pipeline.py b/src/vid2sub/pipeline.py
-index 3d81163..65df683 100644
+index 8daa33e..0d68e2f 100644
 --- a/src/vid2sub/pipeline.py
 +++ b/src/vid2sub/pipeline.py
 @@ -78,8 +78,7 @@ from vid2sub.translate.run import (
@@ -1984,6 +2017,7 @@ MAX_FILES = 64  # files one open or Save hands over: a sidecar, a glossary and s
 MAX_BYTES = 64 * 2**20  # bytes in each: a sidecar is about 400 KB plus 50 KB a version (§14.7)
 MAX_NAME = 255  # characters in a file name
 SHA256 = re.compile(r"[0-9a-f]{64}")
+TEMPORARY = re.compile(r"\..+\.[0-9a-f]{12}\.tmp")  # safe_write's: .<name>.<12 hex>.tmp
 # What URL.createObjectURL returns: blob:<the page's origin>/<a UUID> (File API).
 BLOB_URL = re.compile(r"blob:https?://[A-Za-z0-9.:\[\]-]+/[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}"
                       r"-[0-9A-Fa-f]{12}")
@@ -2169,6 +2203,9 @@ class BrowserBackend:
             after = _read(stage)
         writes = {n: data for n, data in sorted(after.items(), key=lambda kv: kv[0] != sidecar)
                   if before.get(n) != data}
+        lost = [n for n in (sidecar, *result.written) if n not in after]
+        if lost:  # never report a file written that the staging folder's read left out
+            raise SaveError(f"couldn't hand back {', '.join(lost)}: nothing was saved")
         return _browser(done, name, after), result, writes
 
     def _check_open(self, ep: Episode) -> None:
@@ -2285,8 +2322,10 @@ def _staging(files: Mapping[str, bytes]) -> Iterator[Path]:
 
 
 def _read(stage: Path) -> dict[str, bytes]:
+    """Every file in the staging folder but safe_write's temporary ones: a video named
+    `.clip.mkv` has its files named `.clip.…` too."""
     return {p.name: p.read_bytes() for p in sorted(stage.iterdir())
-            if p.is_file() and not p.is_symlink() and not p.name.startswith(".")}
+            if p.is_file() and not p.is_symlink() and not TEMPORARY.fullmatch(p.name)}
 
 
 def _browser(ep: Episode, name: str, files: Mapping[str, bytes]) -> BrowserEpisode:
@@ -2295,7 +2334,7 @@ def _browser(ep: Episode, name: str, files: Mapping[str, bytes]) -> BrowserEpiso
 ```
 
 - [ ] **Step 18: Run them; they pass, and each guard fails without its fix.** `VID2SUB_REQUIRE_
-  FFMPEG=1 uv run pytest tests/test_browser_backend.py -q`: `28 passed`. Then revert each fix in
+  FFMPEG=1 uv run pytest tests/test_browser_backend.py -q`: `29 passed`. Then revert each fix in
   turn in `src/vid2sub/web/browser.py`, run the file again, and restore it (`git checkout` won't
   do: it is new; keep a copy):
   - the merge, `merged = disk.add(*ep.sidecar.records)` made `merged = disk`: `FAILED
@@ -2309,9 +2348,15 @@ def _browser(ep: Episode, name: str, files: Mapping[str, bytes]) -> BrowserEpiso
   - the header check, `if disk is None or disk.header != ep.sidecar.header:` made `if disk is
     None:`: `1 failed`, `…saves_nothing`;
   - the URL check's `if not isinstance(url, str) or not BLOB_URL.fullmatch(url):` made `if
-    False:`: `5 failed`, every `test_a_video_address_the_page_didnt_make_is_refused` case.
-- [ ] **Step 19: Run the checks; they pass.** `make check`. Expected: `1066 passed, 2 skipped, 36
-  deselected` (twice), `Test Files  20 passed (20)`, `Tests  89 passed (89)`, `All checks
+    False:`: `5 failed`, every `test_a_video_address_the_page_didnt_make_is_refused` case;
+  - the staging folder's read, `not TEMPORARY.fullmatch(p.name)` in `_read` made `not
+    p.name.startswith(".")`: `1 failed`, `FAILED
+    tests/test_browser_backend.py::test_a_video_whose_name_starts_with_a_dot_is_saved_whole`,
+    `E vid2sub.web.episode.SaveError: couldn't hand back .clip.vid2sub.jsonl, .clip.ja.srt:
+    nothing was saved` (the check that a Save hands back its sidecar and written files fails
+    closed).
+- [ ] **Step 19: Run the checks; they pass.** `make check`. Expected: `1342 passed, 9 skipped, 46
+  deselected` (twice), `Test Files  25 passed (25)`, `Tests  116 passed (116)`, `All checks
   passed!`, `no leaks found`.
 - [ ] **Step 20: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -2346,6 +2391,10 @@ on what it hands over. vid2sub.web.browser's BrowserBackend:
 - Refused: a sidecar gone or naming another video at Save (nothing saved), a file of the episode
   the folder lists but the page didn't hand over (Save would have written over it), too many or
   too big files, and a video address that isn't a blob URL the page made (§6.9).
+- The staging folder's read skips only safe_write's temporary files (.<name>.<12 hex>.tmp): a
+  video named .clip.mkv has its files named .clip.… too. A Save whose sidecar or written file
+  that read left out fails ("couldn't hand back …: nothing was saved"), so it never says it
+  wrote a file it doesn't hand back.
 - BrowserRuntime (browser_runtime()) is Pages' Runtime: no queue, config, keys or job context;
   media is the backend (no media tokens to revoke); reachable finds nothing; media_for gives the
   page's blob URL and, asked for the sound alone, says the local app can make it (no ffmpeg);
@@ -2357,7 +2406,9 @@ Each guard failed without its fix, reverted in turn: without the merge, a KeyErr
 version's parent missing from the folder's sidecar (the test
 moves the clock between open and save); with exact names only, the case tests; without the
 completeness check, the file-not-handed-over test; without the header check, the other video's
-sidecar test; without the URL check, all five address cases.
+sidecar test; without the URL check, all five address cases; with the read skipping every
+name starting with ".", "SaveError: couldn't hand back .clip.vid2sub.jsonl, .clip.ja.srt:
+nothing was saved" (the dot-named video's test: the check fails closed).
 
 Docs read: the W3C File API's "generate a new blob URL" (blob:, the origin's serialization, /,
 a UUID). Pyodide's docs don't say where /tmp lives; round 1a's check showed safe_write works
@@ -2519,12 +2570,12 @@ index 7767844..5180996 100644
 
 ```diff
 diff --git a/src/vid2sub/web/server.py b/src/vid2sub/web/server.py
-index c534356..e67b5df 100644
+index 0037dfe..4387047 100644
 --- a/src/vid2sub/web/server.py
 +++ b/src/vid2sub/web/server.py
-@@ -40,8 +40,9 @@ through the runtime, whose `retranslate` turns the engine's errors into the pure
- `RetranslateError`, so nothing here imports them. Cloud models only when the request itself says
- `allow_cloud: true` (§7.2): the editor's box, unticked every time.
+@@ -50,8 +50,9 @@ media token is issued only if the episode is still open; the playback audio's to
+ browser that can't play the copy either. Closing the tab, or opening another episode, stops the
+ encode, which leaves nothing in the cache. One copy at a time per tab.
  
 -The settings drawer (§19.2, S35) is `web.settings`'s: the `settings` output (null in Pages, which
 -has no endpoints), a typed key (`typed_key`, read in the flush of its own message and replaced by
@@ -2534,7 +2585,7 @@ index c534356..e67b5df 100644
  the page's null straight after, so Shiny's input map doesn't keep it; it lives only in the
  engine's `KeyRing`), the session's defaults (`session_defaults`), and Test (`endpoint_test`, its
  answer the `endpoint_test_result` message), which asks the endpoint's `/v1/models` through the
-@@ -405,6 +406,8 @@ def _cue_ids(ids: object) -> bool:
+@@ -671,6 +672,8 @@ def _cue_ids(ids: object) -> bool:
  
  def server(input: Inputs, output: Outputs, session: Session) -> None:
      rt = runtime.current()
@@ -2543,7 +2594,7 @@ index c534356..e67b5df 100644
  
      @reactive_output
      def capabilities():
-@@ -412,7 +415,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
+@@ -678,7 +681,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
  
      # The endpoint check runs as this session's extended task, off the event loop and outside
      # Shiny's reactive lock, now and every STATUS_EVERY seconds. The status keeps showing the last
@@ -2552,7 +2603,7 @@ index c534356..e67b5df 100644
      found = reactive.value({})
  
      @reactive.extended_task
-@@ -421,6 +424,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
+@@ -687,6 +690,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
  
      @reactive.effect
      def _check_every_minute() -> None:
@@ -2561,7 +2612,7 @@ index c534356..e67b5df 100644
          reactive.invalidate_later(STATUS_EVERY)
          check.invoke()
  
-@@ -433,7 +438,6 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
+@@ -699,7 +704,6 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
      # editor has no endpoints (`generate` is false there), so it is offered none of this. The
      # session's settings are the launch's, shared by every tab: a change any tab makes (a default,
      # a typed key) reaches every tab's views through the session's listeners.
@@ -2569,7 +2620,7 @@ index c534356..e67b5df 100644
      ticks = itertools.count(1)
      changed = reactive.value(0)
      session.on_ended(rt.session.on_change(lambda: changed.set(next(ticks))))
-@@ -441,6 +445,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
+@@ -707,6 +711,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
      @reactive_output
      def status():
          changed()  # a typed key makes a key present
@@ -2585,13 +2636,13 @@ index c534356..e67b5df 100644
 
 ````diff
 diff --git a/docs/architecture.md b/docs/architecture.md
-index f2c5cea..f542da6 100644
+index b6cf516..58f78e6 100644
 --- a/docs/architecture.md
 +++ b/docs/architecture.md
-@@ -76,6 +76,10 @@ only the pure packages, shiny, shinyreact, htmltools, pydantic and `web.episode`
- reached through the launch's `Runtime`, and every call that blocks goes through
- `runtime.blocking`: a worker thread here, inline in Pyodide. Each tab's `Editor` runs that
- tab's requests one at a time, in order; the job queue is the engine's, shared by every tab.
+@@ -83,6 +83,10 @@ pauses and resumes as a whole. Phase 3's screens reach the core the same way: Ad
+ preview copy (`media.preview`, beside the playback audio) and the Models page (`review.models`,
+ as `vid2sub models` lists them). faster-whisper is an in-process engine behind the Engine
+ protocol, as `mlx-qwen3-asr` is.
 +Opening, the edit rules, Save and a pick are `web.folder`'s, through `vid2sub.store`, so both
 +backends share them: `LocalBackend` adds the typed path, ffprobe, the quick hash and
 +Retranslate; `web.browser.BrowserBackend`, which Pages' runtime holds (Phase 4), runs them on
@@ -2599,7 +2650,7 @@ index f2c5cea..f542da6 100644
  
  ```mermaid
  flowchart TB
-@@ -87,9 +91,11 @@ flowchart TB
+@@ -95,9 +99,11 @@ flowchart TB
      settings["web.settings<br/>settings_view · Session's defaults"]
      runtime["web.runtime<br/>Runtime · blocking"]
      pure["vid2sub.subs · parse · catalog · web.episode"]
@@ -2609,13 +2660,13 @@ index f2c5cea..f542da6 100644
    subgraph local["Local only"]
 -    backend["web.backend.LocalBackend<br/>open · apply · save · resolve · retranslate"]
 +    backend["web.backend.LocalBackend<br/>typed path · ffprobe · quick hash · retranslate"]
-     queue["jobs.Queue<br/>one worker thread, one job at a time"]
-     tokens["web.media.MediaTokens"]
-     keys["engines.clients.KeyRing<br/>keys from the environment;<br/>typed keys, this launch only"]
-@@ -104,7 +110,10 @@ flowchart TB
-   editor -->|"rt.backend · runtime.blocking"| runtime
-   server -->|"jobs_submit · job_cancel"| runtime
+     queue["jobs.Queue<br/>one worker thread, one job at a time;<br/>pause · resume · keep awake"]
+     browse["web.browse<br/>home and mounted volumes:<br/>folders, videos, subtitles"]
+     review["vid2sub.review<br/>prepare · sample · start · models"]
+@@ -119,7 +125,10 @@ flowchart TB
    runtime --> backend & queue & tokens & keys
+   runtime --> browse & review & preview
+   review -->|"each row's own runner"| queue
 +  runtime -->|"in Pages"| browserbe
 +  backend & browserbe --> folder
    backend --> core
@@ -2626,7 +2677,7 @@ index f2c5cea..f542da6 100644
 ````
 ```diff
 diff --git a/docs/superpowers/specs/2026-10-14-vid2sub-design.md b/docs/superpowers/specs/2026-10-14-vid2sub-design.md
-index a00837d..900c088 100644
+index c2e467a..c6fbcee 100644
 --- a/docs/superpowers/specs/2026-10-14-vid2sub-design.md
 +++ b/docs/superpowers/specs/2026-10-14-vid2sub-design.md
 @@ -307,7 +307,9 @@ src/vid2sub/
@@ -2640,7 +2691,7 @@ index a00837d..900c088 100644
      www/                  ui.js + ui.css (build output), fonts
  frontend/                 Vite + React 19 + TypeScript + Tailwind v4 + shadcn (radix-nova)
  pages/                    the Shinylive entry (app.py, requirements.txt)
-@@ -1240,9 +1242,9 @@ UI run from a terminal or a script.
+@@ -1242,9 +1244,9 @@ UI run from a terminal or a script.
    the calling frame). Outputs are `@reactive_output` JSON values from pure view functions;
    progress uses `send_message`. An unset input is a silent exception the client treats as
    pending; an explicit null clears a pane (`recordings`' pattern).
@@ -2653,7 +2704,7 @@ index a00837d..900c088 100644
  
  ### 19.2 Screens
  
-@@ -1302,10 +1304,11 @@ Dan, 2026-10-14: the Pages site is a working subtitle editor with no install, pl
+@@ -1304,10 +1306,11 @@ Dan, 2026-10-14: the Pages site is a working subtitle editor with no install, pl
  
  - **Build:** Shinylive 0.8.12 (assets 0.10.15, Pyodide 0.27.7, Python 3.12.7, pydantic 2.10.5),
    pinned through `scripts/shinylive_local.py` as in `recordings`. The app bundles
@@ -2672,10 +2723,10 @@ index a00837d..900c088 100644
 ```
 
 - [ ] **Step 25: Run the checks; they pass.** First `uv run pytest tests/test_web_browser.py
-  tests/test_pages_imports.py tests/test_web_server.py -q`: `38 passed`. With the check's gate
+  tests/test_pages_imports.py tests/test_web_server.py -q`: `44 passed`. With the check's gate
   (`if not local: return` in `_check_every_minute`) taken out, `tests/test_web_browser.py` fails:
-  `AssertionError: assert ['reachable'] == []`; put it back. Then `make check`: `1068 passed, 2
-  skipped, 36 deselected` (twice), `Test Files  20 passed (20)`, `Tests  89 passed (89)`,
+  `AssertionError: assert ['reachable'] == []`; put it back. Then `make check`: `1344 passed, 9
+  skipped, 46 deselected` (twice), `Test Files  25 passed (25)`, `Tests  116 passed (116)`,
   `All checks passed!`, `no leaks found`.
 - [ ] **Step 26: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -2710,7 +2761,227 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/web/server.py tests/test_pages_imports.py tests/test_web_browser.py
   docs/architecture.md docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
-- [ ] **Step 27: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+#### Round 1e: the security review, on Phase 3's parts
+
+- [ ] **Step 27: The security review.** One independent reviewer (a subagent) over `git diff
+  $(cat .git/TASK_BASE) HEAD` as it meets Phase 3's server and runtime (the `browse`, `add`,
+  review, `queue_pause`, `queue_resume`, `models_check` and `preview` inputs, and `Runtime`'s
+  `roots`, `listing`, `expand`, Review methods, `models` and `make_preview`), with `AGENTS.md`'s
+  security checklist (secrets, permissions, network exposure, failing closed, injection,
+  logging) and the spec's §6, §6.9 and §21; read-only, free to write throwaway probes outside
+  the repository; each finding with file and line, why, the fix and a severity. At this
+  listing's build it found one Important and one Minor. Important: `BrowserRuntime` inherited
+  Phase 3's thirteen methods, which on the host list this machine's home folder and volumes or
+  reach the queue, the models or ffmpeg, while its docstring said it covered every local-only
+  part; fixed here. Minor: no test drives the real `browser_runtime()` through the server with
+  Phase 3's inputs (Phase 3's own "Pages has no X" tests use a fake backend); the Phase-end
+  list. The server gates every one of those inputs on `capabilities.generate`, false here, and
+  the Pages bundle lacks the modules those methods call: a probe sending them all, with a
+  canary path and key, reached only `media_for` and `retranslate`, left every output null and
+  echoed nothing.
+- [ ] **Step 28: Write the failing test.** In `tests/test_browser_backend.py`, the runtime test
+  checks Phase 3's parts too:
+
+```diff
+diff --git a/tests/test_browser_backend.py b/tests/test_browser_backend.py
+index fc07cd5..6d285f4 100644
+--- a/tests/test_browser_backend.py
++++ b/tests/test_browser_backend.py
+@@ -39,7 +39,15 @@ from vid2sub.web.browser import (
+     Found,
+     browser_runtime,
+ )
+-from vid2sub.web.episode import Capabilities, OpenError, RetranslateError, SaveError
++from vid2sub.web.episode import (
++    AddError,
++    Capabilities,
++    OpenError,
++    PreviewError,
++    RetranslateError,
++    ReviewRefused,
++    SaveError,
++)
+ from vid2sub.web.folder import GONE
+ from vid2sub.web.ops import parse_op
+ from vid2sub.web.settings import EndpointError
+@@ -360,6 +368,28 @@ def test_in_the_browser_the_runtime_plays_the_pages_own_video_and_has_nothing_lo
+     assert rt.session.defaults().formats == ("srt",)  # Save's default formats
+     assert (rt.queue, rt.config, rt.keys, rt.job_context) == (None, None, None, None)
+     assert rt.backend.capabilities().generate is False
++    # Phase 3's parts, each the local engine's (Add's file browser, Review, the Models page, the
++    # preview copy): the server offers none of them here, and each refuses too, naming nothing,
++    # rather than reach for this machine's folders, models or ffmpeg (Task 1's security review).
++    local_only = [
++        (AddError, lambda: rt.roots()),
++        (AddError, lambda: rt.listing("/")),
++        (AddError, lambda: rt.expand(["/"], [])),
++        (ReviewRefused, lambda: rt.prepare(["/x.mkv"], keep_video=False)),
++        (ReviewRefused, lambda: rt.sample(None, on_row=print, cancelled=lambda: False)),
++        (ReviewRefused, lambda: rt.with_row(None, None)),
++        (ReviewRefused, lambda: rt.choose(None, "r1", {})),
++        (ReviewRefused, lambda: rt.apply_to_all(None, "r1", "language")),
++        (ReviewRefused, lambda: rt.allow_cloud(None, True)),
++        (ReviewRefused, lambda: rt.problems(None)),
++        (ReviewRefused, lambda: rt.start_review(None)),
++        (EndpointError, lambda: rt.models()),
++        (PreviewError, lambda: rt.make_preview(ep)),
++    ]
++    for refusal, call in local_only:
++        with pytest.raises(refusal) as refused:
++            call()
++        assert INSTALL in str(refused.value) or refused.value.hint == INSTALL
+ 
+ 
+ def test_a_video_whose_name_starts_with_a_dot_is_saved_whole(tmp_path, local):
+```
+
+- [ ] **Step 29: Run it; watch it fail.** `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest
+  tests/test_browser_backend.py -q`. Expected: `1 failed, 28 passed`, with `E           Failed:
+  DID NOT RAISE AddError` (`roots()` lists this machine's home folder and volumes, which takes
+  a few seconds).
+- [ ] **Step 30: The fix.** In `src/vid2sub/web/browser.py`:
+
+```diff
+diff --git a/src/vid2sub/web/browser.py b/src/vid2sub/web/browser.py
+index 0a9e5ea..83b8809 100644
+--- a/src/vid2sub/web/browser.py
++++ b/src/vid2sub/web/browser.py
+@@ -44,7 +44,7 @@ from contextlib import contextmanager
+ from dataclasses import dataclass, field, fields, replace
+ from pathlib import Path, PurePath
+ from types import MappingProxyType
+-from typing import Literal
++from typing import Any, Literal, NoReturn
+ 
+ from vid2sub import store
+ from vid2sub.media.identity import VideoIdentity
+@@ -53,10 +53,13 @@ from vid2sub.subs import naming
+ from vid2sub.subs.sidecar import SidecarError, serialize
+ from vid2sub.web import folder, ops, runtime
+ from vid2sub.web.episode import (
++    AddError,
+     Capabilities,
+     Episode,
+     OpenError,
++    PreviewError,
+     RetranslateError,
++    ReviewRefused,
+     SaveError,
+     SaveResult,
+ )
+@@ -88,6 +91,7 @@ ANOTHER = ("that folder's sidecar is another video's, so nothing was saved: open
+ CANT_PLAY = ("this browser can't play this video; the local app can make a copy of its sound "
+              "that plays (vid2sub serve)")
+ LOCAL_ONLY = "the browser editor can't translate"
++NO_MODELS = "the browser editor has no models"
+ INSTALL = "generating subtitles needs the local app: install vid2sub and run vid2sub serve"
+ 
+ 
+@@ -270,8 +274,11 @@ class BrowserRuntime(runtime.Runtime):
+     is a bundled `web.settings.Session`, whose defaults give Save's formats (SRT). The local-only
+     parts, in the browser: `reachable` finds nothing to check; `media_for` gives the blob URL the
+     page made for the video, and no playback audio, since there is no ffmpeg; `retranslate` and
+-    `endpoint_models` refuse, and the server offers neither, as `capabilities.generate` is
+-    false."""
++    `endpoint_models` refuse, and the page offers neither, as `capabilities.generate` is false.
++    Phase 3's parts (Add's file browser, Review, the Models page, the preview copy) refuse too,
++    each naming nothing: the server offers none of them where `generate` is false, and the
++    Pages bundle lacks the modules they call, but a runtime that answered them would reach for
++    this machine's folders, models or ffmpeg (Task 1's security review)."""
+ 
+     def reachable(self) -> dict[str, bool]:
+         return {}
+@@ -289,6 +296,46 @@ class BrowserRuntime(runtime.Runtime):
+     def endpoint_models(self, name: str) -> list[str]:
+         raise EndpointError(LOCAL_ONLY, INSTALL)
+ 
++    def roots(self) -> NoReturn:
++        raise AddError(INSTALL)
++
++    def listing(self, path: str) -> NoReturn:
++        raise AddError(INSTALL)
++
++    def expand(self, paths: Sequence[str], links: Sequence[str]) -> NoReturn:
++        raise AddError(INSTALL)
++
++    def prepare(self, inputs: Sequence[str], *, keep_video: bool) -> NoReturn:
++        raise ReviewRefused(INSTALL)
++
++    def sample(self, rv: Any, *, on_row: Any, cancelled: Any) -> NoReturn:
++        raise ReviewRefused(INSTALL)
++
++    def with_row(self, rv: Any, row: Any) -> NoReturn:
++        raise ReviewRefused(INSTALL)
++
++    def choose(self, rv: Any, row_id: str, changes: dict[str, Any]) -> NoReturn:
++        raise ReviewRefused(INSTALL)
++
++    def apply_to_all(self, rv: Any, row_id: str, field: str) -> NoReturn:
++        raise ReviewRefused(INSTALL)
++
++    def allow_cloud(self, rv: Any, allowed: bool) -> NoReturn:
++        raise ReviewRefused(INSTALL)
++
++    def problems(self, rv: Any) -> NoReturn:
++        raise ReviewRefused(INSTALL)
++
++    def start_review(self, rv: Any) -> NoReturn:
++        raise ReviewRefused(INSTALL)
++
++    def models(self) -> NoReturn:
++        raise EndpointError(NO_MODELS, INSTALL)
++
++    def make_preview(self, ep: Episode, *, on_progress: Any = None,
++                     cancelled: Any = None) -> NoReturn:
++        raise PreviewError(INSTALL)
++
+ 
+ def browser_runtime(backend: BrowserBackend | None = None) -> BrowserRuntime:
+     """The runtime Pages configures before it imports the server (as recordings' pages/app.py
+```
+
+- [ ] **Step 31: Run the checks; they pass.** `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest
+  tests/test_browser_backend.py -q`: `29 passed`; `uv run pytest tests/test_pages_imports.py
+  tests/test_web_browser.py -q`: `8 passed` (the refusals are `web.episode`'s and
+  `web.settings`', which the bundle has). The guard: take out the `roots` override, run the
+  file again, and restore it: `Failed: DID NOT RAISE AddError`. Then `make check`: `1344 passed,
+  9 skipped, 46 deselected` (twice), `Test Files  25 passed (25)`, `Tests  116 passed (116)`,
+  `All checks passed!`, `no leaks found`.
+- [ ] **Step 32: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(web): 🤖 the security review's fixes: in the browser, Phase 3's Add, Review, Models and preview copy refuse in the runtime as well as in the server
+
+One independent reviewer went over Task 1 as it meets Phase 3, with AGENTS.md's security
+checklist: Phase 3's inputs (browse, add, the review inputs, queue_pause and queue_resume,
+models_check, preview) and its Runtime methods, with this task's real browser_runtime().
+Every input is gated in the server on capabilities.generate, which is false here, and the Pages
+bundle lacks the modules those methods call; a probe sending all of them, with a canary path and
+key, reached only media_for and retranslate, left every output null and echoed nothing.
+
+- Important (a docstring that overclaimed, and defence in depth): BrowserRuntime said what each
+  local-only part of the runtime does in the browser, but inherited Phase 3's roots, listing,
+  expand, the Review methods, models and make_preview, which on the host list this machine's
+  home folder and volumes, or reach the queue, the models or ffmpeg. Each now refuses, naming
+  nothing: AddError, ReviewRefused or PreviewError with the install hint, and models
+  EndpointError("the browser editor has no models"). The class docstring says so, and that the
+  page, not the server, leaves Retranslate out. The runtime test checks all thirteen; before the
+  fix it failed, "Failed: DID NOT RAISE AddError" (roots() listed the home folder).
+- Minor, recorded on the Phase-end list: no test drives the real browser_runtime() through the
+  server with Phase 3's inputs (Phase 3's own "Pages has no X" tests use a fake backend).
+
+Checklist: secrets fine; permissions fine (the overrides close the host-side reach); network
+exposure fine; failing closed a finding, fixed here; injection fine; logging fine. The dot-name
+read and its lost check: the skip matches only safe_write's names, and the check fails closed in
+save and resolve, folder write and download alike.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 1
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/browser.py tests/test_browser_backend.py`, `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 33: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*: Matt Pocock's `code-review`, two axes in two subagents). Worth
   checking: `web.folder` is LocalBackend's code moved, not changed (`git diff
   $(cat .git/TASK_BASE) -M -- src/vid2sub/web/`); no path reaches a view or a message from the
@@ -2721,11 +2992,11 @@ Co-Authored-By: <the model's own line>
   `save` and `resolve` the files' bytes (base64 on the wire), keep the saved episode only once
   the page has written `writes`, and the page reads `Found.reads`; Task 6's Step 2 finds
   `pyodide` 0.27.7 already in `frontend/package.json` and its lockfile, so it adds nothing
-  there and its expected diff loses those 37 lines, and its Step 9 counts gain this task's
-  Vitest file (`Test Files  21 passed`, one more test); Task 11's Step 3 relies on Save's merge.
-  The docs this task made untrue are fixed in round 1d. Then the close, its own commit,
-  holding this plan with this task's boxes ticked and **Now** set to `Task 2: The Pages build,
-  open.`, with the message in `.git/CLOSE_MSG`:
+  there and its expected diff loses those 37 lines, and its Step 9 counts include this task's
+  Vitest file; Task 11's Step 3 relies on Save's merge. The docs this task made untrue are
+  fixed in round 1d. Then the close, its own commit, holding this plan with this task's boxes
+  ticked and **Now** set to `Task 2: The Pages build, open.`, round 1e's Minor on the
+  Phase-end list, with the message in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 1: The browser backend
@@ -2813,7 +3084,7 @@ Co-Authored-By: <the model's own line>
     first build downloads Shinylive's assets (434,679,785 bytes, SHA-256
     `92deba97423ef2baba39df1806372af320cd6f0e751f4a36f3a7faf2645ea19b`) into
     `.cache/shinylive/` and the three wheels into `.cache/wheels/`; it needs ffmpeg until Task 5.
-    It prints `build_pages: wrote _site/ (44.0 MB) with Shinylive 0.8.12 (assets 0.10.15),
+    It prints `build_pages: wrote _site/ (44.1 MB) with Shinylive 0.8.12 (assets 0.10.15),
     Pyodide 0.27.7, Python 3.12.7. Serve it as Pages does with `make pages-serve`.`
   - `_site/`: `index.html` and `start.js` (from `pages/site/`), `app.json`, `shinylive/`,
     `shinylive-sw.js`, `demo/<the demo's video>`, `.nojekyll`.
@@ -2834,10 +3105,10 @@ Co-Authored-By: <the model's own line>
     `pages-start`, `open-demo`, `local-app`.
   - pytest's `pages` marker (deselected by default; `make pages-test` runs it).
 
-The `make check` counts below come from a clone of the finished Phase 2 with only this phase's
-Tasks 1 to 4; yours are higher once Phase 3 is in. What matters is no failure, ruff's
-`All checks passed!` and gitleaks' `no leaks found`; the new tests' own counts are exact. Each
-`diff` block applies with `git apply` from the repository's root (save it to a file first).
+The counts below come from a replay on Phase 3's end with this phase's Task 1 in. What matters
+is no failure, ruff's `All checks passed!` and gitleaks' `no leaks found`; the new tests' own
+counts are exact. Each `diff` block applies with `git apply` from the repository's root (save it
+to a file first).
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
@@ -2848,7 +3119,7 @@ Tasks 1 to 4; yours are higher once Phase 3 is in. What matters is no failure, r
 
 ```diff
 diff --git a/tests/test_browser_backend.py b/tests/test_browser_backend.py
-index 388b69c..7a24e3d 100644
+index 6d285f4..eb3a661 100644
 --- a/tests/test_browser_backend.py
 +++ b/tests/test_browser_backend.py
 @@ -31,11 +31,13 @@ from vid2sub.web.browser import (
@@ -2865,10 +3136,10 @@ index 388b69c..7a24e3d 100644
      Found,
      browser_runtime,
  )
-@@ -360,3 +362,23 @@ def test_in_the_browser_the_runtime_plays_the_pages_own_video_and_has_nothing_lo
-     assert rt.session.defaults().formats == ("srt",)  # Save's default formats
-     assert (rt.queue, rt.config, rt.keys, rt.job_context) == (None, None, None, None)
-     assert rt.backend.capabilities().generate is False
+@@ -406,3 +408,23 @@ def test_a_video_whose_name_starts_with_a_dot_is_saved_whole(tmp_path, local):
+     assert result.written == (".clip.ja.srt",) and not saved.dirty
+     write_out(video, writes)
+     assert local.open(str(video)).tracks.source[0].text == "朝"
 +
 +
 +def test_the_demo_opens_from_the_files_bundled_with_the_site_and_plays_from_its_own_copy(
@@ -2965,10 +3236,10 @@ index 915f822..d275fa5 100644
 
 ```diff
 diff --git a/frontend/src/lib/playable.test.ts b/frontend/src/lib/playable.test.ts
-index 73a4fa9..78be106 100644
+index 90313e4..8f06dab 100644
 --- a/frontend/src/lib/playable.test.ts
 +++ b/frontend/src/lib/playable.test.ts
-@@ -62,4 +62,10 @@ describe("whether the browser can play a video", () => {
+@@ -62,6 +62,12 @@ describe("whether the browser can play a video", () => {
      const ask = browser("video/mp4", 'audio/mp4; codecs="mp4a.40.2"');
      expect(canPlay(ask, { ...MP4, video_codec: null })).toBe(true);
    });
@@ -2979,6 +3250,8 @@ index 73a4fa9..78be106 100644
 +    expect(canPlay(() => "", unprobed)).toBe(true);
 +  });
  });
+ 
+ describe("the preview copy (spec §8.8, S63)", () => {
 ```
 ```diff
 diff --git a/frontend/src/components/TopBar.test.ts b/frontend/src/components/TopBar.test.ts
@@ -3006,7 +3279,7 @@ index 5f4bca7..17b8615 100644
   tests/test_browser_backend.py tests/test_web_browser.py -q`. Expected: `ImportError: cannot
   import name 'NO_DEMO' from 'vid2sub.web.browser'` and `cannot import name 'Demo'`. `cd frontend
   && npx vitest run src/lib/playable.test.ts src/components/TopBar.test.ts`: `Tests  2 failed |
-  12 passed (14)`, with `AssertionError: expected '<header class="flex items-center gap-…' to
+  15 passed (17)`, with `AssertionError: expected '<header class="flex items-center gap-…' to
   contain 'Generating subtitles needs the local …'` and `AssertionError: expected false to be
   true`.
 - [ ] **Step 3: The demo in the backend and the server.** In `src/vid2sub/web/browser.py` and
@@ -3014,13 +3287,13 @@ index 5f4bca7..17b8615 100644
 
 ```diff
 diff --git a/src/vid2sub/web/browser.py b/src/vid2sub/web/browser.py
-index f0dd469..a636653 100644
+index 83b8809..1d592e4 100644
 --- a/src/vid2sub/web/browser.py
 +++ b/src/vid2sub/web/browser.py
 @@ -45,12 +45,13 @@ from dataclasses import dataclass, field, fields, replace
  from pathlib import Path, PurePath
  from types import MappingProxyType
- from typing import Literal
+ from typing import Any, Literal, NoReturn
 +from urllib.parse import quote
  
  from vid2sub import store
@@ -3031,16 +3304,16 @@ index f0dd469..a636653 100644
 +from vid2sub.subs.sidecar import SidecarError, parse_sidecar, serialize
  from vid2sub.web import folder, ops, runtime
  from vid2sub.web.episode import (
-     Capabilities,
-@@ -87,6 +88,7 @@ ANOTHER = ("that folder's sidecar is another video's, so nothing was saved: open
- CANT_PLAY = ("this browser can't play this video; the local app can make a copy of its sound "
+     AddError,
+@@ -92,6 +93,7 @@ CANT_PLAY = ("this browser can't play this video; the local app can make a copy
               "that plays (vid2sub serve)")
  LOCAL_ONLY = "the browser editor can't translate"
+ NO_MODELS = "the browser editor has no models"
 +NO_DEMO = "this site has no demo"
  INSTALL = "generating subtitles needs the local app: install vid2sub and run vid2sub serve"
  
  
-@@ -101,6 +103,16 @@ class Found:
+@@ -106,6 +108,16 @@ class Found:
      problem: str | None = None
  
  
@@ -3057,7 +3330,7 @@ index f0dd469..a636653 100644
  @dataclass(frozen=True)
  class BrowserEpisode(Episode):
      """An episode the page handed over: `video` is the video's bare name, and `files` the
-@@ -111,8 +123,9 @@ class BrowserEpisode(Episode):
+@@ -116,8 +128,9 @@ class BrowserEpisode(Episode):
  
  
  class BrowserBackend:
@@ -3069,7 +3342,7 @@ index f0dd469..a636653 100644
          self._lock = threading.Lock()  # Pyodide has no threads, but tests share a backend
  
      def capabilities(self) -> Capabilities:
-@@ -161,7 +174,27 @@ class BrowserBackend:
+@@ -166,7 +179,27 @@ class BrowserBackend:
              raise OpenError(BAD_VIDEO)
          if not isinstance(url, str) or not BLOB_URL.fullmatch(url):
              raise OpenError(BAD_URL)
@@ -3101,7 +3374,7 @@ index f0dd469..a636653 100644
 ```
 ```diff
 diff --git a/src/vid2sub/web/server.py b/src/vid2sub/web/server.py
-index e67b5df..832831d 100644
+index 4387047..996bd1b 100644
 --- a/src/vid2sub/web/server.py
 +++ b/src/vid2sub/web/server.py
 @@ -15,7 +15,7 @@ stays off: nothing here calls `session.allow_reconnect`, so a tab whose engine r
@@ -3113,7 +3386,7 @@ index e67b5df..832831d 100644
  them, in a task of the tab's own that holds no reactive lock while it waits on the disk or ffmpeg,
  so a slow open never freezes another tab and no edit is lost to a Save running at the same time.
  The backend returns a new frozen `Episode` each time, which the editor sets as the reactive value
-@@ -106,6 +106,7 @@ CUE_ID = re.compile(r"c[0-9a-f]{8}")  # model.new_cue_id's ids, as ops.CueId che
+@@ -151,6 +151,7 @@ CUE_ID = re.compile(r"c[0-9a-f]{8}")  # model.new_cue_id's ids, as ops.CueId che
  MAX_IDS = 10_000  # source cues one retranslation may name: every cue of a long episode
  PICK_CUES = "pick the cues to retranslate"
  JOB_ID = re.compile(r"j[0-9a-f]{8}")  # jobs.Queue's ids
@@ -3121,7 +3394,7 @@ index e67b5df..832831d 100644
  MAX_JOBS = 500  # paths one Start may queue
  TYPE_PATHS = "type each video's full path, one per line: nothing was queued"
  FINISHED = "that job had already finished"
-@@ -209,6 +210,25 @@ class Editor:
+@@ -272,6 +273,25 @@ class Editor:
              await self._set_busy(None)
              await notice(self.session, "error", str(err))
              return
@@ -3147,7 +3420,7 @@ index e67b5df..832831d 100644
          media = await runtime.blocking(self.rt.media_for, ep)
          old, self.ep, self.media = self.ep, ep, media
          if old is not None:
-@@ -526,6 +546,11 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
+@@ -792,6 +812,11 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
      def _open() -> None:
          editor.submit("open", input.open())
  
@@ -3167,7 +3440,7 @@ index e67b5df..832831d 100644
 
 ```diff
 diff --git a/frontend/src/lib/playable.ts b/frontend/src/lib/playable.ts
-index 56eab3e..b588f5e 100644
+index 247736f..f8e02cf 100644
 --- a/frontend/src/lib/playable.ts
 +++ b/frontend/src/lib/playable.ts
 @@ -53,8 +53,10 @@ export function mediaTypes(video: Video): { container: string[]; video: string[]
@@ -3223,38 +3496,41 @@ index 58ef2aa..b8c9ee4 100644
 ```
 ```diff
 diff --git a/frontend/src/components/Editor.tsx b/frontend/src/components/Editor.tsx
-index 76de6dc..8b1e33c 100644
+index ce7bfc1..fcbba86 100644
 --- a/frontend/src/components/Editor.tsx
 +++ b/frontend/src/components/Editor.tsx
-@@ -37,16 +37,17 @@ export type Saving = {
+@@ -37,10 +37,11 @@ export type Saving = {
    onDiscard: () => void;
  };
  
 -/** The editor (spec §20): the path box, then, once an episode is open, the player on the left
-- * and the cue list on the right, with the edit bar, Retranslate (where the engine has models:
-- * `generate`) and find and replace. */
--export function Editor({ episode, busy, progress, pathInput, generate, onOpen, onCantPlay, requests, saving }: {
+- * and the cue list on the right, with the edit bar, Retranslate and Make preview copy (where the
+- * engine makes things: `generate`) and find and replace. */
+-export function Editor({ episode, busy, progress, preview, pathInput, generate, onOpen, onCantPlay, onMakePreview, requests, saving }: {
 +/** The editor (spec §20): the path box, or in the browser editor the demo (`onDemo`, spec §21),
 + * then, once an episode is open, the player on the left and the cue list on the right, with the
-+ * edit bar, Retranslate (where the engine has models: `generate`) and find and replace. */
-+export function Editor({ episode, busy, progress, pathInput, generate, onOpen, onDemo, onCantPlay, requests, saving }: {
++ * edit bar, Retranslate and Make preview copy (where the engine makes things: `generate`) and
++ * find and replace. */
++export function Editor({ episode, busy, progress, preview, pathInput, generate, onOpen, onDemo, onCantPlay, onMakePreview, requests, saving }: {
    episode: EpisodeView | null;
    busy: Busy;
    progress: Progress;
+@@ -48,6 +49,7 @@ export function Editor({ episode, busy, progress, preview, pathInput, generate,
    pathInput: boolean;
    generate: boolean;
    onOpen: (path: string) => void;
 +  onDemo: (() => void) | null;
    onCantPlay: () => void;
+   onMakePreview: () => void;
    requests: Requests;
-   saving: Saving;
-@@ -54,15 +55,29 @@ export function Editor({ episode, busy, progress, pathInput, generate, onOpen, o
+@@ -56,16 +58,30 @@ export function Editor({ episode, busy, progress, preview, pathInput, generate,
    return (
      <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
        {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
 +      {onDemo && <PagesStart busy={busy} onDemo={onDemo} />}
        {episode ? (
-         <EpisodeEditor key={episode.id} episode={episode} busy={busy} progress={progress} generate={generate} requests={requests} saving={saving} onCantPlay={onCantPlay} />
+         <EpisodeEditor key={episode.id} episode={episode} busy={busy} progress={progress} generate={generate} requests={requests} saving={saving} onCantPlay={onCantPlay}
+           preview={preview?.episode === episode.id ? preview : null} onMakePreview={onMakePreview} />
        ) : (
 -        <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
 +        pathInput && <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
@@ -3282,33 +3558,33 @@ index 76de6dc..8b1e33c 100644
 ```
 ```diff
 diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
-index f802454..6694f65 100644
+index bc5711b..24e1022 100644
 --- a/frontend/src/App.tsx
 +++ b/frontend/src/App.tsx
-@@ -35,6 +35,7 @@ export default function App() {
+@@ -47,6 +47,7 @@ export default function App() {
    // Every input is set from here too. Each request carries a count, so the same path asked for
    // twice is still two requests, and "event" sends it at once, never merged with the next.
    const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
 +  const setDemo = useSetShinyInput<{ n: number } | null>("demo", null, { priority: "event", debounceMs: 0 });
    const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
+   const setPreview = useSetShinyInput<{ episode: string; n: number } | null>("preview", null, { priority: "event", debounceMs: 0 });
    const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
-   const setUndo = useSetShinyInput<Ask | null>("undo", null, { priority: "event", debounceMs: 0 });
-@@ -256,6 +257,7 @@ export default function App() {
+@@ -342,6 +343,7 @@ export default function App() {
            pathInput={capabilities?.path_input ?? false}
            generate={generate}
            onOpen={(path) => setOpen({ path, n: ++sent.current })}
 +          onDemo={capabilities?.engine === "browser" ? () => setDemo({ n: ++sent.current }) : null}
            onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+           onMakePreview={() => episode && setPreview({ episode: episode.id, n: ++sent.current })}
            requests={requests}
-           saving={saving}
 ```
 
 - [ ] **Step 5: Run the checks; they pass.** `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest
   tests/test_browser_backend.py tests/test_web_browser.py tests/test_web_server.py
-  tests/test_pages_imports.py -q`: `68 passed`. `cd frontend && npm run typecheck && npx vitest
-  run`: `Test Files  20 passed (20)`, `Tests  91 passed (91)`. Then `make check`: `1070 passed, 2
-  skipped, 36 deselected` (twice), `Test Files  20 passed (20)`, `Tests  91 passed (91)`, `All
-  checks passed!`, `no leaks found`; and `make e2e`: `31 passed` (the local editor's start
+  tests/test_pages_imports.py -q`: `75 passed`. `cd frontend && npm run typecheck && npx vitest
+  run`: `Test Files  25 passed (25)`, `Tests  118 passed (118)`. Then `make check`: `1346 passed,
+  9 skipped, 46 deselected` (twice), `Test Files  25 passed (25)`, `Tests  118 passed (118)`, `All
+  checks passed!`, `no leaks found`; and `make e2e`: `40 passed` (the local editor's start
   screen is as it was).
 - [ ] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -3359,10 +3635,10 @@ Co-Authored-By: <the model's own line>
 
 ```diff
 diff --git a/pyproject.toml b/pyproject.toml
-index 322a475..b28b351 100644
+index 57ceb7a..db731c1 100644
 --- a/pyproject.toml
 +++ b/pyproject.toml
-@@ -43,6 +43,17 @@ dev = [
+@@ -52,6 +52,17 @@ dev = [
      "ruff>=0.8",
      "pytest-playwright==0.10.0",  # the editor's browser tests (spec §22.7), as recordings pins it
      "pyyaml==6.0.3",  # tests/test_brand.py reads _brand.yml, as scripts/brand_css.py does
@@ -3380,7 +3656,7 @@ index 322a475..b28b351 100644
  ]
  
  [build-system]
-@@ -55,11 +66,12 @@ packages = ["src/vid2sub"]
+@@ -64,11 +75,12 @@ packages = ["src/vid2sub"]
  [tool.pytest.ini_options]
  testpaths = ["tests"]
  pythonpath = ["tests"]  # tests/helpers.py and tests/fakes.py are importable
@@ -4337,12 +4613,12 @@ index 0418123..e10f05e 100644
   `make pages`. Expected, the first time, `shinylive_local: downloading
   https://github.com/posit-dev/shinylive/releases/download/v0.10.15/shinylive-0.10.15.tar.gz`
   (435 MB), then Shinylive's own lines (`Copying base Shinylive files …`, `Copying imported
-  packages …`, `Writing …/_site/app.json: 7505529 bytes` or about that) and `build_pages: wrote
-  _site/ (44.0 MB) with Shinylive 0.8.12 (assets 0.10.15), Pyodide 0.27.7, Python 3.12.7. Serve
+  packages …`, `Writing …/_site/app.json: 7579352 bytes` or about that) and `build_pages: wrote
+  _site/ (44.1 MB) with Shinylive 0.8.12 (assets 0.10.15), Pyodide 0.27.7, Python 3.12.7. Serve
   it as Pages does with `make pages-serve`.` `ls .cache/wheels` shows the three wheels, and
   `ls _site` shows `app.json demo index.html shinylive shinylive-sw.js start.js`. Then `make
-  check`: `1089 passed, 2 skipped, 40 deselected` (twice), `Test Files  20 passed (20)`, `Tests
-  91 passed (91)`, `All checks passed!`, `no leaks found`.
+  check`: `1365 passed, 9 skipped, 46 deselected` (twice), `Test Files  25 passed (25)`, `Tests
+  118 passed (118)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 14: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -4374,7 +4650,7 @@ Pyodide, through Shinylive, with no install. As recordings' Makefile has them:
 - Shinylive's template is replaced by pages/site/ (index.html and start.js, which loads the app
   as the template's inline script does, after revalidating the deploy's unhashed files: Review
   Focus 3, whose browser test is the next commit's).
-- make pages prints the versions it used: "build_pages: wrote _site/ (44.0 MB) with Shinylive
+- make pages prints the versions it used: "build_pages: wrote _site/ (44.1 MB) with Shinylive
   0.8.12 (assets 0.10.15), Pyodide 0.27.7, Python 3.12.7" (spec §29's M4 check).
 - make pages-serve: scripts/rangeserver.py (from recordings, 8deb039) under /vid2sub/, with Range
   requests, on 127.0.0.1:8008, printing the address; it now sends Cache-Control: max-age=600 on
@@ -4503,8 +4779,10 @@ def test_the_editor_starts_in_the_browser_with_no_install(page: Page, site_url, 
     expect(app.get_by_role("link", name="Install →")).to_have_attribute(
         "href", "https://github.com/chendaniely/vid2sub#install")
     expect(app.get_by_test_id("open-demo")).to_be_visible()
-    # Hidden in Pages (spec §21): Jobs, the settings drawer, the path box, the engine status.
-    for hidden in ("nav-jobs", "open-settings", "open-path", "status"):
+    # Hidden in Pages (spec §21): Add, Review, Jobs and Models (Phase 3's screens, each only
+    # where `capabilities.generate` is true), the settings drawer, the path box, the engine status.
+    for hidden in ("nav-add", "nav-review", "nav-jobs", "nav-models", "open-settings",
+                   "open-path", "status"):
         expect(app.get_by_test_id(hidden)).to_have_count(0)
     assert errors.seen == []
 
@@ -4600,13 +4878,13 @@ def test_every_file_a_deploy_names_alike_is_revalidated_before_the_app_starts():
 
 ```diff
 diff --git a/src/vid2sub/web/server.py b/src/vid2sub/web/server.py
-index 832831d..12deefc 100644
+index 996bd1b..221b669 100644
 --- a/src/vid2sub/web/server.py
 +++ b/src/vid2sub/web/server.py
-@@ -111,15 +111,17 @@ MAX_JOBS = 500  # paths one Start may queue
- TYPE_PATHS = "type each video's full path, one per line: nothing was queued"
- FINISHED = "that job had already finished"
- STOPPING = "vid2sub is stopping: nothing was queued"
+@@ -164,15 +164,17 @@ NO_VIDEOS = "there are no videos there: nothing was added"
+ TOO_MANY = f"that's more than {MAX_JOBS} videos: add fewer at once"
+ PICK_A_CHOICE = "pick a file and a choice for it"
+ MODELS_FAILED = "couldn't check the models; see the log"
 -# htmltools keeps the highest version of a dependency per name. Shiny's own version with a local
 -# label (1.8.0+vid2sub, which PEP 440 sorts above 1.8.0) makes this one replace Shiny's
 +# htmltools keeps the highest version of a dependency per name. Shiny's own version as a post
@@ -4633,8 +4911,14 @@ index 832831d..12deefc 100644
   built copy) replace the line `await Promise.all(REVALIDATE.map((url) => fetch(url, { cache:
   "no-cache" })));` with a comment, run `uv run pytest -m pages tests/pages -q -k new_deploy`,
   and copy `pages/site/start.js` back over it: `E AssertionError: assert None == 'next'`, `1
-  failed`. Then `uv run pytest tests/test_web_server.py -q`: `30 passed` (the local app still
-  takes the stylesheet in place of Shiny's), and `make check`: the counts of Step 13.
+  failed`. Then `uv run pytest tests/test_web_server.py -q`: `36 passed` (the local app still
+  takes the stylesheet in place of Shiny's), and `make check`: Step 13's counts with the four
+  Pages tests deselected, `1365 passed, 9 skipped, 50 deselected` (twice), `Test Files  25 passed
+  (25)`, `Tests  118 passed (118)`, `All checks passed!`, `no leaks found`. The hidden screens'
+  guard: with App.tsx's screens nav shown where `generate` is false (`{generate && (` before
+  `<nav aria-label="Screens"` made `{(`), `make pages`, then `uv run pytest -m pages
+  tests/pages/test_pages_site.py -q -k no_install`: `E AssertionError: Locator expected to have
+  count '0'`, `E - unexpected value "1"`, `1 failed`; restore it and `make pages` again.
 - [ ] **Step 19: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -4645,8 +4929,10 @@ Spec §21, §22.7 and S50, and the Phase 4 plan's Review Focus 3: tests/pages/te
 Range, max-age=600) and fails on any console error:
 
 - the editor starts in the browser with no install: "Browser editor", the banner that generating
-  needs the local app, with its Install link, Open the demo, and no Jobs, settings, path box or
-  engine status; it prints the cold first load's time (about 4 s here);
+  needs the local app, with its Install link, Open the demo, and no Add, Review, Jobs or Models
+  (Phase 3's screens: with the screens' nav shown in Pages, "Locator expected to have count
+  '0'"), settings, path box or engine status; it prints the cold first load's time (about 4 s
+  here);
 - the demo (S50, Phase 2's JFK clip until Task 5's): four cues, the Japanese beside the English,
   the video playing from the site's own /vid2sub/demo/jfk.mp4, both captions shown;
 - a new deploy runs whole though the browser cached the last one: the "deploy" changes
@@ -4799,10 +5085,10 @@ Co-Authored-By: <the model's own line>
   - `tests/pagesite.py`: `SITE`, `PREFIX`, `BOOT`, `RENDER`, `served(root)`, `built()`,
     `Errors(page)`, `boot(page, url)`, `app_frame(page)`.
 
-The `make check` counts below come from a clone of the finished Phase 2 with only this phase's
-Tasks 1 to 4; yours are higher once Phase 3 is in. What matters is no failure, ruff's
-`All checks passed!` and gitleaks' `no leaks found`; the new tests' own counts are exact. Each
-`diff` block applies with `git apply` from the repository's root (save it to a file first).
+The counts below come from a replay on Phase 3's end with this phase's Tasks 1 and 2 in. What
+matters is no failure, ruff's `All checks passed!` and gitleaks' `no leaks found`; the new
+tests' own counts are exact. Each `diff` block applies with `git apply` from the repository's
+root (save it to a file first).
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
@@ -5182,7 +5468,7 @@ export function download(files: readonly Written[], doc: Document = document): v
   Focus 1) > writes nothing when the permission was taken back`; then delete the `await
   Promise.all(writables.map((w) => w.abort().catch(() => undefined)));` in its `catch`, run, and
   restore: `× … > writes nothing when the folder has moved, and lets go of what it had opened`.
-  Then `make test-js`: `Test Files  21 passed (21)`, `Tests  100 passed (100)`.
+  Then `make test-js`: `Test Files  26 passed (26)`, `Tests  127 passed (127)`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -5477,10 +5763,10 @@ index d275fa5..a041006 100644
 
 ```diff
 diff --git a/src/vid2sub/web/server.py b/src/vid2sub/web/server.py
-index 12deefc..3e5a06d 100644
+index 221b669..8b3b3d9 100644
 --- a/src/vid2sub/web/server.py
 +++ b/src/vid2sub/web/server.py
-@@ -64,7 +64,10 @@ runs no inline script or style, and the CSP needs no `style-src` of its own.
+@@ -100,7 +100,10 @@ runs no inline script or style, and the CSP needs no `style-src` of its own.
  from __future__ import annotations
  
  import asyncio
@@ -5491,7 +5777,7 @@ index 12deefc..3e5a06d 100644
  import itertools
  import logging
  import os
-@@ -79,6 +82,7 @@ from htmltools import HTMLDependency
+@@ -115,6 +118,7 @@ from htmltools import HTMLDependency
  from shiny import Inputs, Outputs, Session, reactive
  from shinyreact import ReactApp, page_react, reactive_output
  
@@ -5499,7 +5785,7 @@ index 12deefc..3e5a06d 100644
  from vid2sub.subs.edit import EditError
  from vid2sub.subs.glossary import GlossaryError
  from vid2sub.web import WWW, ops, runtime, views
-@@ -107,6 +111,15 @@ MAX_IDS = 10_000  # source cues one retranslation may name: every cue of a long
+@@ -152,6 +156,15 @@ MAX_IDS = 10_000  # source cues one retranslation may name: every cue of a long
  PICK_CUES = "pick the cues to retranslate"
  JOB_ID = re.compile(r"j[0-9a-f]{8}")  # jobs.Queue's ids
  NO_DEMO_HERE = "the demo here is vid2sub serve --demo's; this one is the Pages editor's"
@@ -5515,26 +5801,26 @@ index 12deefc..3e5a06d 100644
  MAX_JOBS = 500  # paths one Start may queue
  TYPE_PATHS = "type each video's full path, one per line: nothing was queued"
  FINISHED = "that job had already finished"
-@@ -169,6 +182,9 @@ class Editor:
-         self.busy: reactive.Value[str | None] = reactive.value(None)
-         self.progress: reactive.Value[dict[str, int] | None] = reactive.value(None)
+@@ -225,6 +238,9 @@ class Editor:
          self._retranslating: object | None = None  # the running retranslation's token
+         self._making: tuple[str, list[bool]] | None = None  # the copy being made: episode, stop
+         self._making_task: asyncio.Task | None = None
 +        # The Pages editor's: a Save's files wait for the page to write them (spec §21).
 +        self.browser = rt.backend.capabilities().engine == "browser"
 +        self._writing: tuple[object, asyncio.Future] | None = None  # (n, the page's answer)
          self._todo: deque[tuple[str, object]] = deque()
          self._worker: asyncio.Task | None = None
          self._ended = False
-@@ -184,6 +200,8 @@ class Editor:
-         """The tab closed: drop what waits, and close the episode once the running call ends."""
+@@ -247,6 +263,8 @@ class Editor:
          self._ended = True
          self._todo.clear()
+         self._stop_preview(None)
 +        if self._writing is not None and not self._writing[1].done():
 +            self._writing[1].set_result(None)  # a Save waiting on the page writes nothing
          if self._worker is None or self._worker.done():
              self._close(self.ep)
  
-@@ -202,6 +220,9 @@ class Editor:
+@@ -265,6 +283,9 @@ class Editor:
  
      async def _open(self, request: object) -> None:
          path = request.get("path") if isinstance(request, dict) else None
@@ -5544,7 +5830,7 @@ index 12deefc..3e5a06d 100644
          if not isinstance(path, str) or not path.strip() or len(path) > MAX_PATH:
              await notice(self.session, "error", TYPE_A_PATH)
              return
-@@ -214,6 +235,46 @@ class Editor:
+@@ -277,6 +298,46 @@ class Editor:
              return
          await self._opened(ep)
  
@@ -5591,7 +5877,7 @@ index 12deefc..3e5a06d 100644
      async def _demo(self, request: object) -> None:
          """The Pages editor's demo (spec §21, S50): the episode the site carries."""
          open_demo = getattr(self.rt.backend, "open_demo", None)
-@@ -271,7 +332,14 @@ class Editor:
+@@ -334,7 +395,14 @@ class Editor:
              return
          await self._set_busy("saving")
          try:
@@ -5607,7 +5893,7 @@ index 12deefc..3e5a06d 100644
          except (SaveError, OpenError) as err:
              await self._set_busy(None)
              await notice(self.session, "error", str(err))
-@@ -291,7 +359,15 @@ class Editor:
+@@ -354,7 +422,15 @@ class Editor:
              return
          await self._set_busy("picking")
          try:
@@ -5624,7 +5910,7 @@ index 12deefc..3e5a06d 100644
          except (SaveError, OpenError) as err:  # never echoes the track or the rendition
              await self._set_busy(None)
              await notice(self.session, "error", str(err))
-@@ -300,6 +376,69 @@ class Editor:
+@@ -363,6 +439,69 @@ class Editor:
          await self._publish(busy=None)
          await self._report("pick", picked, result)
  
@@ -5694,8 +5980,8 @@ index 12deefc..3e5a06d 100644
      async def _retranslate(self, request: object) -> None:
          """Retranslate (spec §13.4, §20): the source cues the request names, else (`ids` null)
          every stale or untranslated one. It blocks on the model's server, for minutes on a whole
-@@ -420,6 +559,27 @@ def _full_paths(paths: object) -> bool:
-                     and os.path.isabs(os.path.expanduser(p)) for p in paths))
+@@ -686,6 +825,27 @@ def _typed(values: object, most: int) -> bool:
+                     and not any(ch in v for ch in "\r\n\0") for v in values))
  
  
 +def _files(files: object) -> dict[str, bytes] | None:
@@ -5722,7 +6008,7 @@ index 12deefc..3e5a06d 100644
  def _cue_ids(ids: object) -> bool:
      """None (every stale or untranslated cue), or 1 to MAX_IDS cue ids of new_cue_id's shape."""
      return ids is None or (isinstance(ids, list) and 0 < len(ids) <= MAX_IDS
-@@ -553,6 +713,21 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
+@@ -819,6 +979,21 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
      def _demo() -> None:
          editor.submit("demo", input.demo())
  
@@ -5748,14 +6034,16 @@ index 12deefc..3e5a06d 100644
 
 - [ ] **Step 9: Run the checks; they pass, and each guard fails without its fix.**
   `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest tests/test_web_browser.py tests/test_web_server.py
-  tests/test_pages_imports.py -q`: `47 passed`. Then, in turn: make `_ask_to_write`'s `return
+  tests/test_pages_imports.py -q`: `53 passed`. Then, in turn: make `_ask_to_write`'s `return
   await asyncio.wait_for(future, WRITE_TIMEOUT)` read `return {"ok": True}` (the page's answer
-  taken as yes): `FAILED …test_a_save_is_kept_only_once_the_page_says_its_files_are_written` and
-  `FAILED …test_a_write_the_page_couldnt_make_leaves_the_edits_unsaved`; restore it, and make
-  `if isinstance(answer, dict) and answer.get("why") == "changed":` read `if False:`: `FAILED
-  …test_a_sidecar_that_changed_before_the_page_wrote_is_merged_again`; restore it. Then `make
-  check`: `1097 passed, 2 skipped, 40 deselected` (twice), `Test Files  21 passed (21)`, `Tests
-  100 passed (100)`, `All checks passed!`, `no leaks found`.
+  taken as yes): `FAILED …test_a_save_is_kept_only_once_the_page_says_its_files_are_written`,
+  `FAILED …test_a_write_the_page_couldnt_make_leaves_the_edits_unsaved`, `FAILED
+  …test_a_sidecar_that_changed_before_the_page_wrote_is_merged_again` and `FAILED
+  …test_edits_sent_while_a_save_waits_land_on_the_saved_episode` (`4 failed, 6 passed`);
+  restore it, and make `if isinstance(answer, dict) and answer.get("why") == "changed":` read
+  `if False:`: `FAILED …test_a_sidecar_that_changed_before_the_page_wrote_is_merged_again`;
+  restore it. Then `make check`: `1373 passed, 9 skipped, 50 deselected` (twice), `Test Files
+  26 passed (26)`, `Tests  127 passed (127)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -5869,7 +6157,7 @@ def app_frame(page: Page):
 ```
 ```diff
 diff --git a/tests/pages/test_pages_site.py b/tests/pages/test_pages_site.py
-index 1646129..d53631d 100644
+index 4630cd3..4e1c566 100644
 --- a/tests/pages/test_pages_site.py
 +++ b/tests/pages/test_pages_site.py
 @@ -1,10 +1,9 @@
@@ -5956,7 +6244,7 @@ index 1646129..d53631d 100644
  def test_the_editor_starts_in_the_browser_with_no_install(page: Page, site_url, errors, capsys):
      began = time.monotonic()
      app = boot(page, site_url)
-@@ -105,8 +67,7 @@ def test_the_demo_plays_with_its_captions_and_its_translation(page: Page, site_u
+@@ -107,8 +69,7 @@ def test_the_demo_plays_with_its_captions_and_its_translation(page: Page, site_u
          "ここに来られて、とてもうれしく思います。この機会に来られたことは格別の喜びです。")
      media = app.get_by_test_id("media")
      media.evaluate("m => { m.muted = true; return m.play(); }")
@@ -5966,7 +6254,7 @@ index 1646129..d53631d 100644
                              timeout=RENDER)
      src = urlsplit(media.evaluate("m => m.currentSrc"))
      assert src.path == f"{PREFIX}demo/jfk.mp4"  # the site's own copy
-@@ -164,8 +125,7 @@ EXEMPT = {"index.html", "start.js", "shinylive-sw.js", ".nojekyll", "demo/jfk.mp
+@@ -166,8 +127,7 @@ EXEMPT = {"index.html", "start.js", "shinylive-sw.js", ".nojekyll", "demo/jfk.mp
  
  
  def test_every_file_a_deploy_names_alike_is_revalidated_before_the_app_starts():
@@ -6311,10 +6599,10 @@ export function FolderPicker({ onPicked, onError, disabled }: {
 
 ```diff
 diff --git a/frontend/src/types.ts b/frontend/src/types.ts
-index 7004fe6..31ab075 100644
+index 917131d..43c35d9 100644
 --- a/frontend/src/types.ts
 +++ b/frontend/src/types.ts
-@@ -184,6 +184,17 @@ export type EditOp =
+@@ -268,6 +268,17 @@ export type EditOp =
    | { op: "replace_all"; find: string; replace: string; tracks: string[] }
    | { op: "glossary_add"; term: string; translation: string };
  
@@ -6335,7 +6623,7 @@ index 7004fe6..31ab075 100644
 ```
 ```diff
 diff --git a/frontend/src/components/Editor.tsx b/frontend/src/components/Editor.tsx
-index 8b1e33c..369d53b 100644
+index fcbba86..4be4e0f 100644
 --- a/frontend/src/components/Editor.tsx
 +++ b/frontend/src/components/Editor.tsx
 @@ -3,13 +3,15 @@ import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, us
@@ -6344,8 +6632,8 @@ index 8b1e33c..369d53b 100644
  import { captionLines, type Showing } from "@/lib/overlay";
 +import type { Folder } from "@/lib/folder";
  import { selectedIds, selectionRange } from "@/lib/retranslate";
--import type { Busy, EditOp, EpisodeView, Progress } from "@/types";
-+import type { Busy, EditOp, EpisodeView, FoundItem, Progress } from "@/types";
+-import type { Busy, EditOp, EpisodeView, PreviewProgress, Progress } from "@/types";
++import type { Busy, EditOp, EpisodeView, FoundItem, PreviewProgress, Progress } from "@/types";
  
  import { ConflictPicker } from "./ConflictPicker";
  import { type Cell, type Editing } from "./CueRow";
@@ -6355,14 +6643,15 @@ index 8b1e33c..369d53b 100644
  import { Player } from "./Player";
  import { Retranslate } from "./Retranslate";
  import { SaveBar } from "./SaveBar";
-@@ -37,17 +39,26 @@ export type Saving = {
+@@ -37,11 +39,20 @@ export type Saving = {
    onDiscard: () => void;
  };
  
 -/** The editor (spec §20): the path box, or in the browser editor the demo (`onDemo`, spec §21),
 - * then, once an episode is open, the player on the left and the cue list on the right, with the
-- * edit bar, Retranslate (where the engine has models: `generate`) and find and replace. */
--export function Editor({ episode, busy, progress, pathInput, generate, onOpen, onDemo, onCantPlay, requests, saving }: {
+- * edit bar, Retranslate and Make preview copy (where the engine makes things: `generate`) and
+- * find and replace. */
+-export function Editor({ episode, busy, progress, preview, pathInput, generate, onOpen, onDemo, onCantPlay, onMakePreview, requests, saving }: {
 +/** The browser editor's ways in (spec §21): a folder, an episode in it, or the demo. */
 +export type Pages = {
 +  onFolder: (folder: Folder) => void;
@@ -6374,29 +6663,31 @@ index 8b1e33c..369d53b 100644
 +
 +/** The editor (spec §20): the path box, or in the browser editor a folder and the demo (`pages`,
 + * spec §21), then, once an episode is open, the player on the left and the cue list on the right,
-+ * with the edit bar, Retranslate (where the engine has models: `generate`) and find and replace. */
-+export function Editor({ episode, busy, progress, pathInput, generate, onOpen, pages, onCantPlay, requests, saving }: {
++ * with the edit bar, Retranslate and Make preview copy (where the engine makes things:
++ * `generate`) and find and replace. */
++export function Editor({ episode, busy, progress, preview, pathInput, generate, onOpen, pages, onCantPlay, onMakePreview, requests, saving }: {
    episode: EpisodeView | null;
    busy: Busy;
    progress: Progress;
+@@ -49,7 +60,7 @@ export function Editor({ episode, busy, progress, preview, pathInput, generate,
    pathInput: boolean;
    generate: boolean;
    onOpen: (path: string) => void;
 -  onDemo: (() => void) | null;
 +  pages: Pages | null;
    onCantPlay: () => void;
+   onMakePreview: () => void;
    requests: Requests;
-   saving: Saving;
-@@ -55,7 +66,7 @@ export function Editor({ episode, busy, progress, pathInput, generate, onOpen, o
+@@ -58,7 +69,7 @@ export function Editor({ episode, busy, progress, preview, pathInput, generate,
    return (
      <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
        {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
 -      {onDemo && <PagesStart busy={busy} onDemo={onDemo} />}
 +      {pages && <PagesStart busy={busy} pages={pages} />}
        {episode ? (
-         <EpisodeEditor key={episode.id} episode={episode} busy={busy} progress={progress} generate={generate} requests={requests} saving={saving} onCantPlay={onCantPlay} />
-       ) : (
-@@ -65,15 +76,31 @@ export function Editor({ episode, busy, progress, pathInput, generate, onOpen, o
+         <EpisodeEditor key={episode.id} episode={episode} busy={busy} progress={progress} generate={generate} requests={requests} saving={saving} onCantPlay={onCantPlay}
+           preview={preview?.episode === episode.id ? preview : null} onMakePreview={onMakePreview} />
+@@ -69,15 +80,31 @@ export function Editor({ episode, busy, progress, preview, pathInput, generate,
    );
  }
  
@@ -6439,20 +6730,21 @@ index 8b1e33c..369d53b 100644
 ```
 ```diff
 diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
-index 6694f65..aeed1bb 100644
+index 24e1022..0695003 100644
 --- a/frontend/src/App.tsx
 +++ b/frontend/src/App.tsx
-@@ -7,13 +7,19 @@ import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer
- import { TopBar } from "@/components/TopBar";
+@@ -11,14 +11,20 @@ import { TopBar } from "@/components/TopBar";
+ import { type AddRequest, type BrowseState, NOT_ASKED, answered, asked } from "@/lib/browse";
  import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
  import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, dropRetranslation, loadDraft, replayable } from "@/lib/draft";
 +import { FAILURES, type Folder, FolderError, download, fromBase64, nearby, quickHash, readFiles, sha256Hex } from "@/lib/folder";
  import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
  import { retranslateNotice } from "@/lib/retranslate";
+ import { type Changes, isReview } from "@/lib/review";
  import { pacer } from "@/lib/sends";
  import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
--import type { Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
-+import type { Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, FolderListingMessage, FoundItem, JobsView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status, WriteFilesMessage } from "@/types";
+-import type { AddResultMessage, BrowseResult, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, ModelsView, PreviewProgress, Progress, RetranslateResultMessage, QueueState, ReviewOutput, ReviewStartedMessage, SaveResultMessage, SettingsView, Status } from "@/types";
++import type { AddResultMessage, BrowseResult, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, FolderListingMessage, FoundItem, JobsView, ModelsView, PreviewProgress, Progress, RetranslateResultMessage, QueueState, ReviewOutput, ReviewStartedMessage, SaveResultMessage, SettingsView, Status, WriteFilesMessage } from "@/types";
  
  type Ask = { episode: string; n: number };
 +/** The browser editor's files for a Save or a pick: the folder's, read again, or none where the
@@ -6461,9 +6753,9 @@ index 6694f65..aeed1bb 100644
 +type OpenFiles = { video: string; size: number; quick_sha256: string; url: string; files: Record<string, string>; names: string[]; n: number };
 +type Written = { episode: string; n: number | null; ok: boolean; why?: string; files?: Record<string, string>; names?: string[] };
  
- type JQueryLike = (target: Document) => {
-   on(event: string, handler: () => void): unknown;
-@@ -36,6 +42,9 @@ export default function App() {
+ const SCREENS = { editor: "Editor", add: "Add", review: "Review", jobs: "Jobs", models: "Models" } as const;
+ type Screen = keyof typeof SCREENS;
+@@ -48,6 +54,9 @@ export default function App() {
    // twice is still two requests, and "event" sends it at once, never merged with the next.
    const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
    const setDemo = useSetShinyInput<{ n: number } | null>("demo", null, { priority: "event", debounceMs: 0 });
@@ -6471,9 +6763,9 @@ index 6694f65..aeed1bb 100644
 +  const setOpenFiles = useSetShinyInput<OpenFiles | null>("open_files", null, { priority: "event", debounceMs: 0 });
 +  const setWritten = useSetShinyInput<Written | null>("written", null, { priority: "event", debounceMs: 0 });
    const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
+   const setPreview = useSetShinyInput<{ episode: string; n: number } | null>("preview", null, { priority: "event", debounceMs: 0 });
    const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
-   const setUndo = useSetShinyInput<Ask | null>("undo", null, { priority: "event", debounceMs: 0 });
-@@ -89,6 +98,20 @@ export default function App() {
+@@ -112,6 +121,20 @@ export default function App() {
    // "Retranslate stale", for the notice.
    const asking = useRef(new Map<number, { track: string; stale: boolean }>());
    const episodeId = episode?.id ?? null;
@@ -6494,7 +6786,7 @@ index 6694f65..aeed1bb 100644
    const requests = useMemo<Requests>(() => {
      const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
      const send = <T,>(set: (v: T) => void, value: T | null) => value && pace(() => set(value));
-@@ -96,8 +119,14 @@ export default function App() {
+@@ -119,8 +142,14 @@ export default function App() {
        edit: (op) => { record({ edit: op }); const a = ask(); send(setEdit, a && { ...a, op }); },
        undo: () => { record({ undo: true }); send(setUndo, ask()); },
        redo: () => { record({ redo: true }); send(setRedo, ask()); },
@@ -6511,7 +6803,7 @@ index 6694f65..aeed1bb 100644
        retranslate: (track, ids, allowCloud) => {
          const a = ask();
          if (!a) return;
-@@ -106,7 +135,68 @@ export default function App() {
+@@ -129,7 +158,68 @@ export default function App() {
          send(setRetranslate, { ...a, track, ids, allow_cloud: allowCloud });
        },
      };
@@ -6581,22 +6873,22 @@ index 6694f65..aeed1bb 100644
    useShinyMessageHandler("retranslate_result", (data: RetranslateResultMessage) => {
      if (!episode || data.episode !== episode.id || data.n === null) return;
      const asked = asking.current.get(data.n);
-@@ -257,7 +347,7 @@ export default function App() {
+@@ -343,7 +433,7 @@ export default function App() {
            pathInput={capabilities?.path_input ?? false}
            generate={generate}
            onOpen={(path) => setOpen({ path, n: ++sent.current })}
 -          onDemo={capabilities?.engine === "browser" ? () => setDemo({ n: ++sent.current }) : null}
 +          pages={capabilities?.engine === "browser" ? { onFolder: (f) => void onFolder(f), found, onPick: (item) => void onPick(item), onDemo, onError: (text) => setNotices((shown) => addNotice(shown, { kind: "error", text }, nextId.current++)) } : null}
            onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+           onMakePreview={() => episode && setPreview({ episode: episode.id, n: ++sent.current })}
            requests={requests}
-           saving={saving}
 ```
 
 - [ ] **Step 15: Run the checks; they pass.** `cd frontend && npm run typecheck && npx vitest
-  run`: `Test Files  21 passed (21)`, `Tests  100 passed (100)`. `make pages`, then `make
-  pages-test`: `9 passed` (about 48 s). Then `make check`: `1097 passed, 2 skipped, 45
-  deselected` (twice), `Test Files  21 passed (21)`, `Tests  100 passed (100)`, `All checks
-  passed!`, `no leaks found`; and `make e2e`: `31 passed`.
+  run`: `Test Files  26 passed (26)`, `Tests  127 passed (127)`. `make pages`, then `make
+  pages-test`: `9 passed` (about 50 s). Then `make check`: `1373 passed, 9 skipped, 55
+  deselected` (twice), `Test Files  26 passed (26)`, `Tests  127 passed (127)`, `All checks
+  passed!`, `no leaks found`; and `make e2e`: `40 passed`.
 - [ ] **Step 16: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -6657,7 +6949,7 @@ Co-Authored-By: <the model's own line>
   `git diff $(cat .git/TASK_BASE) HEAD`, with `AGENTS.md`'s security checklist (secrets,
   permissions, network exposure, failing closed, injection, logging), the spec's §6, §14.6,
   §15.3 and §21, and Review Focus 1 and 2; read-only, each finding with file and line, why, the
-  fix and a severity. At this listing's build it found one Critical and seven Important (below),
+  fix and a severity. At this listing's build it found seven Important (below),
   and seven Minor, three of which are on the Phase-end list already, as planning rows. Each of
   the rest is fixed here, with a test that fails without it.
 - [ ] **Step 18: Write the failing tests.** In `tests/test_browser_backend.py`,
@@ -6666,10 +6958,10 @@ Co-Authored-By: <the model's own line>
 
 ```diff
 diff --git a/tests/test_browser_backend.py b/tests/test_browser_backend.py
-index 7a24e3d..1687d94 100644
+index eb3a661..3b775db 100644
 --- a/tests/test_browser_backend.py
 +++ b/tests/test_browser_backend.py
-@@ -116,9 +116,22 @@ def test_a_folder_listing_names_each_episode_and_the_files_the_page_reads_for_it
+@@ -124,9 +124,22 @@ def test_a_folder_listing_names_each_episode_and_the_files_the_page_reads_for_it
  
  @pytest.mark.parametrize("bad", ["../etc/passwd", "a/b.srt", "a\\b.srt", "..", "", "x\0.srt",
                                   "bell\x07.srt", "x" * 256])
@@ -6694,7 +6986,7 @@ index 7a24e3d..1687d94 100644
  
  
  def test_opening_from_the_handed_over_bytes_gives_the_episode_the_local_engine_opens(video,
-@@ -226,11 +239,14 @@ def test_a_download_builds_on_the_files_as_the_episode_last_saw_them(video, loca
+@@ -234,11 +247,14 @@ def test_a_download_builds_on_the_files_as_the_episode_last_saw_them(video, loca
      ep = edit(browser, open_in_browser(browser, video), op="set_text", cue=sid(0), text="一")
      ep = edit(browser, ep, op="glossary_add", term="東京", translation="Tokyo")
      first, _, writes = browser.save(ep, formats=["srt"])
@@ -6711,25 +7003,6 @@ index 7a24e3d..1687d94 100644
      assert dict(parse_glossary(writes[GLOSSARY].decode()).terms) == {"東京": "Tokyo",
                                                                       "大阪": "Osaka"}
      write_out(video, writes)
-@@ -382,3 +398,18 @@ def test_the_demo_opens_from_the_files_bundled_with_the_site_and_plays_from_its_
-     assert browser.video_url(ep.id) == "../demo/Show%20-%20S01E01.mkv"
-     with pytest.raises(OpenError, match=NO_DEMO):
-         BrowserBackend().open_demo()
-+
-+
-+def test_a_video_whose_name_starts_with_a_dot_is_saved_whole(tmp_path, local):
-+    # why: the Task 3 security review's Critical: the staging folder's read skipped every name
-+    # starting with "." (to skip safe_write's temporary files), so `.clip.mkv`'s sidecar and
-+    # subtitle files were left out of a Save's files while the Save said it had written them.
-+    video = make_episode(tmp_path / "show", ".clip.mkv")
-+    browser = BrowserBackend()
-+    ep = edit(browser, open_in_browser(browser, video), op="set_text", cue=sid(0), text="朝")
-+    files, names = read_again(video, browser)
-+    saved, result, writes = browser.save(ep, formats=["srt"], files=files, names=names)
-+    assert list(writes) == [".clip.vid2sub.jsonl", ".clip.ja.srt"]
-+    assert result.written == (".clip.ja.srt",) and not saved.dirty
-+    write_out(video, writes)
-+    assert local.open(str(video)).tracks.source[0].text == "朝"
 ```
 ```diff
 diff --git a/tests/test_web_browser.py b/tests/test_web_browser.py
@@ -6977,10 +7250,10 @@ index 0f8b542..f96008b 100644
 ```
 
   Run them on the code as it is: `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest
-  tests/test_browser_backend.py tests/test_web_browser.py -q`: `15 failed, 30 passed`, namely
+  tests/test_browser_backend.py tests/test_web_browser.py -q`: `14 failed, 31 passed`, namely
   the download's (not the whole set), the ideographic space's, the eight odd names' (each
-  refused), the dot-named video's, the "changed" answer without files, the page that never
-  answers, the demo's download and the sidecar's spelling. `cd frontend && npx vitest run
+  refused), the "changed" answer without files, the page that never answers, the demo's
+  download and the sidecar's spelling. `cd frontend && npx vitest run
   src/lib/folder.test.ts`: `Tests  4 failed | 9 passed (13)`: `nearby`'s season case, the
   cut-short Save's removal, and both of `writePlan`'s.
 - [ ] **Step 19: The fixes.** In `src/vid2sub/web/browser.py`, `src/vid2sub/web/server.py`,
@@ -6990,7 +7263,7 @@ index 0f8b542..f96008b 100644
 
 ```diff
 diff --git a/src/vid2sub/web/browser.py b/src/vid2sub/web/browser.py
-index a636653..11dac89 100644
+index 1d592e4..beb0378 100644
 --- a/src/vid2sub/web/browser.py
 +++ b/src/vid2sub/web/browser.py
 @@ -39,6 +39,7 @@ from __future__ import annotations
@@ -7001,15 +7274,7 @@ index a636653..11dac89 100644
  from collections.abc import Collection, Iterator, Mapping, Sequence
  from contextlib import contextmanager
  from dataclasses import dataclass, field, fields, replace
-@@ -68,6 +69,7 @@ MAX_FILES = 64  # files one open or Save hands over: a sidecar, a glossary and s
- MAX_BYTES = 64 * 2**20  # bytes in each: a sidecar is about 400 KB plus 50 KB a version (§14.7)
- MAX_NAME = 255  # characters in a file name
- SHA256 = re.compile(r"[0-9a-f]{64}")
-+TEMPORARY = re.compile(r"\..+\.[0-9a-f]{12}\.tmp")  # safe_write's: .<name>.<12 hex>.tmp
- # What URL.createObjectURL returns: blob:<the page's origin>/<a UUID> (File API).
- BLOB_URL = re.compile(r"blob:https?://[A-Za-z0-9.:\[\]-]+/[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}"
-                       r"-[0-9A-Fa-f]{12}")
-@@ -283,8 +285,15 @@ class BrowserBackend:
+@@ -288,8 +289,12 @@ class BrowserBackend:
                  raise SaveError(str(err)) from None
              done, result = act(replace(ep, video=staged))
              after = _read(stage)
@@ -7021,13 +7286,10 @@ index a636653..11dac89 100644
 +        else:  # written into the folder: what changed
 +            keep = [n for n in after if before.get(n) != after[n]]
 +        writes = {n: after[n] for n in sorted(keep, key=lambda n: n != sidecar)}
-+        lost = [n for n in (sidecar, *result.written) if n not in after]
-+        if lost:  # never report a file written that the staging folder's read left out
-+            raise SaveError(f"couldn't hand back {', '.join(lost)}: nothing was saved")
-         return _browser(done, name, after), result, writes
- 
-     def _check_open(self, ep: Episode) -> None:
-@@ -328,17 +337,21 @@ def browser_runtime(backend: BrowserBackend | None = None) -> BrowserRuntime:
+         lost = [n for n in (sidecar, *result.written) if n not in after]
+         if lost:  # never report a file written that the staging folder's read left out
+             raise SaveError(f"couldn't hand back {', '.join(lost)}: nothing was saved")
+@@ -379,17 +384,21 @@ def browser_runtime(backend: BrowserBackend | None = None) -> BrowserRuntime:
  
  
  def _names(names: object, limit: int) -> list[str]:
@@ -7053,25 +7315,13 @@ index a636653..11dac89 100644
  
  
  def _video_name(video: object) -> str:
-@@ -401,8 +414,10 @@ def _staging(files: Mapping[str, bytes]) -> Iterator[Path]:
- 
- 
- def _read(stage: Path) -> dict[str, bytes]:
-+    """Every file in the staging folder but safe_write's temporary ones: a video named
-+    `.clip.mkv` has its files named `.clip.…` too."""
-     return {p.name: p.read_bytes() for p in sorted(stage.iterdir())
--            if p.is_file() and not p.is_symlink() and not p.name.startswith(".")}
-+            if p.is_file() and not p.is_symlink() and not TEMPORARY.fullmatch(p.name)}
- 
- 
- def _browser(ep: Episode, name: str, files: Mapping[str, bytes]) -> BrowserEpisode:
 ```
 ```diff
 diff --git a/src/vid2sub/web/server.py b/src/vid2sub/web/server.py
-index 3e5a06d..41fe142 100644
+index 8b3b3d9..c0e843a 100644
 --- a/src/vid2sub/web/server.py
 +++ b/src/vid2sub/web/server.py
-@@ -119,6 +119,8 @@ WRITES = 3  # times a Save merges again when the folder's sidecar changed while
+@@ -164,6 +164,8 @@ WRITES = 3  # times a Save merges again when the folder's sidecar changed while
  WRITE_TIMEOUT = 300.0  # seconds the page has to write a Save's files, or to say why it couldn't
  BAD_FILES = "the page sent files the editor can't read: open the folder again"
  KEPT_CHANGING = "the sidecar kept changing while it was saved: nothing was saved, save again"
@@ -7080,7 +7330,7 @@ index 3e5a06d..41fe142 100644
  OPEN_A_FOLDER = "open a folder: the browser editor reads no typed path"
  MAX_JOBS = 500  # paths one Start may queue
  TYPE_PATHS = "type each video's full path, one per line: nothing was queued"
-@@ -269,7 +271,7 @@ class Editor:
+@@ -332,7 +334,7 @@ class Editor:
                  self.rt.backend.open, request.get("video"), size=request.get("size"),
                  quick_sha256=request.get("quick_sha256"), url=request.get("url"), files=files,
                  names=names)
@@ -7089,7 +7339,7 @@ index 3e5a06d..41fe142 100644
              await self._set_busy(None)
              await notice(self.session, "error", str(err))
              return
-@@ -398,16 +400,20 @@ class Editor:
+@@ -461,16 +463,20 @@ class Editor:
              saved, result, writes = await act(files, names)
              if not writes:
                  return saved, result
@@ -7115,7 +7365,7 @@ index 3e5a06d..41fe142 100644
                  return None
              return saved, result
          await self._set_busy(None)
-@@ -416,18 +422,19 @@ class Editor:
+@@ -479,18 +485,19 @@ class Editor:
  
      async def _ask_to_write(self, n: object, ep: Episode, writes: dict[str, bytes], sidecar: str,
                              read: str | None) -> object:
@@ -7297,10 +7547,10 @@ index 4e96ce7..8d8e5ad 100644
 ```
 ```diff
 diff --git a/frontend/src/types.ts b/frontend/src/types.ts
-index 31ab075..c666492 100644
+index 43c35d9..aba0210 100644
 --- a/frontend/src/types.ts
 +++ b/frontend/src/types.ts
-@@ -191,9 +191,10 @@ export type FoundItem = { name: string; reads: string[]; problem: string | null
+@@ -275,9 +275,10 @@ export type FoundItem = { name: string; reads: string[]; problem: string | null
  export type FolderListingMessage = { n: number | null; found: FoundItem[] };
  
  /** The `write_files` message (the browser editor's Save or pick): the files to write, the sidecar
@@ -7317,10 +7567,10 @@ index 31ab075..c666492 100644
 ```
 ```diff
 diff --git a/frontend/src/components/Editor.tsx b/frontend/src/components/Editor.tsx
-index 369d53b..19ccf78 100644
+index 4be4e0f..de0fa97 100644
 --- a/frontend/src/components/Editor.tsx
 +++ b/frontend/src/components/Editor.tsx
-@@ -78,13 +78,14 @@ export function Editor({ episode, busy, progress, pathInput, generate, onOpen, p
+@@ -82,13 +82,14 @@ export function Editor({ episode, busy, progress, preview, pathInput, generate,
  
  /** The browser editor's ways in (spec §21): a folder of videos vid2sub made subtitles for, with
   * each episode in it to pick (or why it can't open, as plain text), and the demo, a short
@@ -7338,7 +7588,7 @@ index 369d53b..19ccf78 100644
            Open the demo
          </button>
          <span className="text-sm text-muted-foreground">a folder of videos vid2sub made subtitles for, or a short public-domain clip</span>
-@@ -94,7 +95,7 @@ function PagesStart({ busy, pages }: { busy: Busy; pages: Pages }) {
+@@ -98,7 +99,7 @@ function PagesStart({ busy, pages }: { busy: Busy; pages: Pages }) {
            {pages.found.length === 0 && <li className="text-sm text-muted-foreground">Nothing in that folder has vid2sub's subtitles.</li>}
            {pages.found.map((item) => (
              <li key={item.name}>
@@ -7350,19 +7600,19 @@ index 369d53b..19ccf78 100644
 ```
 ```diff
 diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
-index aeed1bb..1e16a62 100644
+index 0695003..5710edc 100644
 --- a/frontend/src/App.tsx
 +++ b/frontend/src/App.tsx
-@@ -7,7 +7,7 @@ import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer
- import { TopBar } from "@/components/TopBar";
+@@ -11,7 +11,7 @@ import { TopBar } from "@/components/TopBar";
+ import { type AddRequest, type BrowseState, NOT_ASKED, answered, asked } from "@/lib/browse";
  import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
  import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, dropRetranslation, loadDraft, replayable } from "@/lib/draft";
 -import { FAILURES, type Folder, FolderError, download, fromBase64, nearby, quickHash, readFiles, sha256Hex } from "@/lib/folder";
 +import { FAILURES, type Folder, FolderError, type Source, download, fromBase64, nearby, quickHash, readFiles, sha256Hex, writePlan } from "@/lib/folder";
  import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
  import { retranslateNotice } from "@/lib/retranslate";
- import { pacer } from "@/lib/sends";
-@@ -100,9 +100,17 @@ export default function App() {
+ import { type Changes, isReview } from "@/lib/review";
+@@ -123,9 +123,17 @@ export default function App() {
    const episodeId = episode?.id ?? null;
    // The browser editor's folder (spec §21, §6.9): its handle lives only here, in this tab's
    // memory, never in storage, so a reload asks for it again. `source` is where the open episode
@@ -7382,7 +7632,7 @@ index aeed1bb..1e16a62 100644
    const blob = useRef<string | null>(null);
    const [found, setFound] = useState<FoundItem[] | null>(null);
    const fail = (err: unknown) => setNotices((shown) => addNotice(shown, { kind: "error", text: FAILURES[err instanceof FolderError ? err.why : "write"] }, nextId.current++));
-@@ -145,6 +153,10 @@ export default function App() {
+@@ -168,6 +176,10 @@ export default function App() {
      setFound(null);
      try {
        const names = await picked.names();
@@ -7393,7 +7643,7 @@ index aeed1bb..1e16a62 100644
        pace(() => setFolder({ names, n: ++sent.current }));
      } catch (err) {
        fail(err);
-@@ -159,7 +171,7 @@ export default function App() {
+@@ -182,7 +194,7 @@ export default function App() {
        const [quick, files, names] = await Promise.all([quickHash(video), readFiles(from, item.reads), from.names()]);
        if (blob.current) URL.revokeObjectURL(blob.current);
        blob.current = URL.createObjectURL(video);
@@ -7402,7 +7652,7 @@ index aeed1bb..1e16a62 100644
        setFound(null);
        pace(() => setOpenFiles({ video: item.name, size: video.size, quick_sha256: quick, url: blob.current ?? "", files, names, n: ++sent.current }));
      } catch (err) {
-@@ -167,29 +179,37 @@ export default function App() {
+@@ -190,29 +202,37 @@ export default function App() {
      }
    };
    const onDemo = () => {
@@ -7453,10 +7703,10 @@ index aeed1bb..1e16a62 100644
 ```
 ```diff
 diff --git a/docs/superpowers/specs/2026-10-14-vid2sub-design.md b/docs/superpowers/specs/2026-10-14-vid2sub-design.md
-index 900c088..16a6510 100644
+index c6fbcee..82848b9 100644
 --- a/docs/superpowers/specs/2026-10-14-vid2sub-design.md
 +++ b/docs/superpowers/specs/2026-10-14-vid2sub-design.md
-@@ -1039,8 +1039,8 @@ about to be written), then the subtitle files (§15.2). Unsaved edits live in th
+@@ -1041,8 +1041,8 @@ about to be written), then the subtitle files (§15.2). Unsaved edits live in th
    by id, keeping existing order and appending new records) and retry.
  - **A truncated last line** is ignored and reported. **Any other line that doesn't parse** stops
    the write: vid2sub never overwrites a sidecar it can't read, and tells the user.
@@ -7467,7 +7717,7 @@ index 900c088..16a6510 100644
  
  ### 14.7 Size
  
-@@ -1314,9 +1314,9 @@ Dan, 2026-10-14: the Pages site is a working subtitle editor with no install, pl
+@@ -1316,9 +1316,9 @@ Dan, 2026-10-14: the Pages site is a working subtitle editor with no install, pl
    'readwrite'})` in Chrome and Edge (a file handle has no parent, so the user picks **the
    folder**) and `<input webkitdirectory>` (read-only) in Safari and Firefox.
  - **Python runs in a Web Worker,** so file handles stay in React. React reads the sidecar,
@@ -7484,30 +7734,22 @@ index 900c088..16a6510 100644
 
 - [ ] **Step 20: Run the checks; they pass, and each guard fails without its fix.** The browser
   tests: `VID2SUB_REQUIRE_FFMPEG=1 uv run pytest tests/test_browser_backend.py
-  tests/test_web_browser.py -q`: `45 passed`. In turn: `_read`'s `not TEMPORARY.fullmatch(p.name)`
-  made `not p.name.startswith(".")`: `SaveError: couldn't hand back .clip.vid2sub.jsonl,
-  .clip.ja.srt: nothing was saved` (the new guard fails closed); the sidecar's `on_disk = next(…)`
-  made `on_disk = sidecar if files and sidecar in files else None`: `FAILED
+  tests/test_web_browser.py -q`: `45 passed`. In turn: the sidecar's `on_disk = next(…)` made
+  `on_disk = sidecar if files and sidecar in files else None`: `FAILED
   …test_the_sidecar_is_read_again_as_the_folder_spells_it`; the `WRITE_LATE` notice taken out:
   `FAILED …test_a_page_that_never_answers_saves_nothing_and_says_so`. `cd frontend && npm run
-  typecheck && npx vitest run`: `Test Files  21 passed (21)`, `Tests  104 passed (104)`. `make
-  pages`, then `make pages-test`: `9 passed`. `make check`: `1103 passed, 2 skipped, 45
-  deselected` (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`, `All checks
-  passed!`, `no leaks found`; `make e2e`: `31 passed`.
+  typecheck && npx vitest run`: `Test Files  26 passed (26)`, `Tests  131 passed (131)`. `make
+  pages`, then `make pages-test`: `9 passed`. `make check`: `1378 passed, 9 skipped, 55
+  deselected` (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks
+  passed!`, `no leaks found`; `make e2e`: `40 passed`.
 - [ ] **Step 21: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
-fix(pages): 🤖 the security review's fixes: a dot-named video saves whole, a Save's files reach only its own folder, and a failed write leaves no empty file
+fix(pages): 🤖 the security review's fixes: a Save's files reach only its own folder, and a failed write leaves no empty file
 
-The Tier 1 review of Task 3 (an independent subagent, AGENTS.md's security checklist) found one
-Critical and seven Important; each is fixed here, with a test that failed without it:
+The Tier 1 review of Task 3 (an independent subagent, AGENTS.md's security checklist) found
+seven Important; each is fixed here, with a test that failed without it:
 
-- Critical, escaped from Task 1 (found by Task 3's security review): BrowserBackend's read of the
-  staging folder skipped every name starting with "." to skip safe_write's temporary files, so
-  `.clip.mkv`'s sidecar and subtitle files never came back while the Save said it had written
-  them and the tab dropped its draft. It now skips only `.<name>.<12 hex>.tmp`, and a Save whose
-  sidecar or written file the read left out fails ("couldn't hand back …: nothing was saved").
-  With the old read: "SaveError: couldn't hand back .clip.vid2sub.jsonl, .clip.ja.srt".
 - A Save's files reach only the episode's own folder: the page binds the folder to the episode
   once Python has opened it (no longer at the pick, nor at the demo's click), refuses a
   `write_files` for any other episode, a writable folder's Save with no sidecar read, and a file
@@ -7636,10 +7878,10 @@ Co-Authored-By: <the model's own line>
   for the files tests' episode; it serves the site itself, on `127.0.0.1`, and needs no network
   beyond the site.
 
-The `make check` counts below come from a clone of the finished Phase 2 with only this phase's
-Tasks 1 to 4; yours are higher once Phase 3 is in. What matters is no failure, ruff's
-`All checks passed!` and gitleaks' `no leaks found`; the new tests' own counts are exact. Each
-`diff` block applies with `git apply` from the repository's root (save it to a file first).
+The counts below come from a replay on Phase 3's end with this phase's Tasks 1 to 3 in. What
+matters is no failure, ruff's `All checks passed!` and gitleaks' `no leaks found`; the new
+tests' own counts are exact. Each `diff` block applies with `git apply` from the repository's
+root (save it to a file first).
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: Write the failing tests,** `tests/pages/test_pages_origin.py`:
@@ -7830,7 +8072,7 @@ index fde63a1..450d14b 100644
 ```
 ```diff
 diff --git a/tests/pages/test_pages_site.py b/tests/pages/test_pages_site.py
-index d53631d..df176c7 100644
+index 4e1c566..62389d8 100644
 --- a/tests/pages/test_pages_site.py
 +++ b/tests/pages/test_pages_site.py
 @@ -3,7 +3,7 @@ Phase 4 plan's Review Focus 3). Run with `make pages`, then `make pages-test`.
@@ -7866,9 +8108,9 @@ index d53631d..df176c7 100644
      began = time.monotonic()
      app = boot(page, site_url)
      with capsys.disabled():
-@@ -51,10 +51,10 @@ def test_the_editor_starts_in_the_browser_with_no_install(page: Page, site_url,
-     # Hidden in Pages (spec §21): Jobs, the settings drawer, the path box, the engine status.
-     for hidden in ("nav-jobs", "open-settings", "open-path", "status"):
+@@ -53,10 +53,10 @@ def test_the_editor_starts_in_the_browser_with_no_install(page: Page, site_url,
+     for hidden in ("nav-add", "nav-review", "nav-jobs", "nav-models", "open-settings",
+                    "open-path", "status"):
          expect(app.get_by_test_id(hidden)).to_have_count(0)
 -    assert errors.seen == []
 +    watch.assert_clean()
@@ -7879,7 +8121,7 @@ index d53631d..df176c7 100644
      # S50: the site's demo (Phase 2's JFK clip until Phase 4 Task 5's), its video the site's
      # own file, its sidecar and subtitles bundled with the app.
      app = boot(page, site_url)
-@@ -73,7 +73,7 @@ def test_the_demo_plays_with_its_captions_and_its_translation(page: Page, site_u
+@@ -75,7 +75,7 @@ def test_the_demo_plays_with_its_captions_and_its_translation(page: Page, site_u
      assert src.path == f"{PREFIX}demo/jfk.mp4"  # the site's own copy
      expect(app.get_by_test_id("caption-line")).to_have_text(
          [DEMO_EN, re.compile("^ここに来られて")], timeout=RENDER)
@@ -7888,7 +8130,7 @@ index d53631d..df176c7 100644
  
  
  def deploy(root: Path, name: str, change) -> None:
-@@ -85,8 +85,7 @@ def deploy(root: Path, name: str, change) -> None:
+@@ -87,8 +87,7 @@ def deploy(root: Path, name: str, change) -> None:
      os.utime(path, (later, later))
  
  
@@ -7898,7 +8140,7 @@ index d53631d..df176c7 100644
      # why: Review Focus 3: Pages caches each file for ten minutes, and Shinylive and Pyodide keep
      # their files' names from one deploy to the next, so a visitor's second visit took
      # shinylive.js, Pyodide's worker and its runtime from the cache, and only app.json afresh
-@@ -97,6 +96,7 @@ def test_a_new_deploy_runs_whole_though_the_browser_cached_the_last_one(page: Pa
+@@ -99,6 +98,7 @@ def test_a_new_deploy_runs_whole_though_the_browser_cached_the_last_one(page: Pa
      root = tmp_path / "site"
      shutil.copytree(SITE, root)
      server, url = served(root)
@@ -7906,7 +8148,7 @@ index d53631d..df176c7 100644
      try:
          boot(page, url)
          assert page.evaluate("() => globalThis.__deploy") is None
-@@ -111,7 +111,7 @@ def test_a_new_deploy_runs_whole_though_the_browser_cached_the_last_one(page: Pa
+@@ -113,7 +113,7 @@ def test_a_new_deploy_runs_whole_though_the_browser_cached_the_last_one(page: Pa
      finally:
          server.shutdown()
          server.server_close()
@@ -8076,9 +8318,9 @@ if (window.top !== window.self) {
   copy) make `if (window.top !== window.self) {` read `if (false) {`, run `uv run pytest -m
   pages tests/pages -q -k frame`, and copy `pages/site/start.js` back over it: `E
   AssertionError: Locator expected to have text 'vid2sub's editor doesn't run inside another
-  page. …'`, `1 failed`. Then `make check`: `1103 passed, 2 skipped, 50 deselected` (twice),
-  `Test Files  21 passed (21)`, `Tests  104 passed (104)`, `All checks passed!`, `no leaks
-  found`; and `make e2e`: `31 passed`.
+  page. …'`, `1 failed`. Then `make check`: `1378 passed, 9 skipped, 60 deselected` (twice),
+  `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks passed!`, `no leaks
+  found`; and `make e2e`: `40 passed`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -8368,8 +8610,8 @@ index 1ef669f..29e10d4 100644
 
 - [ ] **Step 9: Run the checks; they pass.** `make pages`, then `uv run pytest -m pages
   tests/pages/test_pages_origin.py -q`: `6 passed`; `make pages-test`: `15 passed`, about 67 s;
-  `make check`: `1103 passed, 2 skipped, 51 deselected` (twice), `Test Files  21 passed (21)`,
-  `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`; `make e2e`: `31 passed`.
+  `make check`: `1378 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
+  `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`; `make e2e`: `40 passed`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -8521,10 +8763,13 @@ holds no video: `web.demo.prepare` muxes the JFK speech under a still picture wi
     (`tests/pages/test_pages_files.py` is a `media` test: `LocalBackend.open` probes the episode).
   - For Task 11's Step 5: the demo is Step 1's clip.
 
-The `make check` counts below come from a clone of the finished Phase 2 with this phase's Tasks 1
-to 4; yours are higher once Phase 3 is in. What matters is no failure, ruff's `All checks passed!`
-and gitleaks' `no leaks found`; the new tests' own counts are exact. Each `diff` block applies
-with `git apply` from the repository's root (save it to a file first).
+The counts below come from a replay on Phase 3's end with this phase's Tasks 1 to 4 in. What
+matters is no failure, ruff's `All checks passed!` and gitleaks' `no leaks found`; the new tests'
+own counts are exact. Each `diff` block applies with `git apply` from the repository's root (save
+it to a file first). Phase 3's demo tests pass on the committed clip unchanged: its Add browses
+the demo's copy, which still holds `jfk.mp4` and its subtitles (Decision 21), and its Review
+suggests the canned models (Decision 22); `web.demo.prepare(tools)`, as Phase 3's tests call it,
+still takes the tools it no longer uses.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: [Dan] Choose the demo's clip.** Set **Now** to `waiting on Dan: Task 5, Step 1`
@@ -8768,7 +9013,7 @@ index 47fdb32..62c7e3f 100644
  
  def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
 diff --git a/src/vid2sub/web/demo.py b/src/vid2sub/web/demo.py
-index bdd0dbb..193c94d 100644
+index d981146..e92bb6d 100644
 --- a/src/vid2sub/web/demo.py
 +++ b/src/vid2sub/web/demo.py
 @@ -1,13 +1,15 @@
@@ -8794,7 +9039,7 @@ index bdd0dbb..193c94d 100644
  
  Demo isolation is as in recordings, but enforced by the app, not only watched by a test: a
  Python audit hook (`isolate`) refuses, while the demo runs, any file written outside the demo's
-@@ -33,14 +35,11 @@ from vid2sub.cache import Cache
+@@ -40,14 +42,11 @@ from vid2sub.catalog import Candidate
  from vid2sub.config import Config, ModelEntry
  from vid2sub.engines.base import ChunkResult, EngineError, ModelStamp
  from vid2sub.engines.clients import KeyRing, RunPolicy
@@ -8811,7 +9056,7 @@ index bdd0dbb..193c94d 100644
  from vid2sub.translate.run import AskFn
  from vid2sub.web import runtime
  from vid2sub.web.backend import Episode, LocalBackend, OpenError
-@@ -48,8 +47,7 @@ from vid2sub.web.settings import Defaults, Session
+@@ -56,8 +55,7 @@ from vid2sub.web.settings import Defaults, Session
  
  REPO = Path(__file__).resolve().parents[3]
  DEMO = REPO / "demo"
@@ -8821,7 +9066,7 @@ index bdd0dbb..193c94d 100644
  CACHE_BYTES = 200_000_000  # the demo's own cache, in its temporary folder
  
  # The clip's words as Whisper heard them, in ms: recordings' demo transcript (demo/canned/
-@@ -148,39 +146,18 @@ def canned_ask(system: str, prompt: str, data_model):
+@@ -160,39 +158,18 @@ def canned_ask(system: str, prompt: str, data_model):
      return data_model.model_validate({"items": items})
  
  
@@ -8888,12 +9133,12 @@ and subtitles here from the clip, with the real pipeline and the canned engine i
 
   and apply:
 
-```diff
+````diff
 diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
-index 7c3dc82..aa87280 100644
+index bf20635..442d7a5 100644
 --- a/.github/workflows/ci.yml
 +++ b/.github/workflows/ci.yml
-@@ -94,8 +94,8 @@ jobs:
+@@ -126,8 +126,8 @@ jobs:
          with: { version: "0.13.1" }
        - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
          with: { node-version-file: frontend/.nvmrc, cache: npm, cache-dependency-path: frontend/package-lock.json }
@@ -8918,10 +9163,10 @@ index e10f05e..d715dfe 100644
  
  pages-serve: ## Serve _site/ as GitHub Pages does: under /vid2sub/, with Range requests, on 127.0.0.1
 diff --git a/README.md b/README.md
-index 65a8681..bb3e85a 100644
+index e1caae4..e453097 100644
 --- a/README.md
 +++ b/README.md
-@@ -50,8 +50,8 @@ cd ..
+@@ -65,8 +65,8 @@ cd ..
  ```
  
  The build writes `src/vid2sub/web/www/ui.js` and `ui.css`; with make, `make setup` and
@@ -8933,10 +9178,10 @@ index 65a8681..bb3e85a 100644
  ## Configure
  
 diff --git a/tests/README.md b/tests/README.md
-index 58ceaf5..7d71069 100644
+index 54b043b..9771566 100644
 --- a/tests/README.md
 +++ b/tests/README.md
-@@ -24,8 +24,9 @@
+@@ -32,8 +32,9 @@
    unless it checks for them itself.
    `make e2e` builds the frontend and installs Chromium first (`uv run playwright install
    chromium`; on Linux, `uv run playwright install --with-deps chromium` adds the system
@@ -8947,7 +9192,7 @@ index 58ceaf5..7d71069 100644
 +  `ffmpeg -hide_banner -encoders | grep libopus` lists it. Each server's output
    is `server.log` in its test's temporary folder; CI sets `PYTEST_ADDOPTS=--basetemp=e2e-tmp`
    and keeps them when the job fails.
- - Fixtures are synthetic or public domain (`tests/fixtures/CREDITS.md`).
+ - Some of the file browser's tests (`tests/test_browse.py`) run on one system only: junctions,
 diff --git a/tests/pages/test_pages_files.py b/tests/pages/test_pages_files.py
 index cb07cdc..6a8687d 100644
 --- a/tests/pages/test_pages_files.py
@@ -8962,10 +9207,10 @@ index cb07cdc..6a8687d 100644
      folder = tmp_path / "show"
      shutil.copytree(copy, folder, ignore=shutil.ignore_patterns("tmp"))
 diff --git a/tests/pages/test_pages_site.py b/tests/pages/test_pages_site.py
-index df176c7..f81adbb 100644
+index 62389d8..1780892 100644
 --- a/tests/pages/test_pages_site.py
 +++ b/tests/pages/test_pages_site.py
-@@ -55,8 +55,8 @@ def test_the_editor_starts_in_the_browser_with_no_install(page: Page, site_url,
+@@ -57,8 +57,8 @@ def test_the_editor_starts_in_the_browser_with_no_install(page: Page, site_url,
  
  
  def test_the_demo_plays_with_its_captions_and_its_translation(page: Page, site_url, watch):
@@ -8976,7 +9221,7 @@ index df176c7..f81adbb 100644
      app = boot(page, site_url)
      app.get_by_test_id("open-demo").click()
      expect(app.get_by_test_id("episode-name")).to_have_text("jfk.mp4", timeout=RENDER)
-@@ -116,8 +116,9 @@ def test_a_new_deploy_runs_whole_though_the_browser_cached_the_last_one(page: Pa
+@@ -118,8 +118,9 @@ def test_a_new_deploy_runs_whole_though_the_browser_cached_the_last_one(page: Pa
  
  # Files whose names carry their content's hash or their version can't be mixed across deploys:
  # Shinylive's chunks (an 8-character hash) and Pyodide's wheels (their versions). The page itself
@@ -8989,10 +9234,10 @@ index df176c7..f81adbb 100644
  # An exported app's viewer never loads Shinylive's code-URL worker or Quarto's blocks.
  EXEMPT = {"index.html", "start.js", "shinylive-sw.js", ".nojekyll", "demo/jfk.mp4",
 diff --git a/tests/test_browser_backend.py b/tests/test_browser_backend.py
-index 1687d94..c7807fe 100644
+index 3b775db..be58db8 100644
 --- a/tests/test_browser_backend.py
 +++ b/tests/test_browser_backend.py
-@@ -384,7 +384,7 @@ def test_the_demo_opens_from_the_files_bundled_with_the_site_and_plays_from_its_
+@@ -430,7 +430,7 @@ def test_the_demo_opens_from_the_files_bundled_with_the_site_and_plays_from_its_
          video, local, tmp_path):
      # why: S50 and spec §21: the demo's sidecar and subtitles are bundled with the app, and its
      # video is the site's own file, so its bytes never reach Python; its identity is the one its
@@ -9001,7 +9246,7 @@ index 1687d94..c7807fe 100644
      demo = tmp_path / "bundled"
      demo.mkdir()
      for p in video.parent.iterdir():
-```
+````
 
 - [ ] **Step 7: Run the checks; they pass.** `uv run pytest tests/test_demo_clip.py -q`: `5
   passed`. If `test_the_demo_clip_is_committed_and_is_the_one_its_sidecar_was_made_for` fails
@@ -9011,10 +9256,10 @@ index 1687d94..c7807fe 100644
   take out `        tools.need("ffmpeg")` and `        tools.need("ffprobe")`, rerun, restore.
   Expected: `FAILED tests/test_demo_clip.py::test_serve_demo_still_says_it_needs_ffmpeg_before_it_starts`
   with `Failed: DID NOT RAISE CommandError` (`1 failed, 4 passed`). Then `make check`.
-  Expected: `1108 passed, 2 skipped, 51 deselected` (twice), `Test Files  21 passed (21)`,
-  `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`. Then `make pages` (`build_pages:
-  wrote _site/ (44.0 MB) with Shinylive 0.8.12 (assets 0.10.15), Pyodide 0.27.7, Python 3.12.7.
-  …`), `make pages-test` (`15 passed`) and `make e2e` (`31 passed`).
+  Expected: `1383 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
+  `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`. Then `make pages`
+  (`build_pages: wrote _site/ (44.1 MB) with Shinylive 0.8.12 (assets 0.10.15), Pyodide 0.27.7,
+  Python 3.12.7. …`), `make pages-test` (`15 passed`) and `make e2e` (`40 passed`).
 - [ ] **Step 8: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -9048,7 +9293,7 @@ serve --demo's ffmpeg check all hold with no ffmpeg found. Before the change: "F
 isn't installed"; the serve test, after prepare stopped needing ffmpeg and before serve checked
 for it, "Failed: DID NOT RAISE CommandError".
 
-make pages, make pages-test (15 passed) and make e2e (31 passed) pass on the committed clip.
+make pages, make pages-test (15 passed) and make e2e (40 passed) pass on the committed clip.
 
 Docs read: ffmpeg 9.0.2's `-fflags +bitexact` and `-map_metadata -1` (ffmpeg's formats and
 main options manuals).
@@ -9165,8 +9410,9 @@ print("TRANSLATION =", tuple(pairs))
   `test_retranslate.py`, `test_saving.py` (`EN`, the notices' file names),
   `tests/pages/test_pages_files.py` (`SIDECAR`, `EN`, `FIRST`), `test_pages_origin.py`,
   `test_pages_site.py` (`DEMO_EN`, `EXEMPT`'s `demo/<stem>.mp4`), `tests/test_build_pages.py`,
-  `tests/test_web_browser.py`, `tests/test_backend_retranslate.py`, and Phase 3's Add and Review
-  tests, which list the demo folder's files. `tests/fixtures/speech/jfk-14s.wav` stays: other
+  `tests/test_web_browser.py`, `tests/test_backend_retranslate.py`, and Phase 3's
+  `tests/test_web_add.py` and `tests/e2e/test_add.py` (the demo folder's listing) and
+  `tests/e2e/test_review.py` (copies of the clip). `tests/fixtures/speech/jfk-14s.wav` stays: other
   tests use it.
 - [ ] **Step 15: Run the checks; they pass,** as Step 7: `uv run pytest tests/test_demo_clip.py
   -q` (`5 passed`), `make check`, `make pages`, `make pages-test` (in the demo test the new
@@ -9246,15 +9492,15 @@ pydantic 2.10.5), the version §21 pins through Shinylive 0.8.12, in CI's `pyodi
   describes. It is a frontend dev dependency (the frontend's is the only npm project), and the
   ubuntu-24.04 runner needs nothing beyond checkout and setup-node.
 - **Which tests:** every `tests/test_*.py` whose imports are the pure packages, the standard
-  library and what the run installs. 20 files at this listing's build: `test_build`,
-  `test_catalog`, `test_edit`, `test_formats`, `test_glossary`, `test_hostile_fixtures`,
-  `test_langs`, `test_model`, `test_naming`, `test_parse_openai_qwen`,
+  library and what the run installs. 21 files on Phase 3's end: `test_build`, `test_catalog`,
+  `test_edit`, `test_formats`, `test_glossary`, `test_hostile_fixtures`, `test_langs`,
+  `test_model`, `test_naming`, `test_parse_fasterwhisper`, `test_parse_openai_qwen`,
   `test_parse_qwen_endpoint`, `test_parse_whispercpp`, `test_parse_words`, `test_readme`,
   `test_rendition`, `test_rules_lint`, `test_scripts`, `test_sidecar`, `test_text`,
-  `test_translate_shape` (224 tests, the same 224 the host runs for them). They are picked by their
+  `test_translate_shape` (261 tests, the same 261 the host runs for them). They are picked by their
   imports, not listed, so a new pure test joins without an edit, as Phase 2 Task 20's
-  `test_parse_qwen_endpoint` did; the floor job's list, by contrast, lacks `test_edit.py` and
-  `test_hostile_fixtures.py` (see the close).
+  `test_parse_qwen_endpoint` and Phase 3 Task 9's `test_parse_fasterwhisper` did; the floor job's
+  list, by contrast, lacks `test_edit.py` and `test_hostile_fixtures.py` (see the close).
 - **What Pyodide gets:** its own `micropip`, `pydantic` 2.10.5, `pytest` 8.1.1 and `jsonschema`
   (for `test_rendition.py`'s contract checks), loaded from its CDN and cached in
   `frontend/node_modules/pyodide`, as Pages has them; from PyPI through micropip, uv.lock's
@@ -9290,10 +9536,9 @@ pydantic 2.10.5), the version §21 pins through Shinylive 0.8.12, in CI's `pyodi
     main(args) -> int`, `HYPOTHESIS = "hypothesis==6.155.7"`, `LOCKED`, `INSTALLED`, `PURE`.
   - The harness refuses any Pyodide but Task 1's devDependency `"pyodide": "0.27.7"`.
 
-The `make check` counts below come from a clone of the finished Phase 2 with Phase 4's Tasks
-1–5; yours are higher once Phase 3 is in. What matters is no failure, ruff's `All checks passed!`
-and gitleaks' `no leaks found`; `make test-pyodide`'s file list grows with every pure test added
-since.
+The counts below come from a replay on Phase 3's end with this phase's Tasks 1–5 in. What
+matters is no failure, ruff's `All checks passed!` and gitleaks' `no leaks found`; `make
+test-pyodide`'s file list grows with every pure test added since.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: Watch the target fail.** `make test-pyodide`. Expected (GNU make 3.81):
@@ -9425,7 +9670,8 @@ test-pyodide: ## Run the pure packages' tests inside Pyodide 0.27.7, as Pages ru
 ```
 
 - [ ] **Step 6: The job.** In `.github/workflows/ci.yml`, insert above the line `  frontend:`
-  (spec §23.2's order: `python`, `floor`, `pyodide`, `frontend`, `e2e`, `leaks`):
+  (spec §23.2's order: `python`, `floor`, `pyodide`, `frontend`, `e2e`, `leaks`; Phase 3's
+  `whisper` job sits between `python` and `floor`):
 
 ```yaml
   pyodide:
@@ -9450,21 +9696,21 @@ test-pyodide: ## Run the pure packages' tests inside Pyodide 0.27.7, as Pages ru
   lines (`Package pydantic-2.10.5-py3-none-any.whl loaded from
   https://cdn.jsdelivr.net/pyodide/v0.27.7/full/, caching the wheel in node_modules for future
   use.` and the like, on the first run):
-  `Python 3.12.7 in Pyodide: 20 test files: test_build.py test_catalog.py test_edit.py ...
+  `Python 3.12.7 in Pyodide: 21 test files: test_build.py test_catalog.py test_edit.py ...
   test_translate_shape.py`, `platform emscripten -- Python 3.12.7, pytest-8.1.1, pluggy-1.5.0`,
   `rootdir: /repo`, `configfile: pyproject.toml`, `plugins: hypothesis-6.155.7`,
-  `collected 224 items`, and `============================= 224 passed in 5.10s
+  `collected 261 items`, and `============================= 261 passed in 6.73s
   ==============================`. Then `git status --short` shows only this task's files: the
   run writes nothing into the checkout.
 - [ ] **Step 8: Make a subs test fail; watch the run fail.** In `tests/test_text.py`, change
   `assert t.width("日本") == 4` to `assert t.width("日本") == 2`, run `make test-pyodide`, then
   `git checkout tests/test_text.py`. Expected: `E       AssertionError: assert 4 == 2`,
   `FAILED ../../repo/tests/test_text.py::test_wide_characters_count_two_and_latin_counts_one`,
-  `======================== 1 failed, 223 passed in 3.04s =========================` and
+  `======================== 1 failed, 260 passed in 3.93s =========================` and
   `make: *** [test-pyodide] Error 1`.
 - [ ] **Step 9: Run the checks; they pass.** `make actionlint`, then `make check`. Expected:
-  actionlint prints only its command line and exits 0; `1108 passed, 2 skipped, 51 deselected`
-  (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`, `All checks passed!`,
+  actionlint prints only its command line and exits 0; `1383 passed, 9 skipped, 61 deselected`
+  (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks passed!`,
   `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -9482,7 +9728,7 @@ tests of vid2sub.subs, vid2sub.parse and vid2sub.catalog through the real Pyodid
   needs pyodide-build in a host Python matched to Pyodide's and Node as well: this needs only the
   Node the frontend already has, which is what §22.6 describes.
 - tests/pyodide_run.py picks every tests/test_*.py whose imports are the pure packages, the
-  standard library and what the run installs (20 files today, test_edit.py,
+  standard library and what the run installs (21 files today, test_edit.py,
   test_hostile_fixtures.py and test_parse_qwen_endpoint.py among them), so a new pure test joins without an edit; it installs
   uv.lock's pysubs2 1.9.0, opencc-purepy 1.4.4 and charset-normalizer 3.5.2 from PyPI through
   micropip (Pyodide ships charset-normalizer 3.3.2, below pyproject.toml's >=3.4), and
@@ -9490,10 +9736,10 @@ tests of vid2sub.subs, vid2sub.parse and vid2sub.catalog through the real Pyodid
   wheels only, none for Pyodide 0.27, read from PyPI's JSON). micropip checks each wheel's sha256 against PyPI's
   (its _validate_sha256_checksum, read in micropip 0.9.0's source). Nothing is written into the
   checkout: no bytecode, and pytest and hypothesis work in /tmp inside Pyodide.
-- make test-pyodide passes: "224 passed in 5.10s", about 9 s with a cold package cache, the
-  same 224 tests the host runs for those files. With tests/test_text.py's `t.width("日本") == 4`
+- make test-pyodide passes: "261 passed in 6.73s", about 9 s with a cold package cache, the
+  same 261 tests the host runs for those files. With tests/test_text.py's `t.width("日本") == 4`
   changed to `== 2`, it fails: "FAILED ../../repo/tests/test_text.py::test_wide_characters_count_
-  two_and_latin_counts_one", "1 failed, 223 passed", and make stops with
+  two_and_latin_counts_one", "1 failed, 260 passed", and make stops with
   "make: *** [test-pyodide] Error 1". It needs the network (Pyodide's CDN and PyPI), so make
   check leaves it out, as it does e2e.
 - The job: ubuntu-24.04, contents: read, 10 minutes, checkout without credentials, setup-node
@@ -9639,9 +9885,9 @@ test only. Task 9 adds the install index and the post-deploy smoke job to it.
   - `tests/test_pages_workflow.py`: `evaluate(expression, context)`, `EVENTS`, and the
     hardening checks Task 9's jobs must keep.
 
-The `make check` counts below come from a clone of the finished Phase 2 with this phase's Tasks 1
-to 6; yours are higher once Phase 3 is in. What matters is no failure, ruff's `All checks passed!`
-and gitleaks' `no leaks found`; the new tests' own counts are exact.
+The counts below come from a replay on Phase 3's end with this phase's Tasks 1 to 6 in. What
+matters is no failure, ruff's `All checks passed!` and gitleaks' `no leaks found`; the new tests'
+own counts are exact.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: Write the failing test,** `tests/test_pages_workflow.py`:
@@ -10042,8 +10288,8 @@ jobs:
     tests/test_pages_workflow.py::test_only_the_deploy_job_can_write_and_it_runs_nothing_of_the_repositorys`.
 
   Each prints `1 failed, 18 passed`. The build job's commands are Tasks 2–5's, run here: `make
-  pages` and `make pages-test` (`15 passed`). Then `make check`. Expected: `1127 passed, 2
-  skipped, 51 deselected` (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`, `All
+  pages` and `make pages-test` (`15 passed`). Then `make check`. Expected: `1402 passed, 9
+  skipped, 61 deselected` (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All
   checks passed!`, `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -10483,8 +10729,8 @@ jobs:
     …::test_the_site_is_uploaded_only_once_it_holds_no_link`.
 
   Each prints `1 failed, 31 passed`. `make actionlint`: its command line only. Then `make check`.
-  Expected: `1129 passed, 2 skipped, 51 deselected` (twice), `Test Files  21 passed (21)`,
-  `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`. `make pages` still builds
+  Expected: `1404 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
+  `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`. `make pages` still builds
   from the unpacked folder already in `.cache/shinylive/` (an existing checkout keeps its folder;
   a fresh one now keeps the tarball beside it).
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
@@ -10606,8 +10852,8 @@ index e1b5eed..f81c0ce 100644
   `21 passed`. The guard: the old check back (`if find _site -type l | grep -q .; then` with
   its `$(find _site -type l | head -1)` message), `FAILED
   tests/test_pages_workflow.py::test_the_site_is_uploaded_only_once_it_holds_no_link`
-  (`1 failed, 20 passed`); restore. `make actionlint`, then `make check`: `1129 passed, 2
-  skipped, 51 deselected` (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`,
+  (`1 failed, 20 passed`); restore. `make actionlint`, then `make check`: `1404 passed, 9
+  skipped, 61 deselected` (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`,
   `All checks passed!`, `no leaks found`.
 - [ ] **Step 13: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -10839,13 +11085,14 @@ Focus 4).
     accepts.
   - For Task 9's index: release assets are named as above; the wheel is the only `.whl`.
 
-The `make check` counts below come from a clone of the finished Phase 2 with this phase's Tasks 1
-to 7; yours are higher once Phase 3 is in. What matters is no failure, ruff's `All checks passed!`
-and gitleaks' `no leaks found`. `tests/test_release.py`'s own counts are exact.
+The counts below come from a replay on Phase 3's end with this phase's Tasks 1 to 7 in. What
+matters is no failure, ruff's `All checks passed!` and gitleaks' `no leaks found`.
+`tests/test_release.py`'s own counts are exact.
 
 This listing was first built on an older Phase 2 base (its round 8d records that build's Tier 1
 security review); it was replayed, every Expected line re-run, on Phase 2 with this phase's
-Tasks 1–7 on 2026-10-24, where `make build-constraints` wrote the same pins. Re-checked then:
+Tasks 1–7 on 2026-10-24, and again on Phase 3's end with Tasks 1–7 the same day, where `make
+build-constraints` wrote the same pins each time. Re-checked then:
 `gh release list --help` and `gh release create --help` (gh 2.103.1: `--exclude-drafts`,
 `--json`, `--limit`, `--verify-tag`), `uv build --help` (`--clear`, `--build-constraints`,
 `--require-hashes`, `--no-sources`), hatch's build configuration (artifacts) and actions/attest
@@ -11010,8 +11257,8 @@ tar -tzf dist/*.tar.gz | grep 'www/ui'
   `uv build --no-sources --clear --build-constraints build-constraints.txt --require-hashes`,
   then `git checkout build-constraints.txt` (or regenerate it). Expected: ``cause: Hash mismatch
   for `hatchling==<version>` ``, exit 2, even with hatchling in uv's cache. Then `make check`.
-  Expected: `1130 passed, 2 skipped, 51 deselected` (twice), `Test Files  21 passed (21)`,
-  `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`.
+  Expected: `1405 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`,
+  `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -11314,8 +11561,8 @@ if __name__ == "__main__":
   check: v0.1.0.dev0 names the package's version` (exit 0); `uv run scripts/release_check.py
   v0.1.0` prints `release check: the tag 'v0.1.0' isn't v0.1.0.dev0, pyproject.toml's version`
   (exit 1); `uv run scripts/release_check.py 'v$(touch /tmp/x)'` is refused the same way and
-  creates nothing. Then `make check`. Expected: `1136 passed, 2 skipped, 51 deselected`
-  (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`, `All checks passed!`, `no
+  creates nothing. Then `make check`. Expected: `1411 passed, 9 skipped, 61 deselected`
+  (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks passed!`, `no
   leaks found`.
 - [ ] **Step 11: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -11687,8 +11934,8 @@ unset UV_FROZEN TAG
   tests/test_release.py::test_a_published_release_is_never_overwritten`; with the build job's
   `contents: read` changed to `contents: write`, `FAILED
   tests/test_release.py::test_only_the_publish_job_can_write`. Then `make check`. Expected:
-  `1141 passed, 2 skipped, 51 deselected` (twice), `Test Files  21 passed (21)`, `Tests  104
-  passed (104)`, `All checks passed!`, `no leaks found`.
+  `1416 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed (26)`, `Tests  131
+  passed (131)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 16: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -12245,8 +12492,8 @@ jobs:
     (the stand-in gh answers only the exact call).
 
   Each prints `1 failed, 15 passed`. Then `make actionlint` (its command line only, exit 0) and
-  `make check`. Expected: `1145 passed, 2 skipped, 51 deselected` (twice), `Test Files  21
-  passed (21)`, `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`.
+  `make check`. Expected: `1420 passed, 9 skipped, 61 deselected` (twice), `Test Files  26
+  passed (26)`, `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 21: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -12364,8 +12611,8 @@ index 229a651..ab61912 100644
   tests/test_release.py::test_no_step_or_job_can_be_switched_off_or_allowed_to_fail` (`1
   failed, 16 passed`); with a second workflow, `.github/workflows/other.yml`, named `release`:
   `FAILED tests/test_pages_workflow.py::test_release_yml_is_the_only_workflow_pages_follows`
-  (`1 failed, 20 passed`). Revert each. Then `make check`. Expected: `1146 passed, 2 skipped, 51
-  deselected` (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`, `All checks
+  (`1 failed, 20 passed`). Revert each. Then `make check`. Expected: `1421 passed, 9 skipped, 61
+  deselected` (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks
   passed!`, `no leaks found`.
 - [ ] **Step 24: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -12540,9 +12787,9 @@ three operating systems. There is no PyPI (Dan, 2026-10-14).
     _site/simple`; `curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c
     '#sha256='` is 1; the smoke job's three entries green.
 
-The `make check` counts below come from a clone of the finished Phase 2 with this phase's Tasks 1
-to 8; yours are higher once Phase 3 is in. What matters is no failure, ruff's `All checks passed!`
-and gitleaks' `no leaks found`; the new tests' own counts are exact.
+The counts below come from a replay on Phase 3's end with this phase's Tasks 1 to 8 in. What
+matters is no failure, ruff's `All checks passed!` and gitleaks' `no leaks found`; the new tests'
+own counts are exact.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
@@ -12964,8 +13211,8 @@ if __name__ == "__main__":
   .git/releases.json .git/simple --repo chendaniely/vid2sub` prints `build_index: v0.2.0: a
   draft, left out`, `build_index: 1 wheel from 2 releases into .git/simple`, `wheels=1`,
   `newest=0.1.0.dev0`, and `.git/simple/vid2sub/index.html` links the wheel alone; then `rm -r
-  .git/simple .git/releases.json`. Then `make check`. Expected: `1155 passed, 2 skipped, 51
-  deselected` (twice), `Test Files  21 passed (21)`, `Tests  104 passed (104)`, `All checks
+  .git/simple .git/releases.json`. Then `make check`. Expected: `1430 passed, 9 skipped, 61
+  deselected` (twice), `Test Files  26 passed (26)`, `Tests  131 passed (131)`, `All checks
   passed!`, `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -13219,8 +13466,8 @@ def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_
   the index step moved below the upload: `FAILED
   …::test_the_index_is_built_after_the_pages_tests_and_uploaded_with_the_site`. Each prints `1
   failed, 22 passed`. The smoke job's three steps were run as the commit below says. Then
-  `make check`. Expected: `1157 passed, 2 skipped, 51 deselected` (twice), `Test Files  21
-  passed (21)`, `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`.
+  `make check`. Expected: `1432 passed, 9 skipped, 61 deselected` (twice), `Test Files  26
+  passed (26)`, `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -13330,8 +13577,13 @@ status line and scenario rows are each task's close.
   `…/vid2sub#install` (`TopBar.tsx`'s `INSTALL_URL`), which is the README's `## Install`.
 - **The index is empty until the first release**, so the README keeps the install from a clone
   beside the one from the index.
+- **On Phase 3's README:** the install from the index offers `[whisper]` and `[nvidia]` beside
+  `[mac]`, as Phase 3's install from a clone does; the Pages section names Phase 3's screens,
+  Models and Make preview copy among what the Pages editor leaves out (each is shown only where
+  `capabilities.generate` is true); the status line names Phases 1 to 4.
 - **The diagrams:** the first diagram's Pages node was dashed "(Phase 4)"; built now, it is solid.
-  The new diagram draws only what is built, every name taken from the files (ci.yml's six jobs,
+  The new diagram draws only what is built, every name taken from the files (ci.yml's seven jobs,
+  Phase 3's `whisper` among them,
   release.yml's `build` and `publish`, pages.yml's `build`, `deploy` and `smoke`, the
   `workflow_run` between them, `start.js`, the bundle's parts, `simple/vid2sub/`). Mermaid 11's
   own parser read all four diagrams while this listing was written (a scratch script beside the
@@ -13358,23 +13610,25 @@ status line and scenario rows are each task's close.
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 - [ ] **Step 1: The docs.** Apply (from the repository's root, saved to a file first; `git apply`):
 
-```diff
+````diff
 diff --git a/README.md b/README.md
-index bb3e85a..60b0d24 100644
+index e453097..1ddad72 100644
 --- a/README.md
 +++ b/README.md
-@@ -6,8 +6,8 @@ optionally ASS) next to the video, named the way Plex and Jellyfin expect. It ru
+@@ -6,9 +6,9 @@ optionally ASS) next to the video, named the way Plex and Jellyfin expect. It ru
  your computer, on a machine you run (such as a DGX Spark), or, only when you allow it for a run,
  on OpenAI.
  
--Status: Phase 1 (M1, the command line) and Phase 2 (M2, the web editor) are built; the spec's
--status line says which have merged.
-+Status: Phase 1 (M1, the command line), Phase 2 (M2, the web editor) and Phase 4 (M4, the
-+Pages editor and releases) are built; the spec's status line says which have merged.
+-Status: Phase 1 (M1, the command line), Phase 2 (M2, the web editor) and Phase 3 (M3: adding
+-and reviewing seasons in the app, and Windows and Linux) are built; the spec's status line says
+-which have merged.
++Status: Phase 1 (M1, the command line), Phase 2 (M2, the web editor), Phase 3 (M3: adding and
++reviewing seasons in the app, and Windows and Linux) and Phase 4 (M4, the Pages editor and
++releases) are built; the spec's status line says which have merged.
  Design: [`docs/superpowers/specs/2026-10-14-vid2sub-design.md`](docs/superpowers/specs/2026-10-14-vid2sub-design.md),
  whose Outline and Scenarios say what is built. Diagrams:
  [`docs/architecture.md`](docs/architecture.md). How it is built: [`AGENTS.md`](AGENTS.md).
-@@ -25,7 +25,25 @@ build; `vid2sub doctor` tells you.
+@@ -26,7 +26,27 @@ build; `vid2sub doctor` tells you.
  | ffmpeg | `brew install ffmpeg` | `winget install Gyan.FFmpeg` | your package manager |
  | deno | `brew install deno` | `winget install DenoLand.Deno` | `curl -fsSL https://deno.land/install.sh \| sh` |
  
@@ -13384,8 +13638,10 @@ index bb3e85a..60b0d24 100644
 +the editor's frontend, built. None of this needs Node:
 +
 +```bash
-+uv tool install 'vid2sub[mac]' --index https://chendaniely.github.io/vid2sub/simple/   # Mac
-+uv tool install vid2sub --index https://chendaniely.github.io/vid2sub/simple/          # elsewhere
++uv tool install 'vid2sub[mac]' --index https://chendaniely.github.io/vid2sub/simple/      # a Mac
++uv tool install 'vid2sub[whisper]' --index https://chendaniely.github.io/vid2sub/simple/  # Windows, Linux
++uv tool install 'vid2sub[nvidia]' --index https://chendaniely.github.io/vid2sub/simple/   # an NVIDIA GPU
++uv tool install vid2sub --index https://chendaniely.github.io/vid2sub/simple/             # servers only
 +vid2sub doctor
 +uv tool upgrade vid2sub   # later: uv keeps the index and the extra in its tool receipt
 +```
@@ -13401,9 +13657,9 @@ index bb3e85a..60b0d24 100644
  
  ```bash
  git clone https://github.com/chendaniely/vid2sub && cd vid2sub
-@@ -37,8 +55,8 @@ vid2sub doctor
- `--editable` follows your clone, so `git pull` updates it. To work inside the project's own
- environment instead: `uv sync --extra mac` and `uv run vid2sub …`.
+@@ -52,8 +72,8 @@ names it and the fix. The first run downloads the model from Hugging Face (1.6 G
+ large-v3-turbo, 3.1 GB for large-v3); with no network then, the episode fails at once, naming the
+ download, and later runs load the model from its cache.
  
 -The editor (`vid2sub serve`) also needs its frontend built, once, and again whenever it
 -changes; release wheels will carry it built (M4). Without it, `vid2sub serve` says to build it
@@ -13412,19 +13668,19 @@ index bb3e85a..60b0d24 100644
  first. The build needs Node 22 or later, such as Homebrew's `node`, or nvm's: `nvm install` in
  `frontend/` reads its `.nvmrc`. In your clone, in any shell:
  
-@@ -217,7 +235,40 @@ shows them and closing a tab cancels nothing; **Open in editor** opens a finishe
- demo, jobs run only on the demo's own clip.
+@@ -278,7 +298,40 @@ under the names they stand in for (Whisper large-v3-turbo and Gemma 4), and jobs
+ demo's own clip.
  
- Retranslate, Settings and Jobs need an engine that makes subtitles, so the Pages editor
--(Phase 4) leaves them out.
-+(below) leaves them out.
+ Retranslate, **Make preview copy**, Settings, Add, Review, Jobs and Models need an engine that
+-makes subtitles, so the Pages editor (Phase 4) leaves them out.
++makes subtitles, so the Pages editor (below) leaves them out.
 +
 +## The Pages editor
 +
 +<https://chendaniely.github.io/vid2sub/> is the same editor with nothing to install: it runs in
 +your browser, through Shinylive and Pyodide, and edits subtitles vid2sub has already made. It
-+can't make subtitles, so Add, Review, Jobs, Retranslate and the settings aren't there; a banner
-+says so and links to installing vid2sub.
++can't make subtitles, so Add, Review, Jobs, Models, Retranslate, Make preview copy and the
++settings aren't there; a banner says so and links to installing vid2sub.
 +
 +- **Open folder** picks the folder a video is in (a browser can't open a file's folder from the
 +  file), lists the episodes vid2sub made subtitles for, and opens the one you pick. The video
@@ -13454,7 +13710,7 @@ index bb3e85a..60b0d24 100644
  
  ## Models
  
-@@ -246,7 +297,11 @@ make build         # build the frontend into src/vid2sub/web/www/ (vid2sub serve
+@@ -307,7 +360,11 @@ make build         # build the frontend into src/vid2sub/web/www/ (vid2sub serve
  make test          # pytest, without the live and browser tests (media tests need ffmpeg)
  make test-utc      # the same under TZ=UTC, as on CI's Ubuntu runners
  make test-js       # typecheck the frontend and run its Vitest tests
@@ -13466,7 +13722,7 @@ index bb3e85a..60b0d24 100644
  make check         # everything CI checks: the suite, again under UTC, the frontend's tests,
                     # lint, the leak scan
  make lint          # ruff
-@@ -254,6 +309,8 @@ make actionlint    # lint the GitHub workflows
+@@ -315,6 +372,8 @@ make actionlint    # lint the GitHub workflows
  make leaks         # gitleaks over the whole history
  make demo          # build, then vid2sub serve --demo
  make demo-sidecar  # remake demo/'s canned sidecar and subtitles with the pipeline
@@ -13475,7 +13731,7 @@ index bb3e85a..60b0d24 100644
  make brand         # regenerate frontend/src/theme.css from _brand.yml
  make skills        # install the shinyreact and shadcn agent skills (never committed)
  make hooks         # install the git hooks (none are built yet)
-@@ -263,6 +320,23 @@ make readme        # refresh the model table above from the catalog
+@@ -324,6 +383,23 @@ make readme        # refresh the model table above from the catalog
  
  `make readme` keeps the model table in step with `src/vid2sub/catalog.py`: run it whenever the
  catalog changes (`make check` fails while the table is stale). The tests, and the variables that
@@ -13503,7 +13759,7 @@ index bb3e85a..60b0d24 100644
 +4. `pages.yml` follows it: the index at `/simple/` gains the release's wheel, and the smoke job
 +   installs it from there on macOS, Windows and Linux.
 diff --git a/docs/architecture.md b/docs/architecture.md
-index f542da6..dab74d1 100644
+index 58f78e6..43497d8 100644
 --- a/docs/architecture.md
 +++ b/docs/architecture.md
 @@ -25,7 +25,7 @@ flowchart LR
@@ -13519,12 +13775,12 @@ index f542da6..dab74d1 100644
    core -->|"chunks, cue text"| cloud
    pages -.->|"File System Access"| files
    classDef planned stroke-dasharray: 5 5
--  class fw,sparkqwen,pages planned
-+  class fw,sparkqwen planned
+-  class sparkqwen,pages planned
++  class sparkqwen planned
  ```
  
  ## The local web app
-@@ -117,3 +117,41 @@ flowchart TB
+@@ -132,3 +132,41 @@ flowchart TB
    queue -->|"runtime.job_runner"| core
    core <--> files
  ```
@@ -13543,7 +13799,7 @@ index f542da6..dab74d1 100644
 +```mermaid
 +flowchart LR
 +  subgraph repo["github.com/chendaniely/vid2sub"]
-+    ci["ci.yml<br/>python · floor · pyodide · frontend · e2e · leaks"]
++    ci["ci.yml<br/>python · whisper · floor · pyodide ·<br/>frontend · e2e · leaks"]
 +    release["release.yml, named release<br/>on a v* tag: build (make dist) ·<br/>publish (attest, gh release create)"]
 +    pagesyml["pages.yml<br/>build: make pages · make pages-test · the index<br/>deploy, main only · smoke, 3 systems"]
 +    releases[("GitHub Releases<br/>wheel and sdist, www/ inside,<br/>build-provenance attestations")]
@@ -13567,13 +13823,13 @@ index f542da6..dab74d1 100644
 +  simple -->|"wheel, checked by its SHA-256"| releases
 +```
 diff --git a/tests/README.md b/tests/README.md
-index 7d71069..70f00c2 100644
+index 9771566..ef82ca0 100644
 --- a/tests/README.md
 +++ b/tests/README.md
-@@ -29,4 +29,25 @@
-   `ffmpeg -hide_banner -encoders | grep libopus` lists it. Each server's output
-   is `server.log` in its test's temporary folder; CI sets `PYTEST_ADDOPTS=--basetemp=e2e-tmp`
-   and keeps them when the job fails.
+@@ -41,4 +41,25 @@
+   the hidden attribute, 8.3 short names and `\\?\` names on Windows; the hidden flag and the
+   other Unicode form on macOS; a name that isn't valid Unicode on Linux. CI's `python` job runs
+   the whole suite on all three, so each runs there.
 +- Pages tests (`make pages-test`, marked `pages`) drive Playwright's Chromium against the site
 +  `make pages` built in `_site/`, served as GitHub Pages serves it (`scripts/rangeserver.py`:
 +  under `/vid2sub/`, with Range requests and `Cache-Control: max-age=600`). Each fails on a console
@@ -13596,19 +13852,19 @@ index 7d71069..70f00c2 100644
 +  against the events that can start it. `tests/test_build_index.py` builds the install index
 +  from release listings written by hand, and has uv install from it, served on this machine.
  - Fixtures are synthetic or public domain (`tests/fixtures/CREDITS.md`).
-```
+````
 
 - [ ] **Step 2: Check the words left behind.** `git grep -n -e 'not yet' -e planned -e 'Phase 4'
   -e unverified -- README.md tests/README.md docs/architecture.md demo/CREDITS.md`. Expected,
   and each still true: the README's status line naming Phase 4; `durations) are shown, not yet
   changeable` (the cue rules, Phase 2's); `docs/architecture.md`'s legend, `classDef planned`,
-  `class fw,sparkqwen planned` (Phase 3's and local-ai's), "since Phase 4 runs them in
+  `class sparkqwen planned` (local-ai's), "since Phase 4 runs them in
   Pyodide", "which Pages' runtime holds (Phase 4)" and the new section's "(spec §21, Phase 4)";
   `demo/CREDITS.md`'s "(Phase 4 Task 5)". Nothing says a Phase 4 part is to come.
 - [ ] **Step 3: Run the checks; they pass.** `uv run pytest tests/test_readme.py -q`: `1
   passed` (the model table is untouched). `make help` lists every target the README names. Then
-  `make check`. Expected: `1157 passed, 2 skipped, 51 deselected` (twice), `Test Files  21 passed
-  (21)`, `Tests  104 passed (104)`, `All checks passed!`, `no leaks found`.
+  `make check`. Expected: `1432 passed, 9 skipped, 61 deselected` (twice), `Test Files  26 passed
+  (26)`, `Tests  131 passed (131)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 4: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -13619,21 +13875,24 @@ Phase 4 Task 10. What Tasks 1–9 built, written where a person looks for it:
 - README: installing from a release through the index (`uv tool install 'vid2sub[mac]' --index
   https://chendaniely.github.io/vid2sub/simple/`, `uv tool upgrade`, why the index outranks
   PyPI, checking a download's attestation with `gh attestation verify … --signer-workflow`),
-  with a clone as the other way; release wheels carry the frontend; a "Pages editor" section
+  with `[whisper]` and `[nvidia]` for Windows and Linux as the clone's install has them, and a
+  clone as the other way; release wheels carry the frontend; a "Pages editor" section
   (Open folder; Save writing next to the video in Chrome and Edge after re-reading the sidecar,
   or downloading the set in Safari and Firefox; the demo; no folder kept across a reload; no
-  frames; nothing fetched beyond its own files; make pages, pages-serve, pages-test); the
+  frames; nothing fetched beyond its own files; make pages, pages-serve, pages-test; Add,
+  Review, Jobs, Models, Retranslate, Make preview copy and the settings not there); the
   Develop list gains test-pyodide, pages, pages-serve, pages-test, dist and build-constraints;
   CI's sentence names the Pyodide job, pages.yml and release.yml; a "Releases" section says how
   a release is cut (both versions, merge, Dan tags main's merge commit) and what follows. The
-  status line names Phase 4.
+  status line names Phase 4 after Phase 3.
 - tests/README.md: the Pages tests (`make pages-test`, the `pages` marker, how a folder is
   handed to the page, what only the exit test covers), make test-pyodide, and the release,
   workflow and index tests.
 - docs/architecture.md: the first diagram's Pages node is built, so solid; a new section draws
   the Pages site (start.js, Shinylive and Pyodide in a worker, the app bundle, the demo clip,
-  simple/), the workflows (ci.yml's jobs, release.yml's build and publish, pages.yml's build,
-  deploy and smoke, the workflow_run between them) and the index's links to GitHub Releases.
+  simple/), the workflows (ci.yml's seven jobs, Phase 3's whisper among them, release.yml's
+  build and publish, pages.yml's build, deploy and smoke, the workflow_run between them) and the
+  index's links to GitHub Releases.
   Every name in it was checked against the code; mermaid 11's parser reads all four diagrams.
 
 The words "not yet", "planned", "Phase 4" and "unverified" were grepped in README.md,
@@ -13716,7 +13975,8 @@ make pages-serve
 ```
 
   Expected: the terminal prints the address it serves. Open it in Chrome; the editor loads with
-  no install, and the browser's console shows no error.
+  no install, and the browser's console shows no error. It has no Add, Review, Jobs or Models
+  screen and no **Make preview copy** (Task 2's round 2c checks the screens; Decision 23).
 - [ ] **Step 3: [Dan] In Chrome, open a folder, edit and save (S47):** **Open folder**, pick the
   folder of an episode Phase 2's exit test used, allow read and write, and pick the episode from
   the list. Fix two source lines.
@@ -13891,9 +14151,9 @@ curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c '#sha2
   - [ ] **9d. The install from the index (S51):** in that same `pages.yml` run, the smoke job
     (Task 9) is green on ubuntu-24.04, macos-14 (which installs the `[mac]` extra) and
     windows-2022. **[Dan]** On a clean machine (or a fresh user account) with uv:
-    `uv tool install 'vid2sub[mac]' --index https://chendaniely.github.io/vid2sub/simple/`,
-    then `vid2sub --version` and `vid2sub serve`. Expected: the release's version, and the
-    editor opens, so the frontend came with the wheel.
+    `uv tool install 'vid2sub[mac]' --index https://chendaniely.github.io/vid2sub/simple/`
+    (`'vid2sub[whisper]'` on Windows or Linux), then `vid2sub --version` and `vid2sub serve`.
+    Expected: the release's version, and the editor opens, so the frontend came with the wheel.
   - [ ] **9e. The results PR:** from `main`, a branch `phase-4-live` holds one commit,
     `docs(spec): 🤖 M4's live results: <what passed>`, trailer
     `Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Phase end`. It sets S47, S51 and
@@ -13912,3 +14172,4 @@ curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c '#sha2
 | Task 3 (planning) | Minor | `frontend/src/lib/folder.ts` | After a close fails past the sidecar, the notice says nothing was saved, though the sidecar was | open |
 | Task 3 (planning) | Minor | `src/vid2sub/web/browser.py` | On a case-sensitive disk, vid2sub's spelling beside a case variant of its own file makes a duplicate | open |
 | Task 7 (planning) | Minor | `.github/workflows/pages.yml` | A cache entry saved by a main-ref run is restored, every member of it, into the workspace of a run that can deploy, so it could carry the unpacked Shinylive folder or any path. Closing it means restoring caches only on pull requests and saving them on main (`actions/cache/restore` and `/save`), or `assets()` unpacking fresh from the checked tarball every time | open |
+| Task 1 (planning) | Minor | `tests/test_web_browser.py` | No test drives the real `browser_runtime()` through the server with Phase 3's inputs (browse, add, the review inputs, the queue's, `models_check`, the preview copy); Phase 3's "Pages has no X" tests use a fake backend (the replay's security review) | open |
