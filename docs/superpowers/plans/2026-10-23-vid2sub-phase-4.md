@@ -4,6 +4,12 @@
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking. Every rule for running a task is in `AGENTS.md`; this
 > plan never restates them.
+>
+> **Resuming mid-task** (after a crash or compaction with no wip commit): never run Step 0 again.
+> The task's base is the parent of its first commit whose trailer names it
+> (`git log --reverse --format=%H --grep='phase-4.md Task N$' | head -1`, then `^`), and the
+> newest commit's subject, matched against the task's commit steps, says which step is next (the
+> kickoff council's reliability finding 9).
 
 **Goal:** the editor at `chendaniely.github.io/vid2sub/` with no install: open a local folder,
 edit, and save next to the video in Chrome and Edge, or download in Safari and Firefox; a demo
@@ -33,18 +39,17 @@ listings are run and revised at its phase start.)
    the install from the index (S47 live, S51, S52) run after the merge, as the phase end's step
    9. Their results go out in a short PR from `phase-4-live`, which also carries the status
    line's `merged` entry, since no Phase 5 start follows to carry it.
-2. **`pages.yml` runs when `release.yml` succeeds, not on `release: published`.** A release that
-   `release.yml` creates with `GITHUB_TOKEN` starts no other workflow (GitHub's docs: "events
-   triggered by the `GITHUB_TOKEN`, with the exception of `workflow_dispatch` and
-   `repository_dispatch`, will not create a new workflow run"). As specced, then, the index
-   would never list a new release (S52). So `pages.yml` triggers on
-   `workflow_run: {workflows: [release], types: [completed]}` and deploys only when that run
-   succeeded, was a tag push in this repository, and built from main's own files. The run's ref
-   is `main`, so the `github-pages` environment needs no tag rule, and `release.yml` keeps only
-   the three write permissions its publish job needs (Task 7, Task 8; found while writing Task
-   8). The other ways each cost more: `release.yml` dispatching `pages.yml` needs
-   `actions: write`, and a GitHub App or personal token is a secret. **This changes the spec**
-   (§23.3's triggers), so it waits for Dan's yes at approval.
+2. **A release updates the site by dispatching `pages.yml`** (Tasks 7–9; the kickoff council's
+   simplicity finding 4; Dan, Q&A item 26). A release that `release.yml` creates with
+   `GITHUB_TOKEN` starts no other workflow (GitHub's docs: "events triggered by the
+   `GITHUB_TOKEN`, with the exception of `workflow_dispatch` and `repository_dispatch`, will not
+   create a new workflow run"), so as first specced the index would never list a new release
+   (S52). `release.yml`'s publish job ends with `gh workflow run pages.yml --ref main`, holding
+   `actions: write` beside its three other write permissions; it runs no repository code. If the
+   dispatch fails, the release stands and Dan runs `pages.yml` by hand. `pages.yml` runs on push
+   to main, pull requests and `workflow_dispatch`, and deploys from main only; the
+   `workflow_run` trigger first planned, with its three guard conditions, is gone. §23.3 says so
+   now.
 3. **What both backends do with an episode's files moves into `vid2sub.web.folder`** (Task 1): a
    refactor of Phase 2's `LocalBackend`, with no change in behaviour; `pipeline.video_change`
    moves to `subs.sidecar` and `MEDIA_SUFFIXES` to `subs.naming`, the pipeline keeping both
@@ -89,8 +94,8 @@ listings are run and revised at its phase start.)
     (Task 2): in Pages, Shinylive's Starlette 0.38.1 answers a path holding "+" with 404. Both
     sort above Shiny's own 1.8.0, as Phase 2 Task 13 needs.
 15. **`make pages-serve` sends `Cache-Control: max-age=600`** on every response (Task 2), as
-    GitHub Pages is widely reported to; GitHub's docs don't say, so Task 11 checks it on the live
-    site.
+    GitHub Pages is widely reported to; GitHub's docs don't say, so Task 12's step 9a checks it
+    on the live site (the kickoff council's goal fit finding 8).
 16. **The demo's clip is committed in `demo/`** (Task 5), so neither the Pages build nor
     `vid2sub serve --demo` runs ffmpeg to make it; `serve --demo` still checks for ffmpeg and
     ffprobe first, since its editor probes the clip. `web.demo.prepare` keeps its unused `tools`
@@ -101,9 +106,11 @@ listings are run and revised at its phase start.)
     checks its SHA-256 before every unpack (Task 7). `shinylive_local.assets()` now keeps the
     tarball (Task 2 deleted it), so locally it stays beside the unpacked folder (435 MB). uv's
     cache is off in `pages.yml`.
-18. **Pages deploys go out in the order their runs started,** one ref at a time and none
-    cancelled; `_site/` is checked for links before the upload; the deploy job's 15-minute
-    timeout outlasts deploy-pages' own 10 (Task 7).
+18. **Pages deploys go out one ref at a time, and a running deploy is never cancelled;** a
+    waiting run gives way to a newer one (GitHub's concurrency rule; reliability finding 14),
+    which is harmless, since each run rebuilds the site and the index from main. `_site/` is
+    checked for links before the upload; the deploy job's 15-minute timeout outlasts
+    deploy-pages' own 10 (Task 7).
 19. **The `github-pages` environment's rule, `main` only, is the real deploy gate** (Task 7): a
     run on another branch runs that branch's copy of `pages.yml`, so only the environment, Dan's
     setting at Task 7's Step 14, stops it deploying.
@@ -111,17 +118,33 @@ listings are run and revised at its phase start.)
     never a URL from the listing. Only wheels are listed; drafts, tags that aren't `v` and a
     version, releases with no wheel, wheels named for another version, and assets with no
     `sha256:` digest or not yet uploaded are left out (Review Focus 5).
-21. **The smoke job runs after the deploy, only once a wheel is indexed** (Task 9), with no
-    permissions and no checkout, on Ubuntu, macOS and Windows; macOS installs the `[mac]` extra;
-    it waits up to 3 minutes for the live index to list the newest wheel.
-22. **No `release.yml` step may carry `if:` or `continue-on-error`, and it is the only workflow
-    named `release`** (Task 8, round 8e), since `pages.yml` follows every workflow by that name.
+21. **The smoke job runs after a dispatched deploy, once a release exists** (Task 9; simplicity
+    finding 12): on the run a release starts, or Dan's own, never after every push. It has no
+    permissions and no checkout, runs on Ubuntu, macOS and Windows (macOS installs the `[mac]`
+    extra), and waits up to 3 minutes for the live index to list the newest wheel.
+22. **No `release.yml` step may carry `if:` or `continue-on-error`** (Task 8, round 8e), so no
+    guard can be switched off with every test green.
 23. **`BrowserRuntime` refuses Phase 3's local-only calls itself** (Task 1, round 1e): browsing,
     Add, Review, the models check and the preview copy each raise their own "install vid2sub"
     refusal, as defence in depth beside the server's `capabilities.generate` gate (the replay's
     security review found the runtime inheriting them, so `roots()` would list the home folder).
 24. **The README's install from the index offers `[whisper]` and `[nvidia]` beside `[mac]`**
     (Task 10), as Phase 3's README does for a clone.
+25. **`vid2sub write <video> --merge <sidecar>`** adds a downloaded sidecar's records to the one
+    next to the video, refusing one made for another video, then writes the subtitle files as
+    `write` does (Task 3; reliability finding 4; Dan, Q&A item 24). Safari's Save notice and the
+    README give it first, and otherwise say to replace the downloads only if nothing else
+    changed the episode since it was opened. §18.1 says so now.
+26. **Chrome's Save asks for write permission on the Save click,** before Python's merge, and the
+    sidecar's re-read moves after the permission check, just before the files open (Task 3;
+    reliability finding 5), so no permission prompt sits inside the compare-and-swap.
+27. **The index build fails rather than deploy an index missing a release's wheel** (Task 9;
+    reliability finding 6): a published `v` release whose `vid2sub-<version>-py3-none-any.whl`
+    isn't indexed stops the build.
+28. **The index protects installs only while it answers** (Tasks 10 and 12; security finding 3;
+    Dan, Q&A item 25): uv moves on to PyPI after a 404, so Dan claims `vid2sub` on PyPI with a
+    minimal release pointing to the index, his step outside the repo (Task 12, step 9); §23.4
+    and the README say so.
 
 ## Global Constraints
 
@@ -159,7 +182,7 @@ plus:
 
 ### Task 1: The browser backend
 
-**Tier:** 2 · **Scenarios:** S47
+**Tier:** 1 · **Scenarios:** S47
 
 **Why it is built this way** (read 2026-10-24):
 - **The rules exist once.** LocalBackend's own module imports ffprobe's tools, the engines, the
@@ -2981,22 +3004,22 @@ Co-Authored-By: <the model's own line>
 
   `git add src/vid2sub/web/browser.py tests/test_browser_backend.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
-- [ ] **Step 33: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
-  (`AGENTS.md`, *Reviews*: Matt Pocock's `code-review`, two axes in two subagents). Worth
-  checking: `web.folder` is LocalBackend's code moved, not changed (`git diff
-  $(cat .git/TASK_BASE) -M -- src/vid2sub/web/`); no path reaches a view or a message from the
-  browser backend (`Episode.video` is a bare name); every refusal echoes nothing the page sent.
-  The forward review over Tasks 2, 3, 6 and 11: Task 2's `pages/app.py` calls
-  `browser_runtime(...)` before it imports the server, and its bundle is
-  `tests/test_pages_imports.py`'s lists; Task 3's server inputs hand `BrowserBackend.open`,
-  `save` and `resolve` the files' bytes (base64 on the wire), keep the saved episode only once
-  the page has written `writes`, and the page reads `Found.reads`; Task 6's Step 2 finds
-  `pyodide` 0.27.7 already in `frontend/package.json` and its lockfile, so it adds nothing
-  there and its expected diff loses those 37 lines, and its Step 9 counts include this task's
-  Vitest file; Task 11's Step 3 relies on Save's merge. The docs this task made untrue are
-  fixed in round 1d. Then the close, its own commit, holding this plan with this task's boxes
-  ticked and **Now** set to `Task 2: The Pages build, open.`, round 1e's Minor on the
-  Phase-end list, with the message in `.git/CLOSE_MSG`:
+- [ ] **Step 33: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
+  kickoff council, because it moves Save, never-overwrite and the merge into the browser: Matt
+  Pocock's `code-review`, two axes in two subagents). Worth checking: `web.folder` is LocalBackend's
+  code moved, not changed (`git diff $(cat .git/TASK_BASE) -M -- src/vid2sub/web/`); no path reaches
+  a view or a message from the browser backend (`Episode.video` is a bare name); every refusal
+  echoes nothing the page sent. The forward review over Tasks 2, 3, 6 and 11: Task 2's
+  `pages/app.py` calls `browser_runtime(...)` before it imports the server, and its bundle is
+  `tests/test_pages_imports.py`'s lists; Task 3's server inputs hand `BrowserBackend.open`, `save`
+  and `resolve` the files' bytes (base64 on the wire), keep the saved episode only once the page has
+  written `writes`, and the page reads `Found.reads`; Task 6's Step 2 finds `pyodide` 0.27.7 already
+  in `frontend/package.json` and its lockfile, so it adds nothing there and its expected diff loses
+  those 37 lines, and its Step 9 counts include this task's Vitest file; Task 11's Step 3 relies on
+  Save's merge. The docs this task made untrue are fixed in round 1d. Then the close, its own
+  commit, holding this plan with this task's boxes ticked and **Now** set to `Task 2: The Pages
+  build, open.`, round 1e's Minor on the Phase-end list, with the message in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 1: The browser backend
@@ -3005,8 +3028,14 @@ Drift: none
 Rulings: none
 Phase-end: none
 Forward: none
-Tier: 2
-Rounds: none
+Tier: 1
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+  secrets: fine | a finding | n/a: why
+  permissions: fine | a finding | n/a: why
+  network exposure: fine | a finding | n/a: why
+  failing closed: fine | a finding | n/a: why
+  injection: fine | a finding | n/a: why
+  logging: fine | a finding | n/a: why
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 1
@@ -3019,7 +3048,7 @@ Co-Authored-By: <the model's own line>
 
 ### Task 2: The Pages build
 
-**Tier:** 2 · **Scenarios:** S47, S50
+**Tier:** 1 · **Scenarios:** S47, S50
 
 **Why it is built this way** (read 2026-10-24):
 - **The vendored packages are folders beside `app.py`, not lines in `requirements.txt`.**
@@ -4966,28 +4995,29 @@ Co-Authored-By: <the model's own line>
 
   `git add src/vid2sub/web/server.py tests/pages/test_pages_site.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
-- [ ] **Step 20: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
-  (`AGENTS.md`, *Reviews*: Matt Pocock's `code-review`, two axes in two subagents). Worth
-  checking: nothing outside `demo/` and the bundle reaches `_site/` (`find _site -type f | grep
-  -v ^_site/shinylive/` lists only `app.json`, `index.html`, `start.js`, `shinylive-sw.js`,
-  `.nojekyll` and `demo/`'s video), and `app.json`'s file names are the bundle's, shinyreact's,
-  the vendored packages' and `demo/`'s (`python3 -c "import json; print(sorted({f['name'].split('/')[0]
-  for f in json.load(open('_site/app.json'))}))"`); no request leaves `/vid2sub/` (Task 4's
-  test proves it). The forward review over Tasks 3, 4, 5, 7, 10 and 11: Task 3 replaces the
-  `Editor`'s `onDemo` with `pages` (a folder too), and saves the demo as downloads; Task 4 puts
-  the frame refusal at the top of `pages/site/start.js` and a `Watch` on every Pages test; Task
-  5 commits the clip into `demo/`, so `build_pages.demo_folder()` copies `demo/` instead of
-  muxing (`make pages` then needs no ffmpeg), the tests' `jfk.mp4`, `DEMO_EN` and the Japanese
-  line change, and `EXEMPT`'s `demo/jfk.mp4` follows the clip's name; Task 7's `pages.yml` runs
-  `make pages` (with ffmpeg until Task 5) and `make pages-test` before uploading `_site/`,
-  caches `.cache/shinylive/` by `shinylive_local.ASSETS` and `.cache/wheels/` by `uv.lock`, and
-  needs Playwright's Chromium (`uv run playwright install --with-deps chromium`, as CI's e2e
-  job has it); Task 10's README names `make pages`, `make pages-serve` and `make pages-test`;
-  Task 11's Step 2 matches these targets. The spec's rows stay as they are: S47 is `built` once
-  Tasks 3 and 4's Pages tests are in, and S50 once Task 5's clip plays (its "public-domain clip"
-  isn't here yet). Then the close, its own commit, holding this plan with this task's boxes ticked
-  and **Now** set to `Task 3: Opening and saving local files in the browser, open.`, with the
-  message in `.git/CLOSE_MSG`:
+- [ ] **Step 20: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
+  kickoff council, because it pins the code every visitor runs (Shinylive's assets, the wheels,
+  start.js): Matt Pocock's `code-review`, two axes in two subagents). Worth checking: nothing
+  outside `demo/` and the bundle reaches `_site/` (`find _site -type f | grep -v ^_site/shinylive/`
+  lists only `app.json`, `index.html`, `start.js`, `shinylive-sw.js`, `.nojekyll` and `demo/`'s
+  video), and `app.json`'s file names are the bundle's, shinyreact's, the vendored packages' and
+  `demo/`'s (`python3 -c "import json; print(sorted({f['name'].split('/')[0] for f in
+  json.load(open('_site/app.json'))}))"`); no request leaves `/vid2sub/` (Task 4's test proves it).
+  The forward review over Tasks 3, 4, 5, 7, 10 and 11: Task 3 replaces the `Editor`'s `onDemo` with
+  `pages` (a folder too), and saves the demo as downloads; Task 4 puts the frame refusal at the top
+  of `pages/site/start.js` and a `Watch` on every Pages test; Task 5 commits the clip into `demo/`,
+  so `build_pages.demo_folder()` copies `demo/` instead of muxing (`make pages` then needs no
+  ffmpeg), the tests' `jfk.mp4`, `DEMO_EN` and the Japanese line change, and `EXEMPT`'s
+  `demo/jfk.mp4` follows the clip's name; Task 7's `pages.yml` runs `make pages` (with ffmpeg until
+  Task 5) and `make pages-test` before uploading `_site/`, caches `.cache/shinylive/` by
+  `shinylive_local.ASSETS` and `.cache/wheels/` by `uv.lock`, and needs Playwright's Chromium (`uv
+  run playwright install --with-deps chromium`, as CI's e2e job has it); Task 10's README names
+  `make pages`, `make pages-serve` and `make pages-test`; Task 11's Step 2 matches these targets.
+  The spec's rows stay as they are: S47 is `built` once Tasks 3 and 4's Pages tests are in, and S50
+  once Task 5's clip plays (its "public-domain clip" isn't here yet). Then the close, its own
+  commit, holding this plan with this task's boxes ticked and **Now** set to `Task 3: Opening and
+  saving local files in the browser, open.`, with the message in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 2: The Pages build
@@ -4996,8 +5026,14 @@ Drift: none
 Rulings: none
 Phase-end: none
 Forward: none
-Tier: 2
-Rounds: none
+Tier: 1
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+  secrets: fine | a finding | n/a: why
+  permissions: fine | a finding | n/a: why
+  network exposure: fine | a finding | n/a: why
+  failing closed: fine | a finding | n/a: why
+  injection: fine | a finding | n/a: why
+  logging: fine | a finding | n/a: why
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 2
@@ -12715,7 +12751,7 @@ Co-Authored-By: <the model's own line>
 
 ### Task 9: The install index and its smoke test
 
-**Tier:** 2 · **Scenarios:** S51
+**Tier:** 1 · **Scenarios:** S51
 
 Spec §23.4, S51 and S52's second half: `pages.yml` builds a PEP 503 simple index at
 `/simple/vid2sub/`, linking every release's wheel on GitHub Releases with its `#sha256=`
@@ -13517,26 +13553,26 @@ Co-Authored-By: <the model's own line>
 
   `git add .github/workflows/pages.yml tests/test_pages_workflow.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
-- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
-  (`AGENTS.md`, *Reviews*: Matt's `code-review`, two axes in two subagents; fix Critical and
-  Important). Worth the reviewers' time: Review Focus 5 (a release with no wheel, a deleted
-  wheel, a draft: never linked; an install still gets the newest good release); that a link can
-  only point at this repository's releases; the smoke job's permissions (none) and that it runs
-  no repository code; that an empty index skips it rather than failing every push before the
-  first release. The forward review over Tasks 10, 11 and 12: Task 10's README gives the
-  install from the index and the release process; Task 12's step 9c looks for `build_index: 1
-  wheel from 1 release into _site/simple` in the `pages.yml` run the release starts, and
-  checks the live index with `curl … | grep -c '#sha256='`; its step 9d is the smoke job's three
-  green entries (they replace the manual install on a clean machine only if Dan says so: S51's
-  exit test is his). The docs this task made untrue: spec §23.4's index line gains "links each
-  release's wheel on GitHub Releases with GitHub's SHA-256 of it, leaving out a draft or a
-  release without its wheel; built on every deploy", and its smoke line "after each deploy,
-  once a release exists". Then the close, its own commit, holding this plan with this task's
-  boxes ticked and **Now** set to `Task 10: The README and the docs, open.`, and the spec's §23.4
-  lines, S51's Proof (`the post-deploy smoke job (pages.yml's smoke); tests/test_build_index.py;
-  the exit test`) and S52's Proof (`tests/test_release.py; tests/test_build_index.py; the
-  release.yml and pages.yml runs on the first tag (Task 12, step 9c)`), S51 set to `built`,
-  with the message in `.git/CLOSE_MSG`:
+- [ ] **Step 11: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
+  kickoff council, because it edits pages.yml and decides what users install: Matt's `code-review`,
+  two axes in two subagents; fix Critical and Important). Worth the reviewers' time: Review Focus 5
+  (a release with no wheel, a deleted wheel, a draft: never linked; an install still gets the newest
+  good release); that a link can only point at this repository's releases; the smoke job's
+  permissions (none) and that it runs no repository code; that an empty index skips it rather than
+  failing every push before the first release. The forward review over Tasks 10, 11 and 12: Task
+  10's README gives the install from the index and the release process; Task 12's step 9c looks for
+  `build_index: 1 wheel from 1 release into _site/simple` in the `pages.yml` run the release starts,
+  and checks the live index with `curl … | grep -c '#sha256='`; its step 9d is the smoke job's three
+  green entries (they replace the manual install on a clean machine only if Dan says so: S51's exit
+  test is his). The docs this task made untrue: spec §23.4's index line gains "links each release's
+  wheel on GitHub Releases with GitHub's SHA-256 of it, leaving out a draft or a release without its
+  wheel; built on every deploy", and its smoke line "after each deploy, once a release exists". Then
+  the close, its own commit, holding this plan with this task's boxes ticked and **Now** set to
+  `Task 10: The README and the docs, open.`, and the spec's §23.4 lines, S51's Proof (`the
+  post-deploy smoke job (pages.yml's smoke); tests/test_build_index.py; the exit test`) and S52's
+  Proof (`tests/test_release.py; tests/test_build_index.py; the release.yml and pages.yml runs on
+  the first tag (Task 12, step 9c)`), S51 set to `built`, with the message in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 9: The install index and its smoke test
@@ -13545,8 +13581,14 @@ Drift: none
 Rulings: none
 Phase-end: none
 Forward: none
-Tier: 2
+Tier: 1
 Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+  secrets: fine | a finding | n/a: why
+  permissions: fine | a finding | n/a: why
+  network exposure: fine | a finding | n/a: why
+  failing closed: fine | a finding | n/a: why
+  injection: fine | a finding | n/a: why
+  logging: fine | a finding | n/a: why
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-4.md Task 9
@@ -13991,8 +14033,10 @@ make pages-serve
   pick the folder (Safari reads it only). Fix one line, then **Save**, which downloads here.
   Expected: the sidecar
   and every subtitle file it projects download (and the glossary, if there is one), a quarter
-  second apart; Safari may ask once to allow several downloads. Put them next to the video,
-  replacing the old ones, and reopen the episode in Chrome: the fix is there.
+  second apart; Safari may ask once to allow several downloads, and the notice gives the merge
+  command. Run it: `vid2sub write <the video> --merge <the downloaded sidecar>` (Decision 25).
+  Expected: it adds the download's records and rewrites the subtitle files; reopen the episode
+  in Chrome: the fix is there, and the English line Step 3 saved from `vid2sub serve` is too.
 - [ ] **Step 5: [Dan] The demo (S50):** from the start screen, open the demo, in Chrome and then
   in Safari. Expected: the clip Task 5 committed plays with its captions and its translation, in
   both (it is VP9 and Opus in an MP4: Safari playing it is checked here first).
@@ -14123,8 +14167,11 @@ fi
   - [ ] **9a. The live site:** Task 7's Step 14 settings were set before the merge (without
     them the first deploy fails). `pages.yml`'s run on the merge commit is green, its build and
     deploy jobs, with the smoke job skipped (no release has a wheel yet, Task 9), and
-    `https://chendaniely.github.io/vid2sub/` serves the editor. **[Dan]** In Chrome, repeat Task
-    11's Step 3 on the live site, without the re-read part (S47).
+    `https://chendaniely.github.io/vid2sub/` serves the editor. `curl -sSI
+    https://chendaniely.github.io/vid2sub/ | grep -i '^cache-control'` prints the header Pages
+    sends (Decision 15 expects `max-age=600`); record it in §29's M4 bullet, and if it differs,
+    `make pages-serve`'s header follows it in the results PR (step 9e). **[Dan]** In Chrome,
+    repeat Task 11's Step 3 on the live site, without the re-read part (S47).
   - [ ] **9b. [Dan] The first release.** First the settings Task 8's review named (Settings →
     General, and Settings → Rules): turn on immutable releases; add a tag ruleset on
     `refs/tags/v*` so only you can create, move or delete those tags; and check that `main`'s
@@ -14133,7 +14180,7 @@ fi
     `git fetch origin`, `git tag -a v<version> origin/main -m "vid2sub <version>"`, then
     `git push origin v<version>`.
   - [ ] **9c. The release and the index (S52):** `release.yml` and the `pages.yml` run its
-    success starts (Decision 2) are green; then the read-only checks:
+    dispatch starts (Decision 2) are green; then the read-only checks:
 
 ```bash
 gh release view "v<version>" --json assets --jq '.assets[].name'
@@ -14161,6 +14208,11 @@ curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c '#sha2
     <date>`, records the release in §29's M4 bullet and adds the release to `CHANGELOG.md`.
     Then, after Dan's OK to push it, its PR, scanned and opened as step 8's was, waits for Dan's
     merge.
+  - [ ] **9f. [Dan] The name on PyPI** (Decision 28), whenever you choose, outside the repo:
+    publish a minimal `vid2sub` to PyPI whose description says to install from
+    `https://chendaniely.github.io/vid2sub/simple/`, so a 404 from the index can never fall
+    through to someone else's `vid2sub`. The agent prepares nothing for it and publishes
+    nothing; record on the Q&A page when it is done.
 
 ***
 
@@ -14173,3 +14225,8 @@ curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c '#sha2
 | Task 3 (planning) | Minor | `src/vid2sub/web/browser.py` | On a case-sensitive disk, vid2sub's spelling beside a case variant of its own file makes a duplicate | open |
 | Task 7 (planning) | Minor | `.github/workflows/pages.yml` | A cache entry saved by a main-ref run is restored, every member of it, into the workspace of a run that can deploy, so it could carry the unpacked Shinylive folder or any path. Closing it means restoring caches only on pull requests and saving them on main (`actions/cache/restore` and `/save`), or `assets()` unpacking fresh from the checked tarball every time | open |
 | Task 1 (planning) | Minor | `tests/test_web_browser.py` | No test drives the real `browser_runtime()` through the server with Phase 3's inputs (browse, add, the review inputs, the queue's, `models_check`, the preview copy); Phase 3's "Pages has no X" tests use a fake backend (the replay's security review) | open |
+| Task 5 (planning) | Minor | `src/vid2sub/web/demo.py` | `prepare` keeps an unused `tools` argument for its callers, and the pipeline keeps both of Decision 3's names; nothing outside the repository imports either, so the callers can change instead (simplicity finding 13) | open |
+| Task 8 (planning) | Minor | `scripts/release_check.py` | The version is written in `pyproject.toml` and `vid2sub/__init__.py`, and a script and a test keep them equal; hatchling's own version source would make it one, once uv's handling of a dynamic version is checked (simplicity finding 9) | open |
+| Task 8 (planning) | Minor | `.github/workflows/release.yml` | `npm ci` runs install scripts in the jobs that build what is released and deployed; check whether `npm ci --ignore-scripts` still builds (esbuild's binary comes in optional packages) in `release.yml`, `pages.yml` and `ci.yml` (security finding 7) | open |
+| Task 3 (planning) | Minor | `frontend/src/lib/draft.ts` | In Pages, crash drafts sit in `localStorage` on the shared `chendaniely.github.io` origin, readable by Dan's other sites there, and never expire; expire them (after 7 days, by their time), and say so in §6.9 (security finding 9) | open |
+| Task 3 (planning) | Minor | `src/vid2sub/web/server.py` | A browser Save whose sidecar was placed but a later file failed, or that ran past the server's wait, leaves the tab on the old heads, so the next Save conflicts with the person's own version; the page reports what it placed, and the server keeps the saved episode when the sidecar is among it (reliability finding 11) | open |

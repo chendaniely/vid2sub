@@ -4,6 +4,12 @@
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking. Every rule for running a task (the loop, the reviews,
 > the stops, the commit formats) is in `AGENTS.md`; this plan never restates them.
+>
+> **Resuming mid-task** (after a crash or compaction with no wip commit): never run Step 0 again.
+> The task's base is the parent of its first commit whose trailer names it
+> (`git log --reverse --format=%H --grep='phase-2.md Task N$' | head -1`, then `^`), and the
+> newest commit's subject, matched against the task's commit steps, says which step is next (the
+> kickoff council's reliability finding 9).
 
 **Goal:** `vid2sub serve`, a local web app on `127.0.0.1` behind a launch token, whose editor
 opens an episode M1 made, plays it (through the playback audio when the browser can't play its
@@ -119,8 +125,36 @@ ffmpeg ≥6 for the playback audio.
     a draft never asks a model again (Task 17, with Decision 18).
 28. **The Jobs page takes full local paths only;** a link is refused, since adding a YouTube link
     is Phase 3's Add (spec §19.2, S36). Every tab on a launch sees the same jobs, with the paths
-    typed (Task 19).
+    typed (Task 19). Phase 3 removes the box once Add exists (Phase 3 Decision 28).
 29. **The demo session's targets are `("ja",)`,** matching its canned translation (Tasks 17–19).
+30. **One write lock per sidecar inside the app, and the re-check just before the rename** (Task
+    6; the kickoff council's reliability finding 1, a Critical; Dan, Q&A item 18). Every
+    `store.append` and projection takes a process-wide lock keyed by the sidecar's real path, so
+    an editor Save and a job's write never overlap, and the compare-and-swap's re-read moves to
+    just before `os.replace`, as §14.6 says. Between the app and a CLI run only that moment is
+    unguarded; §18.3 says so now. The backend's per-video lock, keyed by the path as typed, goes.
+31. **A new cue takes the id the page proposes** (Tasks 2, 15 and 16; reliability finding 2, a
+    Critical; Dan, Q&A item 19). Every edit that makes a cue (split, merge, insert, join) carries
+    its new ids, `c` + 8 hex, drawn by the page; the server refuses one that is malformed or
+    taken. A crash draft therefore replays exactly, and it is cleared only after a replay with
+    no refused step. Each tab keeps its own draft, keyed by the heads and a tab id held in
+    `sessionStorage`, and a reopened episode offers every draft for its heads with its time
+    (reliability finding 3).
+32. **Save never replaces someone else's subtitle file from the UI** (Task 16; goal fit finding 5;
+    Dan, Q&A item 22): its notice names each file it left and says
+    `vid2sub write <video> --overwrite-foreign` replaces it. §6.6 says so now, and asking per
+    file is the spec's Later row S64.
+33. **The editor's Retranslate has its own Allow cloud models box,** unticked at first and after
+    each request (Task 17; security finding 6): a third place to consent, beside §7.2's flag and
+    Review's checkbox. **This adds to the spec** (§7.2), so it waits for Dan's yes at approval;
+    Task 17's close amends §7.2.
+34. **The launch cookie reaches any server on 127.0.0.1,** since cookies ignore ports (Task 9;
+    security finding 8): a local server the browser visits could replay it with no Origin
+    header and get in. HostGuard and WriteGuard keep other pages out, not other servers. **This
+    adds to the spec** (§6.1 names the risk), so it waits for Dan's yes at approval; Task 9's
+    close writes it into §6.1.
+35. **Dependabot watches the frontend's npm lock on Fridays** too (Task 21; security finding 7),
+    as §23.1 asks; whether `npm ci --ignore-scripts` still builds is a Phase-end row.
 
 ## Global Constraints
 
@@ -213,11 +247,13 @@ vid2sub doctor                          # every line green; keys by presence onl
 - [ ] **Step 3: [Dan] A Cantonese episode (S01):**
 
 ```bash
-time vid2sub run "<a Cantonese episode>" --from yue --to en
+time vid2sub run "<a Cantonese episode>" --from yue --to none
+vid2sub translate "<the same episode>" --to en
 ```
 
   Watch the `.en.srt` in Plex. Check the `.zh-HK.srt` shows as Chinese (Hong Kong) or similar,
-  in Traditional characters. Note the run's time (Qwen3-ASR's speed on an idle Mac, §29).
+  in Traditional characters. Note the first command's time: transcription alone, Qwen3-ASR's
+  speed on an idle Mac (§29); the second translates the transcript the first made.
 - [ ] **Step 4: [Dan] A Japanese episode (S02),** detection on:
 
 ```bash
@@ -225,12 +261,14 @@ vid2sub run "<a Japanese episode>" --to en
 ```
 
   Watch the `.en.srt` in Plex; note whether Gemma's English reads well at 4 characters per second
-  (Open items: Japanese reading speed). Optionally, for the Japanese routing (Open items), copy
-  the episode into two empty folders and run each with `--model spark-turbo` and with
-  `--model mac-qwen`; note which reads better.
+  (Open items: Japanese reading speed). Then, for the Japanese routing (Open items) and for Task
+  23's timing check, which needs an episode whisper.cpp transcribed, copy the episode into two
+  empty folders and run each with `--model spark-turbo` and with `--model mac-qwen`, both
+  `--from ja --to en`; note which reads better, and keep the `spark-turbo` copy's path for Task
+  23.
 - [ ] **Step 5: [Dan] The naming codes (S05):** next to a test video, copy one `.srt` to
-  `<stem>.zh-CN.srt`, `<stem>.zh-TW.srt`, `<stem>.zh-HK.srt` and `<stem>.ja.srt`; note what Plex
-  and Jellyfin each display for each.
+  `<stem>.zh-CN.srt`, `<stem>.zh-TW.srt`, `<stem>.zh-HK.srt`, `<stem>.ja.srt` and
+  `<stem>.en.srt`; note what Plex and Jellyfin each display for each.
 - [ ] **Step 6: [Dan] YouTube (S03):**
 
 ```bash
@@ -248,7 +286,7 @@ vid2sub run "<the same folder>" --from ja --to en --skip-existing; echo "exit $?
 
   Expected: every episode done unattended; the second command does nothing and prints `exit 0`.
 - [ ] **Step 8: [Dan] Hand back the notes** from Steps 2–7: what worked, what didn't, the times,
-  and what Plex and Jellyfin showed for each code.
+  what Plex and Jellyfin showed for each code, and the `spark-turbo` copy's path.
 - [ ] **Step 9: Record the results in the spec.** In §29's "M1 results so far", replace each
   *pending* with the result, dated 2026-MM-DD (the day Dan ran it): the Plex and Jellyfin codes,
   Qwen3-ASR's time on an idle Mac, the real YouTube download, the season run. Set S01–S05 to
@@ -1037,7 +1075,7 @@ Co-Authored-By: <the model's own line>
 
 ### Task 3: The cache and the playback audio
 
-**Tier:** 2 · **Scenarios:** S43, S46
+**Tier:** 1 · **Scenarios:** S43, S46
 
 **Files:**
 - Create: `src/vid2sub/cache.py`, `src/vid2sub/media/preview.py`,
@@ -1855,16 +1893,17 @@ Co-Authored-By: <the model's own line>
   tests/test_cache.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'`
   shows `Plan:`.
 
-- [ ] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
-  (`AGENTS.md`, *Reviews*); the forward review over Tasks 5, 10, 11 and 23 (Task 5's
-  `LocalBackend` takes a `Cache` and its `Episode.audio_index` is the `a:N` index this task's
-  `playback_audio` takes; Task 10 serves the `.m4a` through a media token; Task 11's `serve`
-  builds the cache with `cache.from_config(config)`); the docs this task made untrue (none
-  expected; the README's *Use* block doesn't list `vid2sub cache clear` yet: a missing doc, for
-  Task 22). Then the close, its own commit, holding this plan with this task's boxes ticked and
-  **Now** set to `Task 4: The job queue, open.`, and the spec's scenario row S46 set to `built`
-  (S43 stays `planned`: its Playwright and exit-test proof are Tasks 10, 14 and 23). The
-  message, in `.git/CLOSE_MSG`:
+- [ ] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
+  kickoff council, because it deletes cache folders with rmtree); the forward review over Tasks 5,
+  10, 11 and 23 (Task 5's `LocalBackend` takes a `Cache` and its `Episode.audio_index` is the `a:N`
+  index this task's `playback_audio` takes; Task 10 serves the `.m4a` through a media token; Task
+  11's `serve` builds the cache with `cache.from_config(config)`); the docs this task made untrue
+  (none expected; the README's *Use* block doesn't list `vid2sub cache clear` yet: a missing doc,
+  for Task 22). Then the close, its own commit, holding this plan with this task's boxes ticked and
+  **Now** set to `Task 4: The job queue, open.`, and the spec's scenario row S46 set to `built` (S43
+  stays `planned`: its Playwright and exit-test proof are Tasks 10, 14 and 23). The message, in
+  `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 3: The cache and the playback audio
@@ -1873,8 +1912,14 @@ Drift: none
 Rulings: none
 Phase-end: none
 Forward: none
-Tier: 2
-Rounds: none
+Tier: 1
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+  secrets: fine | a finding | n/a: why
+  permissions: fine | a finding | n/a: why
+  network exposure: fine | a finding | n/a: why
+  failing closed: fine | a finding | n/a: why
+  injection: fine | a finding | n/a: why
+  logging: fine | a finding | n/a: why
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 3
@@ -7866,7 +7911,7 @@ Co-Authored-By: <the model's own line>
 
 ### Task 7: The editor backend: retranslate
 
-**Tier:** 2 · **Scenarios:** S30
+**Tier:** 1 · **Scenarios:** S30
 
 **Files:**
 - Modify: `src/vid2sub/web/backend.py`
@@ -9128,20 +9173,21 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/web/backend.py tests/test_backend_retranslate.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
-  (`AGENTS.md`, *Reviews*); the forward review over Tasks 17 and 23 (Task 17's `retranslate`
-  input runs `LocalBackend.retranslate` off the event loop for the current cue, the selection
-  or `ids=None` ("Retranslate stale"), holds other edits to the episode until it returns, sends
-  each `on_batch` as progress through the session's loop, takes `allow_cloud` from a control
-  that starts unticked every time (spec §7.2), and shows `EditError`, `EngineError` (with its
-  `hint`), `TranslationFailed` and `GlossaryError` as notices; with no model named it asks the
-  route's servers which models they serve before planning, so even "nothing stale" takes a
-  moment; after a glossary or model change "Retranslate stale" redoes every unedited cue, which
-  the view's `all_stale` explains; Task 23's Step 5 runs it on a real episode); the docs this
-  task made untrue (none expected). Then the close, its own commit,
-  holding this plan with this task's boxes ticked and **Now** set to `Task 8: The web
-  dependencies, the guards and the CSP, open.`; S30 stays `planned` (its proof is Task 17's
-  Playwright test and the exit test). The message, in `.git/CLOSE_MSG`:
+- [ ] **Step 11: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
+  kickoff council, because it is retranslation's cloud opt-in gate (§7.2)); the forward review over
+  Tasks 17 and 23 (Task 17's `retranslate` input runs `LocalBackend.retranslate` off the event loop
+  for the current cue, the selection or `ids=None` ("Retranslate stale"), holds other edits to the
+  episode until it returns, sends each `on_batch` as progress through the session's loop, takes
+  `allow_cloud` from a control that starts unticked every time (spec §7.2), and shows `EditError`,
+  `EngineError` (with its `hint`), `TranslationFailed` and `GlossaryError` as notices; with no model
+  named it asks the route's servers which models they serve before planning, so even "nothing stale"
+  takes a moment; after a glossary or model change "Retranslate stale" redoes every unedited cue,
+  which the view's `all_stale` explains; Task 23's Step 5 runs it on a real episode); the docs this
+  task made untrue (none expected). Then the close, its own commit, holding this plan with this
+  task's boxes ticked and **Now** set to `Task 8: The web dependencies, the guards and the CSP,
+  open.`; S30 stays `planned` (its proof is Task 17's Playwright test and the exit test). The
+  message, in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 7: The editor backend: retranslate
@@ -9150,8 +9196,14 @@ Drift: none
 Rulings: none
 Phase-end: none
 Forward: none
-Tier: 2
-Rounds: none
+Tier: 1
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+  secrets: fine | a finding | n/a: why
+  permissions: fine | a finding | n/a: why
+  network exposure: fine | a finding | n/a: why
+  failing closed: fine | a finding | n/a: why
+  injection: fine | a finding | n/a: why
+  logging: fine | a finding | n/a: why
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 7
@@ -10688,17 +10740,20 @@ Co-Authored-By: <the model's own line>
   response, log record, URL path or query, or file name (the redirect file's contents are its
   one home); that every comparison is constant-time; that nothing in `auth.html` or `auth.js`
   would need `'unsafe-inline'` or `'unsafe-eval'`; that a malformed or oversized body can't
-  raise a 500. Known and accepted (spec §6.2): cookies ignore ports, so a server the user visits
-  on another port of 127.0.0.1 would receive the cookie; HostGuard and WriteGuard are what keep
-  pages on other ports out. The forward review over Tasks 11, 12 and 13 (Task 11 prints
-  `auth_url(port, token)` to the terminal only, opens `write_redirect(…)` with `webbrowser`,
-  removes its folder at exit, and turns uvicorn's access log off; Task 12's page shows
-  `SIGN_IN_AGAIN` instead of reconnecting when the websocket is refused, Review Focus 5: the
-  refusal comes before accept, so the browser sees an HTTP 403 (close code 1006), never 1008;
-  Task 12's `page` fixture signs in through `/auth#t=<token>`). The docs this task made untrue:
-  none expected. Then the close, its own commit, holding this plan with this task's boxes ticked
-  and **Now** set to `Task 10: Media tokens and \`/media/{token}\`, open.`, and the spec's
-  scenario row S24 set to `built`, its Proof reading `tests/test_web_guards.py`,
+  raise a 500. Known (Decision 34): cookies ignore ports, so a server the user visits on another
+  port of 127.0.0.1 would receive the cookie and could replay it; HostGuard and WriteGuard keep
+  pages on other ports out, not servers. With Dan's yes at approval, the docs this task makes
+  untrue include spec §6.1, which gains, after its cookie bullet: "Cookies ignore ports, so a
+  server the browser visits on another port of 127.0.0.1 receives the cookie and could replay it;
+  the token's protection assumes no hostile local server (Phase 2 Decision 34)." The forward review
+  over Tasks 11, 12 and 13 (Task 11 prints `auth_url(port, token)` to the terminal only, opens
+  `write_redirect(…)` with `webbrowser`, removes its folder at exit, and turns uvicorn's access log
+  off; Task 12's page shows `SIGN_IN_AGAIN` instead of reconnecting when the websocket is refused,
+  Review Focus 5: the refusal comes before accept, so the browser sees an HTTP 403 (close code
+  1006), never 1008; Task 12's `page` fixture signs in through `/auth#t=<token>`). The docs this
+  task made untrue: none expected. Then the close, its own commit, holding this plan with this
+  task's boxes ticked and **Now** set to `Task 10: Media tokens and \`/media/{token}\`, open.`, and
+  the spec's scenario row S24 set to `built`, its Proof reading `tests/test_web_guards.py`,
   `tests/test_web_auth.py` (S23 waits for Task 11, which binds and opens the browser), with the
   message in `.git/CLOSE_MSG`:
 
@@ -13045,7 +13100,7 @@ Co-Authored-By: <the model's own line>
 
 ### Task 12: The frontend scaffold and the shinyreact server
 
-**Tier:** 2 · **Scenarios:** S26
+**Tier:** 1 · **Scenarios:** S26
 
 **Files:**
 - Create: `frontend/` (`package.json`, `package-lock.json`, `vite.config.js`, `tsconfig.json`,
@@ -15645,29 +15700,30 @@ Co-Authored-By: <the model's own line>
   frontend/src/lib/connection.ts frontend/src/lib/connection.test.ts frontend/src/App.tsx`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 18: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
-  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that the rendered page has no executable
-  inline script, `<style>` or style attribute, and the test checks the page, not the dependency
-  object; that `status` never holds a key's value and never contacts a cloud endpoint; that
-  untrusted text (endpoint names, notices) reaches React only as text; that React stays external
-  (the build test) and every output and message handler lives in `App`; that the restart path
-  never reconnects. The forward review over Tasks 13–19, 21, 22 and 23 (Task 13 makes the e2e
-  `server` the demo and adds `start_server(..., toml=...)`; Tasks 14–19 add each output to
-  `App`'s subscriptions and each message to its handlers, use `notice` for plain-text errors, and
-  build their modal parts on the native `<dialog>` described above, never a modal Radix part or
-  Radix Select; Task 18's drawer is that dialog with `side="right"`; Task 21's CI frontend job runs
-  `make test-js` with `CI=true` and the e2e job `make e2e`, both on Node 22; Task 22's README
-  says `make build` comes before `vid2sub serve`; Task 23's Step 2 builds with `make build`). The
-  docs this task made untrue: spec §29's M2 bullet on the CSP, which this task settles: add to it
-  "*Result (2026-10-24, Chromium via Playwright 1.64.1):* Shiny 1.8.0's one inline script, its
-  busy indicators, is served as a file instead (`server.BUSY_INDICATORS`), so `script-src 'self'`
-  holds with no violation; no `style-src` is needed and none is set; `eval` is never needed.
-  Radix's modal parts and Select inject `<style>` elements, so the editor's modal parts use the
-  native `<dialog>`, its menus are non-modal and its choices native `<select>`s." Then the close,
-  its own commit, holding this plan with this task's boxes ticked and **Now** set to
-  `Task 13: The end-to-end harness and the demo, open.`, and the spec's §29 as above; S26 stays
-  `planned` (its hostile fixtures are Task 13's and its overlay Task 14's), with the message in
-  `.git/CLOSE_MSG`:
+- [ ] **Step 18: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
+  kickoff council, because it makes the server's whole websocket surface and the only real-browser
+  CSP test). Worth the reviewers' time: that the rendered page has no executable inline script,
+  `<style>` or style attribute, and the test checks the page, not the dependency object; that
+  `status` never holds a key's value and never contacts a cloud endpoint; that untrusted text
+  (endpoint names, notices) reaches React only as text; that React stays external (the build test)
+  and every output and message handler lives in `App`; that the restart path never reconnects. The
+  forward review over Tasks 13–19, 21, 22 and 23 (Task 13 makes the e2e `server` the demo and adds
+  `start_server(..., toml=...)`; Tasks 14–19 add each output to `App`'s subscriptions and each
+  message to its handlers, use `notice` for plain-text errors, and build their modal parts on the
+  native `<dialog>` described above, never a modal Radix part or Radix Select; Task 18's drawer is
+  that dialog with `side="right"`; Task 21's CI frontend job runs `make test-js` with `CI=true` and
+  the e2e job `make e2e`, both on Node 22; Task 22's README says `make build` comes before `vid2sub
+  serve`; Task 23's Step 2 builds with `make build`). The docs this task made untrue: spec §29's M2
+  bullet on the CSP, which this task settles: add to it "*Result (2026-10-24, Chromium via
+  Playwright 1.64.1):* Shiny 1.8.0's one inline script, its busy indicators, is served as a file
+  instead (`server.BUSY_INDICATORS`), so `script-src 'self'` holds with no violation; no `style-src`
+  is needed and none is set; `eval` is never needed. Radix's modal parts and Select inject `<style>`
+  elements, so the editor's modal parts use the native `<dialog>`, its menus are non-modal and its
+  choices native `<select>`s." Then the close, its own commit, holding this plan with this task's
+  boxes ticked and **Now** set to `Task 13: The end-to-end harness and the demo, open.`, and the
+  spec's §29 as above; S26 stays `planned` (its hostile fixtures are Task 13's and its overlay Task
+  14's), with the message in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 12: The frontend scaffold and the shinyreact server
@@ -15676,8 +15732,14 @@ Drift: none
 Rulings: none
 Phase-end: none
 Forward: none
-Tier: 2
+Tier: 1
 Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+  secrets: fine | a finding | n/a: why
+  permissions: fine | a finding | n/a: why
+  network exposure: fine | a finding | n/a: why
+  failing closed: fine | a finding | n/a: why
+  injection: fine | a finding | n/a: why
+  logging: fine | a finding | n/a: why
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 12
@@ -23814,7 +23876,7 @@ Co-Authored-By: <the model's own line>
 
 ### Task 17: Retranslating
 
-**Tier:** 2 · **Scenarios:** S30
+**Tier:** 1 · **Scenarios:** S30
 
 **Files:**
 - Modify: `src/vid2sub/web/server.py` (input `retranslate`, output `progress`, message
@@ -26449,27 +26511,31 @@ Co-Authored-By: <the model's own line>
   frontend/src/lib/retranslate.ts frontend/src/types.ts tests/e2e/test_retranslate.py`, `git
   commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
-  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that `allow_cloud` comes only from the
-  request, true or false, and the box unticks after every request (§7.2); that a late
-  `progress` never shows after its retranslation ended, and `busy` always goes back to null;
-  that an edit sent during a retranslation lands on the retranslated episode, one undo step
-  after it; that "Retranslate stale" never replaces an edited translation and named cues do
-  (Decision 8), in the demo and with a real route; that `retranslate_result` follows every
-  request naming the open episode, so the draft's marker is dropped exactly when nothing
-  changed; that `replayable` follows the server's undo history (a new edit clears redo, an
-  undo with nothing to undo is ignored); that no notice echoes what the page sent. The forward
-  review over Tasks 18, 19, 21, 22 and 23 (Task 18's drawer and Task 19's Jobs page are shown
-  only where `capabilities.generate`, as Retranslate is; Task 19's jobs translate through the
-  pipeline, not this path, and the demo's jobs need the canned translation there too; Task 21's
-  CI e2e job runs `tests/e2e/test_retranslate.py`; Task 22's README says Retranslate names the
-  selection or every stale cue and never replaces an edited one when stale; Task 23's Step 5 is
+- [ ] **Step 11: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
+  kickoff council, because it builds the editor's Allow cloud models box (§7.2)). Worth the
+  reviewers' time: that `allow_cloud` comes only from the request, true or false, and the box
+  unticks after every request (§7.2); that a late `progress` never shows after its retranslation
+  ended, and `busy` always goes back to null; that an edit sent during a retranslation lands on the
+  retranslated episode, one undo step after it; that "Retranslate stale" never replaces an edited
+  translation and named cues do (Decision 8), in the demo and with a real route; that
+  `retranslate_result` follows every request naming the open episode, so the draft's marker is
+  dropped exactly when nothing changed; that `replayable` follows the server's undo history (a new
+  edit clears redo, an undo with nothing to undo is ignored); that no notice echoes what the page
+  sent. The forward review over Tasks 18, 19, 21, 22 and 23 (Task 18's drawer and Task 19's Jobs
+  page are shown only where `capabilities.generate`, as Retranslate is; Task 19's jobs translate
+  through the pipeline, not this path, and the demo's jobs need the canned translation there too;
+  Task 21's CI e2e job runs `tests/e2e/test_retranslate.py`; Task 22's README says Retranslate names
+  the selection or every stale cue and never replaces an edited one when stale; Task 23's Step 5 is
   "Retranslate stale" on Dan's episode, through his configured route; Phase 4 Task 1's
   `BrowserBackend` has no `Runtime.retranslate`, and Pages hides Retranslate). The docs this task
-  made untrue: none expected. Then the close, its own commit, holding this plan with this task's
-  boxes ticked and **Now** set to `Task 18: The settings drawer, open.`, and the spec's S30 set to
-  `built` (Proof: `tests/test_backend_retranslate.py; tests/e2e/test_retranslate.py; the exit
-  test`), with the message in `.git/CLOSE_MSG`:
+  made untrue: with Dan's yes to Decision 33 at approval, spec §7.2's "the `--allow-cloud` flag,
+  or the checkbox on the Review screen, which starts unticked every time" becomes "the
+  `--allow-cloud` flag, the checkbox on the Review screen, or the editor's Retranslate box, each
+  starting unticked every time (Phase 2 Decision 33)". Then the close, its own commit, holding this
+  plan with this task's boxes ticked and **Now** set to `Task 18: The settings drawer, open.`, and
+  the spec's S30 set to `built` (Proof: `tests/test_backend_retranslate.py;
+  tests/e2e/test_retranslate.py; the exit test`), with the message in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 17: Retranslating
@@ -26478,8 +26544,14 @@ Drift: none
 Rulings: none
 Phase-end: none
 Forward: none
-Tier: 2
+Tier: 1
 Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+  secrets: fine | a finding | n/a: why
+  permissions: fine | a finding | n/a: why
+  network exposure: fine | a finding | n/a: why
+  failing closed: fine | a finding | n/a: why
+  injection: fine | a finding | n/a: why
+  logging: fine | a finding | n/a: why
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 17
@@ -31882,23 +31954,9 @@ curl -sS -H "Authorization: Bearer $SPARK_API_KEY" http://127.0.0.1:9100/v1/mode
   | uv run python -c "import json, sys; print(sorted(m['id'] for m in json.load(sys.stdin)['data']))"
 ```
 
-  - **The list has no Qwen3-ASR 1.7B:** set the plan's **Now** to
-    `waiting on Dan: Task 20, Step 1`, write `.git/WIP_MSG`, then
-    `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md` and
-    `git commit -F .git/WIP_MSG`. Then go on with Step 2: Steps 2–20 don't need the recording,
-    and Step 21 waits for it.
-
-```text
-chore(plan): 🤖 wip Task 20: waiting on Dan for the Spark's Qwen3-ASR
-
-Done so far: Step 0, the base recorded.
-Stopped at: Step 1: local-ai doesn't list Qwen3-ASR yet, so there is nothing to record. Steps
-2-20 go on against the documented shape; Step 21 waits for the recording.
-Tests: make check green at the base.
-
-Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 20
-Co-Authored-By: <the model's own line>
-```
+  - **The list has no Qwen3-ASR 1.7B:** go on with Step 2. Steps 2–20 don't need the recording,
+    and Step 21 says what happens to it; Phase 2 never waits on local-ai (§25: it comes "in
+    parallel").
 
   - **It lists it:** Dan runs these, the same commands as the fixture README written in Step 6,
     with `MODEL` set to the 1.7B's id exactly as printed. Note the date, the 1.7B's id and
@@ -33129,13 +33187,19 @@ Co-Authored-By: <the model's own line>
   `git add README.md tests/README.md docs/superpowers/specs/2026-10-14-vid2sub-design.md`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 21 [Dan]: The recording, and the live test.** If Step 1 found no Qwen3-ASR, wait
-  here (**Now** already says so) until Dan says local-ai serves it, then run Step 1's commands.
-  With `tests/fixtures/qwen-endpoint/jfk-14s.en.json` and `jfk-14s-detected.en.json` in place,
-  Dan runs, with the tunnel up and the key exported:
+- [ ] **Step 21 [Dan]: The recording, the live test and a Cantonese run.** If Step 1 found no
+  Qwen3-ASR, run its list command again. Still none: Steps 21–23 wait, as the Phase-end list's
+  Task 20 row says, and the task closes now (Step 24, S22 `built`); they run once local-ai serves
+  it, in whichever phase that is. Otherwise, after Step 1's commands if they haven't run, with
+  `tests/fixtures/qwen-endpoint/jfk-14s.en.json` and `jfk-14s-detected.en.json` in place, Dan
+  runs, with the tunnel up and the key exported:
   `VID2SUB_LIVE_SPARK=1 uv run pytest -m live tests/test_live_spark.py -q -k qwen`. Expected:
   `1 passed, 2 deselected`. If the 1.7B's id isn't `qwen3-asr-1.7b`, change `model=` in
-  `CONFIG["qwen"]` first (Step 22 makes it drift). Note the date.
+  `CONFIG["qwen"]` first (Step 22 makes it drift). Then S22's own case, on a copy of one of his
+  Cantonese episodes in an empty folder, with the starter's `spark-qwen` entry uncommented:
+  `vid2sub run "<the copy>" --from yue --to none --model spark-qwen`. Expected: the
+  `.zh-HK.srt`'s lines are timed to the speech, punctuated, in Traditional characters. Note the
+  date.
 - [ ] **Step 22: The real answers through the contract tests.** First the key check, which prints
   only `False` per file (a `True` file must never be committed: delete it and tell Dan):
 
@@ -33286,16 +33350,20 @@ Co-Authored-By: <the model's own line>
   untrue: Steps 20 and 23 cover them; grep for `whisper.cpp or openai` and `"whisper.cpp" |
   "openai"` once more. Then the close, its own commit, holding this plan with this task's boxes
   ticked and **Now** set to `Task 21: CI: the frontend and end-to-end jobs, open.`, and the
-  spec's S22 row: replace
+  spec's S22 row. If Steps 21–23 waited, its "Phase and task" becomes `Phase 2, Task 20`, its
+  Proof `tests/test_parse_qwen_endpoint.py` on the documented shape;
+  `tests/test_pipeline.py::test_an_unreachable_spark_qwen_never_falls_back_to_the_macs_qwen_or_the_cloud`,
+  and its status `built`; the Phase-end row stays open. Otherwise replace
 
 ```markdown
 | S22 | a Cantonese episode through the Spark's Qwen3-ASR and forced aligner, once local-ai serves them | timed words with the text's punctuation attached; when the Spark is down, no fallback | Phase 2 | a fixture recorded from the Spark; `VID2SUB_LIVE_SPARK=1` | planned |
 ```
 
-  with (verified: Step 21's live run checked it for real)
+  with (verified: Step 21's live run and Cantonese run checked it for real), and mark the
+  Phase-end list's Task 20 row done
 
 ```markdown
-| S22 | a Cantonese episode through the Spark's Qwen3-ASR and forced aligner, once local-ai serves them | timed words with the text's punctuation attached; when the Spark is down, no fallback | Phase 2, Task 20 | `tests/test_parse_qwen_endpoint.py` on answers recorded from the Spark; `tests/test_pipeline.py::test_an_unreachable_spark_qwen_never_falls_back_to_the_macs_qwen_or_the_cloud`; `tests/test_live_spark.py`, passed <Step 21's date> | verified |
+| S22 | a Cantonese episode through the Spark's Qwen3-ASR and forced aligner, once local-ai serves them | timed words with the text's punctuation attached; when the Spark is down, no fallback | Phase 2, Task 20 | `tests/test_parse_qwen_endpoint.py` on answers recorded from the Spark; `tests/test_pipeline.py::test_an_unreachable_spark_qwen_never_falls_back_to_the_macs_qwen_or_the_cloud`; `tests/test_live_spark.py` and a Cantonese episode, passed <Step 21's date> | verified |
 ```
 
   with the message in `.git/CLOSE_MSG`:
@@ -34254,7 +34322,8 @@ vid2sub serve
 
   Expected: the browser opens on the editor through the launch link, and the terminal prints the
   same link for opening by hand.
-- [ ] **Step 3: [Dan] Open an M1 episode (S27, S43):** type the path of an episode Task 1 made.
+- [ ] **Step 3: [Dan] Open an M1 episode (S27, S43):** type the path of the `spark-turbo` copy
+  Task 1's Step 4 made (whisper.cpp transcribed it, which Step 8 measures).
   Note whether it played as video or through the playback audio, and in which browser (try
   Chrome, and Safari or Firefox if you use them: the codec matrix, §29). If a file that browser
   plays elsewhere came up as sound only, say so: its `canPlayType` answered "" for it
@@ -34268,10 +34337,11 @@ vid2sub serve
   corrected are kept. It uses your configured route's translation model (Decision 26); if that
   is a cloud model, tick **Allow cloud models** first, since the box unticks after every request.
   It asks the route's servers what they serve before it knows anything is stale, so
-  "retranslating" shows even when nothing is, and a server that's down gives an error here.
-- [ ] **Step 6: [Dan] An outside edit (S31):** edit the episode's `.en.srt` in another editor
-  (change one line), save it, then reopen the episode in vid2sub. Expected: the editor says it
-  kept your outside edit, and shows the changed line.
+  "retranslating" shows even when nothing is, and a server that's down gives an error here. Then
+  **Save**. Expected: the `.en.srt` now holds the new English, and reopening shows it.
+- [ ] **Step 6: [Dan] An outside edit (S31):** edit the episode's `.en.srt`, as Step 5 saved it,
+  in another editor (change one line), save it, then reopen the episode in vid2sub. Expected: the
+  editor says it kept your outside edit, and shows the changed line.
 - [ ] **Step 7: [Dan] Hand back the notes** from Steps 2–6, and the episode's path for Step 8.
 - [ ] **Step 8: Measure the cue timing** (§29: whisper.cpp tokens without DTW, against the
   episode Dan corrected in Step 4). In this repo's folder, with the episode's path in `$EP`:
@@ -34285,7 +34355,11 @@ from vid2sub.subs.rendition import cues_from_body
 sidecar, _ = store.load(Path(sys.argv[1]))
 track = store.source_track(sidecar)
 auto_id = next(h.rendition for h in sidecar.heads(track) if h.by == "auto")
-first = {c.id: c for c in cues_from_body(sidecar.renditions()[auto_id].body)}
+renditions = sidecar.renditions()
+made = [renditions[p].body for p in renditions[auto_id].parents
+        if renditions[p].body.get("kind") == "transcript"]
+print("transcribed by", made[0].get("engine") if made else "?", made[0].get("model") if made else "?")
+first = {c.id: c for c in cues_from_body(renditions[auto_id].body)}
 _, edited = store.current_cues(sidecar, track)
 pairs = [(c, first[c.id]) for c in edited if c.id in first and c.end_ms <= 300_000]
 d = [abs(c.start_ms - a.start_ms) for c, a in pairs] + [abs(c.end_ms - a.end_ms) for c, a in pairs]
@@ -34294,8 +34368,9 @@ print(f"{len(pairs)} cues compared; median {statistics.median(d)} ms; "
 PY
 ```
 
-  Expected: one line, `<n> cues compared; median <m> ms; 90th percentile <p> ms`. It prints no
-  title or path.
+  Expected: `transcribed by spark-turbo <its model>` (any other name means another engine made
+  the episode: stop, and use the `spark-turbo` copy), then `<n> cues compared; median <m> ms;
+  90th percentile <p> ms`. It prints no title or path.
 - [ ] **Step 9: Record the results in the spec.** §29: the timing line (M1) with Step 8's numbers,
   dated; the M2 bullets with the CSP Task 12 recorded and the codec matrix from Step 3. Set S27,
   S29, S30, S31 and S43 to `verified` where they passed. A failure caused by a bug is a new task,
@@ -34423,3 +34498,6 @@ fi
 | Task 2 (planning) | Minor | `.github/workflows/ci.yml` | The floor job's hand-kept test list lacks `tests/test_edit.py` (Task 2) and `tests/test_hostile_fixtures.py` (Task 13), both pure; it could pick its files by their imports, as Phase 4 Task 6's `tests/pyodide_run.py` does (found writing Phase 4 Task 6) | open |
 | Task 18 (planning) | Minor | `src/vid2sub/engines/clients.py` | The drawer's Test has httpx's per-read timeout but no overall deadline or size cap, so a server that trickles its `/v1/models` answer holds that Test open (found by the security review of Task 18's listing) | open |
 | Task 22 (planning) | Minor | `AGENTS.md` | Missing docs: Layout names neither `src/vid2sub/web/` nor `frontend/`; Commands name none of `make build`, `test-js`, `e2e` or `demo`; the check-the-docs table lacks FastAPI, shiny, shinyreact, Playwright, React, Vite, Tailwind and shadcn (spec §24). `AGENTS.md` is the workflow's own file, so its change waits for the phase end (found writing Task 22) | open |
+| Task 20 (planning) | Minor | `tests/test_live_spark.py` | If local-ai doesn't serve Qwen3-ASR by Task 20's Step 21, its recording, live test and Cantonese run (Steps 21–23) wait; they run once it does, in whichever phase that is, and S22 becomes `verified` then (the kickoff council's goal fit finding 1) | open |
+| Task 16 (planning) | Minor | `tests/e2e/test_saving.py` | The close-warning test waits a fixed 500 ms before checking for the `beforeunload` dialog, and some server tests sleep, then assert nothing happened, so a slow runner flakes the first and passes the others without their fix; wait on `page.expect_event("dialog")`, and send a later request through the same queue before asserting (reliability finding 13) | open |
+| Task 17 (planning) | Minor | `src/vid2sub/web/server.py` | A whole-episode Retranslate holds the tab's queue, with no Cancel, so a slow Spark keeps edits and Save waiting for minutes; a Cancel checked between batches, or Save allowed past a running retranslation (reliability finding 15) | open |

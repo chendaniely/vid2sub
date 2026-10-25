@@ -4,6 +4,12 @@
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking. Every rule for running a task is in `AGENTS.md`; this
 > plan never restates them.
+>
+> **Resuming mid-task** (after a crash or compaction with no wip commit): never run Step 0 again.
+> The task's base is the parent of its first commit whose trailer names it
+> (`git log --reverse --format=%H --grep='phase-3.md Task N$' | head -1`, then `^`), and the
+> newest commit's subject, matched against the task's commit steps, says which step is next (the
+> kickoff council's reliability finding 9).
 
 **Goal:** add a season folder or a YouTube link from the app, review the suggested languages and
 models, and run it unattended, pausing on a dropped connection and resuming where it stopped; play
@@ -25,13 +31,16 @@ listings are run and revised at its phase start.)
 ## Decisions made while planning (review these)
 
 1. **The file browser never lists or follows a link,** and a typed path through one is refused
-   (Task 1). Spec §6.5 doesn't mention links, and the CLI follows them. So a media folder linked
-   into home (`~/Movies/Anime` pointing at a NAS share) is added from the app by its real path
-   under `/Volumes`, or from the CLI. **This adds to the spec:** Task 1's close writes it, with
-   Decisions 3 and 24, into §6.5, so it waits for Dan's yes at approval.
-2. **The browser reaches only its roots** (home and mounted volumes) and typed UNC shares, so a
-   Linux library under `/srv` is added from the CLI, not the app (Task 1). §6.5 limits what may be
-   read; it doesn't promise that any typed path is accepted.
+   (Task 1), in Add and in the editor's path box alike (Decision 2). Spec §6.5 doesn't mention
+   links, and the CLI follows them. So a media folder linked into home (`~/Movies/Anime` pointing at
+   a NAS share) is added from the app by its real path under `/Volumes`, or from the CLI. **This
+   adds to the spec:** Task 1's close writes it, with Decisions 3 and 24, into §6.5, so it waits for
+   Dan's yes at approval.
+2. **Browse lists only its roots** (home and mounted volumes) and typed UNC shares, while a typed
+   full path may be anywhere (a Linux library under `/srv`), as §6.5 says (Tasks 1 and 2; the
+   kickoff council's goal fit finding 4 and security finding 5; Dan, Q&A item 21). Every typed
+   path in the app, in Add and in the editor's path box, runs Browse's checks: links, hidden and
+   credential folders, admin shares and device paths are refused.
 3. **`Library` and `AppData` stay hidden** in the home folder on every OS (Task 1). On Linux that
    hides more than it needs to (the Phase-end list).
 4. **Suggestions never pick a cloud model,** and ticking **Allow cloud models for this run**
@@ -45,8 +54,8 @@ listings are run and revised at its phase start.)
    `vid2sub run` does (Task 3).
 8. **Pause stops the running job at its next check.** Resume redoes decode and VAD but keeps the
    finished chunks (Task 5, spec §8.9, §17.3).
-9. **The machine may sleep while the queue is paused** (Task 5). §8.10 keeps it awake while the
-   queue runs.
+9. **The machine may sleep while the queue is paused** (Task 5), except while the paused queue
+   is retrying by itself (Decision 23). §8.10 keeps it awake while the queue runs.
 10. **`faster-whisper` on NVIDIA needs cuDNN 9 as well as cuBLAS 12,** as its README (1.2.1) says.
     The `[nvidia]` extra and `doctor` check both. **This changes the spec** (§4.2, §9.5 and S45
     name cuBLAS 12 only), so it waits for Dan's yes at approval (Task 9).
@@ -86,10 +95,13 @@ listings are run and revised at its phase start.)
     Decision 23's one gate.
 22. **The demo's Review suggests its canned models** under the catalog entries they stand in
     for (Task 4), so its pickers name Whisper turbo and Gemma 4.
-23. **The app's jobs retry a dropped connection for 30 s, then pause the queue** (Task 6,
-    `runtime.APP_WAIT_S`); the CLI keeps M1's 600 s. §17.3 says connection errors "pause the
-    whole queue … with a **Resume** button". The cost: a short overnight blip pauses the queue
-    until someone presses Resume.
+23. **The app's jobs retry a dropped connection for 30 s, then pause the queue, and the paused
+    queue retries by itself** (Tasks 5 and 6, `runtime.APP_WAIT_S`; goal fit finding 12 and
+    reliability finding 8; Dan, Q&A item 20). While it is paused on a connection error or an
+    unreachable folder (Decision 29), never on the person's own Pause, it checks the server or
+    the folder on a backoff, 30 s up to 15 min, for up to 2 hours, keeps the machine awake
+    meanwhile, and resumes when it answers; the banner says it is retrying. The CLI keeps M1's
+    600 s. §17.3 says so now.
 24. **Beside Decision 3:** a user's `Library` and `AppData` stay hidden under any `Users/<name>/`
     on any root (WSL's `/mnt/c`, a backup disk), not only in home; a disk's admin shares (`C$`,
     `ADMIN$`, `IPC$`) are refused, while a person's own `name$` media share is not (Task 1).
@@ -102,6 +114,19 @@ listings are run and revised at its phase start.)
 27. **The Models page checks when it opens and on Check again, never on a timer** (Task 8): a
     check asks each local server, so it isn't polled; an ask while one runs is dropped, and a
     failed check says "couldn't check the models; see the log", never the error's own text.
+28. **The Jobs page's path box goes** (Task 6; Dan, Q&A item 21): Add replaces it, with Browse's
+    checks, and §19.2's Jobs screen has none; the `jobs_submit` input goes with it.
+29. **A folder that can't be reached pauses the queue,** as a dropped connection does (Task 5;
+    reliability finding 7; §17.3, now saying so): an input or output folder that is gone or on a
+    share that stopped answering pauses with "the folder isn't reachable" instead of failing
+    every remaining episode on it.
+30. **Each job re-checks its first chunk's language** (Task 5; goal fit finding 6; Dan, Q&A item
+    23), as §10 step 6 says: a disagreement with the language chosen shows as a badge in Jobs and
+    in the editor, and never stops the job.
+31. **On Windows, ffmpeg, ffprobe and deno run only as `.exe` or `.com`** (Task 10; security
+    finding 4, escaped from M1): Windows runs a `.bat` or `.cmd` through cmd.exe whatever the
+    argument list, so a file name holding `&` could run a command (§6.7's "no shell"). `doctor`
+    names a shim it refused.
 
 ## Global Constraints
 
@@ -4469,7 +4494,7 @@ Co-Authored-By: <the model's own line>
 
 ### Task 3: Sampling and suggestions for Review
 
-**Tier:** 2 · **Scenarios:** S40
+**Tier:** 1 · **Scenarios:** S40
 
 **Files:**
 - Create: `src/vid2sub/review.py`
@@ -5733,20 +5758,21 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/pipeline.py src/vid2sub/review.py tests/test_review.py`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
-  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that no path from sampling reaches a
-  cloud model (detection, suggestion, `run_options`, and the engine cache now checked per run);
-  that a model whose server is down is suggested, never passed over (§17.4); that `on_row`
-  never replaces a row the person could already change. The forward review over Tasks 4, 5, 6
-  and 8: Task 4 calls everything listed under *What Task 4 calls*, through the runtime,
-  renders rows through its own view (never `Row.path`), and draws **Allow cloud** from
+- [ ] **Step 11: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
+  kickoff council, because it changes the per-call cloud check (§7.2)). Worth the reviewers' time:
+  that no path from sampling reaches a cloud model (detection, suggestion, `run_options`, and the
+  engine cache now checked per run); that a model whose server is down is suggested, never passed
+  over (§17.4); that `on_row` never replaces a row the person could already change. The forward
+  review over Tasks 4, 5, 6 and 8: Task 4 calls everything listed under *What Task 4 calls*, through
+  the runtime, renders rows through its own view (never `Row.path`), and draws **Allow cloud** from
   `Review.allow_cloud`, never a setting; Task 5's pause and resume keep each job's own runner
-  (`Queue._runners`, Task 2's); Task 6's Jobs page shows jobs Review queued like any other;
-  Task 8 may show `model_choices`. The docs this task made untrue: none expected (grep `docs/`
-  and `README.md` for "Review" and "allow cloud"). Then the close, its own commit, holding this
-  plan with this task's boxes ticked and **Now** set to `Task 4: The Review screen, open.`, and
-  the spec's S40 row with "Phase and task" set to `Phase 3, Tasks 3–4`; S40 stays `planned`
-  (its Playwright half is Task 4's). The message, in `.git/CLOSE_MSG`:
+  (`Queue._runners`, Task 2's); Task 6's Jobs page shows jobs Review queued like any other; Task 8
+  may show `model_choices`. The docs this task made untrue: none expected (grep `docs/` and
+  `README.md` for "Review" and "allow cloud"). Then the close, its own commit, holding this plan
+  with this task's boxes ticked and **Now** set to `Task 4: The Review screen, open.`, and the
+  spec's S40 row with "Phase and task" set to `Phase 3, Tasks 3–4`; S40 stays `planned` (its
+  Playwright half is Task 4's). The message, in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 3: Sampling and suggestions for Review
@@ -5755,8 +5781,14 @@ Drift: none
 Rulings: none
 Phase-end: none
 Forward: none
-Tier: 2
-Rounds: none
+Tier: 1
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+  secrets: fine | a finding | n/a: why
+  permissions: fine | a finding | n/a: why
+  network exposure: fine | a finding | n/a: why
+  failing closed: fine | a finding | n/a: why
+  injection: fine | a finding | n/a: why
+  logging: fine | a finding | n/a: why
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 3
@@ -5770,7 +5802,7 @@ Co-Authored-By: <the model's own line>
 
 ### Task 4: The Review screen
 
-**Tier:** 2 · **Scenarios:** S40
+**Tier:** 1 · **Scenarios:** S40
 
 **Files:**
 - Create: `frontend/src/components/ReviewPage.tsx`, `frontend/src/lib/review.ts`
@@ -7698,18 +7730,19 @@ Co-Authored-By: <the model's own line>
   frontend/src/lib/review.test.ts tests/e2e/test_add.py tests/e2e/test_review.py`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
-  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that no path reaches the view (§6.8) and
-  every choice from the page is checked by the core and echoed nowhere; that a late row from an
-  ended review never lands in a new one; that Allow cloud is drawn only from the review, which
-  starts it unticked (§7.2); that the row's targets and formats, not the session's, reach each
-  job. The forward review over Tasks 6, 8, 11 and 12: Task 6's Jobs page shows Review's jobs like
-  any other; Task 8's Models page may reuse `review.model_choices` and `choiceLabel`; Task 11
-  documents Add, Review, Discard and the demo's canned suggestions; Task 12's Step 4 runs this
-  screen. The docs this task made untrue: none expected (grep `README.md` and `docs/` for
-  "Review"). Then the close, its own commit, holding this plan with this task's boxes ticked and
-  **Now** set to `Task 5: The queue pauses and resumes, open.`, and the spec's S40 row set to
-  `built`, its proof `tests/test_review.py`; `tests/test_web_review.py`;
+- [ ] **Step 11: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
+  kickoff council, because it builds Review's Allow cloud box (§7.2)). Worth the reviewers' time:
+  that no path reaches the view (§6.8) and every choice from the page is checked by the core and
+  echoed nowhere; that a late row from an ended review never lands in a new one; that Allow cloud is
+  drawn only from the review, which starts it unticked (§7.2); that the row's targets and formats,
+  not the session's, reach each job. The forward review over Tasks 6, 8, 11 and 12: Task 6's Jobs
+  page shows Review's jobs like any other; Task 8's Models page may reuse `review.model_choices` and
+  `choiceLabel`; Task 11 documents Add, Review, Discard and the demo's canned suggestions; Task 12's
+  Step 4 runs this screen. The docs this task made untrue: none expected (grep `README.md` and
+  `docs/` for "Review"). Then the close, its own commit, holding this plan with this task's boxes
+  ticked and **Now** set to `Task 5: The queue pauses and resumes, open.`, and the spec's S40 row
+  set to `built`, its proof `tests/test_review.py`; `tests/test_web_review.py`;
   `tests/e2e/test_review.py`. The message, in `.git/CLOSE_MSG`:
 
 ```text
@@ -7719,8 +7752,14 @@ Drift: none
 Rulings: none
 Phase-end: none
 Forward: none
-Tier: 2
-Rounds: none
+Tier: 1
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+  secrets: fine | a finding | n/a: why
+  permissions: fine | a finding | n/a: why
+  network exposure: fine | a finding | n/a: why
+  failing closed: fine | a finding | n/a: why
+  injection: fine | a finding | n/a: why
+  logging: fine | a finding | n/a: why
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-3.md Task 4
@@ -15359,7 +15398,7 @@ faster-whisper there instead of skipping.
     skipping without the extra (`installed_faster_whisper()` in the engine's test module).
   - `tests/test_ci_workflow.py`: what Phase 4's workflow tasks can extend (pins, timeouts,
     read-only permissions and token-free checkouts across every job).
-- For Task 12's Step 8: the run's job list shows `whisper (ubuntu-24.04)` and
+- For Task 12's Step 9: the run's job list shows `whisper (ubuntu-24.04)` and
   `whisper (windows-2022)`.
 
 The counts below are the assembled Phase 3's, with Tasks 1–9 in before this task.
@@ -16134,7 +16173,7 @@ Windows). The implementer prepares and records; Dan runs every step on his media
 **Interfaces:** none (no code).
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
-- [ ] **Step 1: List the [Dan] steps** (2 to 7 below), one line each, with the count, then present
+- [ ] **Step 1: List the [Dan] steps** (2 to 8 below), one line each, with the count, then present
   Step 2. Set **Now** to `waiting on Dan: Task 12, Step 2` in a wip commit
   (`chore(plan): 🤖 wip Task 12: waiting on Dan for the M3 exit test`; `Done so far:` the list,
   `Stopped at:` Step 2, `Tests:` `make check` and `make e2e` green at the base).
@@ -16155,21 +16194,26 @@ vid2sub serve
 - [ ] **Step 4: [Dan] Review it (S40):** expected: the first two files are sampled, each row shows
   a detected language with its confidence and a suggested transcription and translation model,
   and the rest of the folder inherits their choices where they agree. Change one row's target and
-  use **Apply to all**. **Allow cloud models for this run** is unticked; leave it so. Start: the
-  Jobs page lists the season's episodes.
+  use **Apply to all**. Pick a Spark model (`spark-turbo` or, once local-ai serves it,
+  `spark-qwen`) for at least one row, so Step 5 has an episode transcribing on the Spark. **Allow
+  cloud models for this run** is unticked; leave it so. Start: the Jobs page lists the season's
+  episodes, and has no box for typing paths (Decision 28).
 - [ ] **Step 5: [Dan] Drop the connection once (S41):** while an episode is transcribing on the
   Spark, stop the tunnel to it (local-ai's), wait a minute, then start it again. Turning the Wi-Fi
   off would also drop the NAS share, which is a different failure. Expected: about 30 seconds
-  after the tunnel stops (Decision 23), the whole queue pauses with a banner giving the reason
-  and **Resume**, and no job is marked failed. After
-  **Resume**, the job carries on from the chunk that failed (its progress doesn't start again at
-  1), and the queue moves on.
+  after the tunnel stops (Decision 23), the whole queue pauses with a banner giving the reason,
+  saying it is retrying, and **Resume**; no job is marked failed. Once the tunnel is back, within
+  the backoff's next check (at most a few minutes), the queue resumes by itself; the job carries
+  on from the chunk that failed (its progress doesn't start again at 1), and the queue moves on.
 - [ ] **Step 6: [Dan] Leave it running overnight (S42):** before leaving it, run
   `pmset -g assertions | grep -i caffeinate`. Expected: a `PreventUserIdleSystemSleep` line. In
   the morning: every episode has its subtitles next to it, and the same command prints nothing
   once the queue has finished.
-- [ ] **Step 7: [Dan] One manual run on Windows or Linux (S45),** on whichever machine you have.
-  Note its OS, and whether it has an NVIDIA GPU. In a checkout of the `phase-3` branch:
+- [ ] **Step 7: [Dan] One manual run on Windows or Linux (S45),** on Windows if you have it
+  (§29's check is CUDA's libraries on Windows), else Linux. Note its OS, and whether it has an
+  NVIDIA GPU. On Windows first install git, uv, ffmpeg and Node, 22 or later (`winget install
+  Git.Git astral-sh.uv Gyan.FFmpeg OpenJS.NodeJS.LTS`), and for an NVIDIA GPU its current driver. In
+  a checkout of the `phase-3` branch:
 
 ```bash
 uv tool install --editable '.[whisper]'      # '.[nvidia]' instead on a machine with an NVIDIA GPU
@@ -16191,8 +16235,15 @@ vid2sub run <a short English video> --from en --to none --model local-whisper
   install it). `models` prints `✓ local-whisper: Whisper large-v3-turbo (transcribe)` (Task 8),
   and each other catalog entry ending `add it to vid2sub.toml`. The run writes the `.en.srt` next
   to the video; the first run downloads the model (about 1.6 GB). Note what `doctor` printed, and
-  how long the run took.
-- [ ] **Step 8: Check CI's Windows and Linux path:** the newest run on `phase-3` has Task 10's
+  how long the run took. Then the app on this machine (the council's reliability finding 10:
+  nothing else runs it off the Mac): `(cd frontend && npm ci && npm run build)`, `vid2sub serve`;
+  Browse to a folder on a drive letter or a share, Add one episode, Review and Start it with
+  `local-whisper`, open the result in the editor, fix a line, then Save while the `.en.srt` is
+  open in another program (Notepad). Expected: the job finishes; Save either writes or says
+  another program has the file open (§6.6), and never loses the edit.
+- [ ] **Step 8: [Dan] Hand back the notes** from Steps 2–7: what worked, what didn't, the OS and
+  GPU of Step 7's machine, what `doctor` printed, and the times.
+- [ ] **Step 9: Check CI's Windows and Linux path:** the newest run on `phase-3` has Task 10's
   Windows and Linux faster-whisper jobs green, and every other job too:
 
 ```bash
@@ -16202,11 +16253,12 @@ gh run view "$(gh run list --branch phase-3 --workflow ci.yml --limit 1 --json d
 
   Expected: the newest run's conclusion is `success`, and its job list includes Task 10's
   `whisper (ubuntu-24.04)` and `whisper (windows-2022)`.
-- [ ] **Step 9: Record the results in the spec.** §29's M3 bullet gets Step 7's result, dated:
-  the OS, CPU or NVIDIA, and what `doctor`'s `CUDA libraries` check said. Set S38, S40, S41, S42
+- [ ] **Step 10: Record the results in the spec.** §29's M3 bullet gets Step 7's result, dated:
+  the OS, CPU or NVIDIA, and what `doctor`'s `CUDA libraries` check said; the Windows CUDA check
+  stays *pending* unless Step 7 ran on Windows with an NVIDIA GPU. Set S38, S40, S41, S42
   and S45 to `verified` where they passed. A failure caused by a bug is a new task, proposed to
   Dan; a result that would change the spec is the fifth stop.
-- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [ ] **Step 11: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 docs(spec): 🤖 M3's exit test results: <what passed, in one line>
@@ -16221,7 +16273,7 @@ Co-Authored-By: <the model's own line>
 
   `git add docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/COMMIT_MSG`,
   then `git log -1 --format='%(trailers)'` shows `Plan:`.
-- [ ] **Step 11: Review, look forward, close.** The Tier 3 self-review from
+- [ ] **Step 12: Review, look forward, close.** The Tier 3 self-review from
   `$(cat .git/TASK_BASE)` (*Standards*, *Spec*) plus `make check`; the forward review over the
   Phase 4 plan (Step 7's install steps are what Phase 4's install index and README describe).
   Then the close, its own commit, holding this plan with this task's boxes ticked and **Now** set
@@ -16333,3 +16385,4 @@ fi
 | Task 2 (planning) | Minor | `src/vid2sub/web/views.py` | A finished YouTube job doesn't open in the editor (`can_open` false), since the job doesn't report the downloaded file's path | open |
 | Task 6 (planning) | Minor | `src/vid2sub/pipeline.py` | Resume re-detects the language (three windows) of a job whose language wasn't chosen, as decode and VAD are redone (Decision 8); Review's jobs have theirs chosen, so only the Jobs page's typed paths pay it | open |
 | Task 7 (planning) | Minor | `src/vid2sub/web/server.py` | Two tabs that ask for one episode's preview copy at once encode it twice (each into its own temporary name; the later rename wins), doubling the wait; a per-video lock in the runtime would share one encode | open |
+| Task 7 (planning) | Minor | `src/vid2sub/web/runtime.py` | The preview copy writes a JSON record and threads `preview_encoder` through every layer only to show which encoder made it; a log line (no path) would do (the kickoff council's simplicity finding 14) | open |
