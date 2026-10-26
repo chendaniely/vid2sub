@@ -32,7 +32,7 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 1: The M1 exit test (with Dan), open.
+**Now:** waiting on Dan: Task 1, Step 2
 
 ## Decisions made while planning (review these)
 
