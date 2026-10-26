@@ -37387,7 +37387,9 @@ else
 fi
 ```
 
-  Attended: the PR waits for Dan's merge (a merge commit, never squash or rebase).
+  Attended: the PR waits for Dan's merge (a merge commit, never squash or rebase). GitHub
+  allows all three (Q&A item 31), so the body's last line before its trailer says "Merge
+  with **Create a merge commit**, not squash or rebase."
 - [ ] **9. After the merge:** this project's docs are read on GitHub and its Pages site arrives in
   Phase 4, so there is no live site to check; the status line's `merged` entry comes with Phase
   3's start.

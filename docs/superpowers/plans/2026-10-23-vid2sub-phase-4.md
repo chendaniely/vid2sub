@@ -15455,7 +15455,9 @@ else
 fi
 ```
 
-  Attended: the PR waits for Dan's merge (a merge commit, never squash or rebase).
+  Attended: the PR waits for Dan's merge (a merge commit, never squash or rebase). GitHub
+  allows all three (Q&A item 31), so the body's last line before its trailer says "Merge
+  with **Create a merge commit**, not squash or rebase."
 - [ ] **9. After the merge: the live site, the first release and the install (S47, S51, S52).**
   Tags, releases and repo settings are Dan's (`AGENTS.md`, *Stops*), so the agent lists these
   steps, presents them one at a time (*Asking Dan*), and runs only the read-only checks.
