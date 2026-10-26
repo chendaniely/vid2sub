@@ -1,8 +1,8 @@
 # vid2sub: design
 
-**Status:** spec written 2026-10-14; plan-driven-development kickoff in progress on `phase-2`
-(2026-10-23) · Phase 1 (M1) merged `95ebb90` 2026-10-15 · Phase 2 (M2) planned · Phase 3 (M3)
-planned · Phase 4 (M4) planned
+**Status:** spec written 2026-10-14; spec and the Phase 2–4 plans approved 2026-10-25, after the
+plan-driven-development kickoff on `phase-2` · Phase 1 (M1) merged `95ebb90` 2026-10-15 · Phase 2
+(M2) planned · Phase 3 (M3) planned · Phase 4 (M4) planned
 
 Written 2026-10-14 from a brainstorming session with Dan and a five-reviewer design council the
 same day (§27). Every decision up to the adoption of plan-driven-development is dated and
@@ -148,6 +148,13 @@ test names.
   ([Q&A items 6–9](2026-10-14-vid2sub-qa.md)) (`a05066a`).
 - 2026-10-23: the playback audio and the cache move from M3 to Phase 2; the preview copy stays in
   Phase 3 ([Q&A item 13](2026-10-14-vid2sub-qa.md)) (`12ebdce`).
+- 2026-10-25: the kickoff council's findings answered: one lock per sidecar, new cues with ids
+  the page proposes, a paused queue that resumes itself, one set of checks for every typed path,
+  Save naming someone else's file, the first-chunk language check (re-linking to Later),
+  `vid2sub write --merge`, the PyPI name claimed, and a release dispatching `pages.yml`
+  ([Q&A items 18–26](2026-10-14-vid2sub-qa.md)) (`6ce7434`).
+- 2026-10-25: the spec and the Phase 2, 3 and 4 plans approved, with the plans' eleven flagged
+  spec changes ([Q&A item 27](2026-10-14-vid2sub-qa.md)).
 
 ## Contents
 
