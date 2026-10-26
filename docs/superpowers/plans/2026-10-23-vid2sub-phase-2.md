@@ -139,10 +139,15 @@ ffmpeg ≥6 for the playback audio.
     taken. A crash draft therefore replays exactly, and it is cleared only after a replay with
     no refused step. Each tab keeps its own draft, keyed by the heads and a tab id held in
     `sessionStorage`, and a reopened episode offers every draft for its heads with its time
-    (reliability finding 3).
+    (reliability finding 3). The server answers each edit, undo and redo with
+    `applied {episode, n, ok, changed}`, so a Restore knows which steps were refused, and a step
+    accepted that changes nothing counts as not replayed, so the draft is kept (Tasks 16 and 17,
+    the latter's Tier 1 review).
 32. **Save never replaces someone else's subtitle file from the UI** (Task 16; goal fit finding 5;
     Dan, Q&A item 22): its notice names each file it left and says
-    `vid2sub write <video> --overwrite-foreign` replaces it. §6.6 says so now, and asking per
+    `vid2sub write <video> --overwrite-foreign` replaces it, with the literal `<video>`; the
+    video's name is plain text outside the command, never inside one a person might paste (a
+    security review of the build). §6.6 says so now, and asking per
     file is the spec's Later row S64.
 33. **The editor's Retranslate has its own Allow cloud models box,** unticked at first and after
     each request (Task 17; security finding 6): a third place to consent, beside §7.2's flag and
@@ -155,6 +160,11 @@ ffmpeg ≥6 for the playback audio.
     close writes it into §6.1.
 35. **Dependabot watches the frontend's npm lock on Fridays** too (Task 21; security finding 7),
     as §23.1 asks; whether `npm ci --ignore-scripts` still builds is a Phase-end row.
+36. **Discard clears only this tab's draft** and hides the others in this tab; other tabs'
+    drafts stay until restored, or until a Save moves the heads (Task 16).
+37. **The sidecar lock folds a name's case and Unicode form everywhere** (Task 6): on a
+    case-sensitive volume, two files that differ only in case take turns rather than write at
+    once, which costs nothing but a wait.
 
 ## Global Constraints
 
@@ -347,10 +357,13 @@ Co-Authored-By: <the model's own line>
 - Test: `tests/test_edit.py`
 
 **Interfaces:**
-- Consumes: `vid2sub.subs.model.Cue`, `TrackError`, `new_cue_id(taken)`, `check_track(cues)`;
-  `vid2sub.subs.text.canonical(text)`.
+- Consumes: `vid2sub.subs.model.Cue`, `TrackError`, `check_track(cues)` (and `new_cue_id(taken)`
+  in the tests, to draw ids as the page does); `vid2sub.subs.text.canonical(text)`.
 - Produces (pure; every function returns a new `Tracks` and never mutates its input; the ones
-  that make cues add the new ids to `taken`, as `new_cue_id` does):
+  that make cues take the new cues' ids from the caller, who draws them (the page, Decision 31),
+  so the same edits replayed make the same cues, and add them to `taken`; an id not of
+  `new_cue_id`'s shape (`c` and 8 lowercase hex digits), given twice, or already in `taken` is
+  refused with `EditError` and `taken` is left as it was):
   - `class EditError(ValueError)` (its message is fit to show)
   - `SOURCE = "source"` (the name `replace_all` gives the source track)
   - `@dataclass(frozen=True) class Tracks: source: tuple[Cue, ...]; translations:
@@ -365,12 +378,14 @@ Co-Authored-By: <the model's own line>
     left)
   - `nudge(t, cue_id: str, delta_ms: int, *, edge: Literal["start", "end", "both"] = "both")
     -> Tracks` (`"both"` moves the cue as a block that stops at its neighbours)
-  - `split(t, cue_id: str, *, at_char: int, at_ms: int, taken: set[str])
-    -> tuple[Tracks, tuple[str, str]]` (both halves `from` the old id, no `w`)
-  - `merge_next(t, cue_id: str, *, taken: set[str]) -> tuple[Tracks, str]` (`w` joined when
-    both parts have one; two or more translations covering the parts become one new cue with
-    no `src_sha`)
-  - `insert(t, *, start_ms: int, end_ms: int, text: str, taken: set[str])
+  - `split(t, cue_id: str, *, at_char: int, at_ms: int, ids: tuple[str, str], taken: set[str])
+    -> tuple[Tracks, tuple[str, str]]` (the halves take `ids` in order, both `from` the old id,
+    no `w`)
+  - `merge_next(t, cue_id: str, *, new_id: str, joined_ids: Mapping[str, str], taken: set[str])
+    -> tuple[Tracks, str]` (the merged cue takes `new_id`; `w` joined when both parts have one;
+    two or more translations covering the parts become one new cue with no `src_sha`, whose id
+    is `joined_ids[track]`; a track that needs one and has none is refused)
+  - `insert(t, *, start_ms: int, end_ms: int, text: str, new_id: str, taken: set[str])
     -> tuple[Tracks, str]` (start must be in a gap; the end is clamped to the next cue)
   - `delete(t, cue_id: str) -> Tracks`
   - `detach(t, track: str, cue_id: str, detached: bool) -> Tracks`
@@ -391,8 +406,11 @@ from hypothesis import strategies as st
 
 from vid2sub.subs import edit
 from vid2sub.subs.edit import EditError, Tracks
-from vid2sub.subs.model import Cue, check_track
+from vid2sub.subs.model import Cue, check_track, new_cue_id
 from vid2sub.subs.translate_shape import src_sha, stale_ids, untranslated
+
+# New cues' ids, as the page draws them: c + 8 lowercase hex (Decision 31)
+A, B, M, J, USED = "c0000000a", "c0000000b", "c000000a1", "c000000b1", "c0ffee000"
 
 
 def cue(id, start, end, text, **kw):
@@ -499,9 +517,10 @@ def test_follow_gives_each_attached_translation_the_span_of_its_source_cues():
     assert (out["t3"].start_ms, out["t3"].end_ms) == (7000, 8000)
 
 
-def test_a_split_gives_both_halves_new_ids_from_the_old_and_repoints_the_translation():
+def test_a_split_gives_both_halves_the_ids_it_is_given_and_repoints_the_translation():
     taken = {"a", "b", "c", "ta", "tb"}
-    out, (h1, h2) = edit.split(tracks(), "c", at_char=3, at_ms=3400, taken=taken)
+    out, (h1, h2) = edit.split(tracks(), "c", at_char=3, at_ms=3400, ids=(A, B), taken=taken)
+    assert (h1, h2) == (A, B)
     halves = [by_id(out.source)[h1], by_id(out.source)[h2]]
     assert [h.text for h in halves] == ["はい、", "元気です"]
     assert [(h.start_ms, h.end_ms) for h in halves] == [(3000, 3400), (3400, 4000)]
@@ -514,25 +533,25 @@ def test_a_split_gives_both_halves_new_ids_from_the_old_and_repoints_the_transla
 @pytest.mark.parametrize("at_char, at_ms", [(0, 3400), (7, 3400), (3, 3000), (3, 4000)])
 def test_a_split_needs_text_and_time_on_both_sides(at_char, at_ms):
     with pytest.raises(EditError, match="split"):
-        edit.split(tracks(), "c", at_char=at_char, at_ms=at_ms, taken=set())
+        edit.split(tracks(), "c", at_char=at_char, at_ms=at_ms, ids=(A, B), taken=set())
 
 
 def test_a_merge_joins_the_text_the_times_the_word_ranges_and_the_flags():
     taken: set[str] = set()
-    out, m = edit.merge_next(tracks(), "a", taken=taken)
+    out, m = edit.merge_next(tracks(), "a", new_id=M, joined_ids={"en": J}, taken=taken)
     merged = by_id(out.source)[m]
     assert merged.text == "おはよう\n元気ですか"
     assert (merged.start_ms, merged.end_ms) == (0, 2000)
     assert merged.w == (0, 5) and merged.from_ == ("a", "b") and merged.flags == ("halluc",)
-    assert m in taken and [c.id for c in out.source] == [m, "c"]
+    assert m == M and m in taken and [c.id for c in out.source] == [m, "c"]
 
 
 def test_a_merge_concatenates_the_translations_of_either_part_into_one_stale_cue():
     t = edit.set_translation_text(tracks(), "en", "ta", "Morning")
     taken: set[str] = set()
-    out, m = edit.merge_next(t, "a", taken=taken)
+    out, m = edit.merge_next(t, "a", new_id=M, joined_ids={"en": J}, taken=taken)
     (joined,) = out.translations["en"]
-    assert joined.id in taken and joined.id not in ("ta", "tb")
+    assert joined.id == J and J in taken
     assert joined.from_ == ("ta", "tb") and joined.src == (m, "c")
     assert joined.text == "Morning\nHow are you? Fine."
     assert (joined.start_ms, joined.end_ms) == (0, 4000)
@@ -540,20 +559,20 @@ def test_a_merge_concatenates_the_translations_of_either_part_into_one_stale_cue
 
 
 def test_merging_two_cues_one_translation_covers_keeps_that_translation():
-    out, m = edit.merge_next(tracks(), "b", taken=set())
+    out, m = edit.merge_next(tracks(), "b", new_id=M, joined_ids={}, taken=set())
     tb = by_id(out.translations["en"])["tb"]
     assert tb.src == (m,) and stale(out) == {"tb"}
 
 
 def test_a_merge_keeps_no_word_range_unless_both_parts_have_one():
-    t, _ = edit.insert(tracks(), start_ms=2100, end_ms=2900, text="えっ", taken=set())
-    out, m = edit.merge_next(t, "b", taken=set())
+    t, _ = edit.insert(tracks(), start_ms=2100, end_ms=2900, text="えっ", new_id=A, taken=set())
+    out, m = edit.merge_next(t, "b", new_id=M, joined_ids={}, taken=set())
     assert by_id(out.source)[m].w is None
 
 
 def test_the_last_cue_has_nothing_to_merge_with():
     with pytest.raises(EditError, match="last cue"):
-        edit.merge_next(tracks(), "c", taken=set())
+        edit.merge_next(tracks(), "c", new_id=M, joined_ids={}, taken=set())
 
 
 def test_a_delete_takes_the_id_out_of_every_src_and_drops_a_translation_left_with_none():
@@ -567,16 +586,61 @@ def test_a_delete_takes_the_id_out_of_every_src_and_drops_a_translation_left_wit
 
 def test_an_inserted_cue_fills_the_gap_and_is_untranslated():
     taken: set[str] = set()
-    out, new = edit.insert(tracks(), start_ms=2100, end_ms=3500, text=" えっ ", taken=taken)
+    out, new = edit.insert(tracks(), start_ms=2100, end_ms=3500, text=" えっ ", new_id=A,
+                           taken=taken)
     c = by_id(out.source)[new]
-    assert (c.start_ms, c.end_ms, c.text, c.w) == (2100, 3000, "えっ", None)
+    assert new == A and (c.start_ms, c.end_ms, c.text, c.w) == (2100, 3000, "えっ", None)
     assert [x.id for x in out.source] == ["a", "b", new, "c"] and new in taken
     assert untranslated([x.id for x in out.source], out.translations["en"]) == [new]
 
 
 def test_a_cue_cannot_be_inserted_on_top_of_another():
     with pytest.raises(EditError, match="already a cue"):
-        edit.insert(tracks(), start_ms=500, end_ms=800, text="x", taken=set())
+        edit.insert(tracks(), start_ms=500, end_ms=800, text="x", new_id=A, taken=set())
+
+
+def test_a_merge_that_joins_translations_needs_a_new_id_for_each_joined_track():
+    t = edit.set_translation_text(tracks(), "en", "ta", "Morning")
+    taken = {"a", "b", "c", "ta", "tb"}
+    with pytest.raises(EditError, match="the en track's translations"):
+        edit.merge_next(t, "a", new_id=M, joined_ids={}, taken=taken)
+    assert taken == {"a", "b", "c", "ta", "tb"}
+
+
+@pytest.mark.parametrize("call", [
+    lambda t, taken: edit.split(t, "c", at_char=3, at_ms=3400, ids=(A, "C0000000B"),
+                                taken=taken),
+    lambda t, taken: edit.split(t, "c", at_char=3, at_ms=3400, ids=(A, A), taken=taken),
+    lambda t, taken: edit.split(t, "c", at_char=3, at_ms=3400, ids=(A, USED), taken=taken),
+    lambda t, taken: edit.merge_next(t, "b", new_id="c123", joined_ids={}, taken=taken),
+    lambda t, taken: edit.merge_next(t, "a", new_id=M, joined_ids={"en": M}, taken=taken),
+    lambda t, taken: edit.insert(t, start_ms=2100, end_ms=2900, text="x", new_id=USED,
+                                 taken=taken),
+])
+def test_a_malformed_or_taken_new_id_is_refused_and_nothing_changes(call):
+    taken = {"a", "b", "c", "ta", "tb", USED}
+    with pytest.raises(EditError, match="new cue's id"):
+        call(tracks(), taken)
+    assert taken == {"a", "b", "c", "ta", "tb", USED}
+
+
+def test_the_same_edits_with_the_same_ids_make_the_same_tracks():
+    # what lets a crash draft replay exactly: a later edit names the cue an earlier one made
+    def run() -> Tracks:
+        taken = {"a", "b", "c", "ta", "tb"}
+        t, _ = edit.insert(tracks(), start_ms=2100, end_ms=2900, text="…", new_id=A,
+                           taken=taken)
+        t = edit.set_text(t, A, "えっと")
+        t, _ = edit.split(t, "c", at_char=3, at_ms=3400, ids=(B, M), taken=taken)
+        t = edit.set_text(t, M, "元気だ")
+        t = edit.set_translation_text(t, "en", "ta", "Morning")
+        t, _ = edit.merge_next(t, "a", new_id=J, joined_ids={"en": USED}, taken=taken)
+        return edit.set_translation_text(t, "en", USED, "Morning! How are you?")
+
+    out = run()
+    assert out == run()
+    assert by_id(out.source)[A].text == "えっと" and by_id(out.source)[M].text == "元気だ"
+    assert by_id(out.translations["en"])[USED].text == "Morning! How are you?"
 
 
 def test_replace_all_replaces_plain_text_across_the_named_tracks_and_counts_it():
@@ -618,8 +682,8 @@ def test_every_edit_on_a_two_hour_episode_takes_well_under_a_second():
     began = time.perf_counter()
     t = edit.set_text(t, "s1000", "changed")
     t = edit.nudge(t, "s1000", 100)
-    t, _ = edit.split(t, "s10", at_char=2, at_ms=36_100, taken=taken)
-    t, _ = edit.merge_next(t, "s20", taken=taken)
+    t, _ = edit.split(t, "s10", at_char=2, at_ms=36_100, ids=(A, B), taken=taken)
+    t, _ = edit.merge_next(t, "s20", new_id=M, joined_ids={"en": J}, taken=taken)
     t = edit.delete(t, "s30")
     t, _ = edit.replace_all(t, "line", "Line", tracks=["source"])
     assert time.perf_counter() - began < 1.0
@@ -642,10 +706,17 @@ def _start(spec) -> Tracks:
     return Tracks(tuple(source), {"en": en})
 
 
+def _fresh(taken: set[str], n: int) -> list[str]:
+    """n new ids, as the page draws them; the edit itself adds them to `taken`."""
+    pool = set(taken)
+    return [new_cue_id(pool) for _ in range(n)]
+
+
 def _apply(t: Tracks, op, taken: set[str]) -> Tracks:
     name, k, ms, delta, text = op
     if name == "insert" or not t.source:
-        return edit.insert(t, start_ms=ms, end_ms=ms + abs(delta), text=text, taken=taken)[0]
+        return edit.insert(t, start_ms=ms, end_ms=ms + abs(delta), text=text,
+                           new_id=_fresh(taken, 1)[0], taken=taken)[0]
     c = t.source[k % len(t.source)]
     en = t.translations["en"]
     if name == "set_text":
@@ -658,9 +729,11 @@ def _apply(t: Tracks, op, taken: set[str]) -> Tracks:
         return edit.nudge(t, c.id, delta, edge=("start", "end", "both")[k % 3])
     if name == "split":
         at_ms = c.start_ms + ms % (c.end_ms - c.start_ms + 1)
-        return edit.split(t, c.id, at_char=k % (len(c.text) + 1), at_ms=at_ms, taken=taken)[0]
+        return edit.split(t, c.id, at_char=k % (len(c.text) + 1), at_ms=at_ms,
+                          ids=tuple(_fresh(taken, 2)), taken=taken)[0]
     if name == "merge_next":
-        return edit.merge_next(t, c.id, taken=taken)[0]
+        new_id, joined = _fresh(taken, 2)
+        return edit.merge_next(t, c.id, new_id=new_id, joined_ids={"en": joined}, taken=taken)[0]
     if name == "delete":
         return edit.delete(t, c.id)
     if name == "detach":
@@ -719,19 +792,24 @@ detached (§13.4); an edit that would make a translation track overlap is refuse
 flags follow the Phase 2 plan's Decision 3: text and time edits keep `w`, split and insert drop
 it, merge joins two; a text edit drops `halluc` and a time edit drops `est`, since a person has
 now checked them; an edited translation is marked `edited` (Decision 4), as `store.align_ids`
-marks one edited outside.
+marks one edited outside. A new cue's id comes from the caller, who draws it (the page, with
+`crypto.getRandomValues`), so the same edits replayed make the same cues and a crash draft's later
+edits to them still land (Decision 31, Dan's answer to the kickoff council); an id that isn't
+`model.new_cue_id`'s shape, or is taken, is refused and nothing changes.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from vid2sub.subs.model import Cue, TrackError, check_track, new_cue_id
+from vid2sub.subs.model import Cue, TrackError, check_track
 from vid2sub.subs.text import canonical
 
 SOURCE = "source"  # the name `replace_all` gives the source track
+_NEW_ID = re.compile(r"c[0-9a-f]{8}")  # the shape model.new_cue_id makes
 
 
 class EditError(ValueError):
@@ -810,11 +888,11 @@ def nudge(t: Tracks, cue_id: str, delta_ms: int, *,
     return set_times(t, cue_id, start_ms=c.start_ms + delta, end_ms=c.end_ms + delta)
 
 
-def split(t: Tracks, cue_id: str, *, at_char: int, at_ms: int,
+def split(t: Tracks, cue_id: str, *, at_char: int, at_ms: int, ids: tuple[str, str],
           taken: set[str]) -> tuple[Tracks, tuple[str, str]]:
     """Two new cues from one, both `from` it; translations of it point at both halves.
 
-    `taken` gains the new ids (as `model.new_cue_id` does)."""
+    The halves take `ids`, in order, and `taken` gains them."""
     i = _at(t.source, cue_id)
     c = t.source[i]
     left = canonical(c.text[:at_char]) if 0 < at_char < len(c.text) else ""
@@ -823,33 +901,47 @@ def split(t: Tracks, cue_id: str, *, at_char: int, at_ms: int,
         raise EditError("split inside the text, so both halves have some")
     if not c.start_ms < at_ms < c.end_ms:
         raise EditError("split at a time inside the cue")
-    a = Cue(id=new_cue_id(taken), start_ms=c.start_ms, end_ms=at_ms, text=left,
-            from_=(c.id,), flags=c.flags)
-    b = Cue(id=new_cue_id(taken), start_ms=at_ms, end_ms=c.end_ms, text=right,
-            from_=(c.id,), flags=c.flags)
+    if len(ids) != 2:
+        raise EditError("a split needs two new ids")
+    _claim(taken, *ids)
+    a = Cue(id=ids[0], start_ms=c.start_ms, end_ms=at_ms, text=left, from_=(c.id,),
+            flags=c.flags)
+    b = Cue(id=ids[1], start_ms=at_ms, end_ms=c.end_ms, text=right, from_=(c.id,),
+            flags=c.flags)
     pairs = {c.id: (a.id, b.id)}
     translations = {k: tuple(_repoint(x, pairs) for x in v) for k, v in t.translations.items()}
     return _done(_splice(t.source, i, 1, a, b), translations), (a.id, b.id)
 
 
-def merge_next(t: Tracks, cue_id: str, *, taken: set[str]) -> tuple[Tracks, str]:
-    """One new cue from a cue and the next; the translations of either part become one."""
+def merge_next(t: Tracks, cue_id: str, *, new_id: str, joined_ids: Mapping[str, str],
+               taken: set[str]) -> tuple[Tracks, str]:
+    """One new cue from a cue and the next; the translations of either part become one.
+
+    The merged cue takes `new_id`; a translation track whose cues for the two parts are joined
+    into one new cue takes that cue's id from `joined_ids` (track key → id), and a track that
+    needs one and has none is refused. `taken` gains every id given."""
     i = _at(t.source, cue_id)
     if i + 1 >= len(t.source):
         raise EditError("the last cue has no next cue to merge with")
     a, b = t.source[i], t.source[i + 1]
-    m = Cue(id=new_cue_id(taken), start_ms=a.start_ms, end_ms=b.end_ms,
+    pairs = {a.id: (new_id,), b.id: (new_id,)}
+    for k, v in t.translations.items():
+        if k not in joined_ids and len(_parts(v, pairs)) > 1:
+            raise EditError(f"merging joins the {k} track's translations, which needs a new id")
+    _claim(taken, new_id, *joined_ids.values())
+    m = Cue(id=new_id, start_ms=a.start_ms, end_ms=b.end_ms,
             text=canonical(a.text + "\n" + b.text),
             w=(a.w[0], b.w[1]) if a.w and b.w else None, from_=(a.id, b.id),
             flags=tuple(sorted(set(a.flags) | set(b.flags))))
-    pairs = {a.id: (m.id,), b.id: (m.id,)}
-    translations = {k: _merge_translations(v, pairs, taken) for k, v in t.translations.items()}
+    translations = {k: _merge_translations(v, pairs, joined_ids.get(k))
+                    for k, v in t.translations.items()}
     return _done(_splice(t.source, i, 2, m), translations), m.id
 
 
-def insert(t: Tracks, *, start_ms: int, end_ms: int, text: str,
+def insert(t: Tracks, *, start_ms: int, end_ms: int, text: str, new_id: str,
            taken: set[str]) -> tuple[Tracks, str]:
-    """A new, untranslated cue in a gap; its end is clamped to the next cue's start."""
+    """A new, untranslated cue in a gap, with the id `new_id` (which `taken` gains); its end is
+    clamped to the next cue's start."""
     body = _text(text)
     i = sum(1 for c in t.source if c.start_ms <= start_ms)
     if i and t.source[i - 1].end_ms > start_ms:
@@ -858,7 +950,8 @@ def insert(t: Tracks, *, start_ms: int, end_ms: int, text: str,
     end = end_ms if i == len(t.source) else min(end_ms, t.source[i].start_ms)
     if start >= end:
         raise EditError("a cue must start before it ends, in the gap between its neighbours")
-    new = Cue(id=new_cue_id(taken), start_ms=start, end_ms=end, text=body)
+    _claim(taken, new_id)
+    new = Cue(id=new_id, start_ms=start, end_ms=end, text=body)
     return _done(_splice(t.source, i, 0, new), t.translations), new.id
 
 
@@ -915,12 +1008,26 @@ def _done(source: Sequence[Cue], translations: Mapping[str, Sequence[Cue]]) -> T
     return out
 
 
+def _claim(taken: set[str], *ids: str) -> None:
+    """New cues' ids come from the caller, so each is checked: `model.new_cue_id`'s shape, none
+    twice, none taken. All of them join `taken`, or none does."""
+    if not all(isinstance(i, str) and _NEW_ID.fullmatch(i) for i in ids):
+        raise EditError("a new cue's id is c and 8 lowercase hex digits")
+    if len(set(ids)) < len(ids) or any(i in taken for i in ids):
+        raise EditError("a new cue's id is already in use; try again")
+    taken.update(ids)
+
+
+def _parts(cues: Sequence[Cue], pairs: Mapping[str, tuple[str, ...]]) -> list[Cue]:
+    return [c for c in cues if c.src and any(i in pairs for i in c.src)]
+
+
 def _merge_translations(cues: Sequence[Cue], pairs: Mapping[str, tuple[str, ...]],
-                        taken: set[str]) -> tuple[Cue, ...]:
-    parts = [c for c in cues if c.src and any(i in pairs for i in c.src)]
+                        joined_id: str | None) -> tuple[Cue, ...]:
+    parts = _parts(cues, pairs)
     if len(parts) < 2:
         return tuple(_repoint(c, pairs) for c in cues)
-    joined = Cue(id=new_cue_id(taken), start_ms=min(p.start_ms for p in parts),
+    joined = Cue(id=joined_id, start_ms=min(p.start_ms for p in parts),
                  end_ms=max(p.end_ms for p in parts),
                  text=canonical("\n".join(p.text for p in parts)),
                  src=_mapped([i for p in parts for i in p.src or ()], pairs),
@@ -1006,7 +1113,7 @@ def _with(flags: tuple[str, ...], flag: str) -> tuple[str, ...]:
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_edit.py
-  tests/test_purity.py -q` first (`34 passed`), then `make check`. Expected: `498 passed, 2
+  tests/test_purity.py -q` first (`42 passed`), then `make check`. Expected: `506 passed, 2
   skipped, 4 deselected` twice (the local zone, then UTC), `All checks passed!` and `no leaks
   found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
@@ -1027,6 +1134,14 @@ follow their source (follow); an edit that would make a translation
 track overlap a detached cue is refused. w, halluc and est follow the
 plan's Decision 3; an edited translation is marked edited (Decision 4).
 
+Split, merge_next and insert take their new cues' ids from the caller
+(the page draws them), so the same edits replayed make the same cues and
+a crash draft's later edits to them still land (Decision 31, Dan's
+answer to the kickoff council, Q&A item 19). An id that isn't
+new_cue_id's shape, is given twice or is taken is refused with
+EditError, and taken is left as it was; a merge that joins a track's
+translations needs an id for that track's joined cue.
+
 The new test failed first with: ImportError: cannot import name 'edit'
 from 'vid2sub.subs'. A hypothesis property test runs random edit
 sequences and checks spec §12.1's invariants on every track, each
@@ -1046,8 +1161,9 @@ Co-Authored-By: <the model's own line>
 
 - [ ] **Step 6: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*); the forward review over Tasks 5, 6, 7, 14 and 15 (the `Episode`
-  holds `Tracks`; `ops.EditOp` maps one op to each function here; retranslate builds on
-  `stale_ids` reading re-pointed and merged cues as stale); the docs this task made untrue
+  holds `Tracks`; `ops.EditOp` maps one op to each function here, a split, merge or insert op
+  carrying the new ids the page drew; retranslate builds on `stale_ids` reading re-pointed and
+  merged cues as stale); the docs this task made untrue
   (none expected: `subs.edit` is new). Then the close, its own commit, holding this plan with
   this task's boxes ticked and **Now** set to `Task 3: The cache and the playback audio,
   open.`; S28 stays `planned` (its proof's Playwright half is Task 15's). The message, in
@@ -1347,7 +1463,7 @@ def _remove(folder: Path) -> int:
   Then change it to `return [p for p in found if _KEY.fullmatch(p.name) and p.is_dir()]`, and in
   `_bytes` use `os.walk(folder, followlinks=True)` and `os.stat` for `os.lstat`; the run gives
   `FAILED tests/test_cache.py::test_clear_never_follows_a_symlink - assert 3300 ...`; restore
-  all three. `make check`. Expected: `512 passed, 2 skipped, 4 deselected` twice (the local zone,
+  all three. `make check`. Expected: `520 passed, 2 skipped, 4 deselected` twice (the local zone,
   then UTC), `All checks passed!` and `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -1592,7 +1708,7 @@ def playback_audio(video: Path, *, key: str, audio_index: int, tools: Tools, cac
   the file tools, delete `"-map_metadata", "-1",` and `"-map_chapters", "-1",` from the ffmpeg
   arguments; `uv run pytest tests/test_playback.py -q` gives `FAILED
   tests/test_playback.py::test_an_ac3_track_becomes_aac_stereo_in_mp4_with_no_title_or_chapters`;
-  restore both. `make check`. Expected: `518 passed, 2 skipped, 4 deselected` twice, `All checks
+  restore both. `make check`. Expected: `526 passed, 2 skipped, 4 deselected` twice, `All checks
   passed!` and `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -1865,7 +1981,7 @@ def _cache(config: Config) -> Check:
 
 - [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_cache.py
   tests/test_doctor_config.py tests/test_cli_scaffold.py -q` first (`27 passed`), then
-  `make check`. Expected: `521 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
+  `make check`. Expected: `529 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
   `no leaks found`.
 - [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -2095,7 +2211,7 @@ def _never() -> bool:
   (`55 passed`), then the propagation check, then `make check`. **Propagation check:** take
   `Cancelled` out of `_guarded`'s `except (Paused, StopRun, Cancelled):`; `uv run pytest
   tests/test_pipeline.py -q -k cancel` gives `3 failed, 1 passed, 51 deselected` (the cancel
-  became a failed result); restore it. `make check`. Expected: `525 passed, 2 skipped, 4
+  became a failed result); restore it. `make check`. Expected: `533 passed, 2 skipped, 4
   deselected` twice, `All checks passed!` and `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -2528,7 +2644,7 @@ class Queue:
   `log.error("job %s failed: %s", job_id, type(err).__name__)` to log `err` instead of
   `type(err).__name__`; `uv run pytest tests/test_jobs.py -q` gives `FAILED
   tests/test_jobs.py::test_a_runner_that_raises_fails_only_its_job_and_logs_only_the_error_kind`;
-  restore it. `make check`. Expected: `536 passed, 2 skipped, 4 deselected` twice, `All checks
+  restore it. `make check`. Expected: `544 passed, 2 skipped, 4 deselected` twice, `All checks
   passed!` and `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -3262,7 +3378,7 @@ def _audio_track(p: Probe, transcript: RenditionRecord | None, info: naming.Trac
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_backend_open.py -q` first
-  (`22 passed`), then `make check`. Expected: `558 passed, 2 skipped, 4 deselected` twice (the
+  (`22 passed`), then `make check`. Expected: `566 passed, 2 skipped, 4 deselected` twice (the
   local zone, then UTC), `All checks passed!` and `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -3631,7 +3747,7 @@ def _label(track: str) -> str:
 
 - [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_views.py -q` first
   (`14 passed`; the two-hour test took about 0.08 s where this listing was built: 0.06 s to open,
-  0.02 s for the view), then `make check`. Expected: `572 passed, 2 skipped, 4 deselected` twice,
+  0.02 s for the view), then `make check`. Expected: `580 passed, 2 skipped, 4 deselected` twice,
   `All checks passed!` and `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -4469,7 +4585,7 @@ def _label(track: str) -> str:
 ```
 
 - [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_views.py
-  tests/test_backend_open.py -q` first (`46 passed`), then `make check`. Expected: `582
+  tests/test_backend_open.py -q` first (`46 passed`), then `make check`. Expected: `590
   passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
 - [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -4555,10 +4671,14 @@ Co-Authored-By: <the model's own line>
 **Files:**
 - Create: `src/vid2sub/web/ops.py`
 - Modify: `src/vid2sub/web/backend.py`, `src/vid2sub/subs/glossary.py` (`add_terms`: the
-  glossary had no writer), `src/vid2sub/store.py` (`check_external` and `project`: round 6f,
-  escaped from M1 Task 28)
+  glossary had no writer), `src/vid2sub/store.py` (round 6e: `write_lock`, and `append`'s
+  re-check moved to just before the rename, Decision 30; `check_external` and `project`: round
+  6f, escaped from M1 Task 28; round 6h: the Tier 1 review's fixes), `src/vid2sub/security.py`
+  (`safe_write`'s `check`, rounds 6e and 6h), `src/vid2sub/subs/edit.py` (round 6h: new ids
+  join `taken` only once an edit is made, escaped from Task 2)
 - Test: `tests/test_ops.py`, `tests/test_backend_edit.py`, `tests/test_backend_save.py`,
-  `tests/test_glossary.py` (the writer's tests), `tests/test_store.py` (round 6f)
+  `tests/test_glossary.py` (the writer's tests), `tests/test_store.py` (rounds 6e, 6f and 6h),
+  `tests/test_security.py` (rounds 6e and 6h), `tests/test_edit.py` (round 6h)
 
 **Interfaces:**
 - Consumes: Task 2's `subs.edit` (every operation, `EditError`, `SOURCE`, `Tracks`); Task 5's
@@ -4570,18 +4690,22 @@ Co-Authored-By: <the model's own line>
 - Produces:
   - `vid2sub.web.ops`: `SetText{cue, text}`, `SetTranslationText{track, cue, text}`,
     `SetTimes{cue, start_ms?, end_ms?}` (one of them), `Nudge{cue, delta_ms, edge="both"}`,
-    `Split{cue, at_char, at_ms}`, `MergeNext{cue}`, `Insert{start_ms, end_ms, text}`,
+    `Split{cue, at_char, at_ms, ids}` (`ids`: the two halves' new ids), `MergeNext{cue, id,
+    joined}` (`id`: the merged cue's; `joined`: translation track → the id of the cue its two
+    parts' translations may join into), `Insert{start_ms, end_ms, text, id}`,
     `Delete{cue}`, `Detach{track, cue, detached}`, `ReplaceAll{find, replace, tracks}`,
     `GlossaryAdd{term, translation}`: pydantic models with `extra="forbid"`, `strict`, frozen,
     each `op` a Literal with its own name as default; `EditOp` (their union, discriminated on
     `op`); `EDIT_KINDS`; bounds `MAX_MS` (48 h), `MAX_TEXT` (2,000), `MAX_TERM` (200); cue ids
-    `^c[0-9a-f]{8}$`; tracks the keys of `naming.TRACKS` (and `"source"` in `replace_all`);
+    `^c[0-9a-f]{8}$`, new ones drawn by the page (Decision 31); tracks the keys of
+    `naming.TRACKS` (and `"source"` in `replace_all`);
     `parse_op(data: object) -> EditOp`; `class BadOp(ValueError)` with `.field` (the field's
     name, or None for an unknown field or a non-object), message
     `this edit can't be made: <field> <reason>`, never the value, never chained.
   - `LocalBackend.apply(self, ep, op: ops.EditOp) -> Episode` (one undo step; `ep` itself when
-    nothing changed; `EditError` when the rules refuse, when the track or the source is in
-    conflict, and for a split, merge or delete while any translation is); `undo(self, ep) ->
+    nothing changed; `EditError` when the rules refuse, when a new cue's id is one any version in
+    the sidecar or the tab has used, when the track or the source is in conflict, and for a
+    split, merge or delete while any translation is); `undo(self, ep) ->
     Episode`; `redo(self, ep) -> Episode` (`ep` itself with
     nothing to step to); `backend.UNDO_STEPS = 200`. The undo and redo stacks hold
     `(tracks, glossary_adds)`, so a glossary add is undone like an edit. A closed episode raises
@@ -4600,8 +4724,18 @@ Co-Authored-By: <the model's own line>
   - `LocalBackend.resolve(self, ep, track: str, rendition: str) -> tuple[Episode, SaveResult]`
     (changed from the skeleton's `-> Episode`: a pick writes the track's files, and the server
     must say which it couldn't); `SaveError` for an unknown track, a track not in conflict in
-    `ep`, or a rendition that isn't one of the track's versions. Saves and picks on one video
-    take turns within one `LocalBackend` (a lock per video).
+    `ep`, or a rendition that isn't one of the track's versions. Saves and picks hold the
+    sidecar's write lock throughout (`store.write_lock`), so they take turns with each other and
+    with every other write to that sidecar in the engine (Decision 30).
+  - `store.write_lock(video: Path) -> threading.RLock` (round 6e): this process's one lock for
+    the video's sidecar, keyed by its folder's `(st_dev, st_ino)` and its name, NFC and
+    casefolded, so two spellings of one file share it; held only while someone holds it.
+    `store.append` holds it, and its compare-and-swap re-reads the sidecar just before the rename
+    (spec §14.6) through `security.safe_write(path, data, *, overwrite, check=None)`, whose
+    `check` runs once the data is on disk and before each try of the replace (round 6h); an
+    exception from it leaves the target as it was. Round 6h: `store.project` and
+    `store.check_external` hold the lock too and read the sidecar again inside it, and an
+    append that found no sidecar merges one another writer made meanwhile.
   - After a Save the episode's `glossary` is read back from the file, so a term just added makes
     every translation made without it stale (`backend.all_stale`, spec §13.4), as M1 decides it:
     intended (round 6g).
@@ -4627,6 +4761,7 @@ from vid2sub.web import ops
 from vid2sub.web.ops import BadOp
 
 CUE = "ca0000001"
+NEW, NEW2 = "cb0000002", "cb0000003"  # new cues' ids, as the page draws them
 SECRET = "SECRET-7f3a"  # stands for anything a hostile page might send
 
 
@@ -4636,9 +4771,9 @@ SECRET = "SECRET-7f3a"  # stands for anything a hostile page might send
      ops.SetTranslationText),
     ({"op": "set_times", "cue": CUE, "start_ms": 100}, ops.SetTimes),
     ({"op": "nudge", "cue": CUE, "delta_ms": -100, "edge": "start"}, ops.Nudge),
-    ({"op": "split", "cue": CUE, "at_char": 2, "at_ms": 1500}, ops.Split),
-    ({"op": "merge_next", "cue": CUE}, ops.MergeNext),
-    ({"op": "insert", "start_ms": 0, "end_ms": 900, "text": "えっ"}, ops.Insert),
+    ({"op": "split", "cue": CUE, "at_char": 2, "at_ms": 1500, "ids": [NEW, NEW2]}, ops.Split),
+    ({"op": "merge_next", "cue": CUE, "id": NEW, "joined": {"en": NEW2}}, ops.MergeNext),
+    ({"op": "insert", "start_ms": 0, "end_ms": 900, "text": "えっ", "id": NEW}, ops.Insert),
     ({"op": "delete", "cue": CUE}, ops.Delete),
     ({"op": "detach", "track": "en", "cue": CUE, "detached": True}, ops.Detach),
     ({"op": "replace_all", "find": "元気", "replace": "", "tracks": ["source", "en"]},
@@ -4703,7 +4838,19 @@ def test_an_unknown_field_is_refused_without_naming_it():
     ({"op": "nudge", "cue": CUE, "delta_ms": "100"}, "delta_ms", "has the wrong type"),
     ({"op": "nudge", "cue": CUE, "delta_ms": 100, "edge": SECRET}, "edge",
      "isn't one of the choices"),
-    ({"op": "split", "cue": CUE, "at_char": 1.5, "at_ms": 10}, "at_char", "has the wrong type"),
+    ({"op": "split", "cue": CUE, "at_char": 1.5, "at_ms": 10, "ids": [NEW, NEW2]}, "at_char",
+     "has the wrong type"),
+    ({"op": "split", "cue": CUE, "at_char": 1, "at_ms": 10}, "ids", "is missing"),
+    ({"op": "split", "cue": CUE, "at_char": 1, "at_ms": 10, "ids": [NEW]}, "ids",
+     "has the wrong number of items"),
+    ({"op": "split", "cue": CUE, "at_char": 1, "at_ms": 10, "ids": [NEW, f"../{SECRET}"]},
+     "ids", "isn't valid"),
+    ({"op": "merge_next", "cue": CUE, "id": "C0000000A", "joined": {}}, "id", "isn't valid"),
+    ({"op": "merge_next", "cue": CUE, "id": NEW, "joined": [NEW2]}, "joined",
+     "has the wrong type"),
+    ({"op": "merge_next", "cue": CUE, "id": NEW, "joined": {SECRET: NEW2}}, "joined",
+     "isn't one of the choices"),
+    ({"op": "insert", "start_ms": 0, "end_ms": 900, "text": "x"}, "id", "is missing"),
     ({"op": "detach", "track": "en", "cue": CUE, "detached": "yes"}, "detached",
      "has the wrong type"),
     ({"op": "detach", "track": SECRET, "cue": CUE, "detached": True}, "track",
@@ -4763,7 +4910,9 @@ and nothing coerced (`strict`), so a string never becomes a number. Bounds keep 
 from handing the server work or text it can't save: text up to 2,000 characters with no control
 characters but line breaks and tabs and no lone surrogates (they can't be written as UTF-8),
 times from 0 to 48 hours, cue ids in the shape `model.new_cue_id` makes, tracks only the keys
-vid2sub knows. `BadOp` names the field and why, never the value or an unknown field's name, so
+vid2sub knows. An edit that makes cues (split, merge, insert) carries their new ids, drawn by the
+page, so a crash draft replays exactly (the Phase 2 plan's Decision 31); `subs.edit` refuses one
+that is taken. `BadOp` names the field and why, never the value or an unknown field's name, so
 nothing the page sent comes back in a message or a log (spec §6.8); pydantic's own error, which
 quotes the input, is dropped. Each kind maps to one `subs.edit` operation; `glossary_add` is held
 until Save writes the glossary (the Phase 2 plan's Decision 5).
@@ -4860,11 +5009,15 @@ class Split(_Op):
     cue: CueId
     at_char: Annotated[int, Field(ge=0, le=MAX_TEXT)]
     at_ms: Ms
+    ids: Annotated[list[CueId], Field(min_length=2, max_length=2)]  # the two halves' new ids
 
 
 class MergeNext(_Op):
     op: Literal["merge_next"] = "merge_next"
     cue: CueId
+    id: CueId  # the merged cue's
+    # per translation track, the id of the cue that joins its translations of the two parts
+    joined: Annotated[dict[Track, CueId], Field(max_length=len(naming.TRACKS))]
 
 
 class Insert(_Op):
@@ -4872,6 +5025,7 @@ class Insert(_Op):
     start_ms: Ms
     end_ms: Ms
     text: Text
+    id: CueId
 
 
 class Delete(_Op):
@@ -4920,6 +5074,7 @@ _REASONS = {
     "string_type": "has the wrong type",
     "bool_type": "has the wrong type",
     "list_type": "has the wrong type",
+    "dict_type": "has the wrong type",
 }
 
 
@@ -4949,11 +5104,11 @@ def parse_op(data: object) -> EditOp:
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_ops.py -q` first
-  (`43 passed`), then the guard check, then `make check`. **Guard check** (an unknown field):
+  (`50 passed`), then the guard check, then `make check`. **Guard check** (an unknown field):
   in `class _Op`, change `ConfigDict(extra="forbid", frozen=True, strict=True)` to
   `ConfigDict(frozen=True, strict=True)`; `uv run pytest tests/test_ops.py -q` gives
   `FAILED tests/test_ops.py::test_an_unknown_field_is_refused_without_naming_it` and
-  `1 failed, 42 passed`; restore it. `make check`. Expected: `625 passed, 2 skipped, 4
+  `1 failed, 49 passed`; restore it. `make check`. Expected: `640 passed, 2 skipped, 4
   deselected` twice (the local zone, then UTC), `All checks passed!` and `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -4971,6 +5126,10 @@ naming.TRACKS knows ("source" too for replace_all); glossary terms are
 one line of at most 200 characters. parse_op(data) raises BadOp naming
 the field and why, never the value or an unknown field's name, and
 without chaining pydantic's ValidationError, which quotes the input.
+Split, merge_next and insert carry the ids of the cues they make (split
+two, merge one plus one per translation track it joins, insert one),
+drawn by the page, so a crash draft replays exactly (Decision 31, Dan's
+answer to the kickoff council, Q&A item 19).
 
 The new test failed first with: ImportError: cannot import name 'ops'
 from 'vid2sub.web'. Guard checked by reverting it: without
@@ -5010,6 +5169,7 @@ from vid2sub.web.backend import LocalBackend, OpenError
 from vid2sub.web.ops import parse_op
 
 pytestmark = pytest.mark.media
+NEW = ("cc0000001", "cc0000002")  # new cues' ids, as the page draws them (Decision 31)
 
 
 @pytest.fixture
@@ -5047,11 +5207,11 @@ def test_an_edit_returns_a_new_episode_and_leaves_the_old_one_as_it_was(backend,
      lambda t: t.source[1].end_ms == 6000 and t.translations["en"][1].end_ms == 6000),
     ({"op": "nudge", "cue": sid(2), "delta_ms": 500},
      lambda t: (t.source[2].start_ms, t.source[2].end_ms) == (7700, 10_700)),
-    ({"op": "split", "cue": sid(2), "at_char": 3, "at_ms": 8000},
+    ({"op": "split", "cue": sid(2), "at_char": 3, "at_ms": 8000, "ids": list(NEW)},
      lambda t: texts(t.source)[2:] == ["はい、", "元気です"]),
-    ({"op": "merge_next", "cue": sid(0)},
+    ({"op": "merge_next", "cue": sid(0), "id": NEW[0], "joined": {"en": NEW[1]}},
      lambda t: texts(t.source)[0] == "おはよう\n元気ですか" and len(t.translations["en"]) == 2),
-    ({"op": "insert", "start_ms": 3100, "end_ms": 3500, "text": "えっ"},
+    ({"op": "insert", "start_ms": 3100, "end_ms": 3500, "text": "えっ", "id": NEW[0]},
      lambda t: texts(t.source)[1] == "えっ"),
     ({"op": "delete", "cue": sid(1)},
      lambda t: texts(t.source) == [LINES[0], LINES[2]] and len(t.translations["en"]) == 2),
@@ -5066,11 +5226,15 @@ def test_every_kind_of_edit_runs_through_the_edit_rules(backend, video, data, ch
     assert check(out.tracks) and out.tracks != ep.tracks and len(out.undo) == 1
 
 
-def test_new_cues_get_ids_no_version_of_the_track_has_used(backend, video):
+def test_a_new_cue_takes_the_id_the_page_proposes_and_one_already_used_is_refused(backend,
+                                                                                  video):
     ep = backend.open(str(video))
-    out = backend.apply(ep, op(op="split", cue=sid(0), at_char=2, at_ms=1500))
+    out = backend.apply(ep, op(op="split", cue=sid(0), at_char=2, at_ms=1500, ids=list(NEW)))
     halves = {c.id for c in out.tracks.source} - {c.id for c in ep.tracks.source}
-    assert len(halves) == 2 and halves <= out.taken and not halves & ep.taken
+    assert halves == set(NEW) and halves <= out.taken and not halves & ep.taken
+    for used, on in ((NEW[0], out), (tid(0), ep)):  # one the tab made, one the sidecar has
+        with pytest.raises(EditError, match="already in use"):
+            backend.apply(on, op(op="insert", start_ms=3100, end_ms=3500, text="x", id=used))
 
 
 def test_undo_and_redo_step_back_and_forward(backend, video):
@@ -5149,7 +5313,7 @@ def test_nothing_but_a_glossary_add_can_be_made_while_the_source_is_in_conflict(
     write_track(video, "ja", source_cues(3)[1:], role="source", replaces=head)
     ep = backend.open(str(video))
     for data in ({"op": "set_text", "cue": sid(0), "text": "x"},
-                 {"op": "insert", "start_ms": 0, "end_ms": 900, "text": "x"},
+                 {"op": "insert", "start_ms": 0, "end_ms": 900, "text": "x", "id": NEW[0]},
                  {"op": "detach", "track": "en", "cue": tid(0), "detached": True}):
         with pytest.raises(EditError, match="the ja track has two versions: pick one"):
             backend.apply(ep, parse_op(data))
@@ -5170,8 +5334,9 @@ def test_each_edit_on_a_two_hour_episode_and_its_new_view_take_well_under_a_seco
     ep = backend.open(str(make_episode(tmp_path / "long", n=2000)))
     edits = [{"op": "set_text", "cue": sid(1000), "text": "変更"},
              {"op": "nudge", "cue": sid(1000), "delta_ms": 100},
-             {"op": "split", "cue": sid(10), "at_char": 2, "at_ms": 36_100},
-             {"op": "merge_next", "cue": sid(20)},
+             {"op": "split", "cue": sid(10), "at_char": 2, "at_ms": 36_100, "ids": list(NEW)},
+             {"op": "merge_next", "cue": sid(20), "id": "cc0000003",
+              "joined": {"en": "cc0000004"}},
              {"op": "delete", "cue": sid(30)},
              {"op": "replace_all", "find": "台詞", "replace": "セリフ", "tracks": ["source"]},
              {"op": "set_translation_text", "track": "en", "cue": tid(5), "text": "x"}]
@@ -5392,15 +5557,16 @@ def _edit(ep: Episode, op: ops.EditOp, taken: set[str]) -> tuple[Tracks, dict[st
             return edit.nudge(t, op.cue, op.delta_ms, edge=op.edge), ep.glossary_adds
         case ops.Split():
             _editable(ep, ep.source_key)
-            return (edit.split(t, op.cue, at_char=op.at_char, at_ms=op.at_ms, taken=taken)[0],
-                    ep.glossary_adds)
+            return (edit.split(t, op.cue, at_char=op.at_char, at_ms=op.at_ms,
+                               ids=(op.ids[0], op.ids[1]), taken=taken)[0], ep.glossary_adds)
         case ops.MergeNext():
             _editable(ep, ep.source_key)
-            return edit.merge_next(t, op.cue, taken=taken)[0], ep.glossary_adds
+            return (edit.merge_next(t, op.cue, new_id=op.id, joined_ids=op.joined,
+                                    taken=taken)[0], ep.glossary_adds)
         case ops.Insert():
             _editable(ep, ep.source_key)
             return (edit.insert(t, start_ms=op.start_ms, end_ms=op.end_ms, text=op.text,
-                                taken=taken)[0], ep.glossary_adds)
+                                new_id=op.id, taken=taken)[0], ep.glossary_adds)
         case ops.Delete():
             _editable(ep, ep.source_key)
             return edit.delete(t, op.cue), ep.glossary_adds
@@ -5427,7 +5593,7 @@ def _editable(ep: Episode, *tracks: str) -> None:
   `for name in ():`; the run gives `FAILED
   tests/test_backend_edit.py::test_a_track_in_conflict_cant_be_edited_until_a_version_is_picked`,
   `FAILED tests/test_backend_edit.py::test_nothing_but_a_glossary_add_can_be_made_while_the_source_is_in_conflict`
-  and `2 failed, 20 passed`; restore it. `make check`. Expected: `647 passed, 2 skipped, 4
+  and `2 failed, 20 passed`; restore it. `make check`. Expected: `662 passed, 2 skipped, 4
   deselected` twice, `All checks passed!` and `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -5445,8 +5611,10 @@ there's nothing to step to. glossary_add only records the term for Save
 can't be edited, and nothing but a glossary add can while the source is
 (spec §14.4), each refused with EditError: "the en track has two
 versions: pick one before editing". A closed episode is refused with
-OpenError. Review Focus 3: each edit on a 2,000-cue episode, with its new
-view, took about 0.02 s.
+OpenError. A split, merge or insert gives its new cues the ids the page
+sent, and one any version in the sidecar or the tab has used is refused
+(Decision 31). Review Focus 3: each edit on a 2,000-cue episode, with its
+new view, took about 0.02 s.
 
 The new test failed first with: AttributeError: 'LocalBackend' object has
 no attribute 'apply'. Guard checked by reverting it: with _editable
@@ -5621,7 +5789,7 @@ def _toml_string(s: str) -> str:
 
 - [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_glossary.py
   tests/test_purity.py -q` first (`21 passed`: `subs` stays pure), then `make check`. Expected:
-  `656 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
+  `671 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
 - [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -6535,7 +6703,7 @@ def _write_glossary(video: Path, adds: dict[str, str]) -> tuple[dict[str, str], 
      tests/test_backend_save.py::test_a_glossary_that_is_a_link_is_neither_read_nor_written`,
      `1 failed, 24 passed`.
 
-  `make check`. Expected: `681 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
+  `make check`. Expected: `696 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
   `no leaks found`.
 - [ ] **Step 20: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -6596,9 +6764,12 @@ Co-Authored-By: <the model's own line>
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
 - [ ] **Step 21: Write the failing tests:** Save and pick with other writers about (an outside
-  edit since the open, the same Save sent twice, two picks at once, a stale pick), the words of
-  a picked source, an empty glossary file, and a source edit that would orphan a conflicted
-  translation's cues.
+  edit since the open, the same Save sent twice, two picks at once, a stale pick, a Jobs-page
+  job's append during a Save, another process replacing the sidecar while its temporary file is
+  written), two spellings of one sidecar, the words of a picked source, an empty glossary file,
+  and a source edit that would orphan a conflicted translation's cues. The sidecar's write lock
+  and the re-check just before the rename are Decision 30 (Dan's answer to the kickoff council,
+  Q&A item 18; reliability findings 1 and 12).
   In `tests/test_backend_save.py`, replace the imports from `import sys` to `from fakes import fake_make_ask`
 
 ```python
@@ -6627,6 +6798,9 @@ from episodes import (
 )
 from fakes import fake_make_ask
 ```
+
+  and replace `from vid2sub import __version__, pipeline, store` with
+  `from vid2sub import __version__, pipeline, security, store`.
 
   Replace the test `test_a_file_changed_outside_since_the_episode_opened_is_never_overwritten` (an outside edit is now kept, and diverges from the editor's) with two
 
@@ -6720,6 +6894,47 @@ def test_two_picks_at_once_are_made_one_after_the_other(backend, video, monkeypa
     assert isinstance(head, HeadRecord) and head.rendition == a.conflicts["en"][0]
     assert results["b"][1].notes == (
         "the en track's version was already picked elsewhere: showing it",)
+
+
+def test_a_jobs_write_during_a_save_waits_for_it_and_both_keep_their_records(backend, video,
+                                                                              monkeypatch):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    # what a Jobs-page job appends first, from its worker thread
+    theirs = make_rendition([], None, transcript_for(source_cues(3), audio_track=0, quick="q"))
+    real_replace, appended, job = security._replace, threading.Event(), []
+
+    def mid_save(src, dst):  # the Save has re-read the sidecar and is about to rename its own
+        if dst == store.sidecar_path(video) and not job:
+            job.append(threading.Thread(target=lambda: (
+                store.append(video, ep.header, [theirs]), appended.set())))
+            job[0].start()
+            appended.wait(0.5)  # done by now, unless the Save's lock holds it back (Decision 30)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(security, "_replace", mid_save)
+    saved, _ = backend.save(ep, formats=["srt"])
+    job[0].join(5)
+    side, _ = store.load(video)
+    assert theirs.id in side.renditions() and saved.heads["ja"] in side.renditions()
+```
+
+  In `test_a_save_cut_short_after_the_sidecar_never_makes_the_next_save_conflict_with_itself`,
+  `store.append` now passes `safe_write` a `check`, so its stand-in takes any keyword: replace
+
+```python
+    def full_disk(path, data, *, overwrite):
+        if path.suffix == ".srt":
+            raise OSError(28, "No space left on device")
+        return real(path, data, overwrite=overwrite)
+```
+
+  with
+
+```python
+    def full_disk(path, data, **kwargs):
+        if path.suffix == ".srt":
+            raise OSError(28, "No space left on device")
+        return real(path, data, **kwargs)
 ```
 
   Directly above `def test_a_version_picked_in_another_tab_is_shown_rather_than_picked_again(`, add:
@@ -6773,25 +6988,131 @@ def test_no_cue_can_be_split_merged_or_deleted_while_a_translation_is_in_conflic
         write_track(video, "en", [Cue(id=tid(0), start_ms=0, end_ms=3000, text=text,
                                       src=(sid(0),))], role="translation", replaces=head)
     ep = backend.open(str(video))
-    for data in ({"op": "delete", "cue": sid(0)}, {"op": "merge_next", "cue": sid(0)},
-                 {"op": "split", "cue": sid(0), "at_char": 2, "at_ms": 1500}):
+    for data in ({"op": "delete", "cue": sid(0)},
+                 {"op": "merge_next", "cue": sid(0), "id": NEW[0], "joined": {}},
+                 {"op": "split", "cue": sid(0), "at_char": 2, "at_ms": 1500, "ids": list(NEW)}):
         with pytest.raises(EditError, match="the en track has two versions: pick one"):
             backend.apply(ep, parse_op(data))
     assert backend.apply(ep, op(op="nudge", cue=sid(0), delta_ms=100)).dirty
 ```
 
+  In `tests/test_store.py`, replace the imports from `import sys` to
+  `from vid2sub.subs.sidecar import HeadRecord, SidecarError, make_rendition, parse_sidecar`
+
+```python
+import sys
+
+import pytest
+
+from vid2sub import store
+from vid2sub.media.identity import VideoIdentity
+from vid2sub.security import WriteRefused
+from vid2sub.subs.formats import to_srt
+from vid2sub.subs.model import Cue
+from vid2sub.subs.rendition import cues_body
+from vid2sub.subs.sidecar import HeadRecord, SidecarError, make_rendition, parse_sidecar
+```
+
+  with
+
+```python
+import os
+import sys
+
+import pytest
+
+from vid2sub import security, store
+from vid2sub.media.identity import VideoIdentity
+from vid2sub.security import WriteRefused
+from vid2sub.subs.formats import to_srt
+from vid2sub.subs.model import Cue
+from vid2sub.subs.rendition import cues_body
+from vid2sub.subs.sidecar import (
+    HeadRecord,
+    SidecarError,
+    make_rendition,
+    parse_sidecar,
+    serialize,
+)
+```
+
+  and directly above `def test_an_auto_version_never_replaces_a_persons(video):`, add (each test
+  followed by two blank lines):
+
+```python
+def test_a_writer_that_replaces_the_sidecar_while_the_temporary_file_is_written_loses_nothing(
+        video, monkeypatch):
+    with_track(video)
+    other = make_rendition([], "ja", {"kind": "cues"})
+    path, real_fsync, calls = store.sidecar_path(video), os.fsync, []
+
+    def racing(fd):  # another process writes the sidecar after the re-read M1 did, before ours
+        if not calls:  # is renamed into place
+            calls.append(1)
+            side, _ = store.load(video)
+            path.write_text(serialize(side.add(other)), encoding="utf-8")
+        real_fsync(fd)
+
+    monkeypatch.setattr(security.os, "fsync", racing)
+    mine = make_rendition([], "en", {"kind": "cues", "n": 2})
+    side = store.append(video, header(video), [mine])
+    assert other.id in side.renditions() and mine.id in side.renditions()
+    assert side == store.load(video)[0]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_two_spellings_of_one_sidecar_share_its_write_lock(tmp_path):
+    folder = tmp_path / "Show"
+    folder.mkdir()
+    (tmp_path / "linked").symlink_to(folder, target_is_directory=True)
+    lock = store.write_lock(folder / "Show - S01E01.mkv")
+    assert store.write_lock(tmp_path / "linked" / "Show - S01E01.mkv") is lock
+    assert store.write_lock(folder / "SHOW - s01e01.mkv") is lock  # a case-insensitive volume's
+    assert store.write_lock(folder / "Show - S01E02.mkv") is not lock
+```
+
+  In `tests/test_security.py`, directly above `def test_redact_removes_every_secret_value():`,
+  add (followed by two blank lines):
+
+```python
+def test_safe_write_checks_last_just_before_the_replace_and_a_failed_check_leaves_the_file(
+        tmp_path, monkeypatch):
+    target = tmp_path / "a.srt"
+    target.write_bytes(b"old")
+    order, real_fsync = [], os.fsync
+    monkeypatch.setattr(s.os, "fsync", lambda fd: (order.append("fsync"), real_fsync(fd)))
+
+    def changed():
+        order.append("check")
+        raise RuntimeError("changed meanwhile")
+
+    with pytest.raises(RuntimeError, match="changed meanwhile"):
+        s.safe_write(target, b"new", overwrite=True, check=changed)
+    assert order == ["fsync", "check"]
+    assert target.read_bytes() == b"old" and list(tmp_path.iterdir()) == [target]
+    s.safe_write(target, b"new", overwrite=True, check=lambda: order.append("fine"))
+    assert target.read_bytes() == b"new" and order[-1] == "fine"
+```
+
 - [ ] **Step 22: Run them; watch them fail.** `uv run pytest tests/test_backend_save.py
-  tests/test_backend_edit.py -q`. Expected: `8 failed, 46 passed`, the eight being
+  tests/test_backend_edit.py tests/test_store.py tests/test_security.py -q`. Expected:
+  `12 failed, 86 passed, 1 skipped`, the twelve being
   `test_a_file_changed_outside_since_the_episode_opened_is_kept_and_both_versions_wait`
-  (`assert () == ('en',)`), `test_an_outside_edit_to_another_track_is_kept_at_save_and_the_save_says_so`,
-  `test_saving_one_episode_twice_writes_its_versions_once` (`assert ('ja',) == ()`),
-  `test_two_picks_at_once_are_made_one_after_the_other` (the second pick isn't waiting),
-  `test_a_pick_on_a_track_with_one_version_is_refused_and_keeps_unsaved_edits` (`DID NOT RAISE`),
-  `test_picking_a_version_of_the_source_brings_the_words_it_was_built_from`
-  (`assert '気ですよ' == '気ですね'`), `test_an_empty_glossary_file_takes_terms`
-  (`vid2sub.glossary.toml already exists`) and
-  `test_no_cue_can_be_split_merged_or_deleted_while_a_translation_is_in_conflict`
-  (`DID NOT RAISE`).
+  (`AssertionError: assert (() == ('en',)`), `test_an_outside_edit_to_another_track_is_kept_at_save_and_the_save_says_so`,
+  `test_a_pick_on_a_track_with_one_version_is_refused_and_keeps_unsaved_edits` (`DID NOT RAISE
+  SaveError`), `test_picking_a_version_of_the_source_brings_the_words_it_was_built_from`
+  (`assert ('気ですよ' == '気ですね'`), `test_saving_one_episode_twice_writes_its_versions_once`
+  (`assert (('ja',) == ()`), `test_two_picks_at_once_are_made_one_after_the_other` (`assert
+  False`: the second pick isn't waiting),
+  `test_a_jobs_write_during_a_save_waits_for_it_and_both_keep_their_records` (the job's
+  rendition isn't in the sidecar: the Save wrote over it), `test_an_empty_glossary_file_takes_terms`
+  (`couldn't ad...eady exists`), `test_no_cue_can_be_split_merged_or_deleted_while_a_translation_is_in_conflict`
+  (`DID NOT RAISE EditError`),
+  `test_a_writer_that_replaces_the_sidecar_while_the_temporary_file_is_written_loses_nothing`
+  (the other writer's rendition is lost), `test_two_spellings_of_one_sidecar_share_its_write_lock`
+  (`AttributeError: module 'vid2sub.store' has no attribute 'write_lock'`) and
+  `test_safe_write_checks_last_just_before_the_replace_and_a_failed_check_leaves_the_file`
+  (`TypeError: safe_write() got an unexpected keyword argument 'check'`).
 - [ ] **Step 23: Write the code.**
   In `src/vid2sub/web/backend.py`, replace the module docstring
 
@@ -6875,8 +7196,10 @@ lost. Only then are the files written, through `store.project` with `overwrite_f
 someone else's file is left alone and reported (§6.6, §15.3), and a track in conflict isn't
 written until a person picks a version with `resolve`, the only thing that moves a head on a
 conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
-written is a note, and the episode moves to the new heads either way. Saves and picks on one
-video take turns within this engine, so two picks at once can't replace each other in a cycle.
+written is a note, and the episode moves to the new heads either way. Saves and picks hold the
+sidecar's write lock (`store.write_lock`, keyed by its real path), which every other append and
+projection in this engine takes too, so two picks at once can't replace each other in a cycle and
+a job's write never lands inside a Save (Decision 30).
 Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
 so its comments survive. A Save, like a pick, starts the undo history again, because the tracks
 are read back from the sidecar. While a translation is in conflict, no source cue can be split,
@@ -6894,19 +7217,6 @@ from collections.abc import Sequence
 
 ```python
 from collections.abc import Callable, Sequence
-```
-
-  In `LocalBackend.__init__`, replace
-
-```python
-        self._lock = threading.Lock()
-```
-
-  with
-
-```python
-        self._lock = threading.Lock()
-        self._writing: dict[Path, threading.Lock] = {}  # one per video: saves and picks take turns
 ```
 
   In `open`, replace
@@ -7001,7 +7311,7 @@ from collections.abc import Callable, Sequence
         self._check_open(ep)
         fmts = _formats(formats)
         notes: list[str] = []
-        with self._writing_lock(ep.video):
+        with store.write_lock(ep.video):
             try:
                 side, changed = store.check_external(ep.video, ep.header, _reload(ep.video),
                                                      on_unreadable=_unreadable(notes))
@@ -7034,7 +7344,7 @@ from collections.abc import Callable, Sequence
         if track not in ep.conflicts:  # a stale request must never reload a track being edited
             raise SaveError(f"the {track} track has only one version: there's nothing to pick")
         notes: list[str] = []
-        with self._writing_lock(ep.video):
+        with store.write_lock(ep.video):
             try:
                 side = _reload(ep.video)
                 head = side.head(track)
@@ -7059,14 +7369,6 @@ from collections.abc import Callable, Sequence
                 ep.video, ep.header, side, [track], ["srt", "ass"] if has_ass else ["srt"])
         return _with_track(ep, side, track), SaveResult(tuple(written), tuple(foreign),
                                                         tuple(conflicts), tuple(notes + more))
-```
-
-  Directly above `    def _check_open(self, ep: Episode) -> None:`, add (followed by one blank line):
-
-```python
-    def _writing_lock(self, video: Path) -> threading.Lock:
-        with self._lock:
-            return self._writing.setdefault(video, threading.Lock())
 ```
 
   In `_edit`, under `case ops.Split():`, replace
@@ -7268,9 +7570,194 @@ overwrite=bool(data))
 overwrite=existed)
 ```
 
+  In `src/vid2sub/store.py`, replace the module docstring's first paragraph's opening
+
+```python
+Appends use compare-and-swap: read the sidecar, add records, re-read just before replacing, and
+start over if another writer got there first; records are immutable with ids, so the merge is a
+union and nothing is lost. A sidecar vid2sub can't read is never overwritten. A subtitle file is
+```
+
+  with
+
+```python
+Appends use compare-and-swap: read the sidecar, add records, write them to a temporary file,
+re-read the sidecar just before the rename, and start over if another writer got there first;
+records are immutable with ids, so the merge is a union and nothing is lost. Within one process
+every append and projection holds the sidecar's lock (`write_lock`), so the editor's Save and a
+job's write never overlap; between processes only the moment between that re-read and the rename
+is unguarded (spec §14.6, §18.3; the Phase 2 plan's Decision 30, Dan's answer to the kickoff
+council). A sidecar vid2sub can't read is never overwritten. A subtitle file is
+```
+
+  below `from __future__ import annotations` (and its blank line), add
+
+```python
+import os
+import threading
+import unicodedata
+import weakref
+```
+
+  below the class `StoreError` (and its two blank lines), add (followed by two blank lines)
+
+```python
+class _Raced(Exception):
+    """Another writer replaced the sidecar after it was read: read it again and merge."""
+```
+
+  directly above `def load(video: Path) -> tuple[Sidecar | None, list[str]]:`, add (followed by
+  two blank lines)
+
+```python
+_LOCKS: weakref.WeakValueDictionary[tuple, threading.RLock] = weakref.WeakValueDictionary()
+_LOCKS_GUARD = threading.Lock()
+
+
+def write_lock(video: Path) -> threading.RLock:
+    """This process's one lock for `video`'s sidecar, held by every append and projection.
+
+    Keyed by the sidecar's folder as the file system knows it (device and inode) and its name
+    folded for case and Unicode form, so two spellings of one file (a linked folder, another case
+    on a case-insensitive volume) share it; folding a name on a case-sensitive volume only makes
+    two files take turns. Reentrant, so the editor's Save holds it around all its writes. Kept
+    only while someone holds it, so the engine doesn't gather one per video it ever saw."""
+    path = sidecar_path(video)
+    try:
+        folder = os.stat(path.parent)
+        key: tuple = (folder.st_dev, folder.st_ino,
+                      unicodedata.normalize("NFC", path.name).casefold())
+    except OSError:  # the folder is gone, and the write will say so
+        key = (os.path.normcase(os.path.realpath(path)),)
+    with _LOCKS_GUARD:
+        lock = _LOCKS.get(key)
+        if lock is None:
+            lock = _LOCKS[key] = threading.RLock()
+        return lock
+```
+
+  replace the function `append` with
+
+```python
+def append(video: Path, header: Header, records: Sequence) -> Sidecar:
+    path = sidecar_path(video)
+    with write_lock(video):
+        for _ in range(5):
+            before = path.read_bytes() if path.exists() else None
+            current = (parse_sidecar(_decode(before, path.name))[0] if before is not None
+                       else Sidecar(header))
+            data = serialize(current.add(*records)).encode("utf-8")
+
+            def unchanged(before: bytes | None = before) -> None:  # just before the rename
+                if (path.read_bytes() if path.exists() else None) != before:
+                    raise _Raced
+
+            try:
+                safe_write(path, data, overwrite=before is not None, check=unchanged)
+            except _Raced:
+                continue
+            return parse_sidecar(data.decode("utf-8"))[0]
+    raise StoreError("the sidecar kept changing while vid2sub saved it; try again")
+```
+
+  and replace the start of `project`, from its `def` line to its first statement,
+
+```python
+def project(video: Path, header: Header, sidecar: Sidecar, track: str, fmt: str, *,
+            overwrite_foreign: bool) -> tuple[Sidecar, Path, bool]:
+    """EditedOnDisk assumes the caller ran `check_external` first; that makes the edit a version.
+
+    A file holding an earlier projection's bytes (an interrupted write) is overwritten.
+    """
+    rec, cues = current_cues(sidecar, track)
+```
+
+  with
+
+```python
+def project(video: Path, header: Header, sidecar: Sidecar, track: str, fmt: str, *,
+            overwrite_foreign: bool) -> tuple[Sidecar, Path, bool]:
+    """EditedOnDisk assumes the caller ran `check_external` first; that makes the edit a version.
+
+    A file holding an earlier projection's bytes (an interrupted write) is overwritten. The
+    sidecar's write lock is held throughout, so a record and the file it describes go in together.
+    """
+    with write_lock(video):
+        return _project(video, header, sidecar, track, fmt, overwrite_foreign=overwrite_foreign)
+
+
+def _project(video: Path, header: Header, sidecar: Sidecar, track: str, fmt: str, *,
+             overwrite_foreign: bool) -> tuple[Sidecar, Path, bool]:
+    rec, cues = current_cues(sidecar, track)
+```
+
+  In `src/vid2sub/security.py`, replace the module docstring's
+
+```python
+Windows' sharing violations (Plex or antivirus holding the file) are retried. Child processes get
+```
+
+  with
+
+```python
+Windows' sharing violations (Plex or antivirus holding the file) are retried. A caller's check runs
+just before the replace, which is where the sidecar's compare-and-swap re-reads it (spec §14.6;
+the Phase 2 plan's Decision 30). Child processes get
+```
+
+  replace `from collections.abc import Iterable, Mapping` with
+  `from collections.abc import Callable, Iterable, Mapping`, replace
+
+```python
+def safe_write(path: Path, data: bytes, *, overwrite: bool) -> None:
+    path = Path(path)
+```
+
+  with
+
+```python
+def safe_write(path: Path, data: bytes, *, overwrite: bool,
+               check: Callable[[], None] | None = None) -> None:
+    """`check`, when given, runs once the data is on disk and just before the replace; if it
+    raises, the target is left as it was."""
+    path = Path(path)
+```
+
+  and replace
+
+```python
+            os.fsync(f.fileno())
+        _replace(tmp, path)
+```
+
+  with
+
+```python
+            os.fsync(f.fileno())
+        if check is not None:
+            check()
+        _replace(tmp, path)
+```
+
 - [ ] **Step 24: Run the checks; they pass.** `uv run pytest tests/test_backend_save.py
-  tests/test_backend_edit.py -q` first (`54 passed`), then `make check`. Expected: `688 passed,
-  2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
+  tests/test_backend_edit.py tests/test_store.py tests/test_security.py -q` first (`98 passed, 1
+  skipped`: a Windows-only test), then the guard checks, then `make check`. **Guard checks**
+  (Tier 1, Decision 30: revert one, run the same command, restore it, then the next):
+  1. *The re-check comes just before the rename:* in `append`, replace
+     `                safe_write(path, data, overwrite=before is not None, check=unchanged)` with
+     the two lines `                unchanged()` and
+     `                safe_write(path, data, overwrite=before is not None)`: `FAILED
+     tests/test_store.py::test_a_writer_that_replaces_the_sidecar_while_the_temporary_file_is_written_loses_nothing`,
+     `1 failed, 97 passed, 1 skipped`.
+  2. *One lock per sidecar:* in `write_lock`, replace its last five lines, from
+     `    with _LOCKS_GUARD:` to `        return lock`, with `    return threading.RLock()`:
+     `FAILED tests/test_backend_save.py::test_two_picks_at_once_are_made_one_after_the_other`,
+     `FAILED tests/test_backend_save.py::test_a_jobs_write_during_a_save_waits_for_it_and_both_keep_their_records`,
+     `FAILED tests/test_store.py::test_two_spellings_of_one_sidecar_share_its_write_lock`,
+     `3 failed, 95 passed, 1 skipped`.
+
+  `make check`. Expected: `707 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
+  `no leaks found`.
 - [ ] **Step 25: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -7285,9 +7772,19 @@ Save and pick when other writers are about (spec §14.4, §14.6, §15.3, §13.5)
 - A changed track whose head on disk (or one of whose diverged versions)
   already holds exactly these cues gets no new version, so the same Save
   sent twice never conflicts with itself.
-- Saves and picks on one video take turns within the engine (a lock per
-  video), so two picks at once can't append "A replaces B" and "B
-  replaces A", a cycle that left the track with no head.
+- One write lock per sidecar in the engine (store.write_lock, keyed by
+  its folder's device and inode and its name folded for case, so two
+  spellings of one file share it): every store.append and projection
+  takes it, and Saves and picks hold it throughout, so two picks at once
+  can't append "A replaces B" and "B replaces A", a cycle that left the
+  track with no head, and a Jobs-page job's append never lands inside a
+  Save (Decision 30; Dan's answer to the kickoff council, Q&A item 18;
+  reliability findings 1 and 12).
+- The compare-and-swap re-reads the sidecar just before the rename, as
+  spec §14.6 says, through safe_write's new check (run after the fsync,
+  before os.replace), so another process's write while the temporary
+  file is written is merged, not lost; between processes only the moment
+  between that re-read and the rename is unguarded (§18.3).
 - resolve refuses a track that isn't in conflict ("only one version"),
   so a stale pick never reloads a track being edited; a pick on the
   source brings the words of the transcript it was built from.
@@ -7298,18 +7795,25 @@ Save and pick when other writers are about (spec §14.4, §14.6, §15.3, §13.5)
   exists"); a file that fails to project for any reason is a note, never
   an exception, once the versions are in the sidecar.
 
-The eight new tests failed first, each on the finding it covers (among
+The twelve new tests failed first, each on the finding it covers (among
 them: assert () == ('en',) for the outside edit; DID NOT RAISE SaveError
-for the one-version pick; the second pick wasn't waiting).
+for the one-version pick; the second pick wasn't waiting; the other
+writer's and the job's records missing from the sidecar). Guards checked
+by reverting each: with the re-read back before safe_write, the other
+writer's test fails; with write_lock handing out a new lock each call,
+the two-spellings, two-picks and job tests fail.
 
-Docs read: none beyond the code (store.check_external, Sidecar.head's
-replacement-cycle rule).
+Docs read: the Python 3.12 docs for threading.RLock (reentrant, owned by
+the acquiring thread), weakref.WeakValueDictionary (an entry goes when
+its value is no longer referenced) and os.stat (st_dev, st_ino follow
+links); store.check_external, Sidecar.head's replacement-cycle rule.
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 6
 Co-Authored-By: <the model's own line>
 ```
 
-  `git add src/vid2sub/web/backend.py tests/test_backend_save.py tests/test_backend_edit.py`,
+  `git add src/vid2sub/web/backend.py src/vid2sub/store.py src/vid2sub/security.py
+  tests/test_backend_save.py tests/test_backend_edit.py tests/test_store.py tests/test_security.py`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
 - [ ] **Step 26: Write the failing tests:** an outside edit to a file written from an older
@@ -7322,7 +7826,8 @@ Co-Authored-By: <the model's own line>
   In `tests/test_store.py`, replace
 
 ```python
-from vid2sub.subs.sidecar import HeadRecord, SidecarError, make_rendition, parse_sidecar
+from vid2sub.subs.sidecar import (
+    HeadRecord,
 ```
 
   with
@@ -7331,10 +7836,6 @@ from vid2sub.subs.sidecar import HeadRecord, SidecarError, make_rendition, parse
 from vid2sub.subs.sidecar import (
     Conflict,
     HeadRecord,
-    SidecarError,
-    make_rendition,
-    parse_sidecar,
-)
 ```
 
   In `test_a_write_interrupted_after_its_record_is_not_taken_for_an_outside_edit`, replace (the record now names what the file holds)
@@ -7475,10 +7976,10 @@ def test_an_outside_edit_to_a_file_a_save_couldnt_write_diverges_from_the_save(b
                                                                               monkeypatch):
     real = store.safe_write
 
-    def full_disk(path, data, *, overwrite):
+    def full_disk(path, data, **kwargs):
         if path.suffix == ".srt":
             raise OSError(28, "No space left on device")
-        return real(path, data, overwrite=overwrite)
+        return real(path, data, **kwargs)
 
     monkeypatch.setattr(store, "safe_write", full_disk)
     ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
@@ -7542,7 +8043,7 @@ def test_a_line_reworded_and_retimed_outside_is_kept_as_a_persons_edit(backend, 
 ```
 
 - [ ] **Step 27: Run them; watch them fail.** `uv run pytest tests/test_store.py
-  tests/test_backend_save.py -q`. Expected: `6 failed, 50 passed`:
+  tests/test_backend_save.py -q`. Expected: `6 failed, 53 passed`:
   `test_an_outside_edit_to_a_file_from_an_older_version_diverges_from_the_head`
   (`E       AssertionError: assert False`, at `isinstance(head, Conflict)`),
   `test_a_failed_write_leaves_the_file_counted_as_the_version_it_still_holds`
@@ -7681,19 +8182,19 @@ automatically (Phase 2, Task 6).
      `latest.setdefault(proj.track, proj.rendition)` with M1's `if proj.track not in latest:`,
      `head = sidecar.head(proj.track)`, `if isinstance(head, HeadRecord):`,
      `latest[proj.track] = head.rendition`: the two outside-edit tests and the failed-write test
-     fail, `3 failed, 53 passed`.
+     fail, `3 failed, 56 passed`.
   2. *A failed write leaves the file counted as what it holds:* replace
      `append(video, header, [previous.model_copy(update={"at": at})])` with `pass`: the
-     failed-write test, the editor test and M1's interrupted-write test fail, `3 failed, 53
+     failed-write test, the editor test and M1's interrupted-write test fail, `3 failed, 56
      passed`.
   3. *A text edit keeps the model:* in `check_external`, change `model=projected_body.get(
      "model"),` to `model=None,`: `FAILED tests/test_backend_save.py::test_an_outside_edit_keeps_the_glossary_and_model_its_translation_was_made_with`,
-     `1 failed, 55 passed`.
+     `1 failed, 58 passed`.
   4. *A person's added line is theirs:* in `align_ids`, drop `, flags=("edited",)`: `FAILED
      tests/test_backend_save.py::test_a_line_reworded_and_retimed_outside_is_kept_as_a_persons_edit`,
-     `1 failed, 55 passed`.
+     `1 failed, 58 passed`.
 
-  `make check`. Expected: `694 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
+  `make check`. Expected: `713 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
   `no leaks found`.
 - [ ] **Step 30: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -7791,7 +8292,7 @@ def test_a_term_added_at_save_makes_every_translation_stale_as_intended(backend,
 
 - [ ] **Step 32: Run it; watch it fail.** `uv run pytest tests/test_backend_save.py -q`.
   Expected: `E       AssertionError: assert Glossary(desc...='', terms=()) == Glossary(desc...ichi
-  Kudo'),))` (the saved episode still held the glossary as it was at open) and `1 failed, 35
+  Kudo'),))` (the saved episode still held the glossary as it was at open) and `1 failed, 36
   passed`.
 - [ ] **Step 33: Write the code.**
   In `src/vid2sub/web/backend.py`'s module docstring, replace
@@ -7836,7 +8337,7 @@ cues would keep pointing at ids that are gone.
 ```
 
 - [ ] **Step 34: Run the checks; they pass.** `uv run pytest tests/test_backend_save.py -q` first
-  (`36 passed`), then `make check`. Expected: `695 passed, 2 skipped, 4 deselected` twice,
+  (`37 passed`), then `make check`. Expected: `714 passed, 2 skipped, 4 deselected` twice,
   `All checks passed!` and `no leaks found`.
 - [ ] **Step 35: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -7865,17 +8366,513 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/web/backend.py tests/test_backend_save.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 36: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+#### Round 6h: what the Tier 1 review found
+
+The Tier 1 review (Step 41's reviewer, run before the close) found two Important and five Minor
+findings in Decisions 30 and 31's code; this round fixes six, test-first, and the seventh (the
+glossary's own write, one file per folder, with no lock) goes on the Phase-end list. Its
+re-review then found one new Minor (`pipeline._write` decides from the sidecar it holds while
+`project` now projects the head on disk), also for the Phase-end list.
+
+- [ ] **Step 36: Write the failing tests.** In `tests/test_store.py`, below `import sys` add
+  `import threading`, and in the `vid2sub.subs.sidecar` import, below `    HeadRecord,` add
+  `    Sidecar,`. Then directly above
+  `@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")` (the
+  line before `def test_two_spellings_of_one_sidecar_share_its_write_lock(tmp_path):`), add (each
+  function followed by two blank lines):
+
+```python
+def test_a_sidecar_another_writer_makes_after_vid2sub_found_none_is_merged(video, monkeypatch):
+    other = make_rendition([], "ja", {"kind": "cues"})
+    real, calls = store.serialize, []
+
+    def racing(sidecar):  # another process makes the sidecar after vid2sub looked for it
+        if not calls:
+            calls.append(1)
+            store.sidecar_path(video).write_text(real(Sidecar(header(video), (other,))),
+                                                 encoding="utf-8")
+        return real(sidecar)
+
+    monkeypatch.setattr(store, "serialize", racing)
+    mine = make_rendition([], "en", {"kind": "cues", "n": 2})
+    side = store.append(video, header(video), [mine])
+    assert other.id in side.renditions() and mine.id in side.renditions()
+
+
+def test_a_sidecar_read_before_another_writers_save_is_read_again_and_nothing_is_adopted(video):
+    side = with_track(video)
+    stale, path, _ = store.project(video, header(video), side, "en", "srt",
+                                   overwrite_foreign=False)
+    # meanwhile another writer (the editor's Save) puts a newer version and writes its file
+    side = with_track(video, cues=[CUES[0], CUES[1].model_copy(update={"text": "Planet"})])
+    store.project(video, header(video), side, "en", "srt", overwrite_foreign=False)
+    now, _ = store.load(video)
+    side, changed = store.check_external(video, header(video), stale)
+    assert changed == [] and side == now  # its file is no outside edit
+    side, _, written = store.project(video, header(video), stale, "en", "srt",
+                                     overwrite_foreign=False)
+    assert not written and side == now and "Planet" in path.read_text(encoding="utf-8")
+
+
+def locked_elsewhere(video) -> bool:
+    """Whether another thread would have to wait for the video's sidecar lock just now."""
+    got: list[bool] = []
+
+    def try_it() -> None:
+        lock = store.write_lock(video)
+        got.append(lock.acquire(blocking=False))
+        if got[0]:
+            lock.release()
+
+    other = threading.Thread(target=try_it)
+    other.start()
+    other.join()
+    return not got[0]
+
+
+def test_a_projection_holds_the_sidecars_write_lock_while_it_writes(video, monkeypatch):
+    side = with_track(video)
+    real, held = security._replace, []
+
+    def watched(src, dst, **kwargs):
+        held.append((dst.name, locked_elsewhere(video)))
+        real(src, dst, **kwargs)
+
+    monkeypatch.setattr(security, "_replace", watched)
+    store.project(video, header(video), side, "en", "srt", overwrite_foreign=False)
+    assert held == [(store.sidecar_path(video).name, True), ("Show - S01E02.en.srt", True)]
+```
+
+  In `tests/test_security.py`, directly above `def test_redact_removes_every_secret_value():`,
+  add (followed by two blank lines):
+
+```python
+def test_on_windows_each_retry_of_a_refused_replace_checks_again_first(tmp_path, monkeypatch):
+    # Plex or antivirus holding the file makes Windows refuse the replace, retried for seconds;
+    # another writer may change things meanwhile, so the check runs before every try.
+    monkeypatch.setattr(s, "_WINDOWS", True)
+    monkeypatch.setattr(s.time, "sleep", lambda seconds: None)
+    target, real, order = tmp_path / "a.srt", os.replace, []
+
+    def held_once(src, dst):
+        order.append("replace")
+        if order.count("replace") == 1:
+            raise PermissionError(13, "in use")
+        real(src, dst)
+
+    monkeypatch.setattr(s.os, "replace", held_once)
+    s.safe_write(target, b"new", overwrite=False, check=lambda: order.append("check"))
+    assert order == ["check", "replace", "check", "replace"] and target.read_bytes() == b"new"
+```
+
+  In `tests/test_edit.py`, directly above
+  `def test_the_same_edits_with_the_same_ids_make_the_same_tracks():`, add (followed by two blank
+  lines):
+
+```python
+def test_an_edit_the_tracks_refuse_leaves_taken_as_it_was():
+    # merging joins ta and tb across a detached cue between them, which the en track can't hold
+    a, b = cue("a", 0, 1000, "x"), cue("b", 2000, 3000, "y")
+    en = (cue("ta", 0, 1000, "X", src=("a",)),
+          cue("tx", 1200, 1800, "Z", src=("gone",), detached=True),
+          cue("tb", 2000, 3000, "Y", src=("b",)))
+    taken = {"a", "b", "ta", "tx", "tb"}
+    with pytest.raises(EditError, match="the en track would break"):
+        edit.merge_next(Tracks((a, b), {"en": en}), "a", new_id=M, joined_ids={"en": J},
+                        taken=taken)
+    assert taken == {"a", "b", "ta", "tx", "tb"}
+```
+
+  In `tests/test_backend_save.py`, replace `from vid2sub.web import views` with the two lines
+  `from vid2sub.web import backend as web_backend` and `from vid2sub.web import views`, and replace
+  the test `test_a_jobs_write_during_a_save_waits_for_it_and_both_keep_their_records`
+
+```python
+def test_a_jobs_write_during_a_save_waits_for_it_and_both_keep_their_records(backend, video,
+                                                                              monkeypatch):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    # what a Jobs-page job appends first, from its worker thread
+    theirs = make_rendition([], None, transcript_for(source_cues(3), audio_track=0, quick="q"))
+    real_replace, appended, job = security._replace, threading.Event(), []
+
+    def mid_save(src, dst):  # the Save has re-read the sidecar and is about to rename its own
+        if dst == store.sidecar_path(video) and not job:
+            job.append(threading.Thread(target=lambda: (
+                store.append(video, ep.header, [theirs]), appended.set())))
+            job[0].start()
+            appended.wait(0.5)  # done by now, unless the Save's lock holds it back (Decision 30)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(security, "_replace", mid_save)
+    saved, _ = backend.save(ep, formats=["srt"])
+    job[0].join(5)
+    side, _ = store.load(video)
+    assert theirs.id in side.renditions() and saved.heads["ja"] in side.renditions()
+```
+
+  with (the lock is checked from another thread while the Save decides and at each of its
+  writes, and a helper for it follows)
+
+```python
+def test_a_jobs_write_during_a_save_waits_for_it_and_both_keep_their_records(backend, video,
+                                                                              monkeypatch):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    # what a Jobs-page job appends first, from its worker thread
+    theirs = make_rendition([], None, transcript_for(source_cues(3), audio_track=0, quick="q"))
+    real_replace, appended, job, held = security._replace, threading.Event(), [], []
+
+    def mid_save(src, dst, **kwargs):  # each file the Save writes, just before it is renamed
+        held.append((dst.name, locked_elsewhere(video)))
+        if dst == store.sidecar_path(video) and not job:
+            job.append(threading.Thread(target=lambda: (
+                store.append(video, ep.header, [theirs]), appended.set())))
+            job[0].start()
+            appended.wait(0.5)  # done by now, unless the Save's lock holds it back (Decision 30)
+        real_replace(src, dst, **kwargs)
+
+    def versions(ep, side):  # between reading the sidecar and writing to it
+        held.append(("deciding", locked_elsewhere(video)))
+        return real_versions(ep, side)
+
+    real_versions = web_backend._versions
+    monkeypatch.setattr(web_backend, "_versions", versions)
+    monkeypatch.setattr(security, "_replace", mid_save)
+    saved, _ = backend.save(ep, formats=["srt"])
+    job[0].join(5)
+    side, _ = store.load(video)
+    assert theirs.id in side.renditions() and saved.heads["ja"] in side.renditions()
+    # the lock was held throughout: deciding, then writing its versions, record and SRT
+    assert {name for name, _ in held} == {"deciding", store.sidecar_path(video).name, JA}
+    assert all(locked for _, locked in held)
+
+
+def locked_elsewhere(video) -> bool:
+    """Whether another thread would have to wait for the video's sidecar lock just now."""
+    got: list[bool] = []
+
+    def try_it() -> None:
+        lock = store.write_lock(video)
+        got.append(lock.acquire(blocking=False))
+        if got[0]:
+            lock.release()
+
+    other = threading.Thread(target=try_it)
+    other.start()
+    other.join()
+    return not got[0]
+```
+
+- [ ] **Step 37: Run them; watch them fail.** `uv run pytest tests/test_store.py
+  tests/test_security.py tests/test_backend_save.py tests/test_edit.py -q`. Expected:
+  `4 failed, 124 passed, 1 skipped`, the four being
+  `test_a_sidecar_another_writer_makes_after_vid2sub_found_none_is_merged` (`WriteRefused: … already
+  exists`), `test_a_sidecar_read_before_another_writers_save_is_read_again_and_nothing_is_adopted`
+  (`AssertionError: assert (['en'] == []`: the other writer's file taken for an outside edit),
+  `test_on_windows_each_retry_of_a_refused_replace_checks_again_first` (`AttributeError: … has no
+  attribute '_WINDOWS'`) and `test_an_edit_the_tracks_refuse_leaves_taken_as_it_was`
+  (`AssertionError: assert {'a', 'b', 'c...a', 'tb', ...} == {'a', 'b', 'ta', 'tb', 'tx'}`). The
+  projection-lock test and the changed job test pass already: they pin what round 6e built, and
+  Step 39's guard checks show them failing without it.
+- [ ] **Step 38: Write the code.** In `src/vid2sub/subs/edit.py`, in `split`, replace
+
+```python
+    _claim(taken, *ids)
+    a = Cue(id=ids[0], start_ms=c.start_ms, end_ms=at_ms, text=left, from_=(c.id,),
+```
+
+  with
+
+```python
+    _check_new_ids(taken, *ids)
+    a = Cue(id=ids[0], start_ms=c.start_ms, end_ms=at_ms, text=left, from_=(c.id,),
+```
+
+  and
+
+```python
+    return _done(_splice(t.source, i, 1, a, b), translations), (a.id, b.id)
+```
+
+  with
+
+```python
+    out = _done(_splice(t.source, i, 1, a, b), translations)
+    taken.update(ids)
+    return out, (a.id, b.id)
+```
+
+  in `merge_next`, replace `    _claim(taken, new_id, *joined_ids.values())` with
+  `    _check_new_ids(taken, new_id, *joined_ids.values())`, and
+
+```python
+    return _done(_splice(t.source, i, 2, m), translations), m.id
+```
+
+  with
+
+```python
+    out = _done(_splice(t.source, i, 2, m), translations)
+    taken.update((new_id, *joined_ids.values()))
+    return out, m.id
+```
+
+  in `insert`, replace
+
+```python
+    _claim(taken, new_id)
+    new = Cue(id=new_id, start_ms=start, end_ms=end, text=body)
+    return _done(_splice(t.source, i, 0, new), t.translations), new.id
+```
+
+  with
+
+```python
+    _check_new_ids(taken, new_id)
+    new = Cue(id=new_id, start_ms=start, end_ms=end, text=body)
+    out = _done(_splice(t.source, i, 0, new), t.translations)
+    taken.add(new_id)
+    return out, new.id
+```
+
+  and replace the function `_claim`
+
+```python
+def _claim(taken: set[str], *ids: str) -> None:
+    """New cues' ids come from the caller, so each is checked: `model.new_cue_id`'s shape, none
+    twice, none taken. All of them join `taken`, or none does."""
+    if not all(isinstance(i, str) and _NEW_ID.fullmatch(i) for i in ids):
+        raise EditError("a new cue's id is c and 8 lowercase hex digits")
+    if len(set(ids)) < len(ids) or any(i in taken for i in ids):
+        raise EditError("a new cue's id is already in use; try again")
+    taken.update(ids)
+```
+
+  with
+
+```python
+def _check_new_ids(taken: set[str], *ids: str) -> None:
+    """New cues' ids come from the caller, so each is checked: `model.new_cue_id`'s shape, none
+    twice, none taken. They join `taken` only once the edit is made."""
+    if not all(isinstance(i, str) and _NEW_ID.fullmatch(i) for i in ids):
+        raise EditError("a new cue's id is c and 8 lowercase hex digits")
+    if len(set(ids)) < len(ids) or any(i in taken for i in ids):
+        raise EditError("a new cue's id is already in use; try again")
+```
+
+  In `src/vid2sub/security.py`, below `_TAILNET = ipaddress.ip_network("100.64.0.0/10")` add
+  `_WINDOWS = os.name == "nt"`; replace
+
+```python
+def _replace(src: Path, dst: Path, attempts: int = 6) -> None:
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if os.name != "nt" or i == attempts - 1:
+```
+
+  with
+
+```python
+def _replace(src: Path, dst: Path, attempts: int = 6,
+             check: Callable[[], None] | None = None) -> None:
+    for i in range(attempts):
+        if check is not None:  # before every attempt: a retry may come seconds later
+            check()
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if not _WINDOWS or i == attempts - 1:
+```
+
+  replace `safe_write`'s docstring
+
+```python
+    """`check`, when given, runs once the data is on disk and just before the replace; if it
+    raises, the target is left as it was."""
+```
+
+  with
+
+```python
+    """`check`, when given, runs once the data is on disk and just before the replace (before
+    each try of it, on Windows); if it raises, the target is left as it was."""
+```
+
+  and replace
+
+```python
+        if check is not None:
+            check()
+        _replace(tmp, path)
+```
+
+  with `        _replace(tmp, path, check=check)`.
+
+  In `src/vid2sub/store.py`, in `append`, replace
+
+```python
+            def unchanged(before: bytes | None = before) -> None:  # just before the rename
+                if (path.read_bytes() if path.exists() else None) != before:
+                    raise _Raced
+
+            try:
+                safe_write(path, data, overwrite=before is not None, check=unchanged)
+```
+
+  with
+
+```python
+            def unchanged(before: bytes | None = before) -> None:  # just before the rename
+                try:
+                    latest = path.read_bytes()
+                except FileNotFoundError:
+                    latest = None
+                if latest != before:
+                    raise _Raced
+
+            try:  # a sidecar made meanwhile is caught by `unchanged`, then merged
+                safe_write(path, data, overwrite=True, check=unchanged)
+```
+
+  in `project`, replace
+
+```python
+    sidecar's write lock is held throughout, so a record and the file it describes go in together.
+    """
+    with write_lock(video):
+        return _project(video, header, sidecar, track, fmt, overwrite_foreign=overwrite_foreign)
+```
+
+  with
+
+```python
+    sidecar's write lock is held throughout, so a record and the file it describes go in together,
+    and the sidecar is read again inside it: the caller's may be from before another writer's
+    Save, whose file would otherwise look like an outside edit.
+    """
+    with write_lock(video):
+        return _project(video, header, load(video)[0] or sidecar, track, fmt,
+                        overwrite_foreign=overwrite_foreign)
+```
+
+  and in `check_external`, replace
+
+```python
+    chain their heads rather than diverge.
+    """
+    renditions = sidecar.renditions()
+```
+
+  with
+
+```python
+    chain their heads rather than diverge. Like `project`, it holds the sidecar's write lock and
+    reads the sidecar again inside it, so another writer's Save is never taken for an outside edit.
+    """
+    with write_lock(video):
+        return _check_external(video, header, load(video)[0] or sidecar,
+                               on_unreadable=on_unreadable)
+
+
+def _check_external(video: Path, header: Header, sidecar: Sidecar, *,
+                    on_unreadable: Callable[[str], None] | None,
+                    ) -> tuple[Sidecar, list[str]]:
+    renditions = sidecar.renditions()
+```
+
+- [ ] **Step 39: Run the checks; they pass.** The same `uv run pytest` command first (`128
+  passed, 1 skipped`), then the guard checks, then `make check`. **Guard checks** (revert one,
+  run the command, restore it, then the next; each fails alone):
+  1. *Read again under the lock:* in `project` and `check_external`, change
+     `load(video)[0] or sidecar` to `sidecar`: `FAILED
+     tests/test_store.py::test_a_sidecar_read_before_another_writers_save_is_read_again_and_nothing_is_adopted`.
+  2. *Check before every try:* in `_replace`, take out the two lines from
+     `        if check is not None:  # before every attempt` and in `safe_write` put back
+     `if check is not None:`, `check()` and `_replace(tmp, path)`: `FAILED
+     tests/test_security.py::test_on_windows_each_retry_of_a_refused_replace_checks_again_first`.
+  3. *A sidecar made meanwhile is merged:* in `append`, change `overwrite=True` back to
+     `overwrite=before is not None`: `FAILED
+     tests/test_store.py::test_a_sidecar_another_writer_makes_after_vid2sub_found_none_is_merged`.
+  4. *A projection holds the lock:* in `project`, change `    with write_lock(video):` to
+     `    if True:`: `FAILED tests/test_store.py::test_a_projection_holds_the_sidecars_write_lock_while_it_writes`.
+  5. *Ids join `taken` once the edit is made:* in `merge_next`, add
+     `    taken.update((new_id, *joined_ids.values()))` below its `_check_new_ids(…)` line:
+     `FAILED tests/test_edit.py::test_an_edit_the_tracks_refuse_leaves_taken_as_it_was`.
+  6. *The Save holds the lock throughout:* in `LocalBackend.save`, change
+     `with store.write_lock(ep.video):` to `if True:`: `FAILED
+     tests/test_backend_save.py::test_a_jobs_write_during_a_save_waits_for_it_and_both_keep_their_records`.
+
+  Each run gives `1 failed, 127 passed, 1 skipped`. `make check`. Expected: `719 passed, 2
+  skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
+- [ ] **Step 40: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(store): 🤖 a projection and an outside-edit check read the sidecar again under its lock, and a retried replace checks again first
+
+The Tier 1 review of Decision 30's lock and Decision 31's ids found:
+- store.project and store.check_external decided from the sidecar their
+  caller read, perhaps before another writer's Save: its file then
+  looked like an outside edit (a spurious external version and
+  conflict) or was refused as EditedOnDisk. Both now hold the sidecar's
+  write lock and read the sidecar again inside it (Important).
+- On Windows, a replace refused by Plex or antivirus is retried for up
+  to about 6 s; the compare-and-swap's check ran once, before the first
+  try. It now runs before every try (Important).
+- An append that found no sidecar refused with "already exists" when
+  another process made one meanwhile; it now writes with
+  overwrite=True and lets its check, which sees the new file, start
+  over and merge. A sidecar deleted between the check's exists and
+  read counts as gone (Minor).
+- Nothing pinned that a projection, or the whole of a Save, holds the
+  lock: the job test now checks from another thread that the lock is
+  taken while the Save decides and at each of its writes, and a store
+  test does the same for a projection (Minor).
+- subs.edit claimed new ids into taken before the track checks, so an
+  edit those refused still grew taken: escaped from Task 2 (Tier 2),
+  found by Task 6's Tier 1 review. Ids join taken only once the edit is
+  made (Minor).
+The glossary's own write (one file per folder, no lock) is left as it
+was and goes on the Phase-end list (Minor).
+
+The five new tests failed first, each on its finding (among them:
+check_external adopted the other writer's file as ['en']; the retry ran
+the check once; WriteRefused: ... already exists). Guards checked by
+reverting each fix: the stale-sidecar, Windows-retry, new-sidecar,
+projection-lock and taken tests each fail alone; with the backend's
+Save holding no lock, the job test fails.
+
+Docs read: the Python 3.12 docs for threading.RLock (acquire with
+blocking=False returns False while another thread owns it) and
+os.replace ("replaced silently if the user has permission"; they say
+nothing of a file another program holds open, so the retry stays M1's
+own, security._replace, which catches PermissionError).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 6
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/store.py src/vid2sub/security.py src/vid2sub/subs/edit.py
+  tests/test_store.py tests/test_security.py tests/test_backend_save.py tests/test_edit.py`,
+  `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 41: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist: secrets (none touched: no key or
   token is read here); permissions (the glossary and subtitle files go through `safe_write`,
   never through a link); network exposure (none: no network call in this task); failing closed
   (a sidecar vid2sub can't read, or one that's gone, stops the Save before anything is written;
-  a conflicted track is never written or re-headed); injection (`parse_op` refuses unknown
+  a conflicted track is never written or re-headed; every write to a sidecar holds its lock and
+  decides from a re-read under it; the compare-and-swap's check runs before each try of the
+  rename); injection (`parse_op` refuses unknown
   fields and kinds, coerces nothing, bounds every value, and never echoes one; `resolve` checks
-  the track before naming it); logging (no logger here; every message names files by their bare
-  name only)); the forward review over Tasks 7, 15, 16 and 17 (Task 7's `retranslate` pushes
+  the track before naming it; a new cue's id is anchored `c` + 8 hex at the door and in
+  `subs.edit`, and one taken is refused); logging (no logger here; every message names files by
+  their bare name only); its findings are round 6h's, before this step's close, with one
+  re-review over that round's diff); the forward review over Tasks 7, 15, 16 and 17 (Task 7's `retranslate` pushes
   one undo step as `apply` does and reads `_editable`; Task 15's `edit`, `undo` and `redo`
-  inputs call `parse_op`, show a `BadOp` or `EditError` as a notice, and may run `apply` on the
+  inputs call `parse_op` (a split, merge or insert carrying the ids the page drew), show a `BadOp` or `EditError` as a notice, and may run `apply` on the
   event loop (about 0.02 s for a 2,000-cue episode); Task 16's `save` and `resolve` inputs run
   off the event loop, show `SaveResult` as the `save_result` message (written, foreign, conflicts,
   notes), offer the conflict picker from the view's `conflicts`, and now take `resolve`'s
@@ -8079,7 +9076,7 @@ def test_an_edited_translation_is_kept_when_retranslating_stale(backend, video, 
 
 def test_an_inserted_cue_is_translated_as_untranslated(backend, video, asked):
     ep = edit(backend, backend.open(str(video)), op="insert", start_ms=3100, end_ms=3500,
-              text="えっ")
+              text="えっ", id="cc0000001")
     inserted = ep.tracks.source[1].id
     out = backend.retranslate(ep, "en", ids=None)
     assert asked == [[inserted]]
@@ -8090,7 +9087,7 @@ def test_a_cue_inserted_inside_a_translation_spanning_two_cues_is_translated_wit
         backend, video, asked):
     spanning(video)
     ep = edit(backend, backend.open(str(video)), op="insert", start_ms=6700, end_ms=7100,
-              text="えっ")
+              text="えっ", id="cc0000001")
     inserted = ep.tracks.source[2].id
     out = backend.retranslate(ep, "en", ids=None)
     assert asked == [[sid(1), inserted, sid(2)]]
@@ -8104,7 +9101,7 @@ def test_an_edited_translation_spanning_an_inserted_cue_keeps_it_untranslated(ba
                                                                              asked):
     spanning(video, edited=True)
     ep = edit(backend, backend.open(str(video)), op="insert", start_ms=6700, end_ms=7100,
-              text="えっ")
+              text="えっ", id="cc0000001")
     assert backend.retranslate(ep, "en", ids=None) is ep and asked == []
 
 
@@ -8312,8 +9309,10 @@ lost. Only then are the files written, through `store.project` with `overwrite_f
 someone else's file is left alone and reported (§6.6, §15.3), and a track in conflict isn't
 written until a person picks a version with `resolve`, the only thing that moves a head on a
 conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
-written is a note, and the episode moves to the new heads either way. Saves and picks on one
-video take turns within this engine, so two picks at once can't replace each other in a cycle.
+written is a note, and the episode moves to the new heads either way. Saves and picks hold the
+sidecar's write lock (`store.write_lock`, keyed by its real path), which every other append and
+projection in this engine takes too, so two picks at once can't replace each other in a cycle and
+a job's write never lands inside a Save (Decision 30).
 Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
 so its comments survive, and the file is read back: a term just added makes every translation
 made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
@@ -8362,8 +9361,10 @@ lost. Only then are the files written, through `store.project` with `overwrite_f
 someone else's file is left alone and reported (§6.6, §15.3), and a track in conflict isn't
 written until a person picks a version with `resolve`, the only thing that moves a head on a
 conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
-written is a note, and the episode moves to the new heads either way. Saves and picks on one
-video take turns within this engine, so two picks at once can't replace each other in a cycle.
+written is a note, and the episode moves to the new heads either way. Saves and picks hold the
+sidecar's write lock (`store.write_lock`, keyed by its real path), which every other append and
+projection in this engine takes too, so two picks at once can't replace each other in a cycle and
+a job's write never lands inside a Save (Decision 30).
 Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
 so its comments survive, and the file is read back: a term just added makes every translation
 made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
@@ -8626,7 +9627,7 @@ def _runs(chosen: Sequence[str], order: dict[str, int], by_id: dict[str, Cue]
   tests/test_backend_retranslate.py::test_a_cue_inserted_inside_a_translation_spanning_two_cues_is_translated_with_them`
   (`the en track would break: cue … overlaps cb0000009`), the edited variant, and the property
   test (`cue n0 overlaps t3`, or another), `3 failed, 13 passed`; restore it. `make check`.
-  Expected: `711 passed, 2 skipped, 4 deselected` twice (the local zone, then UTC),
+  Expected: `735 passed, 2 skipped, 4 deselected` twice (the local zone, then UTC),
   `All checks passed!` and `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -8810,8 +9811,10 @@ lost. Only then are the files written, through `store.project` with `overwrite_f
 someone else's file is left alone and reported (§6.6, §15.3), and a track in conflict isn't
 written until a person picks a version with `resolve`, the only thing that moves a head on a
 conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
-written is a note, and the episode moves to the new heads either way. Saves and picks on one
-video take turns within this engine, so two picks at once can't replace each other in a cycle.
+written is a note, and the episode moves to the new heads either way. Saves and picks hold the
+sidecar's write lock (`store.write_lock`, keyed by its real path), which every other append and
+projection in this engine takes too, so two picks at once can't replace each other in a cycle and
+a job's write never lands inside a Save (Decision 30).
 Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
 so its comments survive, and the file is read back: a term just added makes every translation
 made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
@@ -8870,8 +9873,10 @@ lost. Only then are the files written, through `store.project` with `overwrite_f
 someone else's file is left alone and reported (§6.6, §15.3), and a track in conflict isn't
 written until a person picks a version with `resolve`, the only thing that moves a head on a
 conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
-written is a note, and the episode moves to the new heads either way. Saves and picks on one
-video take turns within this engine, so two picks at once can't replace each other in a cycle.
+written is a note, and the episode moves to the new heads either way. Saves and picks hold the
+sidecar's write lock (`store.write_lock`, keyed by its real path), which every other append and
+projection in this engine takes too, so two picks at once can't replace each other in a cycle and
+a job's write never lands inside a Save (Decision 30).
 Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
 so its comments survive, and the file is read back: a term just added makes every translation
 made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
@@ -9135,7 +10140,7 @@ def track_setup(ep: Episode, track: str) -> tuple[str, str | None]:
   `retranslate`, pass `None` for `glossary.sha()` in the `setup_changed(...)` call: the
   glossary test and the save test fail, `2 failed, 18 passed`; restore it; then pass `None` for
   `entry.model`: the two model tests fail, `2 failed, 18 passed`; restore it. `make check`.
-  Expected: `715 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks
+  Expected: `739 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks
   found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -9299,7 +10304,7 @@ dev = [
   is covered.
 
 - [ ] **Step 2: Run the checks; they pass.** `make check`. Expected: the suite's line, twice,
-  `715 passed, 2 skipped, 4 deselected`, as at Task 7's close (no test is new yet), then
+  `739 passed, 2 skipped, 4 deselected`, as at Task 7's close (no test is new yet), then
   `All checks passed!` and `no leaks found`.
 
 - [ ] **Step 3: Commit.** Write the message to `.git/COMMIT_MSG`:
@@ -9889,7 +10894,7 @@ class WriteGuard:
 ```
 
 - [ ] **Step 7: Run the checks; they pass.** `uv run pytest tests/test_web_guards.py -q`.
-  Expected: `55 passed`. Then `make check`. Expected: `770 passed, 2 skipped, 4 deselected`
+  Expected: `55 passed`. Then `make check`. Expected: `794 passed, 2 skipped, 4 deselected`
   twice, `All checks passed!`, `no leaks found`. Ruff's default rules leave out line length, so also
   check it: `uv run python -c "import sys; [print(f, i) for f in sys.argv[1:] for i, l in
   enumerate(open(f, encoding='utf-8'), 1) if len(l.rstrip()) > 100]"
@@ -10651,7 +11656,7 @@ class TokenGuard:
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_auth.py -q`.
-  Expected: `62 passed`. Then `make check`. Expected: `832 passed, 2 skipped, 4 deselected`
+  Expected: `62 passed`. Then `make check`. Expected: `856 passed, 2 skipped, 4 deselected`
   twice, `All checks passed!`, `no leaks found`. Line length, which ruff's default rules leave out:
   `uv run python -c "import sys; [print(f, i) for f in sys.argv[1:] for i, l in
   enumerate(open(f, encoding='utf-8'), 1) if len(l.rstrip()) > 100]" src/vid2sub/web/auth.py
@@ -11228,7 +12233,7 @@ def route(tokens: MediaTokens) -> BaseRoute:
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_media.py -q`.
-  Expected: `41 passed`. Then `make check`. Expected: `873 passed, 2 skipped, 4 deselected`
+  Expected: `41 passed`. Then `make check`. Expected: `897 passed, 2 skipped, 4 deselected`
   twice, `All checks passed!`, `no leaks found`. Line length: `uv run python -c "import sys;
   [print(f, i) for f in sys.argv[1:] for i, l in enumerate(open(f, encoding='utf-8'), 1) if
   len(l.rstrip()) > 100]" src/vid2sub/web/media.py tests/test_web_media.py` prints nothing.
@@ -11722,7 +12727,7 @@ def create_app(rt: Runtime, *, token: str, port: int, shiny_app: ASGIApp) -> ASG
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_app.py -q`. Expected:
   `22 passed`. Then `make check`. Expected: the suite's line, twice,
-  `895 passed, 2 skipped, 4 deselected` with nothing failed (873 before this task when this
+  `919 passed, 2 skipped, 4 deselected` with nothing failed (873 before this task when this
   listing was built), `All checks passed!` and `no leaks found`. Line length, which ruff's
   default rules leave out: `uv run python -c "import sys; [print(f, i) for f in sys.argv[1:] for i, l in enumerate(open(f, encoding='utf-8'), 1) if len(l.rstrip()) > 100]" src/vid2sub/web/runtime.py src/vid2sub/web/app.py
   tests/test_web_app.py` prints nothing.
@@ -12234,7 +13239,7 @@ COMMAND_MODULES: list[str] = [
 
 - [ ] **Step 10: Run the checks; they pass.** `uv run pytest tests/test_cli_serve.py -q`.
   Expected: `13 passed in 7.74s` or so (each child process starts the CLI). Then `make check`.
-  Expected: `908 passed, 2 skipped, 4 deselected` twice, `All checks passed!`,
+  Expected: `932 passed, 2 skipped, 4 deselected` twice, `All checks passed!`,
   `no leaks found`; the line-length check on the three files prints nothing.
 
 - [ ] **Step 11: Each guard fails its tests without its fix.** `git add src/vid2sub/commands/serve.py src/vid2sub/cli.py tests/test_cli_serve.py`. Then,
@@ -12990,7 +13995,7 @@ def _open(page: Path, out: Output) -> None:
 
 - [ ] **Step 16: Run the checks; they pass.** `uv run pytest tests/test_cli_serve.py
   tests/test_web_app.py -q`. Expected: `41 passed in 21.02s` or so. Then `make check`. Expected:
-  `914 passed, 2 skipped, 4 deselected` twice, `All checks passed!`, `no leaks found`; the
+  `938 passed, 2 skipped, 4 deselected` twice, `All checks passed!`, `no leaks found`; the
   line-length check on the changed files prints nothing.
 
 - [ ] **Step 17: Each guard fails its tests without its fix.** `git add src/vid2sub/commands/serve.py src/vid2sub/web/__init__.py src/vid2sub/web/app.py tests/test_cli_serve.py tests/test_web_app.py`. Then,
@@ -14584,7 +15589,7 @@ skills-lock.json
   `../src/vid2sub/web/www/ui.js   71.15 kB`, `✓ built in` (Vite also says each `/fonts/…` URL
   "didn't resolve at build time, it will remain unchanged to be resolved at runtime", which is
   meant: the engine serves `www/` at "/"). `make test-js`. Expected: `Test Files  4 passed (4)`,
-  `Tests  19 passed (19)`. `make check`. Expected: `917 passed, 2 skipped, 4 deselected` twice,
+  `Tests  19 passed (19)`. `make check`. Expected: `941 passed, 2 skipped, 4 deselected` twice,
   the Vitest lines again, `All checks passed!`, `no leaks found`. `make help` lists `build`,
   `test-js`, `brand` and `skills`. `git check-ignore -v frontend/src/lib/theme.ts` prints nothing
   (the template's `lib/` no longer hides it); `src/vid2sub/web/www/ui.js` and
@@ -15082,7 +16087,7 @@ def _rows(ep: Episode) -> list[dict[str, Any]]:
 - [ ] **Step 10: Run the checks; they pass.** `uv run pytest tests/test_web_server.py -q`.
   Expected: `9 passed`. Without the build (move `www/ui.js` and `ui.css` aside) it still passes,
   with shinyreact's "JS entry point not found" warnings, as CI's Python job will. `make check`.
-  Expected: `926 passed, 2 skipped, 4 deselected` twice, `Test Files  4 passed (4)`,
+  Expected: `950 passed, 2 skipped, 4 deselected` twice, `Test Files  4 passed (4)`,
   `All checks passed!`, `no leaks found`.
 - [ ] **Step 11: Each guard fails its tests without its fix.** `git add src/vid2sub/web/server.py
   src/vid2sub/web/views.py src/vid2sub/web/static/busy/busy-indicators.js
@@ -15651,8 +16656,8 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
 ```
 
 - [ ] **Step 16: Run the checks; they pass.** `make test-js`. Expected: `Test Files  5 passed
-  (5)`, `Tests  24 passed (24)`. `make e2e`, twice. Expected: `4 passed, 932 deselected` each
-  time. `make check`. Expected: `926 passed, 2 skipped, 8 deselected` twice (the e2e tests are
+  (5)`, `Tests  24 passed (24)`. `make e2e`, twice. Expected: `4 passed, 956 deselected` each
+  time. `make check`. Expected: `950 passed, 2 skipped, 8 deselected` twice (the e2e tests are
   the 4 new ones deselected), the Vitest lines, `All checks passed!`, `no leaks found`.
 - [ ] **Step 17: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -16662,7 +17667,7 @@ in a state noted for strength,
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_demo_guard.py -q`.
   Expected: `7 passed`. By hand: `TMPDIR=$(mktemp -d) uv run vid2sub serve --demo --no-browser
   --port 0`, then Ctrl-C: a `vid2sub-demo-…` folder is in that TMPDIR while it runs and gone after.
-  `make check`. Expected: `933 passed, 2 skipped, 8 deselected` twice, `Test Files  5 passed (5)`,
+  `make check`. Expected: `957 passed, 2 skipped, 8 deselected` twice, `Test Files  5 passed (5)`,
   `All checks passed!`, `no leaks found`. The line-length check on the Python files prints nothing.
 - [ ] **Step 5: Each guard fails its tests without its fix.** `git add demo
   scripts/demo_sidecar.py src/vid2sub/web/demo.py tests/test_demo_guard.py
@@ -16964,8 +17969,8 @@ def launch():
 ```
 
 - [ ] **Step 10: Run the checks; they pass.** `uv run pytest tests/test_hostile_fixtures.py -q`.
-  Expected: `3 passed`. `make e2e`. Expected: `6 passed, 942 deselected` (Task 12's four, now
-  against the demo, and these two). `make check`. Expected: `936 passed, 2 skipped, 10 deselected`
+  Expected: `3 passed`. `make e2e`. Expected: `6 passed, 966 deselected` (Task 12's four, now
+  against the demo, and these two). `make check`. Expected: `960 passed, 2 skipped, 10 deselected`
   twice, `Test Files  5 passed (5)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 11: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -17629,7 +18634,7 @@ at its top, only the pure packages, shiny, shinyreact, htmltools, pydantic and
   runtime, views` in `server.py`, run `uv run pytest tests/test_pages_imports.py -q` and see
   `ImportError: the Pages bundle has no vid2sub.engines` (`1 failed, 4 passed`), then take it out
   again. `make check`. Expected:
-  `941 passed, 2 skipped, 10 deselected` (twice: as it is and under `TZ=UTC`), `Tests  24 passed
+  `965 passed, 2 skipped, 10 deselected` (twice: as it is and under `TZ=UTC`), `Tests  24 passed
   (24)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -18144,7 +19149,7 @@ app = ReactApp(server, ui=page, static_assets={"/": WWW})
   `session.on_ended(editor.end)` with `pass`, run
   `uv run pytest tests/test_web_server.py -q -k closing` and see `AssertionError: assert not
   True` (the episode still open after the tab closed); do the same with `self._close(old)` in
-  `_open`; put both back. `make check`. Expected: `947 passed, 2 skipped, 10 deselected` (twice),
+  `_open`; put both back. `make check`. Expected: `971 passed, 2 skipped, 10 deselected` (twice),
   `Tests  24 passed (24)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -19273,7 +20278,7 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
 ```
 
 - [ ] **Step 15: Run the checks; they pass.** `make check`. Expected:
-  `947 passed, 2 skipped, 16 deselected` (twice), `Test Files  8 passed (8)`, `Tests  37 passed
+  `971 passed, 2 skipped, 16 deselected` (twice), `Test Files  8 passed (8)`, `Tests  37 passed
   (37)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `12 passed`. The
   2,000-cue open took about 0.25 s where this was built.
 - [ ] **Step 16: Commit.** Write the message to `.git/COMMIT_MSG`:
@@ -19909,7 +20914,7 @@ export type EpisodeView = {
   `self.rt.media.revoke_owner(ep.id)` in `_playback` with `pass`; `uv run pytest
   tests/test_web_server.py -q -k cant_play` fails `AssertionError: assert PosixPath('…/Show -
   S01E01.mkv') is None` (the video's token still served); put it back. `make check`. Expected:
-  `950 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed
+  `974 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed
   (44)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `14 passed`.
 - [ ] **Step 21: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -20022,6 +21027,7 @@ Co-Authored-By: <the model's own line>
 
 **Files:**
 - Create: `frontend/src/lib/keys.ts` (+ test), `frontend/src/lib/sends.ts` (+ test),
+  `frontend/src/lib/ids.ts` (+ test: new cues' ids, Decision 31),
   `frontend/src/components/FindReplace.tsx`
 - Modify: `src/vid2sub/web/server.py` (inputs `edit`, `undo`, `redo`; `as_json`),
   `frontend/src/lib/cues.ts` (+ test: `splitPoint`, `countMatches`), `frontend/src/types.ts`
@@ -20038,13 +21044,20 @@ Co-Authored-By: <the model's own line>
     inputs `undo` and `redo`: `{"episode": str, "n": int}`. Each joins the tab's `Editor` queue
     (`_edit`, `_undo`, `_redo`), runs on the event loop, and publishes the new episode; a
     `BadOp`, `EditError` or `OpenError` is a notice with its message; a request naming another
-    episode than the one open is dropped; nothing that changes nothing is sent.
+    episode than the one open is dropped; nothing that changes nothing is sent. A split, merge
+    or insert carries its new cues' ids (`ops.Split.ids`, `MergeNext.id` and `joined`,
+    `Insert.id`), whose shape `parse_op` checks and whose freedom `subs.edit` does (Decision 31).
   - `server.as_json(value: object) -> object`: Shiny 1.8.0 decodes every JSON array in an input
     message as a tuple (`shiny._utils.lists_to_tuples`); `Editor.submit` turns them back into
     lists, so every request (Tasks 16–19's too) reaches its checks as JSON has it.
   - `types.ts`: `EditOp`, the union of the eleven `ops` kinds (`set_text`, `set_translation_text`,
     `set_times`, `nudge`, `split`, `merge_next`, `insert`, `delete`, `detach`, `replace_all`,
-    `glossary_add`), field for field.
+    `glossary_add`), field for field, the new cues' ids included.
+  - `lib/ids.ts`: `randomHex(bytes) -> string` (from `crypto.getRandomValues`), `newCueIds(n,
+    known: ReadonlySet<string>) -> string[]` (`c` and 8 lowercase hex, none in `known`, none
+    twice), `shownIds(rows) -> Set<string>` (the rows' ids and their translations'). The
+    `Editor` draws a split's two ids, a merge's id and one per translation track (`joined`), and an
+    insert's id, and finds the inserted cue by its id.
   - `lib/keys.ts`: `type Mode = "navigate" | "edit"`; `type Action` (`play-pause`, `back`,
     `pause`, `play`, `previous`, `next`, `cell` with `"source" | "translation"`, `set-start`,
     `set-end`, `nudge` with `delta_ms`, `edit`, `undo`, `redo`, `commit`, `split`, `merge`,
@@ -20125,17 +21138,24 @@ def test_a_bad_edit_is_a_notice_naming_the_field_and_never_what_was_sent(media_c
             {"op": "set_text", "cue": cue, "text": "x", "<img src=x>": 1},  # an unknown field
             {"op": "set_text", "cue": "<script>", "text": "x"},  # not a cue id's shape
             {"op": "nudge", "cue": cue, "delta_ms": "100"},  # a string is never a number
-            {"op": "merge_next", "cue": ep["rows"][-1]["id"]},  # the rules refuse it
+            {"op": "merge_next", "cue": ep["rows"][-1]["id"], "id": "cd0000001",
+             "joined": {}},  # the rules refuse it
+            # a new cue's id, drawn by the page (Decision 31): its shape, then that it is free
+            {"op": "insert", "start_ms": 3100, "end_ms": 3500, "text": "x", "id": "<b>"},
+            {"op": "insert", "start_ms": 3100, "end_ms": 3500, "text": "x", "id": cue},
         ]):
             t.set(edit={"episode": ep["id"], "n": n, "op": op})
-        t.until(lambda t: len(t.notices()) == 4)
+        t.until(lambda t: len(t.notices()) == 6)
         assert [n["text"] for n in t.notices()] == [
             "this edit can't be made: it has a field no edit has",
             "this edit can't be made: cue isn't valid",
             "this edit can't be made: delta_ms has the wrong type",
             "the last cue has no next cue to merge with",
+            "this edit can't be made: id isn't valid",
+            "a new cue's id is already in use; try again",
         ]
         assert "<img" not in json.dumps(t.messages) and "<script>" not in json.dumps(t.messages)
+        assert "<b>" not in json.dumps(t.messages)
         assert not t.value("episode")["dirty"]
 
 
@@ -20235,7 +21255,7 @@ from vid2sub.web import WWW, ops, runtime, views
         editor.submit("redo", input.redo())
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `make check`. Expected: `953 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed (44)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 4: Run the checks; they pass.** `make check`. Expected: `977 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed (44)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -20247,7 +21267,9 @@ An edit is checked by ops.parse_op and applied by LocalBackend.apply, so the edi
 once; it, undo and redo run on the event loop (about 0.02 s for 2,000 cues, Task 6). A BadOp,
 an EditError or an OpenError is a plain-text notice that names a field at most and never echoes
 the request (§6.3, §6.8); a request naming an episode the tab has moved on from is dropped, since
-it was sent before the open finished. An undo or redo with nothing to do sends nothing.
+it was sent before the open finished. An undo or redo with nothing to do sends nothing. A new
+cue's id, drawn by the page (Decision 31), is checked at the door for its shape, and one already
+taken is refused by the edit rules, each a notice that never echoes it.
 
 The new tests failed first with:
   AssertionError: timed out; the tab saw [{'values': {}, 'inputMessages': [], 'errors': {}}, ...
@@ -20308,7 +21330,7 @@ def as_json(value: object) -> object:
 
   and in `Editor.submit` replace `self._todo.append((kind, request))` with
   `self._todo.append((kind, as_json(request)))`.
-- [ ] **Step 9: Run the checks; they pass.** `make check`. Expected: `954 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed (44)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 9: Run the checks; they pass.** `make check`. Expected: `978 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed (44)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -20456,6 +21478,40 @@ describe("sending requests one per task", () => {
     const send = pacer();
     for (const v of [1, 2, 3]) send(() => setter(v));
     await vi.waitFor(() => expect(delivered).toEqual([1, 2, 3]), settled);
+  });
+});
+```
+
+  `frontend/src/lib/ids.test.ts`:
+
+```ts
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { Row } from "@/types";
+
+import { newCueIds, randomHex, shownIds } from "./ids";
+
+afterEach(() => vi.restoreAllMocks());
+
+describe("new cues' ids, drawn by the page (Decision 31)", () => {
+  it("have the shape the server's new_cue_id makes", () => {
+    for (const id of newCueIds(20, new Set())) expect(id).toMatch(/^c[0-9a-f]{8}$/);
+    expect(randomHex(4)).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it("come from crypto.getRandomValues, and are drawn again when one is known or drawn twice", () => {
+    const draws = [[0, 0, 0, 1], [0, 0, 0, 1], [0, 0, 0, 2], [0, 0, 0, 3]];
+    const spy = vi.spyOn(crypto, "getRandomValues").mockImplementation((a) => {
+      (a as Uint8Array).set(draws.shift() ?? [9, 9, 9, 9]);
+      return a;
+    });
+    expect(newCueIds(2, new Set(["c00000002"]))).toEqual(["c00000001", "c00000003"]);
+    expect(spy).toHaveBeenCalledTimes(4);
+  });
+
+  it("know every id the view shows, translations' included", () => {
+    const row = { id: "ca0000001", tr: { en: { cues: [{ id: "cb0000001" }], flags: [] }, ja: { cues: [], flags: ["untranslated"] } } };
+    expect(shownIds([row as unknown as Row])).toEqual(new Set(["ca0000001", "cb0000001"]));
   });
 });
 ```
@@ -20838,7 +21894,7 @@ def test_an_edit_to_a_two_hour_episode_comes_back_in_under_a_second(page, server
 
 - [ ] **Step 12: Run them; watch them fail.** `cd frontend && npx vitest run src/lib`. Expected:
   `Error: Failed to resolve import "./keys" from "src/lib/keys.test.ts". Does the file exist?`,
-  the same for `./sends`, and `TypeError: splitPoint is not a function` and `TypeError:
+  the same for `./sends` and `./ids`, and `TypeError: splitPoint is not a function` and `TypeError:
   countMatches is not a function`. `make build && uv run pytest -m e2e tests/e2e/test_editing.py
   -q -k a_cue_edited`. Expected: `AssertionError: Locator expected to be focused`, `Error:
   element(s) not found` for `get_by_test_id("cue-editor")`.
@@ -21010,13 +22066,50 @@ export type EditOp =
   | { op: "set_translation_text"; track: string; cue: string; text: string }
   | { op: "set_times"; cue: string; start_ms?: number; end_ms?: number }
   | { op: "nudge"; cue: string; delta_ms: number; edge?: "start" | "end" | "both" }
-  | { op: "split"; cue: string; at_char: number; at_ms: number }
-  | { op: "merge_next"; cue: string }
-  | { op: "insert"; start_ms: number; end_ms: number; text: string }
+  | { op: "split"; cue: string; at_char: number; at_ms: number; ids: [string, string] }
+  | { op: "merge_next"; cue: string; id: string; joined: Record<string, string> }
+  | { op: "insert"; start_ms: number; end_ms: number; text: string; id: string }
   | { op: "delete"; cue: string }
   | { op: "detach"; track: string; cue: string; detached: boolean }
   | { op: "replace_all"; find: string; replace: string; tracks: string[] }
   | { op: "glossary_add"; term: string; translation: string };
+```
+
+  `frontend/src/lib/ids.ts`:
+
+```ts
+// New cues' ids, drawn by the page (the Phase 2 plan's Decision 31, Dan's answer to the kickoff
+// council): a split, a merge or an insert sends the ids of the cues it makes, so the crash draft,
+// replayed, makes the same cues and every later edit to them still lands. They have
+// model.new_cue_id's shape, c and 8 lowercase hex digits, from crypto.getRandomValues; the server
+// refuses one already taken, so a draw that meets an id the page can't see costs only a retry.
+
+import type { Row } from "@/types";
+
+/** `bytes` random bytes, as lowercase hex. */
+export function randomHex(bytes: number): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** `n` new cue ids: none of them in `known`, none twice. */
+export function newCueIds(n: number, known: ReadonlySet<string>): string[] {
+  const out: string[] = [];
+  while (out.length < n) {
+    const id = `c${randomHex(4)}`;
+    if (!known.has(id) && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+/** Every cue id the view shows: the rows' own and their translations'. */
+export function shownIds(rows: readonly Row[]): Set<string> {
+  const out = new Set<string>();
+  for (const row of rows) {
+    out.add(row.id);
+    for (const cell of Object.values(row.tr)) for (const c of cell.cues) out.add(c.id);
+  }
+  return out;
+}
 ```
 
   `frontend/src/components/CueRow.tsx`, in full:
@@ -21300,6 +22393,7 @@ export function FindReplace({ episode, onEdit, onClose }: {
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
+import { newCueIds, shownIds } from "@/lib/ids";
 import { type Action, type KeyLike, actionFor } from "@/lib/keys";
 import { captionLines, type Showing } from "@/lib/overlay";
 import type { Busy, EditOp, EpisodeView } from "@/types";
@@ -21385,7 +22479,7 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
   const media = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
-  const pending = useRef<{ start_ms: number } | null>(null); // an inserted cue, to select and edit
+  const pending = useRef<string | null>(null); // an inserted cue's id, to select and edit
 
   const rows = episode.rows;
   const shownTrack = track && episode.tracks.some((t) => t.key === track) ? track : null;
@@ -21397,7 +22491,7 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
   // split or merge replaces the cue's id); an inserted cue is selected and edited.
   useEffect(() => {
     if (pending.current) {
-      const at = rows.findIndex((r) => r.start_ms === pending.current?.start_ms);
+      const at = rows.findIndex((r) => r.id === pending.current);
       pending.current = null;
       if (at >= 0) {
         setSel({ index: at, id: rows[at].id });
@@ -21485,7 +22579,8 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
     const share = text.length ? at / text.length : 0.5;
     const at_ms = inside ? ph
       : Math.min(row.end_ms - 1, Math.max(row.start_ms + 1, Math.round(row.start_ms + (row.end_ms - row.start_ms) * share)));
-    requests.edit({ op: "split", cue: row.id, at_char: at, at_ms });
+    const [a, b] = newCueIds(2, shownIds(rows));
+    requests.edit({ op: "split", cue: row.id, at_char: at, at_ms, ids: [a, b] });
   };
   const merge = () => {
     if (!row) return;
@@ -21493,7 +22588,10 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
       commit();
       stopEditing();
     }
-    requests.edit({ op: "merge_next", cue: row.id });
+    // the merged cue's id, and one for each translation track, in case its two parts' cues join
+    const tracks = episode.tracks.filter((t) => t.role !== "source").map((t) => t.key);
+    const [id, ...joined] = newCueIds(1 + tracks.length, shownIds(rows));
+    requests.edit({ op: "merge_next", cue: row.id, id, joined: Object.fromEntries(tracks.map((k, i) => [k, joined[i]])) });
   };
   const insert = () => {
     const ph = playhead();
@@ -21501,8 +22599,9 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
     if (indexAt(rows, ph) >= 0 && row) start = row.end_ms;
     const next = rows.find((r) => r.start_ms > start);
     const end = Math.min(start + INSERT_MS, next ? next.start_ms : start + INSERT_MS);
-    pending.current = { start_ms: start };
-    requests.edit({ op: "insert", start_ms: start, end_ms: end, text: "…" });
+    const [id] = newCueIds(1, shownIds(rows));
+    pending.current = id;
+    requests.edit({ op: "insert", start_ms: start, end_ms: end, text: "…", id });
   };
 
   const act = (a: Action) => {
@@ -21780,7 +22879,7 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
   composition runs, whatever the key`, and after `make build`, `uv run pytest -m e2e
   tests/e2e/test_editing.py -q -k input_method` fails `AssertionError: Locator expected to have
   count '0'` (navigate mode's Enter opened the editor); put the line back. `make check`.
-  Expected: `954 passed, 2 skipped, 24 deselected` (twice), `Test Files  11 passed (11)`, `Tests  55 passed (55)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `20 passed`.
+  Expected: `978 passed, 2 skipped, 24 deselected` (twice), `Test Files  12 passed (12)`, `Tests  58 passed (58)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `20 passed`.
 - [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -21804,6 +22903,10 @@ Spec §20's editing, for S28, S33 and S37's editor half:
   translations all stale (Decision 9), which the editor says.
 - Every edit goes to the server's apply as {"episode", "n", "op"}; lib/sends' pacer sends one per
   task, since shinyreact's trailing debounce keeps only the last value set in a task.
+- lib/ids.ts draws the new cues' ids a split, merge or insert sends (c and 8 hex digits, from
+  crypto.getRandomValues, none the view shows), so a crash draft replays exactly (Decision 31,
+  Dan's answer to the kickoff council); a merge sends one for each translation track, for the
+  cue its two parts' translations may join into, and the inserted cue is found by its own id.
 
 The guard (S33) fails without its fix: with the isComposing/229 line taken out of keys.ts, Vitest
 failed "an input method's keys (S33) > are never an action while a composition runs" and the e2e
@@ -21811,6 +22914,7 @@ test failed `expect(cue-editor).to_have_count(0)` (navigate mode's Enter fired).
 
 The new tests failed first with:
   Error: Failed to resolve import "./keys" from "src/lib/keys.test.ts". Does the file exist?
+  Error: Failed to resolve import "./ids" from "src/lib/ids.test.ts". Does the file exist?
   TypeError: splitPoint is not a function
   AssertionError: Locator expected to be focused ... get_by_test_id("cue-editor") (not found)
 
@@ -21818,7 +22922,8 @@ The IME test drives a real composition in Chromium through CDP: Input.imeSetComp
 rawKeyDown Enter with windowsVirtualKeyCode 229 while it runs (the page sees
 ["Enter", 229, true]), then Input.insertText to commit it.
 
-Docs read: spec §20; MDN's keydown event (isComposing, keyCode 229) and CompositionEvent; the
+Docs read: spec §20; MDN's crypto.getRandomValues (fills the typed array in place, in any
+context); MDN's keydown event (isComposing, keyCode 229) and CompositionEvent; the
 Chrome DevTools Protocol's Input domain (imeSetComposition, insertText, dispatchKeyEvent; from
 its Input.pdl); Playwright 1.64's keyboard.press ("ControlOrMeta"), new_cdp_session and
 dispatch_event; HTMLTextAreaElement's selectionStart and setSelectionRange; shinyreact 0.1.0's
@@ -21833,7 +22938,8 @@ Co-Authored-By: <the model's own line>
 
   `git add frontend/src/App.tsx frontend/src/types.ts frontend/src/lib/keys.ts
   frontend/src/lib/keys.test.ts frontend/src/lib/sends.ts frontend/src/lib/sends.test.ts
-  frontend/src/lib/cues.ts frontend/src/lib/cues.test.ts frontend/src/components/Editor.tsx
+  frontend/src/lib/cues.ts frontend/src/lib/cues.test.ts frontend/src/lib/ids.ts
+  frontend/src/lib/ids.test.ts frontend/src/components/Editor.tsx
   frontend/src/components/CueList.tsx frontend/src/components/CueRow.tsx
   frontend/src/components/FindReplace.tsx tests/e2e/test_editing.py`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
@@ -21880,14 +22986,14 @@ Co-Authored-By: <the model's own line>
 
 ### Task 16: Saving
 
-**Tier:** 2 · **Scenarios:** S29, S31, S32, S34
+**Tier:** 1 · **Scenarios:** S29, S31, S32, S34
 
 **Files:**
 - Create: `frontend/src/lib/draft.ts` (+ test), `frontend/src/components/{SaveBar,ConflictPicker}.tsx`,
   `frontend/src/components/{SaveBar,ConflictPicker}.test.ts`, `frontend/src/components/ui/dialog.tsx` (Task 12's
   note's native `<dialog>`, built here as the first modal part)
-- Modify: `src/vid2sub/web/server.py` (inputs `save`, `resolve`; message `save_result`; `busy`
-  "saving" and "picking"), `src/vid2sub/web/views.py` (`heads`, `formats`, `differences`),
+- Modify: `src/vid2sub/web/server.py` (inputs `save`, `resolve`; messages `save_result` and
+  `applied`; `busy` "saving" and "picking"), `src/vid2sub/web/views.py` (`heads`, `formats`, `differences`),
   `frontend/src/{App.tsx,types.ts,index.css}`, `frontend/src/components/Editor.tsx`
 - Test: `tests/test_web_server.py`, `tests/test_views.py`, `tests/e2e/test_saving.py`
 
@@ -21907,32 +23013,50 @@ Co-Authored-By: <the model's own line>
   - Message `save_result`: `{"episode": str, "kind": "save" | "pick", "written": [file names],
     "foreign": [file names left alone], "conflicts": [track keys], "notes": [str]}`, sent after
     the new episode is published.
+  - Message `applied`: `{"episode": str, "n": int, "ok": bool}` after each edit, undo and redo
+    (Task 15's inputs), `n` the request's own count, sent only when it is an integer; `ok` is
+    false when the edit was refused (an undo or redo with nothing to step to counts as made), so
+    the tab's draft keeps only what the server did and a Restore knows which steps were refused
+    (Decision 31).
   - `views.episode_view` gains `"heads": {track: rendition}` and `"formats": ["srt"]` or
     `["srt", "ass"]` (ASS where vid2sub has written one for this video before); round 16c adds
     `"differences": {track: {"cues": [{"start_ms", "end_ms", "texts": [str | null, …]}], "more":
     int}}` for each track in conflict (texts in `conflicts[track]`'s order, null where a version
     lacks the cue; cues matched by id; at most `views.DIFFERENCES_SHOWN` = 50, in time order).
   - `types.ts`: `EpisodeView.heads`, `EpisodeView.formats`, `Busy` with `"saving" | "picking"`,
-    `SaveResultMessage`; round 16c: `Difference`, `EpisodeView.differences`.
-  - `lib/draft.ts`: `type DraftStep = {edit: EditOp} | {undo: true} | {redo: true}`, `type Draft
-    = {v: 1, at: string, steps: DraftStep[]}`, `type DraftStorage`, `draftKey(heads) -> string`
-    (`vid2sub.draft.<track>=<rendition>,…`, sorted), `draftStorage()`, `loadDraft(storage, key)`,
-    `addStep(storage, key, step, now?)`, `clearDraft(storage, key)`; none ever throws.
+    `SaveResultMessage`, `AppliedMessage`; round 16c: `Difference`, `EpisodeView.differences`.
+  - `lib/draft.ts` (Decision 31): `type DraftStep = ({edit: EditOp} | {undo: true} | {redo:
+    true}) & {n: number}` (the op as sent, new cues' ids included, and its request's count),
+    `type Draft = {v: 1, at: string, steps: DraftStep[]}`, `type Offer = {key, draft}`, `type
+    DraftStorage` (`getItem`, `setItem`, `removeItem`, `key`, `length`), `type TabStorage`, `type
+    Replay = {from, waiting: number[], refused, total}`; `headsKey(heads)`
+    (`vid2sub.draft.<track>=<rendition>,…;`, sorted) and `draftKey(heads, tab)` (that and the tab's
+    id); `draftStorage()`, `tabStorage()` (sessionStorage), `tabId(storage)` (`t` and 8 hex, kept
+    in sessionStorage, else one for the page); `loadDraft(storage, key)`, `offersFor(storage,
+    heads)` (every tab's draft for these heads, oldest first), `addStep(storage, key, step, now?)`,
+    `dropStep(storage, key, n)`, `moveDraft(storage, from, to)`, `clearDraft(storage, key)`;
+    `heard(replay, n, ok) -> Replay | null`; none ever throws.
   - `components/ui/dialog.tsx`: `Dialog({open, onClose, title, side?, children, className?})`,
     as Task 12's note gives it; `index.css` gains `html.dialog-open { overflow: hidden; }`.
-  - `SaveBar({dirty, busy, formats, draft, onSave, onRestore, onDiscard})` and
-    `resultNotices(result: SaveResultMessage, tracks: TrackInfo[]): Notice[]`;
+  - `SaveBar({dirty, busy, formats, drafts, onSave, onRestore(key), onDiscard})` (one row per
+    draft offered, each with its time and its own Restore; one Discard), `OVERWRITE_COMMAND`
+    (`vid2sub write <video> --overwrite-foreign`, the placeholder literal) and
+    `resultNotices(result: SaveResultMessage, tracks: TrackInfo[], video: string): Notice[]` (a
+    file left alone is named with that command and, beside it, the video's name: Decision 32);
     `ConflictPicker({episode, open, onClose, onPick(track, rendition)})` and `versionLabel(v)`;
     round 16c numbers the versions (`Version 1: …`) and adds the table of differing cues
     (`data-testid="difference"` on each row).
     Test ids: `save`, `save-ass`, `save-state`, `draft`, `draft-restore`, `draft-discard`,
     `conflict-picker`, `version` (each version's label), `keep-<track>`, `picker-close`,
     `pick-version` (the conflict note's button).
-  - `Editor` takes `saving: Saving` (`{draft, conflictsFound, onRestore, onDiscard}`) beside
+  - `Editor` takes `saving: Saving` (`{drafts, conflictsFound, onRestore(key), onDiscard}`) beside
     round 14d's `onCantPlay`, and
     `Requests` gains `save(formats)` and `resolve(track, rendition)`. `App` sets `save` and
-    `resolve` through the pacer, handles `save_result`, keeps the draft and adds the
-    `beforeunload` listener only while the episode is dirty.
+    `resolve` through the pacer, handles `save_result` and `applied`, keeps this tab's draft
+    (Decision 31: it offers every tab's draft for the heads, restores one by replaying its steps
+    as sent and clears it only once none was refused, else says how many were and keeps it; a
+    Save, a discard or an edit instead clears only this tab's own) and adds the `beforeunload`
+    listener only while the episode is dirty.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
@@ -22062,11 +23186,38 @@ def test_a_save_or_pick_that_isnt_well_formed_is_refused_without_echoing_it(medi
             "the ja track has only one version: there's nothing to pick",
         ]
         assert results(t) == [] and "<" not in json.dumps(t.notices())
+
+
+def applied(t: Tab) -> list[dict]:
+    return [m["custom"]["shinyReactMessage"]["data"] for m in t.messages
+            if m.get("custom", {}).get("shinyReactMessage", {}).get("id") == "applied"]
+
+
+@pytest.mark.media
+def test_each_edit_undo_and_redo_is_answered_with_whether_it_was_made(media_client, tmp_path):
+    # The crash draft keeps only what the server did, and a Restore counts what it refused
+    # (Decision 31).
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        ask, rows = {"episode": ep["id"]}, ep["rows"]
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": rows[0]["id"], "text": "やあ"}})
+        t.set(edit={**ask, "n": 2, "op": {"op": "merge_next", "cue": rows[-1]["id"],
+                                          "id": "cd0000001", "joined": {}}})  # the rules refuse it
+        t.set(undo={**ask, "n": 3})
+        t.set(redo={**ask, "n": 4})
+        t.set(edit={**ask, "n": 5, "op": {"op": "set_text", "cue": "<b>", "text": "x"}})
+        t.set(undo={**ask, "n": "6"})  # a count that isn't a number is never sent back
+        t.set(undo={**ask, "n": 7})  # answered after 6 was done: the queue keeps their order
+        t.until(lambda t: len(applied(t)) == 6)
+        assert applied(t) == [{"episode": ep["id"], "n": n, "ok": ok} for n, ok in
+                              ((1, True), (2, False), (3, True), (4, True), (5, False), (7, True))]
 ```
 
 - [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_server.py
-  tests/test_views.py -q -k 'save or conflict or well_formed or head_and_the_formats'`. Expected:
-  `4 failed, 3 passed, 39 deselected`, three with `AssertionError: timed out; the tab saw [...` and one with
+  tests/test_views.py -q -k 'save or conflict or well_formed or head_and_the_formats or answered'`.
+  Expected: `5 failed, 3 passed, 39 deselected`, four with `AssertionError: timed out; the tab saw
+  [...` (the `applied` test's among them: no edit, undo or redo is answered yet) and one with
   `KeyError: 'heads'`.
 - [ ] **Step 3: Write the code.** `src/vid2sub/web/views.py`: in the module docstring replace
   `` container and codec names, which the browser's canPlayType is asked about (§8.2). The top
@@ -22103,20 +23254,21 @@ def _formats(ep: Episode) -> list[str]:
 The editor (spec §20): each tab holds at most one open episode, in an `Editor`. Every call that
 changes it (open, edits, undo, redo, Save and picks) runs one at a time, in the order the tab sent
 them, in a task of the tab's own that holds no reactive lock while it waits on the disk or ffmpeg,
-so a slow open never freezes another tab and no edit is lost to a Save running at the same time.
-The backend returns a new frozen `Episode` each time, which the editor sets as the reactive value
-the `episode` output reads. The player gets the video by a media token, or the playback audio
-when the browser can't play the video's audio (Decision 2) or, as the page reports from
-canPlayType and the video's own errors, the video itself (`playback`, spec §8.2, §8.8); its
-tokens are revoked with the episode when the tab opens another or closes: the mount passes no
-lifespan events on, so that happens in `session.on_ended`. Requests come from the browser, so
-they are checked before use and never echoed (§6.3, §6.8). Edits go through the backend's
-`apply`, so the rules exist once (§20): an edit is checked at the door by `ops.parse_op`, and it,
-undo and redo run on the event loop (about 0.02 s for 2,000 cues, Task 6); a request naming an
-episode the tab has since moved on from (sent before an open finished) is dropped. Save (§14.5)
-and a pick of a conflicted track's version (§14.4) block on the disk, so they run through
-`runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each sends
-`save_result`: what was written, what was left alone, which tracks are in conflict, and the
+so a slow open never freezes another tab and no edit is lost to a Save running at the same time. The
+backend returns a new frozen `Episode` each time, which the editor sets as the reactive value the
+`episode` output reads. The player gets the video by a media token, or the playback audio when the
+browser can't play the video's audio (Decision 2) or, as the page reports from canPlayType and the
+video's own errors, the video itself (`playback`, spec §8.2, §8.8); its tokens are revoked with the
+episode when the tab opens another or closes: the mount passes no lifespan events on, so that
+happens in `session.on_ended`. Requests come from the browser, so they are checked before use and
+never echoed (§6.3, §6.8). Edits go through the backend's `apply`, so the rules exist once (§20): an
+edit is checked at the door by `ops.parse_op`, and it, undo and redo run on the event loop (about
+0.02 s for 2,000 cues, Task 6); a request naming an episode the tab has since moved on from (sent
+before an open finished) is dropped. Each edit, undo and redo is answered with `applied`, so the
+tab's crash draft keeps only what was done and a Restore knows which steps were refused (Decision
+31). Save (§14.5) and a pick of a conflicted track's version (§14.4) block on the disk, so they run
+through `runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each
+sends `save_result`: what was written, what was left alone, which tracks are in conflict, and the
 notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save sees
 (Review Focus 4, S32).
 ```
@@ -22184,6 +23336,60 @@ RENDITION = re.compile(r"r_[0-9a-f]{16}")  # sidecar.make_rendition's ids (spec 
 
 ```
 
+  In `class Editor`, replace the bodies' ends of `_edit`, `_undo` and `_redo`, from the
+  `except` line in `_edit` to the end of `_redo`,
+
+```python
+        except (ops.BadOp, EditError, OpenError) as err:  # each is fit to show, and echoes nothing
+            await notice(self.session, "error", str(err))
+            return
+        await self._show(new)
+
+    async def _undo(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is not None:
+            await self._show(self.rt.backend.undo(ep))
+
+    async def _redo(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is not None:
+            await self._show(self.rt.backend.redo(ep))
+```
+
+  with (each is answered with `applied`, so the tab's crash draft keeps only what the server did
+  and a Restore knows which steps were refused: Decision 31)
+
+```python
+        except (ops.BadOp, EditError, OpenError) as err:  # each is fit to show, and echoes nothing
+            await notice(self.session, "error", str(err))
+            await self._applied(request, ep, ok=False)
+            return
+        await self._show(new)
+        await self._applied(request, ep, ok=True)
+
+    async def _undo(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is not None:
+            await self._show(self.rt.backend.undo(ep))
+            await self._applied(request, ep, ok=True)
+
+    async def _redo(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is not None:
+            await self._show(self.rt.backend.redo(ep))
+            await self._applied(request, ep, ok=True)
+
+    async def _applied(self, request: object, ep: Episode, *, ok: bool) -> None:
+        """The `applied` message: whether the tab's edit, undo or redo `n` was made (an undo with
+        nothing to undo counts, as the server just ignores it), so its crash draft keeps only what
+        was done and a Restore knows which steps the server refused (Decision 31). `n` is the
+        page's own count, sent back only when it is an integer."""
+        n = request.get("n") if isinstance(request, dict) else None
+        if isinstance(n, int) and not isinstance(n, bool):
+            await shinyreact.send_message(self.session, "applied",
+                                          {"episode": ep.id, "n": n, "ok": ok})
+```
+
   and in `server()`, below the `_redo` effect, add
 
 ```python
@@ -22215,6 +23421,11 @@ rendition must have make_rendition's shape; a SaveError or OpenError is a notice
 the request. Two tabs saving one episode end in a conflict the later Save sees, never written
 until a person picks (Review Focus 4, S32).
 
+Each edit, undo and redo is answered with the `applied` message, {"episode", "n", "ok"}, `n` the
+page's own count, sent back only when it is an integer: the tab's crash draft drops a step the
+server refused, and a Restore learns which of its steps were refused and when it is over (Decision
+31, Dan's answer to the kickoff council). An undo or redo with nothing to step to counts as made.
+
 views.episode_view gains "heads" (track → head rendition, which the tab keys its crash-recovery
 draft by, S34) and "formats" (["srt", "ass"] where vid2sub has written an ASS for this video
 before, so Save keeps writing it, §15.2).
@@ -22241,7 +23452,7 @@ Co-Authored-By: <the model's own line>
 ```ts
 import { describe, expect, it } from "vitest";
 
-import { addStep, clearDraft, draftKey, type DraftStorage, loadDraft } from "./draft";
+import { addStep, clearDraft, draftKey, type DraftStorage, dropStep, headsKey, heard, loadDraft, moveDraft, offersFor, tabId } from "./draft";
 
 function memory(): DraftStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -22250,6 +23461,10 @@ function memory(): DraftStorage & { data: Map<string, string> } {
     getItem: (k) => data.get(k) ?? null,
     setItem: (k, v) => void data.set(k, v),
     removeItem: (k) => void data.delete(k),
+    key: (i) => [...data.keys()][i] ?? null,
+    get length() {
+      return data.size;
+    },
   };
 }
 
@@ -22257,33 +23472,89 @@ const throwing: DraftStorage = {
   getItem: () => { throw new DOMException("denied", "SecurityError"); },
   setItem: () => { throw new DOMException("full", "QuotaExceededError"); },
   removeItem: () => { throw new DOMException("denied", "SecurityError"); },
+  key: () => { throw new DOMException("denied", "SecurityError"); },
+  get length(): number { throw new DOMException("denied", "SecurityError"); },
 };
 
 const AT = new Date("2026-10-24T09:30:00Z");
-const EDIT = { edit: { op: "set_text", cue: "c0000000a", text: "occasion!" } } as const;
+const HEADS = { en: "r_1", ja: "r_2" };
+const EDIT = { edit: { op: "set_text", cue: "c0000000a", text: "occasion!" }, n: 4 } as const;
+const INSERT = { edit: { op: "insert", start_ms: 4700, end_ms: 4900, text: "…", id: "c0000000b" }, n: 5 } as const;
 
 describe("the crash-recovery draft (spec §14.5, S34)", () => {
-  it("is keyed by the episode's heads, whatever their order", () => {
-    expect(draftKey({ ja: "r_2", en: "r_1" })).toBe("vid2sub.draft.en=r_1,ja=r_2");
-    expect(draftKey({ en: "r_1", ja: "r_2" })).toBe(draftKey({ ja: "r_2", en: "r_1" }));
-    expect(draftKey({ en: "r_1", ja: "r_3" })).not.toBe(draftKey({ en: "r_1", ja: "r_2" }));
+  it("is keyed by the episode's heads, whatever their order, and the tab's id", () => {
+    expect(draftKey({ ja: "r_2", en: "r_1" }, "t0000000a")).toBe("vid2sub.draft.en=r_1,ja=r_2;t0000000a");
+    expect(draftKey(HEADS, "t0000000a")).toBe(draftKey({ ja: "r_2", en: "r_1" }, "t0000000a"));
+    expect(draftKey(HEADS, "t0000000a")).not.toBe(draftKey(HEADS, "t0000000b"));
+    expect(headsKey({ en: "r_1", ja: "r_3" })).not.toBe(headsKey(HEADS));
   });
 
-  it("keeps each step in the order sent, from when the first was made", () => {
+  it("keeps each step as sent, in order, from when the first was made", () => {
     const s = memory();
-    const key = draftKey({ en: "r_1" });
+    const key = draftKey(HEADS, "t0000000a");
     expect(loadDraft(s, key)).toBeNull();
     addStep(s, key, EDIT, AT);
-    addStep(s, key, { undo: true }, new Date("2026-10-24T10:00:00Z"));
-    addStep(s, key, { redo: true });
-    expect(loadDraft(s, key)).toEqual({ v: 1, at: "2026-10-24T09:30:00.000Z", steps: [EDIT, { undo: true }, { redo: true }] });
+    addStep(s, key, { undo: true, n: 6 }, new Date("2026-10-24T10:00:00Z"));
+    addStep(s, key, INSERT);
+    expect(loadDraft(s, key)).toEqual({ v: 1, at: "2026-10-24T09:30:00.000Z", steps: [EDIT, { undo: true, n: 6 }, INSERT] });
     clearDraft(s, key);
     expect(loadDraft(s, key)).toBeNull();
   });
 
+  it("drops a step the server refused, and the draft once nothing is left", () => {
+    const s = memory();
+    const key = draftKey(HEADS, "t0000000a");
+    addStep(s, key, EDIT, AT);
+    addStep(s, key, INSERT, AT);
+    dropStep(s, key, 5);
+    expect(loadDraft(s, key)?.steps).toEqual([EDIT]);
+    dropStep(s, key, 99);
+    expect(loadDraft(s, key)?.steps).toEqual([EDIT]);
+    dropStep(s, key, 4);
+    expect(s.data.has(key)).toBe(false);
+  });
+
+  it("offers every tab's draft for the heads, oldest first, and no other heads' (Decision 31)", () => {
+    const s = memory();
+    addStep(s, draftKey(HEADS, "t0000000b"), INSERT, new Date("2026-10-24T11:00:00Z"));
+    addStep(s, draftKey(HEADS, "t0000000a"), EDIT, AT);
+    addStep(s, draftKey({ en: "r_1", ja: "r_3" }, "t0000000a"), EDIT, AT);
+    s.data.set(`${headsKey(HEADS)}t0000000c`, "not json");
+    expect(offersFor(s, HEADS).map((o) => o.key)).toEqual([draftKey(HEADS, "t0000000a"), draftKey(HEADS, "t0000000b")]);
+    expect(offersFor(s, { en: "r_9" })).toEqual([]);
+  });
+
+  it("moves a draft to another key, replacing what was there", () => {
+    const s = memory();
+    const [from, to] = [draftKey(HEADS, "t0000000a"), draftKey({ en: "r_1", ja: "r_3" }, "t0000000a")];
+    addStep(s, from, EDIT, AT);
+    addStep(s, to, INSERT, AT);
+    moveDraft(s, from, to);
+    expect(s.data.has(from)).toBe(false);
+    expect(loadDraft(s, to)?.steps).toEqual([EDIT]);
+  });
+
+  it("gives a tab one id for as long as it lives, kept in sessionStorage", () => {
+    const session = memory();
+    const id = tabId(session);
+    expect(id).toMatch(/^t[0-9a-f]{8}$/);
+    expect(tabId(session)).toBe(id);
+    expect(tabId(memory())).not.toBe(id);
+    expect(tabId(null)).toBe(tabId(throwing)); // forbidden: one id for the page
+  });
+
+  it("says when a Restore is over, and how many of its steps the server refused", () => {
+    const start = { from: "k", waiting: [7, 8, 9], refused: 0, total: 3 };
+    expect(heard(start, 3, true)).toBeNull(); // not one of its steps
+    const one = heard(start, 7, true);
+    const two = one && heard(one, 8, false);
+    expect(two).toEqual({ from: "k", waiting: [9], refused: 1, total: 3 });
+    expect(two && heard(two, 9, true)).toEqual({ from: "k", waiting: [], refused: 1, total: 3 });
+  });
+
   it("ignores junk and an empty draft", () => {
     const s = memory();
-    for (const raw of ["not json", "{}", '{"v":2,"at":"x","steps":[]}', '{"v":1,"at":"x","steps":[]}', "null"]) {
+    for (const raw of ["not json", "{}", '{"v":2,"at":"x","steps":[]}', '{"v":1,"at":"x","steps":[]}', '{"v":1,"at":"x","steps":[{"undo":true}]}', "null"]) {
       s.data.set("k", raw);
       expect(loadDraft(s, "k")).toBeNull();
     }
@@ -22292,6 +23563,9 @@ describe("the crash-recovery draft (spec §14.5, S34)", () => {
   it("never throws where storage is forbidden or full", () => {
     expect(() => addStep(throwing, "k", EDIT)).not.toThrow();
     expect(loadDraft(throwing, "k")).toBeNull();
+    expect(offersFor(throwing, HEADS)).toEqual([]);
+    expect(() => dropStep(throwing, "k", 4)).not.toThrow();
+    expect(() => moveDraft(throwing, "k", "j")).not.toThrow();
     expect(() => clearDraft(throwing, "k")).not.toThrow();
     expect(loadDraft(null, "k")).toBeNull();
     expect(() => addStep(null, "k", EDIT)).not.toThrow();
@@ -22306,32 +23580,53 @@ import { describe, expect, it } from "vitest";
 
 import type { SaveResultMessage, TrackInfo } from "@/types";
 
-import { resultNotices } from "./SaveBar";
+import { OVERWRITE_COMMAND, resultNotices } from "./SaveBar";
 
 const TRACKS: TrackInfo[] = [
   { key: "en", label: "English", role: "source", head_by: "editor", in_conflict: false, all_stale: false },
   { key: "ja", label: "Japanese", role: "translation", head_by: "auto", in_conflict: true, all_stale: false },
 ];
 const BASE: SaveResultMessage = { episode: "e1", kind: "save", written: [], foreign: [], conflicts: [], notes: [] };
+const VIDEO = "Show - S01E01.mkv";
 
 describe("what a Save says (spec §14.5, §15.3)", () => {
   it("names the files it wrote, and says Saved when there was nothing to write", () => {
-    expect(resultNotices({ ...BASE, written: ["a.en.srt", "a.ja.srt"] }, TRACKS)).toEqual([
+    expect(resultNotices({ ...BASE, written: ["a.en.srt", "a.ja.srt"] }, TRACKS, VIDEO)).toEqual([
       { kind: "info", text: "Saved: wrote a.en.srt, a.ja.srt" }]);
-    expect(resultNotices(BASE, TRACKS)).toEqual([{ kind: "info", text: "Saved" }]);
+    expect(resultNotices(BASE, TRACKS, VIDEO)).toEqual([{ kind: "info", text: "Saved" }]);
   });
 
-  it("names each file left alone, each note, and each track in conflict", () => {
+  it("names each file left alone with the command that replaces one, each note, and each track in conflict", () => {
     const r = { ...BASE, foreign: ["a.en.ass"], notes: ["kept your outside edit to en"], conflicts: ["ja"] };
-    expect(resultNotices(r, TRACKS)).toEqual([
-      { kind: "info", text: "Left a.en.ass alone: vid2sub didn't write it, or it was changed outside vid2sub since" },
+    expect(resultNotices(r, TRACKS, VIDEO)).toEqual([
+      { kind: "info", text: "Left a.en.ass alone: vid2sub didn't write it, or it was changed outside vid2sub since. To replace a file vid2sub didn't write, run vid2sub write <video> --overwrite-foreign in the video's folder (the video: Show - S01E01.mkv)" },
       { kind: "info", text: "Kept your outside edit to en" },
       { kind: "error", text: "Japanese has two versions: pick the one to keep" },
     ]);
   });
 
+  it("says so of several files left alone at once (Decision 32: never replaced from the UI)", () => {
+    expect(resultNotices({ ...BASE, written: ["a.ja.srt"], foreign: ["a.en.srt", "a.en.ass"] }, TRACKS, VIDEO)[1]).toEqual({
+      kind: "info",
+      text: "Left a.en.srt, a.en.ass alone: vid2sub didn't write them, or they were changed outside vid2sub since. To replace a file vid2sub didn't write, run vid2sub write <video> --overwrite-foreign in the video's folder (the video: Show - S01E01.mkv)",
+    });
+  });
+
+  it("never puts a file name inside the command a person might paste into a shell", () => {
+    // A name from the disk can hold $(…), backticks or quotes, which a shell expands even inside
+    // double quotes: the command keeps its placeholder, and the names are plain text beside it.
+    const video = "a$(touch x)`b\"c'.mkv";
+    const [, left] = resultNotices({ ...BASE, written: ["x.ja.srt"], foreign: ["a$(id).en.srt"] }, TRACKS, video);
+    const [text, named] = left.text.split(" (the video: ");
+    expect(text).toContain(`run ${OVERWRITE_COMMAND} in the video's folder`);
+    expect(OVERWRITE_COMMAND).toBe("vid2sub write <video> --overwrite-foreign");
+    expect(named).toBe(`${video})`);
+    expect(text.split(OVERWRITE_COMMAND).join("")).not.toContain("touch");
+    expect(text.slice(text.indexOf("run "))).toBe(`run ${OVERWRITE_COMMAND} in the video's folder`);
+  });
+
   it("says a pick kept the version picked", () => {
-    expect(resultNotices({ ...BASE, kind: "pick", written: ["a.ja.srt"] }, TRACKS)).toEqual([
+    expect(resultNotices({ ...BASE, kind: "pick", written: ["a.ja.srt"] }, TRACKS, VIDEO)).toEqual([
       { kind: "info", text: "Kept the version you picked: wrote a.ja.srt" }]);
   });
 });
@@ -22342,10 +23637,12 @@ describe("what a Save says (spec §14.5, §15.3)", () => {
 ```python
 """Saving in Chromium, against `vid2sub serve --demo` (spec §14.4, §14.5, §15.3; S29, S31, S32,
 S34; Review Focus 4): Save appends a version and rewrites only vid2sub's own files, leaving
-someone else's alone; an SRT edited elsewhere comes back as an outside version and the editor
-says so; two tabs saving one episode end in a conflict the second sees, picked in the native
-<dialog>; a crashed tab's draft is offered back, and closing with unsaved edits warns first.
-Run with `make e2e`."""
+someone else's alone and saying which command replaces it (Decision 32); an SRT edited elsewhere
+comes back as an outside version and the editor says so; two tabs saving one episode end in a
+conflict the second sees, picked in the native <dialog>; a crashed tab's draft is offered back,
+and closing with unsaved edits warns first; a restored draft brings back edits to the cues a
+split, a merge or an insert made, each tab keeps its own draft, and a draft is cleared only when
+every step of it was done again (Decision 31). Run with `make e2e`."""
 
 import re
 from pathlib import Path
@@ -22356,6 +23653,7 @@ from playwright.sync_api import expect
 pytestmark = pytest.mark.e2e
 
 EN = "jfk.en.srt"
+LINE_1 = "I am delighted to be here, and I am"
 
 
 def demo_copy(server) -> Path:
@@ -22382,9 +23680,31 @@ def notices(page) -> list[str]:
     return [t.removesuffix("×").strip() for t in page.get_by_test_id("notice").all_inner_texts()]
 
 
+def seek(page, seconds: float) -> None:
+    page.get_by_test_id("media").evaluate(
+        "(m, s) => new Promise((done) => { m.addEventListener('seeked', done, { once: true });"
+        " m.currentTime = s; })", seconds)
+
+
+def texts(page) -> list[str]:
+    return page.get_by_test_id("cue-text").all_inner_texts()
+
+
+def drafts_kept(page) -> dict[str, int]:
+    """Each draft in localStorage, by its tab's id, with how many steps it holds."""
+    return page.evaluate("""() => Object.fromEntries(Object.keys(localStorage)
+        .filter((k) => k.startsWith("vid2sub.draft."))
+        .map((k) => [k.split(";")[1], JSON.parse(localStorage.getItem(k)).steps.length]))""")
+
+
+def tab_of(page) -> str:
+    return page.evaluate("() => sessionStorage.getItem('vid2sub.tab')")
+
+
 def test_save_appends_a_version_and_rewrites_only_vid2subs_own_files(page, server):
     # S29, spec §14.5: an editor rendition, a head and projection records, then the files; a file
-    # vid2sub didn't write is left alone and said so (§15.3).
+    # vid2sub didn't write is left alone and said so, with the command that replaces it (§15.3,
+    # §6.6; Decision 32: never replaced from the UI).
     copy = demo_copy(server)
     sidecar = copy / "jfk.vid2sub.jsonl"
     before = len(sidecar.read_text(encoding="utf-8").splitlines())
@@ -22401,7 +23721,9 @@ def test_save_appends_a_version_and_rewrites_only_vid2subs_own_files(page, serve
     # ASS is asked for, so the Japanese ASS is written too; the English one is someone else's.
     assert notices(page) == ["Saved: wrote jfk.en.srt, jfk.ja.ass",
                              ("Left jfk.en.ass alone: vid2sub didn't write it, or it was changed "
-                              "outside vid2sub since")]
+                              "outside vid2sub since. To replace a file vid2sub didn't write, run "
+                              "vid2sub write <video> --overwrite-foreign in the video's folder "
+                              "(the video: jfk.mp4)")]
     assert "occasion!" in (copy / EN).read_text(encoding="utf-8")
     assert (copy / "jfk.ja.srt").read_bytes() == ja  # no Japanese edit: no new version or SRT
     assert (copy / "jfk.en.ass").read_text(encoding="utf-8") == "someone else's file\n"
@@ -22523,6 +23845,109 @@ def test_a_crashed_tab_offers_its_draft_back_and_closing_with_unsaved_edits_warn
     expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
     expect(b.get_by_test_id("draft")).to_have_count(0)
     assert second.errors == [] and second.violations() == []
+
+
+def test_a_restored_draft_brings_back_the_edits_made_to_new_cues(open_page, server):
+    # Decision 31 (the kickoff council's reliability finding 2): the page draws each new cue's id
+    # and the draft keeps the ops as sent, so the replay makes the same cues and every edit to
+    # them lands.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    seek(a, 4.8)  # in the gap after "occasion." (ends 4.653): insert a cue there and type its line
+    a.get_by_test_id("tool-insert").click()
+    expect(rows).to_have_count(5)
+    a.get_by_test_id("cue-editor").fill("Hm.")
+    a.keyboard.press("ControlOrMeta+Enter")
+    expect(rows.nth(2).get_by_test_id("cue-text")).to_have_text("Hm.")
+    # split the first cue at the end of its first line, then fix the second half
+    rows.nth(0).get_by_test_id("cue-text").click()
+    a.keyboard.press("Enter")
+    a.get_by_test_id("cue-editor").evaluate(f"e => e.setSelectionRange({len(LINE_1)}, "
+                                            f"{len(LINE_1)})")
+    a.keyboard.press("ControlOrMeta+Shift+S")
+    expect(rows).to_have_count(6)
+    edit_cue(a, rows, 1, "particularly delighted to be here today")
+    # merge the last two cues, each with its own Japanese cue, then fix what they made
+    rows.nth(4).get_by_test_id("cue-text").click()
+    a.get_by_test_id("tool-merge").click()
+    expect(rows).to_have_count(5)
+    edit_cue(a, rows, 4, "We meet at a college, in a city noted for progress.")
+    done = texts(a)
+    assert done == [LINE_1, "particularly delighted to be here today", "occasion.", "Hm.",
+                    "We meet at a college, in a city noted for progress."]
+    a.close()  # a crash: no unload handlers, no Save
+    second = open_page(server)
+    b = second.page
+    rows = open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_contain_text("6 unsaved edits from")
+    b.get_by_test_id("draft-restore").click()
+    expect(rows).to_have_count(5)
+    expect(rows.nth(4).get_by_test_id("cue-text")).to_have_text(done[4])
+    assert texts(b) == done
+    expect(b.get_by_test_id("draft")).to_have_count(0)
+    # every step was done again, so the crashed tab's draft is gone; this tab keeps its own
+    expect(b.get_by_test_id("save-state")).to_have_text("Unsaved changes")
+    assert drafts_kept(b) == {tab_of(b): 6}
+    assert second.errors == [] and second.violations() == []
+
+
+def test_two_tabs_on_one_episode_keep_separate_drafts(open_page, server):
+    # Decision 31 (reliability finding 3): each tab's draft is its own; reopening offers each,
+    # with its time, and a Save clears only the saving tab's.
+    first, second = open_page(server), open_page(server)
+    a, b = first.page, second.page
+    rows_a, rows_b = open_demo(a, server), open_demo(b, server)
+    edit_cue(a, rows_a, 1, "occasion!")
+    edit_cue(b, rows_b, 2, "We meet.")
+    edit_cue(b, rows_b, 3, "in a city.")
+    assert drafts_kept(a) == {tab_of(a): 1, tab_of(b): 2}
+    b.close()  # the second tab crashes
+    third = open_page(server)
+    c = third.page
+    rows_c = open_demo(c, server)
+    offered = c.get_by_test_id("draft")
+    expect(offered).to_have_count(2)
+    kept = [re.sub(r" from .*", "", t, flags=re.DOTALL) for t in offered.all_inner_texts()]
+    assert kept == ["1 unsaved edit", "2 unsaved edits"]
+    offered.nth(1).get_by_test_id("draft-restore").click()
+    expect(rows_c.nth(3).get_by_test_id("cue-text")).to_have_text("in a city.")
+    expect(rows_c.nth(2).get_by_test_id("cue-text")).to_have_text("We meet.")
+    expect(rows_c.nth(1).get_by_test_id("cue-text")).to_have_text("occasion.")
+    expect(offered).to_have_count(0)
+    assert drafts_kept(c) == {tab_of(a): 1, tab_of(c): 2}
+    a.get_by_test_id("save").click()
+    expect(a.get_by_test_id("save-state")).to_have_text("All changes saved")
+    assert drafts_kept(c) == {tab_of(c): 2}  # the first tab's Save cleared only its own
+    for watched in (first, third):
+        assert watched.errors == [] and watched.violations() == []
+
+
+def test_a_restore_the_server_refuses_a_step_of_keeps_the_draft_and_says_how_many(
+        open_page, server):
+    # A draft is cleared only after a replay with no refused step (Decision 31).
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit_cue(a, rows, 1, "occasion!")
+    a.evaluate("""() => {  // a step this episode can't take: a cue it never had
+        const key = Object.keys(localStorage).find((k) => k.startsWith("vid2sub.draft."));
+        const draft = JSON.parse(localStorage.getItem(key));
+        draft.steps.push({ edit: { op: "set_text", cue: "c00000000", text: "lost" }, n: 999 });
+        localStorage.setItem(key, JSON.stringify(draft));
+    }""")
+    a.close()
+    second = open_page(server)
+    b = second.page
+    rows = open_demo(b, server)
+    b.get_by_test_id("draft-restore").click()
+    expect(b.get_by_test_id("notice").filter(has_text="couldn't be replayed")).to_have_text(
+        re.compile(r"^1 restored step of 2 couldn.t be replayed: the draft is kept"))
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
+    assert sorted(drafts_kept(b).values()) == [1, 2]  # this tab's one step, and the draft kept
+    b.reload()
+    open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_have_count(2)
 ```
 
 - [ ] **Step 7: Run them; watch them fail.** `cd frontend && npx vitest run src/lib/draft.test.ts
@@ -22537,23 +23962,41 @@ def test_a_crashed_tab_offers_its_draft_back_and_closing_with_unsaved_edits_warn
 // The tab's crash-recovery draft (spec §14.5, S34): unsaved edits live in the tab, and every
 // request that changes the episode is also written to localStorage, so a tab that crashes or is
 // closed can offer them back when the episode is opened again. The draft is the edits, undos and
-// redos in the order they were sent, replayed through the server's rules on Restore, so the
-// rules exist once (§20). It is keyed by the heads the episode was opened at: a Save moves the
-// heads, so a draft is only ever offered on the versions its edits were made against. Every
-// storage call is wrapped in try/catch: a private window or blocked site data throws, and the
-// editor must work without it.
+// redos as they were sent, each with its request's number, replayed through the server's rules
+// on Restore, so the rules exist once (§20). An edit that makes cues carries their ids (Decision
+// 31, Dan's answer to the kickoff council), so the replay makes the same cues and the edits made
+// to them land too; a step the server refused is dropped, so the draft holds only what was done,
+// and a restored draft is cleared only once the server has done every step of it again. Each tab
+// keeps its own draft, keyed by the heads the episode was opened at and the tab's id, held in
+// sessionStorage: two tabs on one episode never write or clear each other's, and opening an
+// episode offers every tab's draft for its heads. A Save moves the heads, so a draft is only ever
+// offered on the versions its edits were made against. Every storage call is wrapped in
+// try/catch: a private window or blocked site data throws, and the editor must work without it.
 
+import { randomHex } from "@/lib/ids";
 import type { EditOp } from "@/types";
 
-export type DraftStep = { edit: EditOp } | { undo: true } | { redo: true };
+export type DraftStep = ({ edit: EditOp } | { undo: true } | { redo: true }) & { n: number };
 export type Draft = { v: 1; at: string; steps: DraftStep[] };
-export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+export type Offer = { key: string; draft: Draft };
+export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
+export type TabStorage = Pick<Storage, "getItem" | "setItem">;
+/** A Restore under way: the draft it replays, and the requests whose answers are still due. */
+export type Replay = { from: string; waiting: number[]; refused: number; total: number };
 
 const PREFIX = "vid2sub.draft.";
+const TAB = "vid2sub.tab";
+const TAB_ID = /^t[0-9a-f]{8}$/;
+let pageTab: string | null = null; // where sessionStorage is forbidden: this page's own
 
-/** The draft's key: the episode's heads (track → rendition id), in a fixed order. */
-export function draftKey(heads: Record<string, string>): string {
-  return PREFIX + Object.keys(heads).sort().map((k) => `${k}=${heads[k]}`).join(",");
+/** Every draft's key for these heads (track → rendition id) starts with this, in a fixed order. */
+export function headsKey(heads: Record<string, string>): string {
+  return `${PREFIX}${Object.keys(heads).sort().map((k) => `${k}=${heads[k]}`).join(",")};`;
+}
+
+/** One tab's draft for these heads. */
+export function draftKey(heads: Record<string, string>, tab: string): string {
+  return headsKey(heads) + tab;
 }
 
 /** localStorage, or null where the browser forbids it. */
@@ -22565,6 +24008,32 @@ export function draftStorage(): DraftStorage | null {
   }
 }
 
+/** sessionStorage, which lives as long as the tab and survives a reload, or null. */
+export function tabStorage(): TabStorage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** This tab's id, `t` and 8 hex digits: kept in sessionStorage, else made for this page. */
+export function tabId(storage: TabStorage | null): string {
+  try {
+    const kept = storage?.getItem(TAB);
+    if (kept && TAB_ID.test(kept)) return kept;
+    if (storage) {
+      const made = `t${randomHex(4)}`;
+      storage.setItem(TAB, made);
+      return made;
+    }
+  } catch {
+    /* forbidden: an id for this page only */
+  }
+  pageTab ??= `t${randomHex(4)}`;
+  return pageTab;
+}
+
 /** The draft under `key`, or null: none, junk, or storage that throws. */
 export function loadDraft(storage: DraftStorage | null, key: string): Draft | null {
   try {
@@ -22572,10 +24041,27 @@ export function loadDraft(storage: DraftStorage | null, key: string): Draft | nu
     if (!raw) return null;
     const draft = JSON.parse(raw) as Partial<Draft>;
     if (draft.v !== 1 || typeof draft.at !== "string" || !Array.isArray(draft.steps)) return null;
+    if (!draft.steps.every((s) => typeof s?.n === "number")) return null;
     return draft.steps.length ? (draft as Draft) : null;
   } catch {
     return null;
   }
+}
+
+/** Every tab's draft for these heads, oldest first. */
+export function offersFor(storage: DraftStorage | null, heads: Record<string, string>): Offer[] {
+  const prefix = headsKey(heads);
+  const out: Offer[] = [];
+  try {
+    for (let i = 0; storage && i < storage.length; i++) {
+      const key = storage.key(i);
+      const draft = key?.startsWith(prefix) ? loadDraft(storage, key) : null;
+      if (key && draft) out.push({ key, draft });
+    }
+  } catch {
+    return [];
+  }
+  return out.sort((a, b) => a.draft.at.localeCompare(b.draft.at));
 }
 
 /** Adds one step to the draft under `key`, started now if there is none. */
@@ -22588,12 +24074,44 @@ export function addStep(storage: DraftStorage | null, key: string, step: DraftSt
   }
 }
 
+/** Takes request `n`'s step out: the server refused it, so it changed nothing to replay. */
+export function dropStep(storage: DraftStorage | null, key: string, n: number): void {
+  try {
+    const draft = loadDraft(storage, key);
+    if (!draft) return;
+    const steps = draft.steps.filter((s) => s.n !== n);
+    if (steps.length === draft.steps.length) return;
+    if (steps.length) storage?.setItem(key, JSON.stringify({ ...draft, steps }));
+    else storage?.removeItem(key);
+  } catch {
+    /* forbidden: there is no draft to change */
+  }
+}
+
+/** Moves the draft under `from` to `to`, replacing whatever was there. */
+export function moveDraft(storage: DraftStorage | null, from: string, to: string): void {
+  try {
+    const draft = loadDraft(storage, from);
+    storage?.removeItem(from);
+    if (draft) storage?.setItem(to, JSON.stringify(draft));
+  } catch {
+    /* forbidden: there is no draft to move */
+  }
+}
+
 export function clearDraft(storage: DraftStorage | null, key: string): void {
   try {
     storage?.removeItem(key);
   } catch {
     /* nothing to clear where storage is forbidden */
   }
+}
+
+/** The Restore after the server's answer to request `n`, or null when `n` isn't one of its
+ * steps. It is over once nothing is waiting: clean if nothing was refused. */
+export function heard(replay: Replay, n: number, ok: boolean): Replay | null {
+  if (!replay.waiting.includes(n)) return null;
+  return { ...replay, waiting: replay.waiting.filter((w) => w !== n), refused: replay.refused + (ok ? 0 : 1) };
 }
 ```
 
@@ -22697,33 +24215,43 @@ import type { Busy, Notice, SaveResultMessage, TrackInfo } from "@/types";
 
 const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
 
+/** The command that replaces a subtitle file vid2sub didn't write, run in the video's folder:
+ * Save never does it from the UI (spec §6.6; Decision 32), and asking file by file is the Later
+ * table's S64. It keeps its placeholder: a name from the disk can hold `$(…)`, backticks or
+ * quotes, which a shell expands even inside double quotes, so no file name ever goes into a line
+ * a person might paste; the video is named beside it, as plain text. */
+export const OVERWRITE_COMMAND = "vid2sub write <video> --overwrite-foreign";
+
 /** What a Save or a pick did, as notices: what was written, each file left alone (someone
- * else's, or changed outside since: §15.3), each track in conflict, and the notes, as text. */
-export function resultNotices(r: SaveResultMessage, tracks: readonly TrackInfo[]): Notice[] {
+ * else's, or changed outside since: §15.3) with the command that replaces it, each track in
+ * conflict, and the notes, as text. */
+export function resultNotices(r: SaveResultMessage, tracks: readonly TrackInfo[], video: string): Notice[] {
   const label = (key: string) => tracks.find((t) => t.key === key)?.label ?? key;
   const out: Notice[] = [];
   const wrote = r.written.length ? `: wrote ${r.written.join(", ")}` : "";
   if (r.kind === "pick") out.push({ kind: "info", text: `Kept the version you picked${wrote}` });
   else if (wrote || !r.conflicts.length) out.push({ kind: "info", text: `Saved${wrote}` });
   if (r.foreign.length) {
-    out.push({ kind: "info", text: `Left ${r.foreign.join(", ")} alone: vid2sub didn't write ${r.foreign.length === 1 ? "it" : "them"}, or ${r.foreign.length === 1 ? "it was" : "they were"} changed outside vid2sub since` });
+    const one = r.foreign.length === 1;
+    out.push({ kind: "info", text: `Left ${r.foreign.join(", ")} alone: vid2sub didn't write ${one ? "it" : "them"}, or ${one ? "it was" : "they were"} changed outside vid2sub since. To replace a file vid2sub didn't write, run ${OVERWRITE_COMMAND} in the video's folder (the video: ${video})` });
   }
   for (const note of r.notes) out.push({ kind: "info", text: note.charAt(0).toUpperCase() + note.slice(1) });
   for (const key of r.conflicts) out.push({ kind: "error", text: `${label(key)} has two versions: pick the one to keep` });
   return out;
 }
 
-/** Save (spec §14.5) and the draft a crashed tab left (S34). Save writes a version of each
+/** Save (spec §14.5) and the drafts a crashed tab left (S34). Save writes a version of each
  * changed track and then the subtitle files: SRT always, ASS too when ticked, as the episode was
- * written before unless the person changes it. A draft found for the versions this episode was
- * opened at is offered back, to restore or discard. */
-export function SaveBar({ dirty, busy, formats, draft, onSave, onRestore, onDiscard }: {
+ * written before unless the person changes it. Every tab's draft found for the versions this
+ * episode was opened at is offered back, each with its time, to restore; Discard sets them aside
+ * here and drops this tab's own (Decision 31). */
+export function SaveBar({ dirty, busy, formats, drafts, onSave, onRestore, onDiscard }: {
   dirty: boolean;
   busy: Busy;
   formats: readonly string[];
-  draft: { at: string; steps: number } | null;
+  drafts: readonly { key: string; at: string; steps: number }[];
   onSave: (formats: ("srt" | "ass")[]) => void;
-  onRestore: () => void;
+  onRestore: (key: string) => void;
   onDiscard: () => void;
 }) {
   const [ass, setAss] = useState(formats.includes("ass"));
@@ -22748,13 +24276,19 @@ export function SaveBar({ dirty, busy, formats, draft, onSave, onRestore, onDisc
           {dirty ? "Unsaved changes" : "All changes saved"}
         </span>
       </div>
-      {draft && (
-        <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm" data-testid="draft">
-          <span>
-            {draft.steps} unsaved {draft.steps === 1 ? "edit" : "edits"} from {new Date(draft.at).toLocaleString()} were kept in this browser.
-          </span>
-          <button type="button" className={button} onClick={onRestore} data-testid="draft-restore">Restore them</button>
-          <button type="button" className={button} onClick={onDiscard} data-testid="draft-discard">Discard</button>
+      {drafts.length > 0 && (
+        <div role="alert" className="flex flex-col gap-1 rounded-md border border-border bg-card px-3 py-2 text-sm" data-testid="drafts">
+          {drafts.map((d) => (
+            <div key={d.key} className="flex flex-wrap items-center gap-2" data-testid="draft">
+              <span>
+                {d.steps} unsaved {d.steps === 1 ? "edit" : "edits"} from {new Date(d.at).toLocaleString()} were kept in this browser.
+              </span>
+              <button type="button" className={button} onClick={() => onRestore(d.key)} data-testid="draft-restore">Restore them</button>
+            </div>
+          ))}
+          <div>
+            <button type="button" className={button} onClick={onDiscard} data-testid="draft-discard">Discard</button>
+          </div>
         </div>
       )}
     </div>
@@ -22847,6 +24381,7 @@ export function ConflictPicker({ episode, open, onClose, onPick }: {
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
+import { newCueIds, shownIds } from "@/lib/ids";
 import { type Action, type KeyLike, actionFor } from "@/lib/keys";
 import { captionLines, type Showing } from "@/lib/overlay";
 import type { Busy, EditOp, EpisodeView } from "@/types";
@@ -22871,12 +24406,13 @@ export type Requests = {
   resolve: (track: string, rendition: string) => void;
 };
 
-/** Saving's state, from App: the draft a crashed tab left (S34), and a count that goes up each
- * time a Save or a pick finds a track in conflict, which opens the picker. */
+/** Saving's state, from App: the drafts tabs left for these versions (S34, Decision 31), and a
+ * count that goes up each time a Save or a pick finds a track in conflict, which opens the
+ * picker. */
 export type Saving = {
-  draft: { at: string; steps: number } | null;
+  drafts: { key: string; at: string; steps: number }[];
   conflictsFound: number;
-  onRestore: () => void;
+  onRestore: (key: string) => void;
   onDiscard: () => void;
 };
 
@@ -22949,7 +24485,7 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
   const media = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
-  const pending = useRef<{ start_ms: number } | null>(null); // an inserted cue, to select and edit
+  const pending = useRef<string | null>(null); // an inserted cue's id, to select and edit
 
   const rows = episode.rows;
   const shownTrack = track && episode.tracks.some((t) => t.key === track) ? track : null;
@@ -22961,7 +24497,7 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
   // split or merge replaces the cue's id); an inserted cue is selected and edited.
   useEffect(() => {
     if (pending.current) {
-      const at = rows.findIndex((r) => r.start_ms === pending.current?.start_ms);
+      const at = rows.findIndex((r) => r.id === pending.current);
       pending.current = null;
       if (at >= 0) {
         setSel({ index: at, id: rows[at].id });
@@ -23058,7 +24594,8 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
     const share = text.length ? at / text.length : 0.5;
     const at_ms = inside ? ph
       : Math.min(row.end_ms - 1, Math.max(row.start_ms + 1, Math.round(row.start_ms + (row.end_ms - row.start_ms) * share)));
-    requests.edit({ op: "split", cue: row.id, at_char: at, at_ms });
+    const [a, b] = newCueIds(2, shownIds(rows));
+    requests.edit({ op: "split", cue: row.id, at_char: at, at_ms, ids: [a, b] });
   };
   const merge = () => {
     if (!row) return;
@@ -23066,7 +24603,10 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
       commit();
       stopEditing();
     }
-    requests.edit({ op: "merge_next", cue: row.id });
+    // the merged cue's id, and one for each translation track, in case its two parts' cues join
+    const tracks = episode.tracks.filter((t) => t.role !== "source").map((t) => t.key);
+    const [id, ...joined] = newCueIds(1 + tracks.length, shownIds(rows));
+    requests.edit({ op: "merge_next", cue: row.id, id, joined: Object.fromEntries(tracks.map((k, i) => [k, joined[i]])) });
   };
   const insert = () => {
     const ph = playhead();
@@ -23074,8 +24614,9 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
     if (indexAt(rows, ph) >= 0 && row) start = row.end_ms;
     const next = rows.find((r) => r.start_ms > start);
     const end = Math.min(start + INSERT_MS, next ? next.start_ms : start + INSERT_MS);
-    pending.current = { start_ms: start };
-    requests.edit({ op: "insert", start_ms: start, end_ms: end, text: "…" });
+    const [id] = newCueIds(1, shownIds(rows));
+    pending.current = id;
+    requests.edit({ op: "insert", start_ms: start, end_ms: end, text: "…", id });
   };
 
   const act = (a: Action) => {
@@ -23142,7 +24683,7 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
       <header className="flex flex-col gap-1">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <h1 className="truncate text-lg font-bold" data-testid="episode-name">{episode.video.name}</h1>
-          <SaveBar dirty={episode.dirty} busy={busy} formats={episode.formats} draft={saving.draft}
+          <SaveBar dirty={episode.dirty} busy={busy} formats={episode.formats} drafts={saving.drafts}
             onSave={requests.save} onRestore={saving.onRestore} onDiscard={saving.onDiscard} />
         </div>
         {(episode.notes.length > 0 || stale.length > 0 || conflicted.length > 0) && (
@@ -23248,13 +24789,15 @@ import { Editor, type Requests, type Saving } from "@/components/Editor";
 import { resultNotices } from "@/components/SaveBar";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
-import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, loadDraft } from "@/lib/draft";
+import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, heard, loadDraft, moveDraft, offersFor, tabId, tabStorage } from "@/lib/draft";
+import { randomHex } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { pacer } from "@/lib/sends";
 import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
-import type { Busy, Capabilities, EditOp, EpisodeView, SaveResultMessage, Status } from "@/types";
+import type { AppliedMessage, Busy, Capabilities, EditOp, EpisodeView, SaveResultMessage, Status } from "@/types";
 
 type Ask = { episode: string; n: number };
+type Step = { edit: EditOp } | { undo: true } | { redo: true };
 
 type JQueryLike = (target: Document) => {
   on(event: string, handler: () => void): unknown;
@@ -23283,74 +24826,116 @@ export default function App() {
   // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
   const pace = useMemo(() => pacer(), []);
 
-  // The crash-recovery draft (spec §14.5, S34): every edit, undo and redo is also written to
-  // localStorage under the heads the episode was opened at, and offered back when it is opened
-  // again. When a Save or a pick moves the heads, the draft goes with them while edits are still
-  // unsaved (a pick keeps the other tracks' edits), and is cleared once everything is saved.
-  const [offer, setOffer] = useState<Draft | null>(null);
-  const drafted = useRef<{ id: string; key: string } | null>(null);
+  // The crash-recovery draft (spec §14.5, S34; Decision 31): every edit, undo and redo is also
+  // written to localStorage as sent, under the heads the episode was opened at and this tab's id,
+  // and the server's word that it refused one takes it out again. Opening an episode offers every
+  // tab's draft for its heads. Restoring one replays it through the server's rules and clears it
+  // only once every step was done again; otherwise it is kept and the editor says how many steps
+  // failed. This tab's own draft starts again then, or when the person edits or discards instead
+  // of restoring. When a Save or a pick moves the heads, this tab's draft goes with them while
+  // edits are still unsaved (a pick keeps the other tracks' edits), and is cleared once
+  // everything is saved; no other tab's draft is ever touched by it.
+  const tab = useMemo(() => tabId(tabStorage()), []);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const offering = useRef(false); // offers are up and this tab's old draft not yet dropped
+  const drafted = useRef<{ id: string; key: string; heads: Record<string, string> } | null>(null);
+  const replaying = useRef<Replay | null>(null);
   useEffect(() => {
     if (!episode) {
       drafted.current = null;
       return;
     }
-    const key = draftKey(episode.heads);
+    const key = draftKey(episode.heads, tab);
     const was = drafted.current;
     const store = draftStorage();
     if (was?.id === episode.id && was.key !== key) {
-      const kept = loadDraft(store, was.key);
-      clearDraft(store, was.key);
-      if (kept && episode.dirty) for (const step of kept.steps) addStep(store, key, step, new Date(kept.at));
+      if (episode.dirty) moveDraft(store, was.key, key);
+      else clearDraft(store, was.key);
     }
-    if (was?.id !== episode.id) setOffer(loadDraft(store, key));
-    drafted.current = { id: episode.id, key };
-  }, [episode]);
-  const record = useCallback((step: DraftStep) => {
-    const at = drafted.current;
-    if (!at) return;
-    if (offer) { // editing again without restoring: the old draft is discarded
-      clearDraft(draftStorage(), at.key);
-      setOffer(null);
+    if (was?.id !== episode.id) {
+      const found = offersFor(store, episode.heads);
+      offering.current = found.length > 0;
+      setOffers(found);
     }
-    addStep(draftStorage(), at.key, step);
-  }, [offer]);
+    drafted.current = { id: episode.id, key, heads: episode.heads };
+  }, [episode, tab]);
+  const dropOffers = useCallback(() => { // editing or discarding instead: this tab starts afresh
+    if (!offering.current) return;
+    offering.current = false;
+    setOffers([]);
+    if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
+  }, []);
 
   const episodeId = episode?.id ?? null;
+  const steps = useMemo(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+    // Sends one edit, undo or redo, and keeps it in the draft as sent; returns its request's count.
+    return (step: Step): number | null => {
+      const a = ask();
+      if (!a) return null;
+      if (drafted.current) addStep(draftStorage(), drafted.current.key, { ...step, n: a.n } as DraftStep);
+      if ("edit" in step) pace(() => setEdit({ ...a, op: step.edit }));
+      else if ("undo" in step) pace(() => setUndo(a));
+      else pace(() => setRedo(a));
+      return a.n;
+    };
+  }, [episodeId, pace, setEdit, setUndo, setRedo]);
   const requests = useMemo<Requests>(() => {
     const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
     const send = <T,>(set: (v: T) => void, value: T | null) => value && pace(() => set(value));
     return {
-      edit: (op) => { record({ edit: op }); const a = ask(); send(setEdit, a && { ...a, op }); },
-      undo: () => { record({ undo: true }); send(setUndo, ask()); },
-      redo: () => { record({ redo: true }); send(setRedo, ask()); },
+      edit: (op) => { dropOffers(); steps({ edit: op }); },
+      undo: () => { dropOffers(); steps({ undo: true }); },
+      redo: () => { dropOffers(); steps({ redo: true }); },
       save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
       resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
     };
-  }, [episodeId, pace, record, setEdit, setUndo, setRedo, setSave, setResolve]);
+  }, [episodeId, pace, dropOffers, steps, setSave, setResolve]);
+
+  useShinyMessageHandler("applied", (data: AppliedMessage) => {
+    if (!episode || data.episode !== episode.id) return;
+    if (!data.ok && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    const now = replaying.current && heard(replaying.current, data.n, data.ok);
+    if (!now) return;
+    replaying.current = now.waiting.length ? now : null;
+    if (now.waiting.length) return;
+    if (!now.refused) clearDraft(draftStorage(), now.from);
+    else setNotices((shown) => addNotice(shown, { kind: "error", text: `${now.refused} restored ${now.refused === 1 ? "step" : "steps"} of ${now.total} couldn't be replayed: the draft is kept` }, nextId.current++));
+  });
 
   const [conflictsFound, setConflictsFound] = useState(0);
   useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
     if (!episode || data.episode !== episode.id) return;
-    for (const n of resultNotices(data, episode.tracks)) setNotices((shown) => addNotice(shown, n, nextId.current++));
+    for (const n of resultNotices(data, episode.tracks, episode.video.name)) setNotices((shown) => addNotice(shown, n, nextId.current++));
     if (data.conflicts.length) setConflictsFound((k) => k + 1);
   });
   const saving: Saving = {
-    draft: offer && { at: offer.at, steps: offer.steps.length },
+    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: o.draft.steps.length })),
     conflictsFound,
-    onRestore: () => {
-      const steps = offer?.steps ?? [];
-      if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
-      setOffer(null);
-      for (const step of steps) {
-        if ("edit" in step) requests.edit(step.edit);
-        else if ("undo" in step) requests.undo();
-        else requests.redo();
+    onRestore: (key) => {
+      const at = drafted.current;
+      const store = draftStorage();
+      const draft = loadDraft(store, key);
+      if (!at || !draft) return;
+      offering.current = false;
+      setOffers([]);
+      let from = key;
+      if (key === at.key) { // this tab's own (a reload): set aside until the server has redone it
+        from = draftKey(at.heads, `t${randomHex(4)}`);
+        moveDraft(store, key, from);
+      } else {
+        clearDraft(store, at.key);
       }
+      const sent: number[] = [];
+      for (const step of draft.steps) {
+        const { n: _, ...asSent } = step;
+        const n = steps(asSent as Step);
+        if (n !== null) sent.push(n);
+      }
+      if (sent.length) replaying.current = { from, waiting: sent, refused: 0, total: sent.length };
+      else clearDraft(store, from);
     },
-    onDiscard: () => {
-      if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
-      setOffer(null);
-    },
+    onDiscard: dropOffers,
   };
 
   // Closing the tab with unsaved edits warns first (S34): listened for only while there are
@@ -23440,8 +25025,8 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
   `TargetClosedError: Page.wait_for_timeout: Target page, context or browser has been closed`
   (the tab closed unwarned); take the `try`/`catch` out of `draft.ts`'s `addStep` and
   `npx vitest run src/lib/draft.test.ts` fails `never throws where storage is forbidden or full`;
-  put both back and `make build`. `make check`. Expected: `958 passed, 2 skipped, 28 deselected` (twice), `Test Files  13 passed (13)`, `Tests  62 passed (62)`, `All checks passed!`, `no leaks found`. Then `make e2e`.
-  Expected: `24 passed`.
+  put both back and `make build`. `make check`. Expected: `983 passed, 2 skipped, 31 deselected` (twice), `Test Files  14 passed (14)`, `Tests  72 passed (72)`, `All checks passed!`, `no leaks found`. Then `make e2e`.
+  Expected: `27 passed`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -23452,20 +25037,36 @@ Spec §14.4 and §14.5, for S29, S31, S32 and S34 end to end, and Review Focus 4
 - SaveBar: Save (SRT always; ASS too when ticked, ticked where the episode has an ASS already,
   the view's `formats`) and whether everything is saved; resultNotices turns `save_result` into
   plain-text notices: the files written, each left alone (someone else's, or changed outside
-  since, §15.3), each note, and each track in conflict.
+  since, §15.3) with the command that replaces a file vid2sub didn't write, since Save never
+  does (§6.6; Decision 32, Dan's answer to the kickoff council): `vid2sub write <video>
+  --overwrite-foreign`, the placeholder kept and the video named beside it as plain text, since
+  a name from the disk can hold $(...), backticks or quotes a shell would run when the line is
+  pasted (a security review of the kickoff council's fixes found it); each note, and each track
+  in conflict.
 - ConflictPicker on components/ui/dialog.tsx, the native <dialog> Task 12's note specifies
   (Decision 13): it opens when a Save or a pick finds a track in conflict, or at once on an
   episode opened torn, and from the conflict note's "Pick a version"; each version is said in
   words (who, when, how many cues); "Keep this version" sends `resolve`. Scroll lock is
   `html.dialog-open` in index.css.
-- lib/draft.ts: every edit, undo and redo is also kept in localStorage under the episode's heads
-  (the view's `heads`), every call in try/catch; reopened, the draft is offered back, to restore
-  (replayed through the server's rules) or discard; a Save clears it, and a pick that moves the
-  heads with edits still unsaved carries it to the new heads.
+- lib/draft.ts: every edit, undo and redo is also kept in localStorage as sent, with its request's
+  count, under the episode's heads (the view's `heads`) and this tab's id, kept in
+  sessionStorage, every call in try/catch; a step the server answers `applied` with ok false is
+  dropped (Decision 31, Dan's answer to the kickoff council). Reopened, every tab's draft for
+  those heads is offered back, each with its time, to restore (replayed through the server's
+  rules, its ops as sent, new cues' ids included) or discard. A restored draft is cleared only
+  once the server has made every step again; otherwise it is kept and the editor says how many
+  steps couldn't be replayed. This tab's own old draft goes when it restores, edits or discards
+  instead; a Save clears only this tab's draft, and a pick that moves the heads with edits still
+  unsaved carries it to the new heads.
 - beforeunload warns while the episode has unsaved edits, listened for only then (MDN), with
   preventDefault and returnValue.
 - The Editor guards its playing-cue indexes, which can be a render behind new rows (a track gone
   into conflict has none until it is picked).
+
+The draft's three new browser tests failed on the code before Decision 31 (the plan's earlier
+Task 16): AssertionError: Locator expected to have text 'We meet at a college, in a city noted
+for progress.' (the merged cue's edit was lost), assert {'undefined': 3} == {None: 2} (one draft
+for both tabs), and no "couldn't be replayed" notice.
 
 The guards fail without their fixes: with the beforeunload listener taken out, the crash test
 failed "TargetClosedError: Page.wait_for_timeout: Target page, context or browser has been
@@ -23478,7 +25079,8 @@ The new tests failed first with:
   playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
   (waiting for get_by_test_id("save"))
 
-Docs read: MDN's <dialog> (showModal, the inert page behind, Esc and the cancel event, closedby,
+Docs read: MDN's sessionStorage (one per tab, kept across a reload, SecurityError where storage
+is blocked); POSIX sh's double quotes ($ and ` keep their meaning inside them); MDN's <dialog> (showModal, the inert page behind, Esc and the cancel event, closedby,
 ::backdrop, autofocus), the inert attribute, the beforeunload event (preventDefault, returnValue,
 sticky activation, adding the listener only while there are unsaved changes) and Web Storage's
 exceptions (SecurityError, QuotaExceededError); Task 12's dialog probe (Tab may leave a modal
@@ -23788,9 +25390,9 @@ function Differences({ versions, found }: { versions: number; found?: EpisodeVie
 }
 ```
 
-- [ ] **Step 14: Run the checks; they pass.** `make check`. Expected: `960 passed, 2 skipped, 28
-  deselected` (twice), `Test Files  14 passed (14)`, `Tests  63 passed (63)`, `All checks
-  passed!`, `no leaks found`. Then `make e2e`. Expected: `24 passed`. (A view of a 2,000-cue track
+- [ ] **Step 14: Run the checks; they pass.** `make check`. Expected: `985 passed, 2 skipped, 31
+  deselected` (twice), `Test Files  15 passed (15)`, `Tests  73 passed (73)`, `All checks
+  passed!`, `no leaks found`. Then `make e2e`. Expected: `27 passed`. (A view of a 2,000-cue track
   whose every cue differs took 0.012 s where this was built.)
 - [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -23827,32 +25429,34 @@ Co-Authored-By: <the model's own line>
   frontend/src/types.ts`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
-  (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that an edit sent during a Save lands on
-  the saved episode and is never lost; that a second tab's Save sees the conflict, and nothing is
-  written over the other tab's version until a person picks; that a file vid2sub didn't write is
-  left alone and said so; that `save_result` and every notice carry file names and track keys
-  only; that the draft is keyed by the heads it was made on, never offered on other versions,
-  cleared by a Save and carried by a pick that leaves edits unsaved, and that no storage call can
+- [ ] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+  (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
+  kickoff council, because it holds the crash draft and its replay, the safety net for unsaved edits
+  (Decision 31)). Worth the reviewers' time: that an edit sent during a Save lands on the saved
+  episode and is never lost; that a second tab's Save sees the conflict, and nothing is written over
+  the other tab's version until a person picks; that a file vid2sub didn't write is left alone and
+  said so; that `save_result` and every notice carry file names and track keys only, and the
+  overwrite command only with its `<video>` placeholder; that each tab's draft is keyed by the heads
+  it was made on and the tab's id, never offered on other versions, replayed as sent (new cues' ids
+  included), cleared only once every replayed step was made, cleared by this tab's Save and carried
+  by a pick that leaves edits unsaved, never touched by another tab, and that no storage call can
   throw; that `beforeunload` is added only while there are unsaved edits; that the picker is the
-  native `<dialog>` with zero CSP violations, focus in, Tab never on the page behind, Esc closing
-  it and focus back on the opener; that the picker's differences are right (matched by id, a cue
+  native `<dialog>` with zero CSP violations, focus in, Tab never on the page behind, Esc closing it
+  and focus back on the opener; that the picker's differences are right (matched by id, a cue
   missing from one version shown as missing, at most 50) and plain text. The forward review over
-  Tasks 17, 18, 19, 22 and 23 (Task 17's retranslation is an undo step but not a draft step: a
-  draft replays edits only, so a restored draft never asks a model again (record it if that
-  changes); Task 18's settings drawer
-  is `Dialog` with `side="right"`, and its per-session formats default feeds `SaveBar`'s
-  `formats`; Task 19's "Open in editor" opens through the `open` input; Task 22's README says
-  Save writes SRT, ASS when ticked, and leaves someone else's files alone; Task 23's Steps 4 and
-  6 expect these notices). The docs this task made untrue: spec §14.5's "a warning on close" now
-  has its mechanism, nothing to change. Then the close, its own commit, holding this plan with
-  this task's boxes ticked and **Now** set to `Task 17: Retranslating, open.`, and the spec's
-  S29, S31 and S34 set to `built` (S29's Proof: `tests/test_backend_save.py;
-  tests/e2e/test_saving.py; the exit test`; S31's:
+  Tasks 17, 18, 19, 22 and 23 (Task 17's retranslation is an undo step but not a draft step: a draft
+  replays edits only, so a restored draft never asks a model again (record it if that changes); Task
+  18's settings drawer is `Dialog` with `side="right"`, and its per-session formats default feeds
+  `SaveBar`'s `formats`; Task 19's "Open in editor" opens through the `open` input; Task 22's README
+  says Save writes SRT, ASS when ticked, and leaves someone else's files alone; Task 23's Steps 4
+  and 6 expect these notices). The docs this task made untrue: spec §14.5's "a warning on close" now
+  has its mechanism, nothing to change. Then the close, its own commit, holding this plan with this
+  task's boxes ticked and **Now** set to `Task 17: Retranslating, open.`, and the spec's S29, S31
+  and S34 set to `built` (S29's Proof: `tests/test_backend_save.py; tests/e2e/test_saving.py; the
+  exit test`; S31's:
   `tests/test_backend_open.py::test_an_outside_edit_comes_back_as_the_head_and_the_editor_says_so;
-  tests/e2e/test_saving.py; the exit test`; S34's: `tests/e2e/test_saving.py`), and S32, built
-  at Task 6, with `tests/e2e/test_saving.py` added to its Proof, with the message in
-  `.git/CLOSE_MSG`:
+  tests/e2e/test_saving.py; the exit test`; S34's: `tests/e2e/test_saving.py`), and S32, built at
+  Task 6, with `tests/e2e/test_saving.py` added to its Proof, with the message in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 16: Saving
@@ -23861,8 +25465,14 @@ Drift: none
 Rulings: none
 Phase-end: none
 Forward: none
-Tier: 2
+Tier: 1
 Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+  secrets: fine | a finding | n/a: why
+  permissions: fine | a finding | n/a: why
+  network exposure: fine | a finding | n/a: why
+  failing closed: fine | a finding | n/a: why
+  injection: fine | a finding | n/a: why
+  logging: fine | a finding | n/a: why
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 16
@@ -23923,18 +25533,22 @@ Co-Authored-By: <the model's own line>
   - Output `progress`: `{"done": int, "of": int}` after each batch of the running retranslation
     (handed from the worker thread to the loop with `asyncio.run_coroutine_threadsafe`, and shown
     only while that retranslation runs), else `null`; `_publish` and `_set_busy` clear it.
-  - Message `retranslate_result`: `{"episode": str, "n": int | null, "changed": int}` (the
-    translation cues the request replaced or added; 0 when nothing was stale, or it failed),
-    sent after every `retranslate` that names the open episode, after the episode is published.
+  - Message `retranslate_result`: `{"episode": str, "n": int | null, "ok": bool, "changed": int}`
+    (`ok` only once the retranslation ran, round 17c; `changed`: the translation cues the request
+    replaced or added, 0 when nothing was stale or it failed), sent after every `retranslate` that
+    names the open episode, after the episode is published. Round 17c: Task 16's `applied`
+    message gains `"changed": bool` (the step moved the server's undo history).
   - `types.ts`: `Busy` gains `"retranslating"`; `Progress`; `RetranslateResultMessage`.
   - `lib/keys.ts`: `Action` gains `{kind: "extend"; by: -1 | 1}` (Shift+↑/↓ in navigate mode).
-  - `lib/draft.ts`: `DraftStep` gains `{retranslate: number}` (the request's `n`: a marker,
-    never replayed); `dropRetranslation(storage, key, n)`; `replayable(steps): DraftStep[]` (the
-    edits, undos and redos Restore sends, leaving out the markers and any undo or redo that took
-    back or brought back a retranslation).
+  - `lib/draft.ts`: `DraftStep` gains `{retranslate: true} & {n}` (a marker under its request's
+    count, never replayed, dropped with Task 16's `dropStep` when the retranslation changed
+    nothing); `replayable(steps): DraftStep[]` (the edits, undos and redos Restore sends, leaving
+    out the markers and any undo or redo that took back or brought back a retranslation, and,
+    round 17c, following only the server's last `UNDO_STEPS` = 200 steps). Round 17c: the page
+    keeps a step in its draft only when `applied` says it was made and changed something.
   - `lib/retranslate.ts`: `selectionRange(rows, selected, anchor: string | null): [number,
-    number] | null`, `selectedIds(rows, range): string[]`, `retranslateNotice(changed, label,
-    stale): Notice | null`.
+    number] | null`, `selectedIds(rows, range): string[]`, `retranslateNotice({ok, changed}, label,
+    stale): Notice | null` (null when not ok: the server's notice says why, round 17c).
   - `Retranslate({label, selected, busy, progress, onSelected(allowCloud), onStale(allowCloud)})`:
     test ids `retranslate`, `retranslate-selected` ("Retranslate this cue" / "Retranslate N
     cues"), `retranslate-stale`, `allow-cloud` (unticked at first and after each request),
@@ -24286,7 +25900,7 @@ def test_the_demo_retranslates_with_its_canned_model_and_no_other(tmp_path):
 - [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q -k
   'retransl or allow_cloud or cue_ids or cant_run or named_cues'`. Expected (about two minutes:
   each test waits 20 s for a message that never comes): `E       AssertionError: timed out; the
-  tab saw [...]` and `6 failed, 24 deselected`. `uv run pytest tests/test_backend_retranslate.py
+  tab saw [...]` and `6 failed, 25 deselected`. `uv run pytest tests/test_backend_retranslate.py
   -q -k demo`. Expected: `E           vid2sub.engines.base.EngineError: no usable translation
   model` and `1 failed, 20 deselected`.
 - [ ] **Step 3: Write the code.** `src/vid2sub/web/episode.py`:
@@ -24762,8 +26376,8 @@ at its top, only the pure packages, shiny, shinyreact, htmltools, pydantic and
   Replace
 
 ```python
-`runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each sends
-`save_result`: what was written, what was left alone, which tracks are in conflict, and the
+through `runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each
+sends `save_result`: what was written, what was left alone, which tracks are in conflict, and the
 notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save sees
 (Review Focus 4, S32).
 
@@ -24774,8 +26388,8 @@ for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.
   with
 
 ```python
-`runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each sends
-`save_result`: what was written, what was left alone, which tracks are in conflict, and the
+through `runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each
+sends `save_result`: what was written, what was left alone, which tracks are in conflict, and the
 notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save sees
 (Review Focus 4, S32). Retranslate (§13.4, §20; S30) names source cues, or none for every stale
 one; it waits on the model's server, so it too runs through `runtime.blocking`, with `busy` at
@@ -25042,9 +26656,9 @@ app = ReactApp(server, ui=page, static_assets={"/": WWW})
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_server.py
-  tests/test_backend_retranslate.py tests/test_pages_imports.py -q` first (`56 passed`), then
-  `make check`. Expected: `967 passed, 2 skipped, 28 deselected` (twice), `Test Files  14 passed
-  (14)`, `Tests  63 passed (63)`, `All checks passed!`, `no leaks found`.
+  tests/test_backend_retranslate.py tests/test_pages_imports.py -q` first (`57 passed`), then
+  `make check`. Expected: `992 passed, 2 skipped, 31 deselected` (twice), `Test Files  15 passed
+  (15)`, `Tests  73 passed (73)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -25124,59 +26738,160 @@ Co-Authored-By: <the model's own line>
       expect(actionFor(k, "navigate")).toBeNull();
 ```
 
-  In `frontend/src/lib/draft.test.ts`:
-
-  Replace
+  `frontend/src/lib/draft.test.ts`, in full:
 
 ```ts
 import { describe, expect, it } from "vitest";
 
-import { addStep, clearDraft, draftKey, type DraftStorage, loadDraft } from "./draft";
+import { addStep, clearDraft, draftKey, type DraftStep, type DraftStorage, dropStep, headsKey, heard, loadDraft, moveDraft, offersFor, replayable, tabId } from "./draft";
 
 function memory(): DraftStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
-```
+  return {
+    data,
+    getItem: (k) => data.get(k) ?? null,
+    setItem: (k, v) => void data.set(k, v),
+    removeItem: (k) => void data.delete(k),
+    key: (i) => [...data.keys()][i] ?? null,
+    get length() {
+      return data.size;
+    },
+  };
+}
 
-  with
+const throwing: DraftStorage = {
+  getItem: () => { throw new DOMException("denied", "SecurityError"); },
+  setItem: () => { throw new DOMException("full", "QuotaExceededError"); },
+  removeItem: () => { throw new DOMException("denied", "SecurityError"); },
+  key: () => { throw new DOMException("denied", "SecurityError"); },
+  get length(): number { throw new DOMException("denied", "SecurityError"); },
+};
 
-```ts
-import { describe, expect, it } from "vitest";
+const AT = new Date("2026-10-24T09:30:00Z");
+const HEADS = { en: "r_1", ja: "r_2" };
+const EDIT = { edit: { op: "set_text", cue: "c0000000a", text: "occasion!" }, n: 4 } as const;
+const INSERT = { edit: { op: "insert", start_ms: 4700, end_ms: 4900, text: "…", id: "c0000000b" }, n: 5 } as const;
 
-import { addStep, clearDraft, draftKey, type DraftStep, type DraftStorage, dropRetranslation, loadDraft, replayable } from "./draft";
+describe("the crash-recovery draft (spec §14.5, S34)", () => {
+  it("is keyed by the episode's heads, whatever their order, and the tab's id", () => {
+    expect(draftKey({ ja: "r_2", en: "r_1" }, "t0000000a")).toBe("vid2sub.draft.en=r_1,ja=r_2;t0000000a");
+    expect(draftKey(HEADS, "t0000000a")).toBe(draftKey({ ja: "r_2", en: "r_1" }, "t0000000a"));
+    expect(draftKey(HEADS, "t0000000a")).not.toBe(draftKey(HEADS, "t0000000b"));
+    expect(headsKey({ en: "r_1", ja: "r_3" })).not.toBe(headsKey(HEADS));
+  });
 
-function memory(): DraftStorage & { data: Map<string, string> } {
-  const data = new Map<string, string>();
-```
+  it("keeps each step as sent, in order, from when the first was made", () => {
+    const s = memory();
+    const key = draftKey(HEADS, "t0000000a");
+    expect(loadDraft(s, key)).toBeNull();
+    addStep(s, key, EDIT, AT);
+    addStep(s, key, { undo: true, n: 6 }, new Date("2026-10-24T10:00:00Z"));
+    addStep(s, key, INSERT);
+    expect(loadDraft(s, key)).toEqual({ v: 1, at: "2026-10-24T09:30:00.000Z", steps: [EDIT, { undo: true, n: 6 }, INSERT] });
+    clearDraft(s, key);
+    expect(loadDraft(s, key)).toBeNull();
+  });
 
-  At the end of the file, after `});`, after one blank line, append:
+  it("drops a step the server refused, and the draft once nothing is left", () => {
+    const s = memory();
+    const key = draftKey(HEADS, "t0000000a");
+    addStep(s, key, EDIT, AT);
+    addStep(s, key, INSERT, AT);
+    dropStep(s, key, 5);
+    expect(loadDraft(s, key)?.steps).toEqual([EDIT]);
+    dropStep(s, key, 99);
+    expect(loadDraft(s, key)?.steps).toEqual([EDIT]);
+    dropStep(s, key, 4);
+    expect(s.data.has(key)).toBe(false);
+  });
 
-```ts
+  it("offers every tab's draft for the heads, oldest first, and no other heads' (Decision 31)", () => {
+    const s = memory();
+    addStep(s, draftKey(HEADS, "t0000000b"), INSERT, new Date("2026-10-24T11:00:00Z"));
+    addStep(s, draftKey(HEADS, "t0000000a"), EDIT, AT);
+    addStep(s, draftKey({ en: "r_1", ja: "r_3" }, "t0000000a"), EDIT, AT);
+    s.data.set(`${headsKey(HEADS)}t0000000c`, "not json");
+    expect(offersFor(s, HEADS).map((o) => o.key)).toEqual([draftKey(HEADS, "t0000000a"), draftKey(HEADS, "t0000000b")]);
+    expect(offersFor(s, { en: "r_9" })).toEqual([]);
+  });
+
+  it("moves a draft to another key, replacing what was there", () => {
+    const s = memory();
+    const [from, to] = [draftKey(HEADS, "t0000000a"), draftKey({ en: "r_1", ja: "r_3" }, "t0000000a")];
+    addStep(s, from, EDIT, AT);
+    addStep(s, to, INSERT, AT);
+    moveDraft(s, from, to);
+    expect(s.data.has(from)).toBe(false);
+    expect(loadDraft(s, to)?.steps).toEqual([EDIT]);
+  });
+
+  it("gives a tab one id for as long as it lives, kept in sessionStorage", () => {
+    const session = memory();
+    const id = tabId(session);
+    expect(id).toMatch(/^t[0-9a-f]{8}$/);
+    expect(tabId(session)).toBe(id);
+    expect(tabId(memory())).not.toBe(id);
+    expect(tabId(null)).toBe(tabId(throwing)); // forbidden: one id for the page
+  });
+
+  it("says when a Restore is over, and how many of its steps the server refused", () => {
+    const start = { from: "k", waiting: [7, 8, 9], refused: 0, total: 3 };
+    expect(heard(start, 3, true)).toBeNull(); // not one of its steps
+    const one = heard(start, 7, true);
+    const two = one && heard(one, 8, false);
+    expect(two).toEqual({ from: "k", waiting: [9], refused: 1, total: 3 });
+    expect(two && heard(two, 9, true)).toEqual({ from: "k", waiting: [], refused: 1, total: 3 });
+  });
+
+  it("ignores junk and an empty draft", () => {
+    const s = memory();
+    for (const raw of ["not json", "{}", '{"v":2,"at":"x","steps":[]}', '{"v":1,"at":"x","steps":[]}', '{"v":1,"at":"x","steps":[{"undo":true}]}', "null"]) {
+      s.data.set("k", raw);
+      expect(loadDraft(s, "k")).toBeNull();
+    }
+  });
+
+  it("never throws where storage is forbidden or full", () => {
+    expect(() => addStep(throwing, "k", EDIT)).not.toThrow();
+    expect(loadDraft(throwing, "k")).toBeNull();
+    expect(offersFor(throwing, HEADS)).toEqual([]);
+    expect(() => dropStep(throwing, "k", 4)).not.toThrow();
+    expect(() => moveDraft(throwing, "k", "j")).not.toThrow();
+    expect(() => clearDraft(throwing, "k")).not.toThrow();
+    expect(loadDraft(null, "k")).toBeNull();
+    expect(() => addStep(null, "k", EDIT)).not.toThrow();
+  });
+});
+
 describe("a retranslation in the draft (Task 17)", () => {
-  const EDIT2 = { edit: { op: "set_text", cue: "c0000000b", text: "We meet." } } as const;
+  const EDIT2 = { edit: { op: "set_text", cue: "c0000000b", text: "We meet." }, n: 8 } as const;
+  const RT = { retranslate: true, n: 3 } as const;
+  const UNDO = { undo: true, n: 9 } as const;
+  const REDO = { redo: true, n: 10 } as const;
 
   it("is never replayed, so a restored draft never asks a model again", () => {
-    expect(replayable([EDIT, { retranslate: 3 }, EDIT2])).toEqual([EDIT, EDIT2]);
+    expect(replayable([EDIT, RT, EDIT2])).toEqual([EDIT, EDIT2]);
   });
 
   it("still takes the undo that undid it, and the redo that redid it, so neither lands elsewhere", () => {
-    const steps: DraftStep[] = [EDIT, { retranslate: 3 }, { undo: true }, EDIT2];
+    const steps: DraftStep[] = [EDIT, RT, UNDO, EDIT2];
     expect(replayable(steps)).toEqual([EDIT, EDIT2]);
-    expect(replayable([EDIT, { retranslate: 3 }, { undo: true }, { redo: true }])).toEqual([EDIT]);
-    expect(replayable([{ retranslate: 3 }, EDIT, { undo: true }, { undo: true }, { undo: true }])).toEqual([EDIT, { undo: true }]);
-    expect(replayable([EDIT, { undo: true }, { redo: true }])).toEqual([EDIT, { undo: true }, { redo: true }]);
+    expect(replayable([EDIT, RT, UNDO, REDO])).toEqual([EDIT]);
+    expect(replayable([RT, EDIT, UNDO, { undo: true, n: 11 }, { undo: true, n: 12 }])).toEqual([EDIT, UNDO]);
+    expect(replayable([EDIT, UNDO, REDO])).toEqual([EDIT, UNDO, REDO]);
     // a new edit clears what redo could bring back, on the server as here
-    expect(replayable([{ retranslate: 3 }, { undo: true }, EDIT2, { redo: true }])).toEqual([EDIT2]);
+    expect(replayable([RT, UNDO, EDIT2, REDO])).toEqual([EDIT2]);
   });
 
   it("is dropped when the server says it changed nothing, and only that one", () => {
     const s = memory();
-    const key = draftKey({ en: "r_1" });
-    for (const step of [EDIT, { retranslate: 3 }, { retranslate: 4 }, EDIT2] as DraftStep[]) addStep(s, key, step, AT);
-    dropRetranslation(s, key, 3);
-    expect(loadDraft(s, key)?.steps).toEqual([EDIT, { retranslate: 4 }, EDIT2]);
-    dropRetranslation(s, key, 9);
-    expect(loadDraft(s, key)?.steps).toEqual([EDIT, { retranslate: 4 }, EDIT2]);
-    expect(() => dropRetranslation(throwing, key, 4)).not.toThrow();
+    const key = draftKey(HEADS, "t0000000a");
+    for (const step of [EDIT, RT, { retranslate: true, n: 5 }, EDIT2] as DraftStep[]) addStep(s, key, step, AT);
+    dropStep(s, key, 3);
+    expect(loadDraft(s, key)?.steps).toEqual([EDIT, { retranslate: true, n: 5 }, EDIT2]);
+    dropStep(s, key, 9);
+    expect(loadDraft(s, key)?.steps).toEqual([EDIT, { retranslate: true, n: 5 }, EDIT2]);
+    expect(() => dropStep(throwing, key, 5)).not.toThrow();
   });
 });
 ```
@@ -25352,9 +27067,9 @@ def test_a_crashed_tabs_draft_never_replays_a_retranslation_or_the_undo_that_und
 
 - [ ] **Step 7: Run them; watch them fail.** `cd frontend && npx vitest run src/lib`. Expected:
   `Error: Failed to resolve import "./retranslate" from "src/lib/retranslate.test.ts"`,
-  `TypeError: replayable is not a function` (twice), `TypeError: dropRetranslation is not a
-  function`, `AssertionError: expected { kind: 'previous' } to deeply equal { kind: 'extend',
-  by: -1 }`, and `Test Files  3 failed | 7 passed (10)`. `make build && uv run pytest -m e2e
+  `TypeError: replayable is not a function` (twice), `AssertionError: expected { kind:
+  'previous' } to deeply equal { kind: 'extend', by: -1 }`, and `Test Files  3 failed | 8 passed
+  (11)` (the marker is dropped by Task 16's `dropStep`, which exists already). `make build && uv run pytest -m e2e
   tests/e2e/test_retranslate.py -q`. Expected: `E       AssertionError: Locator expected not to
   be checked` with `waiting for get_by_test_id("allow-cloud")`, and `3 failed`.
 - [ ] **Step 8: Write the code.** `frontend/src/types.ts`:
@@ -25466,65 +27181,165 @@ export type EditOp =
     case "[": return { kind: "set-start" };
 ```
 
-  `frontend/src/lib/draft.ts`:
-
-  Replace
+  `frontend/src/lib/draft.ts`, in full:
 
 ```ts
+// The tab's crash-recovery draft (spec §14.5, S34): unsaved edits live in the tab, and every
 // request that changes the episode is also written to localStorage, so a tab that crashes or is
 // closed can offer them back when the episode is opened again. The draft is the edits, undos and
-// redos in the order they were sent, replayed through the server's rules on Restore, so the
-// rules exist once (§20). It is keyed by the heads the episode was opened at: a Save moves the
-// heads, so a draft is only ever offered on the versions its edits were made against. Every
-// storage call is wrapped in try/catch: a private window or blocked site data throws, and the
-// editor must work without it.
+// redos as they were sent, each with its request's number, replayed through the server's rules on
+// Restore, so the rules exist once (§20). An edit that makes cues carries their ids (Decision 31,
+// Dan's answer to the kickoff council), so the replay makes the same cues and the edits made to
+// them land too; a step the server refused is dropped, so the draft holds only what was done, and a
+// restored draft is cleared only once the server has done every step of it again. A retranslation
+// is kept only as a marker, never replayed, so a restored draft never asks a model again; it still
+// takes the undo that undid it, so that undo doesn't take back an edit instead (Task 17), and the
+// server's word that it changed nothing drops it. Each tab keeps its own draft, keyed by the heads
+// the episode was opened at and the tab's id, held in sessionStorage: two tabs on one episode never
+// write or clear each other's, and opening an episode offers every tab's draft for its heads. A
+// Save moves the heads, so a draft is only ever offered on the versions its edits were made
+// against. Every storage call is wrapped in try/catch: a private window or blocked site data
+// throws, and the editor must work without it.
 
+import { randomHex } from "@/lib/ids";
 import type { EditOp } from "@/types";
 
-export type DraftStep = { edit: EditOp } | { undo: true } | { redo: true };
+export type DraftStep = ({ edit: EditOp } | { undo: true } | { redo: true } | { retranslate: true }) & { n: number };
 export type Draft = { v: 1; at: string; steps: DraftStep[] };
-export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+export type Offer = { key: string; draft: Draft };
+export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
+export type TabStorage = Pick<Storage, "getItem" | "setItem">;
+/** A Restore under way: the draft it replays, and the requests whose answers are still due. */
+export type Replay = { from: string; waiting: number[]; refused: number; total: number };
 
-```
+const PREFIX = "vid2sub.draft.";
+const TAB = "vid2sub.tab";
+const TAB_ID = /^t[0-9a-f]{8}$/;
+let pageTab: string | null = null; // where sessionStorage is forbidden: this page's own
 
-  with
+/** Every draft's key for these heads (track → rendition id) starts with this, in a fixed order. */
+export function headsKey(heads: Record<string, string>): string {
+  return `${PREFIX}${Object.keys(heads).sort().map((k) => `${k}=${heads[k]}`).join(",")};`;
+}
 
-```ts
-// request that changes the episode is also written to localStorage, so a tab that crashes or is
-// closed can offer them back when the episode is opened again. The draft is the edits, undos and
-// redos in the order they were sent, replayed through the server's rules on Restore, so the
-// rules exist once (§20). A retranslation is kept only as a marker (its request's count), never
-// replayed, so a restored draft never asks a model again; it still takes the undo that undid it,
-// so that undo doesn't take back an edit instead (Task 17), and the server's word that it changed
-// nothing drops it. It is keyed by the heads the episode was opened at: a Save moves the
-// heads, so a draft is only ever offered on the versions its edits were made against. Every
-// storage call is wrapped in try/catch: a private window or blocked site data throws, and the
-// editor must work without it.
+/** One tab's draft for these heads. */
+export function draftKey(heads: Record<string, string>, tab: string): string {
+  return headsKey(heads) + tab;
+}
 
-import type { EditOp } from "@/types";
+/** localStorage, or null where the browser forbids it. */
+export function draftStorage(): DraftStorage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
 
-export type DraftStep = { edit: EditOp } | { undo: true } | { redo: true } | { retranslate: number };
-export type Draft = { v: 1; at: string; steps: DraftStep[] };
-export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+/** sessionStorage, which lives as long as the tab and survives a reload, or null. */
+export function tabStorage(): TabStorage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
 
-```
+/** This tab's id, `t` and 8 hex digits: kept in sessionStorage, else made for this page. */
+export function tabId(storage: TabStorage | null): string {
+  try {
+    const kept = storage?.getItem(TAB);
+    if (kept && TAB_ID.test(kept)) return kept;
+    if (storage) {
+      const made = `t${randomHex(4)}`;
+      storage.setItem(TAB, made);
+      return made;
+    }
+  } catch {
+    /* forbidden: an id for this page only */
+  }
+  pageTab ??= `t${randomHex(4)}`;
+  return pageTab;
+}
 
-  At the end of the file, after `}`, after one blank line, append:
+/** The draft under `key`, or null: none, junk, or storage that throws. */
+export function loadDraft(storage: DraftStorage | null, key: string): Draft | null {
+  try {
+    const raw = storage?.getItem(key);
+    if (!raw) return null;
+    const draft = JSON.parse(raw) as Partial<Draft>;
+    if (draft.v !== 1 || typeof draft.at !== "string" || !Array.isArray(draft.steps)) return null;
+    if (!draft.steps.every((s) => typeof s?.n === "number")) return null;
+    return draft.steps.length ? (draft as Draft) : null;
+  } catch {
+    return null;
+  }
+}
 
-```ts
-/** Removes the marker of the retranslation sent as request `n`: the server says it changed
- * nothing, so it left no undo step behind. */
-export function dropRetranslation(storage: DraftStorage | null, key: string, n: number): void {
+/** Every tab's draft for these heads, oldest first. */
+export function offersFor(storage: DraftStorage | null, heads: Record<string, string>): Offer[] {
+  const prefix = headsKey(heads);
+  const out: Offer[] = [];
+  try {
+    for (let i = 0; storage && i < storage.length; i++) {
+      const key = storage.key(i);
+      const draft = key?.startsWith(prefix) ? loadDraft(storage, key) : null;
+      if (key && draft) out.push({ key, draft });
+    }
+  } catch {
+    return [];
+  }
+  return out.sort((a, b) => a.draft.at.localeCompare(b.draft.at));
+}
+
+/** Adds one step to the draft under `key`, started now if there is none. */
+export function addStep(storage: DraftStorage | null, key: string, step: DraftStep, now: Date = new Date()): void {
+  try {
+    const draft = loadDraft(storage, key) ?? { v: 1, at: now.toISOString(), steps: [] };
+    storage?.setItem(key, JSON.stringify({ ...draft, steps: [...draft.steps, step] }));
+  } catch {
+    /* full or forbidden: the edit still reaches the server, only the crash copy is lost */
+  }
+}
+
+/** Takes request `n`'s step out: the server refused it, so it changed nothing to replay. */
+export function dropStep(storage: DraftStorage | null, key: string, n: number): void {
   try {
     const draft = loadDraft(storage, key);
     if (!draft) return;
-    const steps = draft.steps.filter((s) => !("retranslate" in s && s.retranslate === n));
+    const steps = draft.steps.filter((s) => s.n !== n);
     if (steps.length === draft.steps.length) return;
     if (steps.length) storage?.setItem(key, JSON.stringify({ ...draft, steps }));
     else storage?.removeItem(key);
   } catch {
     /* forbidden: there is no draft to change */
   }
+}
+
+/** Moves the draft under `from` to `to`, replacing whatever was there. */
+export function moveDraft(storage: DraftStorage | null, from: string, to: string): void {
+  try {
+    const draft = loadDraft(storage, from);
+    storage?.removeItem(from);
+    if (draft) storage?.setItem(to, JSON.stringify(draft));
+  } catch {
+    /* forbidden: there is no draft to move */
+  }
+}
+
+export function clearDraft(storage: DraftStorage | null, key: string): void {
+  try {
+    storage?.removeItem(key);
+  } catch {
+    /* nothing to clear where storage is forbidden */
+  }
+}
+
+/** The Restore after the server's answer to request `n`, or null when `n` isn't one of its
+ * steps. It is over once nothing is waiting: clean if nothing was refused. */
+export function heard(replay: Replay, n: number, ok: boolean): Replay | null {
+  if (!replay.waiting.includes(n)) return null;
+  return { ...replay, waiting: replay.waiting.filter((w) => w !== n), refused: replay.refused + (ok ? 0 : 1) };
 }
 
 /** The steps Restore sends: the edits, undos and redos, without the retranslations. The undo
@@ -25871,30 +27686,13 @@ export function CueList({ listRef, rows, words, track, current, word, selected, 
                   editorRef={editorRef}
 ```
 
-  `frontend/src/components/Editor.tsx`:
-
-  Replace
+  `frontend/src/components/Editor.tsx`, in full:
 
 ```tsx
+import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+
 import { indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
-import { type Action, type KeyLike, actionFor } from "@/lib/keys";
-import { captionLines, type Showing } from "@/lib/overlay";
-import type { Busy, EditOp, EpisodeView } from "@/types";
-
-import { ConflictPicker } from "./ConflictPicker";
-import { type Cell, type Editing } from "./CueRow";
-import { CueList } from "./CueList";
-import { FindReplace } from "./FindReplace";
-import { Player } from "./Player";
-import { SaveBar } from "./SaveBar";
-
-const SPEEDS = [0.75, 1, 1.25] as const; // the practice aids' playback rates (spec §20)
-```
-
-  with
-
-```tsx
-import { indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
+import { newCueIds, shownIds } from "@/lib/ids";
 import { type Action, type KeyLike, actionFor } from "@/lib/keys";
 import { captionLines, type Showing } from "@/lib/overlay";
 import { selectedIds, selectionRange } from "@/lib/retranslate";
@@ -25909,50 +27707,27 @@ import { Retranslate } from "./Retranslate";
 import { SaveBar } from "./SaveBar";
 
 const SPEEDS = [0.75, 1, 1.25] as const; // the practice aids' playback rates (spec §20)
-```
+const INSERT_MS = 2000; // a new cue's length, where the gap allows
+export const control = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
 
-  Replace
-
-```tsx
-  redo: () => void;
-  save: (formats: ("srt" | "ass")[]) => void;
-  resolve: (track: string, rendition: string) => void;
-};
-
-/** Saving's state, from App: the draft a crashed tab left (S34), and a count that goes up each
-```
-
-  with
-
-```tsx
+/** What the editor asks the server for: every edit goes through its `apply` (spec §20). */
+export type Requests = {
+  edit: (op: EditOp) => void;
+  undo: () => void;
   redo: () => void;
   save: (formats: ("srt" | "ass")[]) => void;
   resolve: (track: string, rendition: string) => void;
   retranslate: (track: string, ids: string[] | null, allowCloud: boolean) => void; // null: stale
 };
 
-/** Saving's state, from App: the draft a crashed tab left (S34), and a count that goes up each
-```
-
-  Replace
-
-```tsx
-};
-
-/** The editor (spec §20): the path box, then, once an episode is open, the player on the left
- * and the cue list on the right, with the edit bar and find and replace. */
-export function Editor({ episode, busy, pathInput, onOpen, onCantPlay, requests, saving }: {
-  episode: EpisodeView | null;
-  busy: Busy;
-  pathInput: boolean;
-  onOpen: (path: string) => void;
-  onCantPlay: () => void;
-  requests: Requests;
-```
-
-  with
-
-```tsx
+/** Saving's state, from App: the drafts tabs left for these versions (S34, Decision 31), and a
+ * count that goes up each time a Save or a pick finds a track in conflict, which opens the
+ * picker. */
+export type Saving = {
+  drafts: { key: string; at: string; steps: number }[];
+  conflictsFound: number;
+  onRestore: (key: string) => void;
+  onDiscard: () => void;
 };
 
 /** The editor (spec §20): the path box, then, once an episode is open, the player on the left
@@ -25967,23 +27742,9 @@ export function Editor({ episode, busy, progress, pathInput, generate, onOpen, o
   onOpen: (path: string) => void;
   onCantPlay: () => void;
   requests: Requests;
-```
-
-  Replace
-
-```tsx
-    <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
-      {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
-      {episode ? (
-        <EpisodeEditor key={episode.id} episode={episode} busy={busy} requests={requests} saving={saving} onCantPlay={onCantPlay} />
-      ) : (
-        <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
-      )}
-```
-
-  with
-
-```tsx
+  saving: Saving;
+}) {
+  return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
       {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
       {episode ? (
@@ -25991,25 +27752,28 @@ export function Editor({ episode, busy, progress, pathInput, generate, onOpen, o
       ) : (
         <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
       )}
-```
-
-  Replace
-
-```tsx
-  return { key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey };
+    </div>
+  );
 }
 
-function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
-  episode: EpisodeView;
-  busy: Busy;
-  requests: Requests;
-  saving: Saving;
-  onCantPlay: () => void;
-```
+function OpenForm({ busy, onOpen }: { busy: Busy; onOpen: (path: string) => void }) {
+  const [path, setPath] = useState("");
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (path.trim()) onOpen(path.trim());
+  };
+  return (
+    <form className="flex items-center gap-2" onSubmit={submit} data-testid="open-form">
+      <label htmlFor="open-path" className="text-sm font-bold">Video</label>
+      <input id="open-path" className={`${control} min-w-0 flex-1 font-mono`} value={path} onChange={(e) => setPath(e.target.value)} placeholder="/full/path/to/Show - S01E01.mkv" spellCheck={false} autoComplete="off" data-testid="open-path" />
+      <button type="submit" className="rounded-md bg-primary px-3 py-1 text-sm font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60" disabled={busy === "opening"} data-testid="open-button">
+        {busy === "opening" ? "Opening…" : "Open"}
+      </button>
+    </form>
+  );
+}
 
-  with
-
-```tsx
+function keyOf(e: KeyboardEvent): KeyLike {
   return { key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey };
 }
 
@@ -26021,22 +27785,14 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
   requests: Requests;
   saving: Saving;
   onCantPlay: () => void;
-```
-
-  Replace
-
-```tsx
-  const [word, setWord] = useState(-1);
-  const [trAt, setTrAt] = useState(-1);
-  const [sel, setSel] = useState<{ index: number; id: string | null }>({ index: -1, id: null });
-  const [cell, setCell] = useState<Cell>("source");
-  const [editing, setEditing] = useState<Editing | null>(null);
-  const [finding, setFinding] = useState(false);
-```
-
-  with
-
-```tsx
+}) {
+  const translations = episode.tracks.filter((t) => t.role === "translation" && !t.in_conflict);
+  const [track, setTrack] = useState<string | null>(translations[0]?.key ?? null);
+  const [showing, setShowing] = useState<Showing>("both");
+  const [follow, setFollow] = useState(true);
+  const [loop, setLoop] = useState<{ start_ms: number; end_ms: number } | null>(null);
+  const [rate, setRate] = useState<number>(1);
+  const [current, setCurrent] = useState(-1);
   const [word, setWord] = useState(-1);
   const [trAt, setTrAt] = useState(-1);
   const [sel, setSel] = useState<{ index: number; id: string | null }>({ index: -1, id: null });
@@ -26044,22 +27800,15 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
   const [cell, setCell] = useState<Cell>("source");
   const [editing, setEditing] = useState<Editing | null>(null);
   const [finding, setFinding] = useState(false);
-```
+  const conflicted = episode.tracks.filter((t) => t.in_conflict);
+  const [picking, setPicking] = useState(conflicted.length > 0); // open at once on a torn episode
+  const media = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const pending = useRef<string | null>(null); // an inserted cue's id, to select and edit
 
-  Replace
-
-```tsx
-  const trCues = useMemo(() => trackCues(rows, shownTrack), [rows, shownTrack]);
-  const selected = sel.index;
-  const row = selected >= 0 ? rows[selected] : undefined;
-
-  // The rows change with every edit: the selection follows its cue, else stays at its place (a
-  // split or merge replaces the cue's id); an inserted cue is selected and edited.
-```
-
-  with
-
-```tsx
+  const rows = episode.rows;
+  const shownTrack = track && episode.tracks.some((t) => t.key === track) ? track : null;
   const trCues = useMemo(() => trackCues(rows, shownTrack), [rows, shownTrack]);
   const selected = sel.index;
   const row = selected >= 0 ? rows[selected] : undefined;
@@ -26067,24 +27816,53 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
 
   // The rows change with every edit: the selection follows its cue, else stays at its place (a
   // split or merge replaces the cue's id); an inserted cue is selected and edited.
-```
+  useEffect(() => {
+    if (pending.current) {
+      const at = rows.findIndex((r) => r.id === pending.current);
+      pending.current = null;
+      if (at >= 0) {
+        setSel({ index: at, id: rows[at].id });
+        setCell("source");
+        setEditing({ id: rows[at].id, cell: "source", trId: null, text: rows[at].text });
+        return;
+      }
+    }
+    setSel((s) => {
+      const found = rows.findIndex((r) => r.id === s.id);
+      if (found >= 0) return found === s.index ? s : { index: found, id: s.id };
+      const index = Math.min(s.index, rows.length - 1);
+      return { index, id: index >= 0 ? rows[index].id : null };
+    });
+    setEditing((e) => (e && rows.some((r) => r.id === e.id) ? e : null));
+  }, [rows]);
 
-  Replace
+  useEffect(() => {
+    if (editing) editor.current?.focus();
+  }, [editing?.id, editing?.cell]);
 
-```tsx
-  const seekTo = (ms: number) => {
-    if (media.current) media.current.currentTime = ms / 1000;
-  };
-  const select = (index: number, which: Cell = cell) => {
-    if (index < 0 || index >= rows.length) return;
-    setSel({ index, id: rows[index].id });
-    setCell(which);
-    seekTo(rows[index].start_ms + 1);
-```
+  useEffect(() => {
+    if (saving.conflictsFound > 0) setPicking(true);
+  }, [saving.conflictsFound]);
 
-  with
+  // Called every frame while playing: state changes only when the cue, the word or the
+  // translation playing changes, so the list re-renders a few times a second at most.
+  const onTime = useCallback((ms: number) => {
+    if (loop && media.current && ms >= loop.end_ms) {
+      media.current.currentTime = loop.start_ms / 1000;
+      return;
+    }
+    const at = indexAt(rows, ms);
+    setCurrent(at);
+    setWord(at >= 0 ? wordAt(episode.words, rows[at].w, ms) : -1);
+    setTrAt(indexAt(trCues, ms));
+  }, [loop, rows, trCues, episode.words]);
 
-```tsx
+  // New rows (an edit, a Save, a pick): look again at what plays now, even while paused.
+  useEffect(() => {
+    if (media.current) onTime(media.current.currentTime * 1000);
+  }, [onTime]);
+
+  const playhead = () => Math.round((media.current?.currentTime ?? 0) * 1000);
   const seekTo = (ms: number) => {
     if (media.current) media.current.currentTime = ms / 1000;
   };
@@ -26094,22 +27872,81 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
     setSel({ index, id: rows[index].id });
     setCell(which);
     seekTo(rows[index].start_ms + 1);
-```
+  };
+  const focusList = () => list.current?.focus();
 
-  Replace
+  const startEditing = (which: Cell) => {
+    if (!row) return;
+    if (which === "source") {
+      setEditing({ id: row.id, cell: "source", trId: null, text: row.text });
+      return;
+    }
+    const tr = shownTrack ? row.tr[shownTrack]?.cues[0] : undefined;
+    if (tr) setEditing({ id: row.id, cell: "translation", trId: tr.id, text: tr.text });
+  };
+  const commit = (): boolean => {
+    if (!editing || !row) return false;
+    const before = editing.cell === "source" ? row.text : row.tr[shownTrack ?? ""]?.cues.find((c) => c.id === editing.trId)?.text;
+    if (editing.text === before) return false;
+    if (editing.cell === "source") requests.edit({ op: "set_text", cue: editing.id, text: editing.text });
+    else if (shownTrack && editing.trId) requests.edit({ op: "set_translation_text", track: shownTrack, cue: editing.trId, text: editing.text });
+    return true;
+  };
+  const stopEditing = () => {
+    setEditing(null);
+    focusList();
+  };
+  // Split at the caret in edit mode (committing the text first), else at the space nearest the
+  // playhead's share of the cue; at the playhead when it is inside the cue, else at the caret's
+  // share of the cue's time.
+  const split = () => {
+    if (!row) return;
+    const ph = playhead();
+    const inside = row.start_ms < ph && ph < row.end_ms;
+    let text = row.text;
+    let at: number;
+    if (editing?.cell === "source") {
+      commit();
+      text = editing.text;
+      at = editor.current?.selectionStart ?? Math.floor(text.length / 2);
+      stopEditing();
+    } else {
+      at = splitPoint(text, inside ? (ph - row.start_ms) / (row.end_ms - row.start_ms) : 0.5);
+    }
+    const share = text.length ? at / text.length : 0.5;
+    const at_ms = inside ? ph
+      : Math.min(row.end_ms - 1, Math.max(row.start_ms + 1, Math.round(row.start_ms + (row.end_ms - row.start_ms) * share)));
+    const [a, b] = newCueIds(2, shownIds(rows));
+    requests.edit({ op: "split", cue: row.id, at_char: at, at_ms, ids: [a, b] });
+  };
+  const merge = () => {
+    if (!row) return;
+    if (editing) {
+      commit();
+      stopEditing();
+    }
+    // the merged cue's id, and one for each translation track, in case its two parts' cues join
+    const tracks = episode.tracks.filter((t) => t.role !== "source").map((t) => t.key);
+    const [id, ...joined] = newCueIds(1 + tracks.length, shownIds(rows));
+    requests.edit({ op: "merge_next", cue: row.id, id, joined: Object.fromEntries(tracks.map((k, i) => [k, joined[i]])) });
+  };
+  const insert = () => {
+    const ph = playhead();
+    let start = ph;
+    if (indexAt(rows, ph) >= 0 && row) start = row.end_ms;
+    const next = rows.find((r) => r.start_ms > start);
+    const end = Math.min(start + INSERT_MS, next ? next.start_ms : start + INSERT_MS);
+    const [id] = newCueIds(1, shownIds(rows));
+    pending.current = id;
+    requests.edit({ op: "insert", start_ms: start, end_ms: end, text: "…", id });
+  };
 
-```tsx
-      case "play": if (m) void m.play().catch(() => undefined); return;
-      case "previous": select(Math.max(0, selected - 1)); return;
-      case "next": select(Math.min(rows.length - 1, selected + 1)); return;
-      case "cell": if (a.cell === "source" || shownTrack) setCell(a.cell); return;
-      case "set-start": if (row) requests.edit({ op: "set_times", cue: row.id, start_ms: playhead() }); return;
-      case "set-end": if (row) requests.edit({ op: "set_times", cue: row.id, end_ms: playhead() }); return;
-```
-
-  with
-
-```tsx
+  const act = (a: Action) => {
+    const m = media.current;
+    switch (a.kind) {
+      case "play-pause": if (m) void (m.paused ? m.play().catch(() => undefined) : m.pause()); return;
+      case "back": if (m) m.currentTime = Math.max(0, m.currentTime - 2); return;
+      case "pause": m?.pause(); return;
       case "play": if (m) void m.play().catch(() => undefined); return;
       case "previous": select(Math.max(0, selected - 1)); return;
       case "next": select(Math.min(rows.length - 1, selected + 1)); return;
@@ -26117,23 +27954,18 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
       case "cell": if (a.cell === "source" || shownTrack) setCell(a.cell); return;
       case "set-start": if (row) requests.edit({ op: "set_times", cue: row.id, start_ms: playhead() }); return;
       case "set-end": if (row) requests.edit({ op: "set_times", cue: row.id, end_ms: playhead() }); return;
-```
-
-  Replace
-
-```tsx
-    const a = actionFor(keyOf(e), "navigate");
-    if (!a) return;
-    e.preventDefault();
-    if (selected < 0 && (a.kind === "next" || a.kind === "previous")) {
-      select(current >= 0 ? current : 0);
-      return;
+      case "nudge": if (row) requests.edit({ op: "nudge", cue: row.id, delta_ms: a.delta_ms, edge: "both" }); return;
+      case "edit": startEditing(cell); return;
+      case "undo": requests.undo(); return;
+      case "redo": requests.redo(); return;
+      case "commit": commit(); stopEditing(); return;
+      case "split": if (editing?.cell !== "translation") split(); return;
+      case "merge": merge(); return;
+      case "cancel": stopEditing(); return;
     }
-```
-
-  with
-
-```tsx
+  };
+  const onListKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return; // a text box inside handles its own keys
     const a = actionFor(keyOf(e), "navigate");
     if (!a) return;
     e.preventDefault();
@@ -26141,23 +27973,43 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
       select(current >= 0 ? current : 0);
       return;
     }
-```
+    act(a);
+  };
+  const onEditKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const a = actionFor(keyOf(e), "edit");
+    if (!a) return;
+    e.preventDefault();
+    act(a);
+  };
 
-  Replace
+  const toggleLoop = () => {
+    const at = rows[current] ? current : selected;
+    setLoop(loop || !rows[at] ? null : { start_ms: rows[at].start_ms, end_ms: rows[at].end_ms });
+  };
+  const changeRate = (value: number) => {
+    setRate(value);
+    if (media.current) media.current.playbackRate = value;
+  };
 
-```tsx
-          <ul role="status" className="flex flex-col gap-0.5 text-sm" data-testid="episode-notes">
-            {episode.notes.map((note, k) => <li key={k}>{note}</li>)}
-            {stale.map((t) => (
-              <li key={`stale-${t.key}`}>Every {t.label} cue is stale: the glossary or the translation model changed since it was made, or a glossary term is waiting for Save.</li>
-            ))}
-            {conflicted.map((t) => (
-              <li key={`conflict-${t.key}`} className="flex flex-wrap items-center gap-2 text-destructive">
-```
+  // The indexes can be a render behind the rows (an edit, or a track gone into conflict).
+  const lines = captionLines(showing, rows[current]?.text ?? null, trCues[trAt]?.text ?? null);
+  const stale = translations.filter((t) => t.all_stale);
+  const noRow = !row;
+  const tool = (label: string, keys: string, onClick: () => void, testid: string, disabled = noRow) => (
+    <button type="button" className={control} onClick={onClick} disabled={disabled} aria-keyshortcuts={keys || undefined} title={keys ? `${label} (${keys})` : label} data-testid={testid}>
+      {label}
+    </button>
+  );
 
-  with
-
-```tsx
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <header className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <h1 className="truncate text-lg font-bold" data-testid="episode-name">{episode.video.name}</h1>
+          <SaveBar dirty={episode.dirty} busy={busy} formats={episode.formats} drafts={saving.drafts}
+            onSave={requests.save} onRestore={saving.onRestore} onDiscard={saving.onDiscard} />
+        </div>
+        {(episode.notes.length > 0 || stale.length > 0 || conflicted.length > 0) && (
           <ul role="status" className="flex flex-col gap-0.5 text-sm" data-testid="episode-notes">
             {episode.notes.map((note, k) => <li key={k}>{note}</li>)}
             {stale.map((t) => (
@@ -26168,22 +28020,49 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
             ))}
             {conflicted.map((t) => (
               <li key={`conflict-${t.key}`} className="flex flex-wrap items-center gap-2 text-destructive">
-```
-
-  Replace
-
-```tsx
-            onPick={(track, rendition) => { requests.resolve(track, rendition); setPicking(false); }} />
-        </section>
-        <section aria-label="Cue list" className="flex min-h-0 flex-col gap-2">
-          <div role="toolbar" aria-label="Edit the selected cue" className="flex flex-wrap gap-1" data-testid="edit-bar">
-            {tool("Edit", "Enter", () => startEditing(cell), "tool-edit")}
-            {tool("Start to playhead", "[", () => act({ kind: "set-start" }), "tool-start")}
-```
-
-  with
-
-```tsx
+                The {t.label} track has two versions: pick one before editing it.
+                <button type="button" className={control} onClick={() => setPicking(true)} data-testid="pick-version">Pick a version</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </header>
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]">
+        <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
+          <Player video={episode.video} mediaRef={media} lines={lines} busy={busy} onTime={onTime} onCantPlay={onCantPlay} />
+          <div className="flex flex-wrap items-center gap-3 text-sm" data-testid="practice">
+            <label className="flex items-center gap-1">
+              Captions
+              <select className={control} value={showing} onChange={(e) => setShowing(e.target.value as Showing)} data-testid="showing">
+                <option value="source">Source</option>
+                <option value="translation">Translation</option>
+                <option value="both">Both</option>
+              </select>
+            </label>
+            {translations.length > 1 && (
+              <label className="flex items-center gap-1">
+                Translation
+                <select className={control} value={shownTrack ?? ""} onChange={(e) => setTrack(e.target.value)} data-testid="track">
+                  {translations.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                </select>
+              </label>
+            )}
+            <label className="flex items-center gap-1">
+              Speed
+              <select className={control} value={rate} onChange={(e) => changeRate(Number(e.target.value))} data-testid="speed">
+                {SPEEDS.map((s) => <option key={s} value={s}>{s}×</option>)}
+              </select>
+            </label>
+            <button type="button" className={control} aria-pressed={loop !== null} onClick={toggleLoop} data-testid="loop">
+              {loop ? "Looping this cue" : "Loop this cue"}
+            </button>
+            <label className="flex items-center gap-1">
+              <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} className="size-4 accent-(--primary)" data-testid="follow" />
+              Follow playback
+            </label>
+          </div>
+          {finding && <FindReplace episode={episode} onEdit={requests.edit} onClose={() => setFinding(false)} />}
+          <ConflictPicker episode={episode} open={picking && conflicted.length > 0} onClose={() => setPicking(false)}
             onPick={(track, rendition) => { requests.resolve(track, rendition); setPicking(false); }} />
         </section>
         <section aria-label="Cue list" className="flex min-h-0 flex-col gap-2">
@@ -26200,26 +28079,23 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
           <div role="toolbar" aria-label="Edit the selected cue" className="flex flex-wrap gap-1" data-testid="edit-bar">
             {tool("Edit", "Enter", () => startEditing(cell), "tool-edit")}
             {tool("Start to playhead", "[", () => act({ kind: "set-start" }), "tool-start")}
-```
-
-  Replace
-
-```tsx
-              current={current}
-              word={word}
-              selected={selected}
-              cell={cell}
-              editing={editing}
-              follow={follow}
-              onPick={(index, which) => select(index, which)}
-              onKeyDown={onListKey}
-              onDraft={(text) => setEditing((e) => (e ? { ...e, text } : e))}
-              onEditKey={onEditKey}
-```
-
-  with
-
-```tsx
+            {tool("End to playhead", "]", () => act({ kind: "set-end" }), "tool-end")}
+            {tool("−100 ms", "Alt+ArrowLeft", () => act({ kind: "nudge", delta_ms: -100 }), "tool-earlier")}
+            {tool("+100 ms", "Alt+ArrowRight", () => act({ kind: "nudge", delta_ms: 100 }), "tool-later")}
+            {tool("Split", "Meta+Shift+S", split, "tool-split")}
+            {tool("Merge with next", "Meta+M", merge, "tool-merge", noRow || selected >= rows.length - 1)}
+            {tool("Insert", "", insert, "tool-insert", false)}
+            {tool("Delete", "", () => row && requests.edit({ op: "delete", cue: row.id }), "tool-delete")}
+            {tool("Undo", "Meta+Z", requests.undo, "tool-undo", !episode.can_undo)}
+            {tool("Redo", "Meta+Shift+Z", requests.redo, "tool-redo", !episode.can_redo)}
+            <button type="button" className={control} aria-pressed={finding} onClick={() => setFinding(!finding)} data-testid="tool-find">Find and replace</button>
+          </div>
+          <div className="min-h-0 flex-1">
+            <CueList
+              listRef={list}
+              rows={rows}
+              words={episode.words}
+              track={shownTrack}
               current={current}
               word={word}
               selected={selected}
@@ -26231,57 +28107,47 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
               onKeyDown={onListKey}
               onDraft={(text) => setEditing((e) => (e ? { ...e, text } : e))}
               onEditKey={onEditKey}
+              editorRef={editor}
+            />
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
 ```
 
-  `frontend/src/App.tsx`:
-
-  Replace
+  `frontend/src/App.tsx`, in full:
 
 ```tsx
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { Editor, type Requests, type Saving } from "@/components/Editor";
 import { resultNotices } from "@/components/SaveBar";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
-import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, loadDraft } from "@/lib/draft";
-import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
-import { pacer } from "@/lib/sends";
-import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
-import type { Busy, Capabilities, EditOp, EpisodeView, SaveResultMessage, Status } from "@/types";
-
-type Ask = { episode: string; n: number };
-
-```
-
-  with
-
-```tsx
-import { resultNotices } from "@/components/SaveBar";
-import { TopBar } from "@/components/TopBar";
-import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
-import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, dropRetranslation, loadDraft, replayable } from "@/lib/draft";
+import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage } from "@/lib/draft";
+import { randomHex } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { retranslateNotice } from "@/lib/retranslate";
 import { pacer } from "@/lib/sends";
 import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
-import type { Busy, Capabilities, EditOp, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, Status } from "@/types";
+import type { AppliedMessage, Busy, Capabilities, EditOp, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, Status } from "@/types";
 
 type Ask = { episode: string; n: number };
+type Step = { edit: EditOp } | { undo: true } | { redo: true };
 
-```
+type JQueryLike = (target: Document) => {
+  on(event: string, handler: () => void): unknown;
+  off(event: string, handler: () => void): unknown;
+};
 
-  Replace
-
-```tsx
-  const status = useShinyOutputValue<Status>("status");
-  const episode = useShinyOutputValue<EpisodeView | null>("episode");
-  const busy = useShinyOutputValue<Busy>("busy");
-  // Every input is set from here too. Each request carries a count, so the same path asked for
-  // twice is still two requests, and "event" sends it at once, never merged with the next.
-  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
-```
-
-  with
-
-```tsx
+export default function App() {
+  const initialized = useShinyInitialized();
+  // Every output is subscribed here, and every message handler lives here: shinyreact 0.1.0
+  // drops a message that has no handler, and an output that unmounts logs "Output <id> not found"
+  // for each later value (recordings' App.tsx). A new output or message gets a line here too.
+  const capabilities = useShinyOutputValue<Capabilities>("capabilities");
   const status = useShinyOutputValue<Status>("status");
   const episode = useShinyOutputValue<EpisodeView | null>("episode");
   const busy = useShinyOutputValue<Busy>("busy");
@@ -26289,22 +28155,9 @@ type Ask = { episode: string; n: number };
   // Every input is set from here too. Each request carries a count, so the same path asked for
   // twice is still two requests, and "event" sends it at once, never merged with the next.
   const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
-```
-
-  Replace
-
-```tsx
-  const setRedo = useSetShinyInput<Ask | null>("redo", null, { priority: "event", debounceMs: 0 });
-  const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
-  const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
-  const sent = useRef(0);
-  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
-  const pace = useMemo(() => pacer(), []);
-```
-
-  with
-
-```tsx
+  const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
+  const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
+  const setUndo = useSetShinyInput<Ask | null>("undo", null, { priority: "event", debounceMs: 0 });
   const setRedo = useSetShinyInput<Ask | null>("redo", null, { priority: "event", debounceMs: 0 });
   const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
   const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
@@ -26312,137 +28165,190 @@ type Ask = { episode: string; n: number };
   const sent = useRef(0);
   // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
   const pace = useMemo(() => pacer(), []);
-```
 
-  Replace
-
-```tsx
-    addStep(draftStorage(), at.key, step);
-  }, [offer]);
-
-  const episodeId = episode?.id ?? null;
-  const requests = useMemo<Requests>(() => {
-    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
-```
-
-  with
-
-```tsx
-    addStep(draftStorage(), at.key, step);
-  }, [offer]);
+  // The crash-recovery draft (spec §14.5, S34; Decision 31): every edit, undo and redo is also
+  // written to localStorage as sent, under the heads the episode was opened at and this tab's id,
+  // and the server's word that it refused one takes it out again. Opening an episode offers every
+  // tab's draft for its heads. Restoring one replays it through the server's rules and clears it
+  // only once every step was done again; otherwise it is kept and the editor says how many steps
+  // failed. This tab's own draft starts again then, or when the person edits or discards instead
+  // of restoring. When a Save or a pick moves the heads, this tab's draft goes with them while
+  // edits are still unsaved (a pick keeps the other tracks' edits), and is cleared once
+  // everything is saved; no other tab's draft is ever touched by it.
+  const tab = useMemo(() => tabId(tabStorage()), []);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const offering = useRef(false); // offers are up and this tab's old draft not yet dropped
+  const drafted = useRef<{ id: string; key: string; heads: Record<string, string> } | null>(null);
+  const replaying = useRef<Replay | null>(null);
+  useEffect(() => {
+    if (!episode) {
+      drafted.current = null;
+      return;
+    }
+    const key = draftKey(episode.heads, tab);
+    const was = drafted.current;
+    const store = draftStorage();
+    if (was?.id === episode.id && was.key !== key) {
+      if (episode.dirty) moveDraft(store, was.key, key);
+      else clearDraft(store, was.key);
+    }
+    if (was?.id !== episode.id) {
+      const found = offersFor(store, episode.heads);
+      offering.current = found.length > 0;
+      setOffers(found);
+    }
+    drafted.current = { id: episode.id, key, heads: episode.heads };
+  }, [episode, tab]);
+  const dropOffers = useCallback(() => { // editing or discarding instead: this tab starts afresh
+    if (!offering.current) return;
+    offering.current = false;
+    setOffers([]);
+    if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
+  }, []);
 
   // A retranslation goes in the draft as a marker only (never replayed: a restored draft asks no
   // model), dropped when the server says it changed nothing; `asking` remembers which were
   // "Retranslate stale", for the notice.
   const asking = useRef(new Map<number, { track: string; stale: boolean }>());
   const episodeId = episode?.id ?? null;
+  const steps = useMemo(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+    // Sends one edit, undo or redo, and keeps it in the draft as sent; returns its request's count.
+    return (step: Step): number | null => {
+      const a = ask();
+      if (!a) return null;
+      if (drafted.current) addStep(draftStorage(), drafted.current.key, { ...step, n: a.n } as DraftStep);
+      if ("edit" in step) pace(() => setEdit({ ...a, op: step.edit }));
+      else if ("undo" in step) pace(() => setUndo(a));
+      else pace(() => setRedo(a));
+      return a.n;
+    };
+  }, [episodeId, pace, setEdit, setUndo, setRedo]);
   const requests = useMemo<Requests>(() => {
     const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
-```
-
-  Replace
-
-```tsx
-      redo: () => { record({ redo: true }); send(setRedo, ask()); },
-      save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
-      resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
-    };
-  }, [episodeId, pace, record, setEdit, setUndo, setRedo, setSave, setResolve]);
-
-  const [conflictsFound, setConflictsFound] = useState(0);
-  useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
-```
-
-  with
-
-```tsx
-      redo: () => { record({ redo: true }); send(setRedo, ask()); },
+    const send = <T,>(set: (v: T) => void, value: T | null) => value && pace(() => set(value));
+    return {
+      edit: (op) => { dropOffers(); steps({ edit: op }); },
+      undo: () => { dropOffers(); steps({ undo: true }); },
+      redo: () => { dropOffers(); steps({ redo: true }); },
       save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
       resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
       retranslate: (track, ids, allowCloud) => {
         const a = ask();
         if (!a) return;
-        record({ retranslate: a.n });
+        dropOffers();
+        if (drafted.current) addStep(draftStorage(), drafted.current.key, { retranslate: true, n: a.n });
         asking.current.set(a.n, { track, stale: ids === null });
         send(setRetranslate, { ...a, track, ids, allow_cloud: allowCloud });
       },
     };
-  }, [episodeId, pace, record, setEdit, setUndo, setRedo, setSave, setResolve, setRetranslate]);
+  }, [episodeId, pace, dropOffers, steps, setSave, setResolve, setRetranslate]);
   useShinyMessageHandler("retranslate_result", (data: RetranslateResultMessage) => {
     if (!episode || data.episode !== episode.id || data.n === null) return;
     const asked = asking.current.get(data.n);
     asking.current.delete(data.n);
-    if (data.changed === 0 && drafted.current) dropRetranslation(draftStorage(), drafted.current.key, data.n);
+    if (data.changed === 0 && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
     if (!asked) return;
     const label = episode.tracks.find((t) => t.key === asked.track)?.label ?? asked.track;
     const n = retranslateNotice(data.changed, label, asked.stale);
     if (n) setNotices((shown) => addNotice(shown, n, nextId.current++));
   });
 
+  useShinyMessageHandler("applied", (data: AppliedMessage) => {
+    if (!episode || data.episode !== episode.id) return;
+    if (!data.ok && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    const now = replaying.current && heard(replaying.current, data.n, data.ok);
+    if (!now) return;
+    replaying.current = now.waiting.length ? now : null;
+    if (now.waiting.length) return;
+    if (!now.refused) clearDraft(draftStorage(), now.from);
+    else setNotices((shown) => addNotice(shown, { kind: "error", text: `${now.refused} restored ${now.refused === 1 ? "step" : "steps"} of ${now.total} couldn't be replayed: the draft is kept` }, nextId.current++));
+  });
+
   const [conflictsFound, setConflictsFound] = useState(0);
   useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
-```
-
-  Replace
-
-```tsx
-    for (const n of resultNotices(data, episode.tracks)) setNotices((shown) => addNotice(shown, n, nextId.current++));
+    if (!episode || data.episode !== episode.id) return;
+    for (const n of resultNotices(data, episode.tracks, episode.video.name)) setNotices((shown) => addNotice(shown, n, nextId.current++));
     if (data.conflicts.length) setConflictsFound((k) => k + 1);
   });
   const saving: Saving = {
-    draft: offer && { at: offer.at, steps: offer.steps.length },
+    // the steps Restore would send, for each draft that has any
+    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps).length })).filter((d) => d.steps > 0),
     conflictsFound,
-    onRestore: () => {
-      const steps = offer?.steps ?? [];
-      if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
-      setOffer(null);
-      for (const step of steps) {
-        if ("edit" in step) requests.edit(step.edit);
-        else if ("undo" in step) requests.undo();
-        else requests.redo();
+    onRestore: (key) => {
+      const at = drafted.current;
+      const store = draftStorage();
+      const draft = loadDraft(store, key);
+      if (!at || !draft) return;
+      offering.current = false;
+      setOffers([]);
+      let from = key;
+      if (key === at.key) { // this tab's own (a reload): set aside until the server has redone it
+        from = draftKey(at.heads, `t${randomHex(4)}`);
+        moveDraft(store, key, from);
+      } else {
+        clearDraft(store, at.key);
       }
+      const sent: number[] = [];
+      for (const step of replayable(draft.steps)) {
+        const { n: _, ...asSent } = step;
+        const n = steps(asSent as Step);
+        if (n !== null) sent.push(n);
+      }
+      if (sent.length) replaying.current = { from, waiting: sent, refused: 0, total: sent.length };
+      else clearDraft(store, from);
     },
-    onDiscard: () => {
-```
+    onDiscard: dropOffers,
+  };
 
-  with
-
-```tsx
-    for (const n of resultNotices(data, episode.tracks)) setNotices((shown) => addNotice(shown, n, nextId.current++));
-    if (data.conflicts.length) setConflictsFound((k) => k + 1);
+  // Closing the tab with unsaved edits warns first (S34): listened for only while there are
+  // some, as MDN advises; preventDefault, and returnValue for older browsers.
+  const dirty = episode?.dirty ?? false;
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = true;
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  const [notices, setNotices] = useState<Shown[]>([]);
+  const nextId = useRef(1);
+  useShinyMessageHandler("notice", (data: unknown) => {
+    setNotices((shown) => addNotice(shown, data, nextId.current++));
   });
-  const offered = offer ? replayable(offer.steps).length : 0; // the steps Restore would send
-  const saving: Saving = {
-    draft: offer && offered ? { at: offer.at, steps: offered } : null,
-    conflictsFound,
-    onRestore: () => {
-      const steps = offer?.steps ?? [];
-      if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
-      setOffer(null);
-      for (const step of replayable(steps)) {
-        if ("edit" in step) requests.edit(step.edit);
-        else if ("undo" in step) requests.undo();
-        else if ("redo" in step) requests.redo();
-      }
-    },
-    onDiscard: () => {
-```
 
-  Replace
+  // The websocket closed: ask the engine once why, and say so; never reconnect (Review Focus 5).
+  const [lost, setLost] = useState<Lost | null>(null);
+  const check = useCallback(() => {
+    void whyLost((input, init) => window.fetch(input, init)).then(setLost);
+  }, []);
+  useEffect(() => {
+    // Shiny triggers shiny:disconnected through jQuery, which addEventListener never sees.
+    const $ = (window as unknown as { jQuery?: JQueryLike }).jQuery;
+    if (!$) return;
+    $(document).on("shiny:disconnected", check);
+    return () => void $(document).off("shiny:disconnected", check);
+  }, [check]);
 
-```tsx
-        <Editor
-          episode={episode ?? null}
-          busy={busy ?? null}
-          pathInput={capabilities?.path_input ?? false}
-          onOpen={(path) => setOpen({ path, n: ++sent.current })}
-          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
-          requests={requests}
-```
-
-  with
-
-```tsx
+  if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
+  return (
+    <div className="flex h-dvh flex-col" data-testid="app">
+      <TopBar capabilities={capabilities} status={status} />
+      {lost && (
+        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
+        <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">
+          <span>{LOST_MESSAGES[lost]}</span>
+          {lost === "stopped" && (
+            <button type="button" className="underline" onClick={check} data-testid="check-again">Check again</button>
+          )}
+          {lost === "dropped" && (
+            <button type="button" className="underline" onClick={() => window.location.reload()}>Reload</button>
+          )}
+        </div>
+      )}
+      <main className="min-h-0 flex-1" data-testid="main">
         <Editor
           episode={episode ?? null}
           busy={busy ?? null}
@@ -26452,19 +28358,43 @@ type Ask = { episode: string; n: number };
           onOpen={(path) => setOpen({ path, n: ++sent.current })}
           onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
           requests={requests}
+          saving={saving}
+        />
+      </main>
+      <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">
+        <div role="status" aria-live="polite" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "info").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+        <div role="alert" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "error").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: Shown[]) => Shown[]) => void }) {
+  return (
+    <div className={`flex items-start gap-2 rounded-lg border bg-card p-3 text-sm shadow ${notice.kind === "error" ? "border-destructive text-destructive" : "border-border"}`} data-testid="notice">
+      {/* Plain text: a notice can carry a file name or a server's error (spec §6.3). */}
+      <span className="flex-1">{notice.text}</span>
+      <button type="button" aria-label="Dismiss" onClick={() => onDismiss((s) => dismissNotice(s, notice.id))}>×</button>
+    </div>
+  );
+}
 ```
 
 - [ ] **Step 9: Run the checks; they pass.** `cd frontend && npm run typecheck && npx vitest run`
-  first (`Test Files  15 passed (15)`, `Tests  71 passed (71)`), then `make build && uv run
+  first (`Test Files  16 passed (16)`, `Tests  81 passed (81)`), then `make build && uv run
   pytest -m e2e tests/e2e/test_retranslate.py tests/e2e/test_editing.py -q` (`9 passed`: the
   keyboard test of Task 15 walks the edit bar with Shift+Tab from the cue list, which is why
   Retranslate sits above the edit bar, not between it and the list). **Guard check** (spec
   §7.2): in `Retranslate.tsx`, take out `setAllowCloud(false);` from `send`; `make build && uv
   run pytest -m e2e tests/e2e/test_retranslate.py -q -k cloud` fails with `AssertionError:
   Locator expected not to be checked` and `Actual value: checked`; put it back and `make build`.
-  Then `make check`. Expected: `967 passed, 2 skipped, 31 deselected` (twice), `Test Files  15
-  passed (15)`, `Tests  71 passed (71)`, `All checks passed!`, `no leaks found`. Then `make
-  e2e`. Expected: `27 passed`.
+  Then `make check`. Expected: `992 passed, 2 skipped, 34 deselected` (twice), `Test Files  16
+  passed (16)`, `Tests  81 passed (81)`, `All checks passed!`, `no leaks found`. Then `make
+  e2e`. Expected: `30 passed`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -26480,8 +28410,10 @@ unticks again after each request (spec §7.2); nothing stores it. While
 the server works, a polite live region says "Retranslating…", then the
 batches done (§19.3). The stale note adds that Retranslate stale redoes
 them all except those you edited (Decision 9). A retranslation goes in
-the crash draft only as a marker ({"retranslate": n}), dropped when
-retranslate_result says nothing changed; Restore sends replayable(steps),
+the crash draft only as a marker ({"retranslate": true, "n": n}, n its
+request's count, as every step carries since Decision 31), dropped by
+dropStep when retranslate_result says nothing changed; Restore sends
+replayable(steps),
 which leaves the markers out and follows the undo history, so an undo
 that took back a retranslation isn't replayed onto an edit; the draft's
 count is of the steps Restore would send.
@@ -26511,7 +28443,617 @@ Co-Authored-By: <the model's own line>
   frontend/src/lib/retranslate.ts frontend/src/types.ts tests/e2e/test_retranslate.py`, `git
   commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 11: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+#### Round 17c: what the Tier 1 review found
+
+The Tier 1 review (Step 16's reviewer, run before the close) found one Critical, one Important and
+two Minor findings in this task as built on Decision 31's draft; this round fixes three,
+test-first, and the fourth (a draft holding only markers is never offered and never cleared) goes
+on the Phase-end list, with the reviewer's Task 16 note (an edit sent while a Save runs is
+recorded under the old heads, which the Save's clean publish clears).
+
+- [ ] **Step 11: Write the failing tests.**   In `tests/test_web_server.py`, replace
+
+```python
+        t.until(lambda t: len(applied(t)) == 6)
+        assert applied(t) == [{"episode": ep["id"], "n": n, "ok": ok} for n, ok in
+                              ((1, True), (2, False), (3, True), (4, True), (5, False), (7, True))]
+```
+
+  with
+
+```python
+        t.until(lambda t: len(applied(t)) == 6)
+        assert applied(t) == [
+            {"episode": ep["id"], "n": n, "ok": ok, "changed": changed} for n, ok, changed in
+            ((1, True, True), (2, False, False), (3, True, True), (4, True, True),
+             (5, False, False), (7, True, False))]  # 7: nothing left to undo
+
+
+@pytest.mark.media
+def test_an_edit_undo_or_redo_that_changes_nothing_is_answered_as_made_but_unchanged(
+        media_client, tmp_path):
+    # Restore follows the server's undo history, so the draft keeps only the steps that moved it
+    # (Task 17's review: an edit that changed nothing pushes no undo step).
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        ask, first = {"episode": ep["id"]}, ep["rows"][0]
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": first["id"],
+                                          "text": first["text"]}})  # the text it has
+        t.set(redo={**ask, "n": 2})  # nothing to redo
+        t.set(edit={**ask, "n": 3, "op": {"op": "set_text", "cue": first["id"], "text": "やあ"}})
+        t.set(undo={**ask, "n": 4})
+        t.set(redo={**ask, "n": 5})
+        t.until(lambda t: len(applied(t)) == 5)
+        assert [(a["n"], a["ok"], a["changed"]) for a in applied(t)] == [
+            (1, True, False), (2, True, False), (3, True, True), (4, True, True),
+            (5, True, True)]
+```
+  then replace
+
+```python
+        assert t.until(lambda t: retranslated(t)) == [
+            {"episode": ep["id"], "n": 2, "changed": 1}]
+        done = latest(t, lambda e: en_texts(e)[1].startswith("EN "))
+```
+
+  with
+
+```python
+        assert t.until(lambda t: retranslated(t)) == [
+            {"episode": ep["id"], "n": 2, "ok": True, "changed": 1}]
+        done = latest(t, lambda e: en_texts(e)[1].startswith("EN "))
+```
+  then replace
+
+```python
+        t.set(retranslate={**ask, "n": 4})
+        t.until(lambda t: len(retranslated(t)) == 4)
+        assert [n["text"] for n in t.notices()] == [
+            ("couldn't retranslate: the translation model's server isn't reachable → is it "
+```
+
+  with
+
+```python
+        t.set(retranslate={**ask, "n": 4})
+        t.until(lambda t: len(retranslated(t)) == 4)
+        t.set(retranslate={**ask, "n": 5, "ids": None})  # "Retranslate stale" fails the same way
+        t.until(lambda t: len(retranslated(t)) == 5)
+        assert [n["text"] for n in t.notices()] == [
+            ("couldn't retranslate: the translation model's server isn't reachable → is it "
+```
+  then replace
+
+```python
+             "shape → retranslate again, or pick fewer cues"),
+            "the glossary isn't UTF-8; save it as UTF-8"]
+```
+
+  with
+
+```python
+             "shape → retranslate again, or pick fewer cues"),
+            "the glossary isn't UTF-8; save it as UTF-8",
+            "the glossary isn't UTF-8; save it as UTF-8"]
+```
+  then replace
+
+```python
+            "the glossary isn't UTF-8; save it as UTF-8"]
+        assert [r["changed"] for r in retranslated(t)] == [0] * 4
+        assert not t.value("episode")["dirty"] and t.value("busy") is None
+```
+
+  with
+
+```python
+            "the glossary isn't UTF-8; save it as UTF-8"]
+        # failed, so the page never says "nothing was stale" (Task 17's review)
+        assert [(r["ok"], r["changed"]) for r in retranslated(t)] == [(False, 0)] * 5
+        assert not t.value("episode")["dirty"] and t.value("busy") is None
+```
+
+  In `frontend/src/lib/retranslate.test.ts`, replace
+
+```ts
+  it("counts the cues it changed, or says nothing was stale", () => {
+    expect(retranslateNotice(2, "Japanese", true)).toEqual({ kind: "info", text: "Retranslated 2 Japanese cues" });
+    expect(retranslateNotice(1, "Japanese", false)).toEqual({ kind: "info", text: "Retranslated 1 Japanese cue" });
+    expect(retranslateNotice(0, "Japanese", true)).toEqual({ kind: "info", text: "Nothing to retranslate: no Japanese cue is stale or untranslated, apart from those you edited" });
+  });
+```
+
+  with
+
+```ts
+  it("counts the cues it changed, or says nothing was stale", () => {
+    expect(retranslateNotice({ ok: true, changed: 2 }, "Japanese", true)).toEqual({ kind: "info", text: "Retranslated 2 Japanese cues" });
+    expect(retranslateNotice({ ok: true, changed: 1 }, "Japanese", false)).toEqual({ kind: "info", text: "Retranslated 1 Japanese cue" });
+    expect(retranslateNotice({ ok: true, changed: 0 }, "Japanese", true)).toEqual({ kind: "info", text: "Nothing to retranslate: no Japanese cue is stale or untranslated, apart from those you edited" });
+  });
+```
+  then replace
+
+```ts
+  it("leaves a failed request to the server's own notice", () => {
+    expect(retranslateNotice(0, "Japanese", false)).toBeNull();
+  });
+```
+
+  with
+
+```ts
+  it("leaves a failed request to the server's own notice, a stale one too", () => {
+    expect(retranslateNotice({ ok: false, changed: 0 }, "Japanese", false)).toBeNull();
+    expect(retranslateNotice({ ok: false, changed: 0 }, "Japanese", true)).toBeNull();
+  });
+```
+
+  In `frontend/src/lib/draft.test.ts`, replace
+
+```ts
+import { addStep, clearDraft, draftKey, type DraftStep, type DraftStorage, dropStep, headsKey, heard, loadDraft, moveDraft, offersFor, replayable, tabId } from "./draft";
+```
+
+  with
+
+```ts
+import { addStep, clearDraft, draftKey, type DraftStep, type DraftStorage, dropStep, headsKey, heard, loadDraft, moveDraft, offersFor, replayable, tabId, UNDO_STEPS } from "./draft";
+```
+  then replace
+
+```ts
+  it("is dropped when the server says it changed nothing, and only that one", () => {
+```
+
+  with
+
+```ts
+  it("follows the server's undo history only as far back as it keeps, 200 steps", () => {
+    // E0, a retranslation, then E1 to E199, then 201 undos: the server keeps 200 steps, so E0
+    // can't be undone and stays; Restore must keep it too (Task 17's review).
+    const edits = Array.from({ length: 199 }, (_, i) => ({ edit: { op: "set_text", cue: "c0000000a", text: `${i + 1}` }, n: 100 + i }) as DraftStep);
+    const undos = Array.from({ length: 201 }, (_, i) => ({ undo: true, n: 400 + i }) as DraftStep);
+    const sent = replayable([EDIT, RT, ...edits, ...undos]);
+    expect(sent.filter((s) => "edit" in s)).toHaveLength(200);
+    expect(sent.filter((s) => "undo" in s)).toHaveLength(199); // E199 to E1; never E0
+    expect(UNDO_STEPS).toBe(200);
+  });
+
+  it("is dropped when the server says it changed nothing, and only that one", () => {
+```
+
+  At the end of `tests/e2e/test_retranslate.py`, add (the two blank lines first):
+
+```python
+
+
+
+def test_a_step_that_changed_nothing_never_makes_restore_take_back_the_wrong_one(open_page,
+                                                                                server):
+    # Task 17's review: a nudge with nowhere to go pushes no undo step on the server, so the
+    # draft drops it; kept, Restore would follow the wrong undo history and lose the redone edit.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit(a, rows.nth(1).get_by_test_id("cue-text"), "occasion!")
+    a.get_by_test_id("tool-undo").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion.")
+    rows.nth(0).get_by_test_id("cue-text").click()
+    a.keyboard.press("Alt+ArrowLeft")  # the first cue starts at 0: the nudge changes nothing
+    a.get_by_test_id("tool-redo").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
+    a.close()
+    second = open_page(server)
+    b = second.page
+    rows = open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_contain_text("3 unsaved edits from")
+    b.get_by_test_id("draft-restore").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
+    expect(b.get_by_test_id("draft")).to_have_count(0)
+    assert notices(b) == [] and second.errors == [] and second.violations() == []
+```
+
+- [ ] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q -k
+  'answered or cant_run or stale_redoes'`. Expected: `4 failed, 28 deselected`: the two
+  `applied` tests (`KeyError: 'changed'`, and `AssertionError: assert [{'episode': ..., 'ok':
+  True}] == [{'episode': ...nged': False}]`), the stale test (`AssertionError: assert
+  [{'episode': ...'changed': 1}] == [{'episode': ...'changed': 1}]`) and the failing-retranslation
+  test (`KeyError: 'ok'`). `cd frontend && npx vitest run src/lib/draft.test.ts
+  src/lib/retranslate.test.ts`. Expected: `Tests  3 failed | 14 passed (17)`: `follows the
+  server's undo history only as far back as it keeps, 200 steps` (`expected [ { undo: true, n:
+  400 }, …(199) ] to have a length of 199 but got 200`), and both of `what a retranslation says`.
+  `make build && uv run pytest -m e2e tests/e2e/test_retranslate.py -q -k changed_nothing`.
+  Expected: `AssertionError: Locator expected to have text 'occasion!'`, `Actual value:
+  occasion.` (Restore undid the edit that redo had brought back).
+- [ ] **Step 13: Write the code.**   In `src/vid2sub/web/server.py`, replace
+
+```python
+            await notice(self.session, "error", str(err))
+            await self._applied(request, ep, ok=False)
+            return
+```
+
+  with
+
+```python
+            await notice(self.session, "error", str(err))
+            await self._applied(request, ep, ok=False, changed=False)
+            return
+```
+  then replace
+
+```python
+        await self._show(new)
+        await self._applied(request, ep, ok=True)
+```
+
+  with
+
+```python
+        await self._show(new)
+        await self._applied(request, ep, ok=True, changed=new is not ep)
+```
+  then replace
+
+```python
+        if ep is not None:
+            await self._show(self.rt.backend.undo(ep))
+            await self._applied(request, ep, ok=True)
+```
+
+  with
+
+```python
+        if ep is not None:
+            new = self.rt.backend.undo(ep)
+            await self._show(new)
+            await self._applied(request, ep, ok=True, changed=new is not ep)
+```
+  then replace
+
+```python
+        if ep is not None:
+            await self._show(self.rt.backend.redo(ep))
+            await self._applied(request, ep, ok=True)
+```
+
+  with
+
+```python
+        if ep is not None:
+            new = self.rt.backend.redo(ep)
+            await self._show(new)
+            await self._applied(request, ep, ok=True, changed=new is not ep)
+```
+  then replace
+
+```python
+    async def _applied(self, request: object, ep: Episode, *, ok: bool) -> None:
+        """The `applied` message: whether the tab's edit, undo or redo `n` was made (an undo with
+        nothing to undo counts, as the server just ignores it), so its crash draft keeps only what
+        was done and a Restore knows which steps the server refused (Decision 31). `n` is the
+        page's own count, sent back only when it is an integer."""
+        n = request.get("n") if isinstance(request, dict) else None
+```
+
+  with
+
+```python
+    async def _applied(self, request: object, ep: Episode, *, ok: bool, changed: bool) -> None:
+        """The `applied` message: whether the tab's edit, undo or redo `n` was made, and whether
+        it changed the episode (an edit that changes nothing, or an undo with nothing to undo,
+        pushes no undo step), so its crash draft keeps only the steps that moved the undo history
+        and a Restore knows which steps didn't take (Decision 31; Task 17). `n` is the page's own
+        count, sent back only when it is an integer."""
+        n = request.get("n") if isinstance(request, dict) else None
+```
+  then replace
+
+```python
+            await shinyreact.send_message(self.session, "applied",
+                                          {"episode": ep.id, "n": n, "ok": ok})
+```
+
+  with
+
+```python
+            await shinyreact.send_message(self.session, "applied",
+                                          {"episode": ep.id, "n": n, "ok": ok, "changed": changed})
+```
+  then replace
+
+```python
+        queue and land on the retranslated episode. `allow_cloud` is the request's own, true or
+        false, never a setting (§7.2). Whatever happens, `retranslate_result` says how many
+        translation cues changed, so the tab's draft keeps only what changed the episode."""
+        ep = self._named(request)
+```
+
+  with
+
+```python
+        queue and land on the retranslated episode. `allow_cloud` is the request's own, true or
+        false, never a setting (§7.2). Whatever happens, `retranslate_result` says whether it ran
+        and how many translation cues changed, so the tab's draft keeps only what changed the
+        episode and a failed "Retranslate stale" is never taken for one with nothing stale."""
+        ep = self._named(request)
+```
+  then replace
+
+```python
+            return
+        changed = 0
+        try:
+```
+
+  with
+
+```python
+            return
+        ok, changed = False, 0
+        try:
+```
+  then replace
+
+```python
+            await self._publish(busy=None)
+        finally:
+```
+
+  with
+
+```python
+            await self._publish(busy=None)
+            ok = True
+        finally:
+```
+  then replace
+
+```python
+            await shinyreact.send_message(self.session, "retranslate_result", {
+                "episode": ep.id, "n": n if type(n) is int else None, "changed": changed})
+```
+
+  with
+
+```python
+            await shinyreact.send_message(self.session, "retranslate_result", {
+                "episode": ep.id, "n": n if type(n) is int else None, "ok": ok,
+                "changed": changed})
+```
+
+  In `frontend/src/types.ts`, replace
+
+```ts
+ * was stale, or it failed, which a notice says). */
+export type RetranslateResultMessage = { episode: string; n: number | null; changed: number };
+```
+
+  with
+
+```ts
+ * was stale, or it failed, which a notice says). */
+export type RetranslateResultMessage = { episode: string; n: number | null; ok: boolean; changed: number };
+```
+  then replace
+
+```ts
+/** The `applied` message: whether the server made the tab's edit, undo or redo `n` (Decision 31). */
+export type AppliedMessage = { episode: string; n: number; ok: boolean };
+```
+
+  with
+
+```ts
+/** The `applied` message: whether the server made the tab's edit, undo or redo `n` (Decision 31). */
+export type AppliedMessage = { episode: string; n: number; ok: boolean; changed: boolean };
+```
+
+  In `frontend/src/lib/retranslate.ts`, replace
+
+```ts
+// one. "Retranslate stale" names none, and the server redoes every stale or untranslated cue,
+// never one a person edited. The server says how many translation cues changed; nothing changed
+// on a stale request means nothing was stale, and on a named one that it failed, which the
+// server's own notice says.
+```
+
+  with
+
+```ts
+// one. "Retranslate stale" names none, and the server redoes every stale or untranslated cue,
+// never one a person edited. The server says whether it ran and how many translation cues
+// changed: nothing changed on a stale request that ran means nothing was stale; a request that
+// failed has the server's own notice.
+```
+  then replace
+
+```ts
+/** The notice for a retranslation that came back, or null when the server's error says it. */
+export function retranslateNotice(changed: number, label: string, stale: boolean): Notice | null {
+  if (changed > 0) return { kind: "info", text: `Retranslated ${changed} ${label} ${changed === 1 ? "cue" : "cues"}` };
+```
+
+  with
+
+```ts
+/** The notice for a retranslation that came back, or null when the server's error says it. */
+export function retranslateNotice({ ok, changed }: { ok: boolean; changed: number }, label: string, stale: boolean): Notice | null {
+  if (!ok) return null;
+  if (changed > 0) return { kind: "info", text: `Retranslated ${changed} ${label} ${changed === 1 ? "cue" : "cues"}` };
+```
+
+  In `frontend/src/lib/draft.ts`, replace
+
+```ts
+const PREFIX = "vid2sub.draft.";
+```
+
+  with
+
+```ts
+export const UNDO_STEPS = 200; // backend.UNDO_STEPS: how far back the server keeps its undo history
+const PREFIX = "vid2sub.draft.";
+```
+  then replace
+
+```ts
+/** The steps Restore sends: the edits, undos and redos, without the retranslations. The undo
+ * history is followed as the server keeps it, so an undo or a redo that took back or brought back
+ * a retranslation is left out too, rather than landing on an edit. */
+export function replayable(steps: readonly DraftStep[]): DraftStep[] {
+```
+
+  with
+
+```ts
+/** The steps Restore sends: the edits, undos and redos, without the retranslations. The undo
+ * history is followed as the server keeps it (every step in the draft moved it, since a step that
+ * changed nothing is dropped, and only the last 200 can be undone), so an undo or a redo that
+ * took back or brought back a retranslation is left out too, rather than landing on an edit. */
+export function replayable(steps: readonly DraftStep[]): DraftStep[] {
+```
+  then replace
+
+```ts
+      done.push("edit" in step);
+      undone.length = 0;
+```
+
+  with
+
+```ts
+      done.push("edit" in step);
+      if (done.length > UNDO_STEPS) done.shift(); // the server forgets its oldest step too
+      undone.length = 0;
+```
+
+  In `frontend/src/App.tsx`, replace
+
+```tsx
+    asking.current.delete(data.n);
+    if (data.changed === 0 && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    if (!asked) return;
+```
+
+  with
+
+```tsx
+    asking.current.delete(data.n);
+    if (!(data.ok && data.changed > 0) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    if (!asked) return;
+```
+  then replace
+
+```tsx
+    const label = episode.tracks.find((t) => t.key === asked.track)?.label ?? asked.track;
+    const n = retranslateNotice(data.changed, label, asked.stale);
+    if (n) setNotices((shown) => addNotice(shown, n, nextId.current++));
+```
+
+  with
+
+```tsx
+    const label = episode.tracks.find((t) => t.key === asked.track)?.label ?? asked.track;
+    const n = retranslateNotice(data, label, asked.stale);
+    if (n) setNotices((shown) => addNotice(shown, n, nextId.current++));
+```
+  then replace
+
+```tsx
+    if (!episode || data.episode !== episode.id) return;
+    if (!data.ok && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    const now = replaying.current && heard(replaying.current, data.n, data.ok);
+    if (!now) return;
+```
+
+  with
+
+```tsx
+    if (!episode || data.episode !== episode.id) return;
+    // refused, or changed nothing (it pushed no undo step): either way it replays to nothing
+    if (!(data.ok && data.changed) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    const now = replaying.current && heard(replaying.current, data.n, data.ok && data.changed);
+    if (!now) return;
+```
+
+  In `frontend/src/components/Editor.tsx`, replace
+
+```tsx
+            <Retranslate
+              label={translations.find((t) => t.key === shownTrack)?.label ?? shownTrack}
+```
+
+  with
+
+```tsx
+            <Retranslate
+              key={shownTrack} // another track's box starts unticked too (Decision 33)
+              label={translations.find((t) => t.key === shownTrack)?.label ?? shownTrack}
+```
+
+- [ ] **Step 14: Run the checks; they pass.** First the guards: in `server.py`'s `_edit`, change
+  `changed=new is not ep` to `changed=True`, and `uv run pytest tests/test_web_server.py -q -k
+  changes_nothing` fails; in `App.tsx`'s `applied` handler, change `if (!(data.ok && data.changed)
+  && drafted.current)` to `if (!data.ok && drafted.current)`, `make build`, and `uv run pytest -m
+  e2e tests/e2e/test_retranslate.py -q -k changed_nothing` fails `Locator expected to have text
+  'occasion!'`; put both back and `make build`. `make check`. Expected: `993 passed, 2 skipped, 35
+  deselected` (twice), `Test Files  16 passed (16)`, `Tests  82 passed (82)`, `All checks
+  passed!`, `no leaks found`. Then `make e2e`. Expected: `31 passed`.
+- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+fix(web): 🤖 the draft keeps only the steps that moved the undo history, Restore follows only the 200 the server keeps, and a failed Retranslate stale never says nothing was stale
+
+The Tier 1 review of this task (the editor's Allow cloud models box, and
+the draft it shares with Decision 31) found:
+- replayable() took every edit in the draft to have pushed an undo step,
+  but an edit that changes nothing (a nudge with nowhere to go, `[` twice
+  while paused) pushes none and keeps redo: Restore then undid the wrong
+  step or dropped a redo, and, every undo being ok, cleared the draft
+  with an edit lost (Critical). The `applied` message now says whether
+  the step changed the episode, and the page drops a step that didn't,
+  as it drops a refused one; a replayed step that changes nothing counts
+  as not replayed. replayable() follows only the server's last 200 undo
+  steps (UNDO_STEPS), so an undo the server can't make isn't replayed
+  onto an older edit.
+- retranslate_result said changed 0 for a failed request, so a failed
+  "Retranslate stale" also showed "Nothing to retranslate" beside the
+  server's error (Important). It now carries ok, false whenever the
+  retranslation didn't run; the page says nothing of its own then, and
+  drops the draft's marker.
+- The Allow cloud models box kept its tick when the person switched to
+  another track's Retranslate; each track's box now starts unticked
+  (Decision 33) (Minor).
+A draft holding only retranslation markers, which Restore would never
+offer, is left in storage; and an edit sent while a Save runs is
+recorded under the old heads, which the Save's publish clears: both go
+on the Phase-end list (Minor).
+
+The new tests failed first with: KeyError: 'changed' (the applied
+message had none), KeyError: 'ok' (nor had retranslate_result), Vitest's
+"expected [ { undo: true, n: 400 }, …(199) ] to have a length of 199 but
+got 200" and "expected { kind: 'info', …(1) } to be null"; and in
+Chromium, before the page dropped unchanged steps, the restored cue
+read "occasion." instead of "occasion!".
+
+Docs read: shinyreact 0.1.0's useShinyMessageHandler (the latest handler
+is the one called); React 19's key (a new key mounts a new component,
+with its state from scratch).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 17
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/web/server.py tests/test_web_server.py frontend/src/types.ts
+  frontend/src/lib/retranslate.ts frontend/src/lib/retranslate.test.ts frontend/src/lib/draft.ts
+  frontend/src/lib/draft.test.ts frontend/src/App.tsx frontend/src/components/Editor.tsx
+  tests/e2e/test_retranslate.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
   kickoff council, because it builds the editor's Allow cloud models box (§7.2)). Worth the
   reviewers' time: that `allow_cloud` comes only from the request, true or false, and the box
@@ -27855,7 +30397,7 @@ log = logging.getLogger("vid2sub.web.server")
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_settings.py
-  tests/test_pages_imports.py tests/test_web_server.py -q` first (`50 passed`), then the guard
+  tests/test_pages_imports.py tests/test_web_server.py -q` first (`52 passed`), then the guard
   checks, one at a time, each put back after: in `settings.enter_key`, change `if endpoint is
   None or not endpoint.allow_typed_key:` to `if endpoint is None:`, and `uv run pytest
   tests/test_web_settings.py -q` gives `FAILED
@@ -27864,8 +30406,8 @@ log = logging.getLogger("vid2sub.web.server")
   tests/test_web_settings.py::test_a_typed_key_for_an_endpoint_that_doesnt_allow_one_is_kept_nowhere`;
   in `server.py`'s `_typed_key`, take out `if not local: return`, and it gives `FAILED
   tests/test_web_settings.py::test_the_pages_editor_is_offered_no_settings_and_takes_no_key`.
-  Then `make check`. Expected: `982 passed, 2 skipped, 31 deselected` (twice), `Test Files  15
-  passed (15)`, `Tests  71 passed (71)`, `All checks passed!`, `no leaks found`.
+  Then `make check`. Expected: `1008 passed, 2 skipped, 35 deselected` (twice), `Test Files  16
+  passed (16)`, `Tests  82 passed (82)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -28560,69 +31102,39 @@ export function TopBar({ capabilities, status, onSettings }: { capabilities?: Ca
 }
 ```
 
-  `frontend/src/App.tsx`:
-
-  Replace
+  `frontend/src/App.tsx`, in full:
 
 ```tsx
-
-import { Editor, type Requests, type Saving } from "@/components/Editor";
-import { resultNotices } from "@/components/SaveBar";
-import { TopBar } from "@/components/TopBar";
-import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
-import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, dropRetranslation, loadDraft, replayable } from "@/lib/draft";
-```
-
-  with
-
-```tsx
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Editor, type Requests, type Saving } from "@/components/Editor";
 import { resultNotices } from "@/components/SaveBar";
 import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
-import { type Draft, type DraftStep, addStep, clearDraft, draftKey, draftStorage, dropRetranslation, loadDraft, replayable } from "@/lib/draft";
-```
-
-  Replace
-
-```tsx
+import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage } from "@/lib/draft";
+import { randomHex } from "@/lib/ids";
+import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { retranslateNotice } from "@/lib/retranslate";
 import { pacer } from "@/lib/sends";
 import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
-import type { Busy, Capabilities, EditOp, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, Status } from "@/types";
+import type { AppliedMessage, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
 
 type Ask = { episode: string; n: number };
+type Step = { edit: EditOp } | { undo: true } | { redo: true };
 
-```
+type JQueryLike = (target: Document) => {
+  on(event: string, handler: () => void): unknown;
+  off(event: string, handler: () => void): unknown;
+};
 
-  with
-
-```tsx
-import { retranslateNotice } from "@/lib/retranslate";
-import { pacer } from "@/lib/sends";
-import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
-import type { Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
-
-type Ask = { episode: string; n: number };
-
-```
-
-  Replace
-
-```tsx
-  const episode = useShinyOutputValue<EpisodeView | null>("episode");
-  const busy = useShinyOutputValue<Busy>("busy");
-  const progress = useShinyOutputValue<Progress>("progress");
-  // Every input is set from here too. Each request carries a count, so the same path asked for
-  // twice is still two requests, and "event" sends it at once, never merged with the next.
-  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
-```
-
-  with
-
-```tsx
+export default function App() {
+  const initialized = useShinyInitialized();
+  // Every output is subscribed here, and every message handler lives here: shinyreact 0.1.0
+  // drops a message that has no handler, and an output that unmounts logs "Output <id> not found"
+  // for each later value (recordings' App.tsx). A new output or message gets a line here too.
+  const capabilities = useShinyOutputValue<Capabilities>("capabilities");
+  const status = useShinyOutputValue<Status>("status");
   const episode = useShinyOutputValue<EpisodeView | null>("episode");
   const busy = useShinyOutputValue<Busy>("busy");
   const progress = useShinyOutputValue<Progress>("progress");
@@ -28630,22 +31142,10 @@ type Ask = { episode: string; n: number };
   // Every input is set from here too. Each request carries a count, so the same path asked for
   // twice is still two requests, and "event" sends it at once, never merged with the next.
   const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
-```
-
-  Replace
-
-```tsx
-  const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
-  const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
-  const setRetranslate = useSetShinyInput<(Ask & { track: string; ids: string[] | null; allow_cloud: boolean }) | null>("retranslate", null, { priority: "event", debounceMs: 0 });
-  const sent = useRef(0);
-  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
-  const pace = useMemo(() => pacer(), []);
-```
-
-  with
-
-```tsx
+  const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
+  const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
+  const setUndo = useSetShinyInput<Ask | null>("undo", null, { priority: "event", debounceMs: 0 });
+  const setRedo = useSetShinyInput<Ask | null>("redo", null, { priority: "event", debounceMs: 0 });
   const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
   const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
   const setRetranslate = useSetShinyInput<(Ask & { track: string; ids: string[] | null; allow_cloud: boolean }) | null>("retranslate", null, { priority: "event", debounceMs: 0 });
@@ -28655,23 +31155,141 @@ type Ask = { episode: string; n: number };
   const sent = useRef(0);
   // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
   const pace = useMemo(() => pacer(), []);
-```
 
-  Replace
+  // The crash-recovery draft (spec §14.5, S34; Decision 31): every edit, undo and redo is also
+  // written to localStorage as sent, under the heads the episode was opened at and this tab's id,
+  // and the server's word that it refused one takes it out again. Opening an episode offers every
+  // tab's draft for its heads. Restoring one replays it through the server's rules and clears it
+  // only once every step was done again; otherwise it is kept and the editor says how many steps
+  // failed. This tab's own draft starts again then, or when the person edits or discards instead
+  // of restoring. When a Save or a pick moves the heads, this tab's draft goes with them while
+  // edits are still unsaved (a pick keeps the other tracks' edits), and is cleared once
+  // everything is saved; no other tab's draft is ever touched by it.
+  const tab = useMemo(() => tabId(tabStorage()), []);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const offering = useRef(false); // offers are up and this tab's old draft not yet dropped
+  const drafted = useRef<{ id: string; key: string; heads: Record<string, string> } | null>(null);
+  const replaying = useRef<Replay | null>(null);
+  useEffect(() => {
+    if (!episode) {
+      drafted.current = null;
+      return;
+    }
+    const key = draftKey(episode.heads, tab);
+    const was = drafted.current;
+    const store = draftStorage();
+    if (was?.id === episode.id && was.key !== key) {
+      if (episode.dirty) moveDraft(store, was.key, key);
+      else clearDraft(store, was.key);
+    }
+    if (was?.id !== episode.id) {
+      const found = offersFor(store, episode.heads);
+      offering.current = found.length > 0;
+      setOffers(found);
+    }
+    drafted.current = { id: episode.id, key, heads: episode.heads };
+  }, [episode, tab]);
+  const dropOffers = useCallback(() => { // editing or discarding instead: this tab starts afresh
+    if (!offering.current) return;
+    offering.current = false;
+    setOffers([]);
+    if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
+  }, []);
 
-```tsx
+  // A retranslation goes in the draft as a marker only (never replayed: a restored draft asks no
+  // model), dropped when the server says it changed nothing; `asking` remembers which were
+  // "Retranslate stale", for the notice.
+  const asking = useRef(new Map<number, { track: string; stale: boolean }>());
+  const episodeId = episode?.id ?? null;
+  const steps = useMemo(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+    // Sends one edit, undo or redo, and keeps it in the draft as sent; returns its request's count.
+    return (step: Step): number | null => {
+      const a = ask();
+      if (!a) return null;
+      if (drafted.current) addStep(draftStorage(), drafted.current.key, { ...step, n: a.n } as DraftStep);
+      if ("edit" in step) pace(() => setEdit({ ...a, op: step.edit }));
+      else if ("undo" in step) pace(() => setUndo(a));
+      else pace(() => setRedo(a));
+      return a.n;
+    };
+  }, [episodeId, pace, setEdit, setUndo, setRedo]);
+  const requests = useMemo<Requests>(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+    const send = <T,>(set: (v: T) => void, value: T | null) => value && pace(() => set(value));
+    return {
+      edit: (op) => { dropOffers(); steps({ edit: op }); },
+      undo: () => { dropOffers(); steps({ undo: true }); },
+      redo: () => { dropOffers(); steps({ redo: true }); },
+      save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
+      resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
+      retranslate: (track, ids, allowCloud) => {
+        const a = ask();
+        if (!a) return;
+        dropOffers();
+        if (drafted.current) addStep(draftStorage(), drafted.current.key, { retranslate: true, n: a.n });
+        asking.current.set(a.n, { track, stale: ids === null });
+        send(setRetranslate, { ...a, track, ids, allow_cloud: allowCloud });
+      },
+    };
+  }, [episodeId, pace, dropOffers, steps, setSave, setResolve, setRetranslate]);
+  useShinyMessageHandler("retranslate_result", (data: RetranslateResultMessage) => {
+    if (!episode || data.episode !== episode.id || data.n === null) return;
+    const asked = asking.current.get(data.n);
+    asking.current.delete(data.n);
+    if (!(data.ok && data.changed > 0) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    if (!asked) return;
+    const label = episode.tracks.find((t) => t.key === asked.track)?.label ?? asked.track;
+    const n = retranslateNotice(data, label, asked.stale);
+    if (n) setNotices((shown) => addNotice(shown, n, nextId.current++));
+  });
+
+  useShinyMessageHandler("applied", (data: AppliedMessage) => {
+    if (!episode || data.episode !== episode.id) return;
+    // refused, or changed nothing (it pushed no undo step): either way it replays to nothing
+    if (!(data.ok && data.changed) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    const now = replaying.current && heard(replaying.current, data.n, data.ok && data.changed);
+    if (!now) return;
+    replaying.current = now.waiting.length ? now : null;
+    if (now.waiting.length) return;
+    if (!now.refused) clearDraft(draftStorage(), now.from);
+    else setNotices((shown) => addNotice(shown, { kind: "error", text: `${now.refused} restored ${now.refused === 1 ? "step" : "steps"} of ${now.total} couldn't be replayed: the draft is kept` }, nextId.current++));
+  });
+
+  const [conflictsFound, setConflictsFound] = useState(0);
+  useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
+    if (!episode || data.episode !== episode.id) return;
+    for (const n of resultNotices(data, episode.tracks, episode.video.name)) setNotices((shown) => addNotice(shown, n, nextId.current++));
+    if (data.conflicts.length) setConflictsFound((k) => k + 1);
+  });
+  const saving: Saving = {
+    // the steps Restore would send, for each draft that has any
+    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps).length })).filter((d) => d.steps > 0),
+    conflictsFound,
+    onRestore: (key) => {
+      const at = drafted.current;
+      const store = draftStorage();
+      const draft = loadDraft(store, key);
+      if (!at || !draft) return;
+      offering.current = false;
+      setOffers([]);
+      let from = key;
+      if (key === at.key) { // this tab's own (a reload): set aside until the server has redone it
+        from = draftKey(at.heads, `t${randomHex(4)}`);
+        moveDraft(store, key, from);
+      } else {
+        clearDraft(store, at.key);
+      }
+      const sent: number[] = [];
+      for (const step of replayable(draft.steps)) {
+        const { n: _, ...asSent } = step;
+        const n = steps(asSent as Step);
+        if (n !== null) sent.push(n);
+      }
+      if (sent.length) replaying.current = { from, waiting: sent, refused: 0, total: sent.length };
+      else clearDraft(store, from);
     },
-  };
-
-  // Closing the tab with unsaved edits warns first (S34): listened for only while there are
-  // some, as MDN advises; preventDefault, and returnValue for older browsers.
-  const dirty = episode?.dirty ?? false;
-```
-
-  with
-
-```tsx
-    },
+    onDiscard: dropOffers,
   };
 
   // The settings drawer (spec §19.2, S35). A typed key is sent once, and null straight after, in
@@ -28701,23 +31319,34 @@ type Ask = { episode: string; n: number };
   // Closing the tab with unsaved edits warns first (S34): listened for only while there are
   // some, as MDN advises; preventDefault, and returnValue for older browsers.
   const dirty = episode?.dirty ?? false;
-```
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = true;
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  const [notices, setNotices] = useState<Shown[]>([]);
+  const nextId = useRef(1);
+  useShinyMessageHandler("notice", (data: unknown) => {
+    setNotices((shown) => addNotice(shown, data, nextId.current++));
+  });
 
-  Replace
+  // The websocket closed: ask the engine once why, and say so; never reconnect (Review Focus 5).
+  const [lost, setLost] = useState<Lost | null>(null);
+  const check = useCallback(() => {
+    void whyLost((input, init) => window.fetch(input, init)).then(setLost);
+  }, []);
+  useEffect(() => {
+    // Shiny triggers shiny:disconnected through jQuery, which addEventListener never sees.
+    const $ = (window as unknown as { jQuery?: JQueryLike }).jQuery;
+    if (!$) return;
+    $(document).on("shiny:disconnected", check);
+    return () => void $(document).off("shiny:disconnected", check);
+  }, [check]);
 
-```tsx
-  if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
-  return (
-    <div className="flex h-dvh flex-col" data-testid="app">
-      <TopBar capabilities={capabilities} status={status} />
-      {lost && (
-        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
-        <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">
-```
-
-  with
-
-```tsx
   if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
   return (
     <div className="flex h-dvh flex-col" data-testid="app">
@@ -28727,17 +31356,60 @@ type Ask = { episode: string; n: number };
       {lost && (
         // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
         <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">
+          <span>{LOST_MESSAGES[lost]}</span>
+          {lost === "stopped" && (
+            <button type="button" className="underline" onClick={check} data-testid="check-again">Check again</button>
+          )}
+          {lost === "dropped" && (
+            <button type="button" className="underline" onClick={() => window.location.reload()}>Reload</button>
+          )}
+        </div>
+      )}
+      <main className="min-h-0 flex-1" data-testid="main">
+        <Editor
+          episode={episode ?? null}
+          busy={busy ?? null}
+          progress={progress ?? null}
+          pathInput={capabilities?.path_input ?? false}
+          generate={capabilities?.generate ?? false}
+          onOpen={(path) => setOpen({ path, n: ++sent.current })}
+          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+          requests={requests}
+          saving={saving}
+        />
+      </main>
+      <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">
+        <div role="status" aria-live="polite" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "info").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+        <div role="alert" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "error").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: Shown[]) => Shown[]) => void }) {
+  return (
+    <div className={`flex items-start gap-2 rounded-lg border bg-card p-3 text-sm shadow ${notice.kind === "error" ? "border-destructive text-destructive" : "border-border"}`} data-testid="notice">
+      {/* Plain text: a notice can carry a file name or a server's error (spec §6.3). */}
+      <span className="flex-1">{notice.text}</span>
+      <button type="button" aria-label="Dismiss" onClick={() => onDismiss((s) => dismissNotice(s, notice.id))}>×</button>
+    </div>
+  );
+}
 ```
 
 - [ ] **Step 9: Run the checks; they pass.** `cd frontend && npm run typecheck && npx vitest run`
-  first (`Test Files  17 passed (17)`, `Tests  79 passed (79)`), then `make build && uv run
+  first (`Test Files  18 passed (18)`, `Tests  90 passed (90)`), then `make build && uv run
   pytest -m e2e tests/e2e/test_settings.py -q` three times (`2 passed` each). **Guard check**
   (spec §5.3): in `App.tsx`'s `onTypedKey`, take out `pace(() => setTypedKey(null));`; `make
   build && uv run pytest -m e2e tests/e2e/test_settings.py -q -k typed` fails with
   `playwright._impl._errors.TimeoutError: Page.wait_for_function: Timeout 30000ms exceeded.`
-  (the page kept the key); put it back and `make build`. Then `make check`. Expected: `982
-  passed, 2 skipped, 33 deselected` (twice), `Test Files  17 passed (17)`, `Tests  79 passed
-  (79)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `29 passed`.
+  (the page kept the key); put it back and `make build`. Then `make check`. Expected: `1008
+  passed, 2 skipped, 37 deselected` (twice), `Test Files  18 passed (18)`, `Tests  90 passed
+  (90)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `33 passed`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -29591,12 +32263,12 @@ function Endpoint({ endpoint: e, open, connected, test, onTest, onTypedKey }: {
 
 - [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_web_settings.py
   tests/test_translate.py tests/test_clients.py -q` first (`46 passed`), `cd frontend && npx
-  vitest run` (`Tests  79 passed (79)`), then `make build && uv run pytest -m e2e
+  vitest run` (`Tests  90 passed (90)`), then `make build && uv run pytest -m e2e
   tests/e2e/test_settings.py -q` five times (`2 passed` each: the key leaves the page when React
   re-renders the closed drawer, a moment after the native close, so the test waits for it).
-  `make check`. Expected: `986 passed, 2 skipped, 33 deselected` (twice), `Test Files  17 passed
-  (17)`, `Tests  79 passed (79)`, `All checks passed!`, `no leaks found`. Then `make e2e`.
-  Expected: `29 passed`.
+  `make check`. Expected: `1012 passed, 2 skipped, 37 deselected` (twice), `Test Files  18 passed
+  (18)`, `Tests  90 passed (90)`, `All checks passed!`, `no leaks found`. Then `make e2e`.
+  Expected: `33 passed`.
 - [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -30873,9 +33545,9 @@ def _cue_ids(ids: object) -> bool:
   touches nothing but its copy, spec §22.7): in `demo.only_inside`, change `if not inside:` to `if
   False:`; `uv run pytest tests/test_web_jobs.py -q -k demo` fails at `assert refused.state ==
   "failed" and refused.result.reason == "the demo runs only its own clip"`; put it back. Then
-  `make check`. Expected: `997 passed, 2 skipped, 33 deselected` (twice), `Test Files  17 passed
-  (17)`, `Tests  79 passed (79)`, `All checks passed!`, `no leaks found`. Then `make e2e` (the
-  demo's runtime changed). Expected: `29 passed`.
+  `make check`. Expected: `1023 passed, 2 skipped, 37 deselected` (twice), `Test Files  18 passed
+  (18)`, `Tests  90 passed (90)`, `All checks passed!`, `no leaks found`. Then `make e2e` (the
+  demo's runtime changed). Expected: `33 passed`.
 - [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -31608,20 +34280,7 @@ export function JobsPage({ jobs, onSubmit, onCancel, onOpen }: {
 }
 ```
 
-  `frontend/src/App.tsx`:
-
-  Replace
-
-```tsx
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-import { Editor, type Requests, type Saving } from "@/components/Editor";
-import { resultNotices } from "@/components/SaveBar";
-import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer";
-import { TopBar } from "@/components/TopBar";
-```
-
-  with
+  `frontend/src/App.tsx`, in full:
 
 ```tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -31631,46 +34290,31 @@ import { JobsPage } from "@/components/JobsPage";
 import { resultNotices } from "@/components/SaveBar";
 import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer";
 import { TopBar } from "@/components/TopBar";
-```
-
-  Replace
-
-```tsx
+import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
+import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage } from "@/lib/draft";
+import { randomHex } from "@/lib/ids";
+import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { retranslateNotice } from "@/lib/retranslate";
 import { pacer } from "@/lib/sends";
 import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
-import type { Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
+import type { AppliedMessage, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
 
 type Ask = { episode: string; n: number };
+type Step = { edit: EditOp } | { undo: true } | { redo: true };
 
-```
+type JQueryLike = (target: Document) => {
+  on(event: string, handler: () => void): unknown;
+  off(event: string, handler: () => void): unknown;
+};
 
-  with
-
-```tsx
-import { retranslateNotice } from "@/lib/retranslate";
-import { pacer } from "@/lib/sends";
-import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
-import type { Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
-
-type Ask = { episode: string; n: number };
-
-```
-
-  Replace
-
-```tsx
-  const busy = useShinyOutputValue<Busy>("busy");
-  const progress = useShinyOutputValue<Progress>("progress");
-  const settings = useShinyOutputValue<SettingsView | null>("settings");
-  // Every input is set from here too. Each request carries a count, so the same path asked for
-  // twice is still two requests, and "event" sends it at once, never merged with the next.
-  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
-```
-
-  with
-
-```tsx
+export default function App() {
+  const initialized = useShinyInitialized();
+  // Every output is subscribed here, and every message handler lives here: shinyreact 0.1.0
+  // drops a message that has no handler, and an output that unmounts logs "Output <id> not found"
+  // for each later value (recordings' App.tsx). A new output or message gets a line here too.
+  const capabilities = useShinyOutputValue<Capabilities>("capabilities");
+  const status = useShinyOutputValue<Status>("status");
+  const episode = useShinyOutputValue<EpisodeView | null>("episode");
   const busy = useShinyOutputValue<Busy>("busy");
   const progress = useShinyOutputValue<Progress>("progress");
   const settings = useShinyOutputValue<SettingsView | null>("settings");
@@ -31678,22 +34322,13 @@ type Ask = { episode: string; n: number };
   // Every input is set from here too. Each request carries a count, so the same path asked for
   // twice is still two requests, and "event" sends it at once, never merged with the next.
   const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
-```
-
-  Replace
-
-```tsx
-  const setTypedKey = useSetShinyInput<{ endpoint: string; key: string; n: number } | null>("typed_key", null, { priority: "event", debounceMs: 0 });
-  const setEndpointTest = useSetShinyInput<{ endpoint: string; n: number } | null>("endpoint_test", null, { priority: "event", debounceMs: 0 });
-  const setDefaults = useSetShinyInput<(DefaultsChange & { n: number }) | null>("session_defaults", null, { priority: "event", debounceMs: 0 });
-  const sent = useRef(0);
-  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
-  const pace = useMemo(() => pacer(), []);
-```
-
-  with
-
-```tsx
+  const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
+  const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
+  const setUndo = useSetShinyInput<Ask | null>("undo", null, { priority: "event", debounceMs: 0 });
+  const setRedo = useSetShinyInput<Ask | null>("redo", null, { priority: "event", debounceMs: 0 });
+  const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
+  const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
+  const setRetranslate = useSetShinyInput<(Ask & { track: string; ids: string[] | null; allow_cloud: boolean }) | null>("retranslate", null, { priority: "event", debounceMs: 0 });
   const setTypedKey = useSetShinyInput<{ endpoint: string; key: string; n: number } | null>("typed_key", null, { priority: "event", debounceMs: 0 });
   const setEndpointTest = useSetShinyInput<{ endpoint: string; n: number } | null>("endpoint_test", null, { priority: "event", debounceMs: 0 });
   const setDefaults = useSetShinyInput<(DefaultsChange & { n: number }) | null>("session_defaults", null, { priority: "event", debounceMs: 0 });
@@ -31702,22 +34337,164 @@ type Ask = { episode: string; n: number };
   const sent = useRef(0);
   // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
   const pace = useMemo(() => pacer(), []);
-```
 
-  Replace
+  // The crash-recovery draft (spec §14.5, S34; Decision 31): every edit, undo and redo is also
+  // written to localStorage as sent, under the heads the episode was opened at and this tab's id,
+  // and the server's word that it refused one takes it out again. Opening an episode offers every
+  // tab's draft for its heads. Restoring one replays it through the server's rules and clears it
+  // only once every step was done again; otherwise it is kept and the editor says how many steps
+  // failed. This tab's own draft starts again then, or when the person edits or discards instead
+  // of restoring. When a Save or a pick moves the heads, this tab's draft goes with them while
+  // edits are still unsaved (a pick keeps the other tracks' edits), and is cleared once
+  // everything is saved; no other tab's draft is ever touched by it.
+  const tab = useMemo(() => tabId(tabStorage()), []);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const offering = useRef(false); // offers are up and this tab's old draft not yet dropped
+  const drafted = useRef<{ id: string; key: string; heads: Record<string, string> } | null>(null);
+  const replaying = useRef<Replay | null>(null);
+  useEffect(() => {
+    if (!episode) {
+      drafted.current = null;
+      return;
+    }
+    const key = draftKey(episode.heads, tab);
+    const was = drafted.current;
+    const store = draftStorage();
+    if (was?.id === episode.id && was.key !== key) {
+      if (episode.dirty) moveDraft(store, was.key, key);
+      else clearDraft(store, was.key);
+    }
+    if (was?.id !== episode.id) {
+      const found = offersFor(store, episode.heads);
+      offering.current = found.length > 0;
+      setOffers(found);
+    }
+    drafted.current = { id: episode.id, key, heads: episode.heads };
+  }, [episode, tab]);
+  const dropOffers = useCallback(() => { // editing or discarding instead: this tab starts afresh
+    if (!offering.current) return;
+    offering.current = false;
+    setOffers([]);
+    if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
+  }, []);
 
-```tsx
-    pace(() => setDefaults({ ...change, n }));
+  // A retranslation goes in the draft as a marker only (never replayed: a restored draft asks no
+  // model), dropped when the server says it changed nothing; `asking` remembers which were
+  // "Retranslate stale", for the notice.
+  const asking = useRef(new Map<number, { track: string; stale: boolean }>());
+  const episodeId = episode?.id ?? null;
+  const steps = useMemo(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+    // Sends one edit, undo or redo, and keeps it in the draft as sent; returns its request's count.
+    return (step: Step): number | null => {
+      const a = ask();
+      if (!a) return null;
+      if (drafted.current) addStep(draftStorage(), drafted.current.key, { ...step, n: a.n } as DraftStep);
+      if ("edit" in step) pace(() => setEdit({ ...a, op: step.edit }));
+      else if ("undo" in step) pace(() => setUndo(a));
+      else pace(() => setRedo(a));
+      return a.n;
+    };
+  }, [episodeId, pace, setEdit, setUndo, setRedo]);
+  const requests = useMemo<Requests>(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+    const send = <T,>(set: (v: T) => void, value: T | null) => value && pace(() => set(value));
+    return {
+      edit: (op) => { dropOffers(); steps({ edit: op }); },
+      undo: () => { dropOffers(); steps({ undo: true }); },
+      redo: () => { dropOffers(); steps({ redo: true }); },
+      save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
+      resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
+      retranslate: (track, ids, allowCloud) => {
+        const a = ask();
+        if (!a) return;
+        dropOffers();
+        if (drafted.current) addStep(draftStorage(), drafted.current.key, { retranslate: true, n: a.n });
+        asking.current.set(a.n, { track, stale: ids === null });
+        send(setRetranslate, { ...a, track, ids, allow_cloud: allowCloud });
+      },
+    };
+  }, [episodeId, pace, dropOffers, steps, setSave, setResolve, setRetranslate]);
+  useShinyMessageHandler("retranslate_result", (data: RetranslateResultMessage) => {
+    if (!episode || data.episode !== episode.id || data.n === null) return;
+    const asked = asking.current.get(data.n);
+    asking.current.delete(data.n);
+    if (!(data.ok && data.changed > 0) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    if (!asked) return;
+    const label = episode.tracks.find((t) => t.key === asked.track)?.label ?? asked.track;
+    const n = retranslateNotice(data, label, asked.stale);
+    if (n) setNotices((shown) => addNotice(shown, n, nextId.current++));
+  });
+
+  useShinyMessageHandler("applied", (data: AppliedMessage) => {
+    if (!episode || data.episode !== episode.id) return;
+    // refused, or changed nothing (it pushed no undo step): either way it replays to nothing
+    if (!(data.ok && data.changed) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    const now = replaying.current && heard(replaying.current, data.n, data.ok && data.changed);
+    if (!now) return;
+    replaying.current = now.waiting.length ? now : null;
+    if (now.waiting.length) return;
+    if (!now.refused) clearDraft(draftStorage(), now.from);
+    else setNotices((shown) => addNotice(shown, { kind: "error", text: `${now.refused} restored ${now.refused === 1 ? "step" : "steps"} of ${now.total} couldn't be replayed: the draft is kept` }, nextId.current++));
+  });
+
+  const [conflictsFound, setConflictsFound] = useState(0);
+  useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
+    if (!episode || data.episode !== episode.id) return;
+    for (const n of resultNotices(data, episode.tracks, episode.video.name)) setNotices((shown) => addNotice(shown, n, nextId.current++));
+    if (data.conflicts.length) setConflictsFound((k) => k + 1);
+  });
+  const saving: Saving = {
+    // the steps Restore would send, for each draft that has any
+    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps).length })).filter((d) => d.steps > 0),
+    conflictsFound,
+    onRestore: (key) => {
+      const at = drafted.current;
+      const store = draftStorage();
+      const draft = loadDraft(store, key);
+      if (!at || !draft) return;
+      offering.current = false;
+      setOffers([]);
+      let from = key;
+      if (key === at.key) { // this tab's own (a reload): set aside until the server has redone it
+        from = draftKey(at.heads, `t${randomHex(4)}`);
+        moveDraft(store, key, from);
+      } else {
+        clearDraft(store, at.key);
+      }
+      const sent: number[] = [];
+      for (const step of replayable(draft.steps)) {
+        const { n: _, ...asSent } = step;
+        const n = steps(asSent as Step);
+        if (n !== null) sent.push(n);
+      }
+      if (sent.length) replaying.current = { from, waiting: sent, refused: 0, total: sent.length };
+      else clearDraft(store, from);
+    },
+    onDiscard: dropOffers,
   };
 
-  // Closing the tab with unsaved edits warns first (S34): listened for only while there are
-  // some, as MDN advises; preventDefault, and returnValue for older browsers.
-  const dirty = episode?.dirty ?? false;
-```
-
-  with
-
-```tsx
+  // The settings drawer (spec §19.2, S35). A typed key is sent once, and null straight after, in
+  // a task of its own: Shiny's input map on the server, its copy in the page, and shinyreact's
+  // keep each input's last value, and the null replaces the key in all three (§5.3). It is never
+  // kept anywhere else in the page: not in state, storage, the draft or a notice.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tests, setTests] = useState<Record<string, EndpointTestResult | "testing">>({});
+  useShinyMessageHandler("endpoint_test_result", (r: EndpointTestResult) => {
+    if (typeof r?.endpoint === "string") setTests((t) => ({ ...t, [r.endpoint]: r }));
+  });
+  const onTypedKey = (endpoint: string, key: string) => {
+    const n = ++sent.current;
+    pace(() => setTypedKey({ endpoint, key, n }));
+    pace(() => setTypedKey(null));
+  };
+  const onTest = (endpoint: string) => {
+    setTests((t) => ({ ...t, [endpoint]: "testing" }));
+    const n = ++sent.current;
+    pace(() => setEndpointTest({ endpoint, n }));
+  };
+  const onDefaults = (change: DefaultsChange) => {
+    const n = ++sent.current;
     pace(() => setDefaults({ ...change, n }));
   };
 
@@ -31741,29 +34518,49 @@ type Ask = { episode: string; n: number };
   // Closing the tab with unsaved edits warns first (S34): listened for only while there are
   // some, as MDN advises; preventDefault, and returnValue for older browsers.
   const dirty = episode?.dirty ?? false;
-```
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = true;
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  const [notices, setNotices] = useState<Shown[]>([]);
+  const nextId = useRef(1);
+  useShinyMessageHandler("notice", (data: unknown) => {
+    setNotices((shown) => addNotice(shown, data, nextId.current++));
+  });
 
-  Replace
+  // The websocket closed: ask the engine once why, and say so; never reconnect (Review Focus 5).
+  const [lost, setLost] = useState<Lost | null>(null);
+  const check = useCallback(() => {
+    void whyLost((input, init) => window.fetch(input, init)).then(setLost);
+  }, []);
+  useEffect(() => {
+    // Shiny triggers shiny:disconnected through jQuery, which addEventListener never sees.
+    const $ = (window as unknown as { jQuery?: JQueryLike }).jQuery;
+    if (!$) return;
+    $(document).on("shiny:disconnected", check);
+    return () => void $(document).off("shiny:disconnected", check);
+  }, [check]);
 
-```tsx
+  if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
+  return (
+    <div className="flex h-dvh flex-col" data-testid="app">
+      <TopBar capabilities={capabilities} status={status} onSettings={capabilities?.generate ? () => setSettingsOpen(true) : undefined} />
+      <SettingsDrawer open={settingsOpen && Boolean(settings)} onClose={() => setSettingsOpen(false)} connected={lost === null} settings={settings ?? null}
+        tests={tests} onTest={onTest} onTypedKey={onTypedKey} onDefaults={onDefaults} />
+      {lost && (
+        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
+        <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">
+          <span>{LOST_MESSAGES[lost]}</span>
+          {lost === "stopped" && (
+            <button type="button" className="underline" onClick={check} data-testid="check-again">Check again</button>
           )}
-        </div>
-      )}
-      <main className="min-h-0 flex-1" data-testid="main">
-        <Editor
-          episode={episode ?? null}
-          busy={busy ?? null}
-          progress={progress ?? null}
-          pathInput={capabilities?.path_input ?? false}
-          generate={capabilities?.generate ?? false}
-          onOpen={(path) => setOpen({ path, n: ++sent.current })}
-          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
-          requests={requests}
-```
-
-  with
-
-```tsx
+          {lost === "dropped" && (
+            <button type="button" className="underline" onClick={() => window.location.reload()}>Reload</button>
           )}
         </div>
       )}
@@ -31792,15 +34589,39 @@ type Ask = { episode: string; n: number };
           onOpen={(path) => setOpen({ path, n: ++sent.current })}
           onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
           requests={requests}
+          saving={saving}
+        />
+      </main>
+      <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">
+        <div role="status" aria-live="polite" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "info").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+        <div role="alert" className="flex flex-col gap-2">
+          {notices.filter((n) => n.kind === "error").map((n) => <NoticeCard key={n.id} notice={n} onDismiss={setNotices} />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: Shown[]) => Shown[]) => void }) {
+  return (
+    <div className={`flex items-start gap-2 rounded-lg border bg-card p-3 text-sm shadow ${notice.kind === "error" ? "border-destructive text-destructive" : "border-border"}`} data-testid="notice">
+      {/* Plain text: a notice can carry a file name or a server's error (spec §6.3). */}
+      <span className="flex-1">{notice.text}</span>
+      <button type="button" aria-label="Dismiss" onClick={() => onDismiss((s) => dismissNotice(s, notice.id))}>×</button>
+    </div>
+  );
+}
 ```
 
 - [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_jobs.py
   tests/test_web_jobs.py -q` (`22 passed`), `cd frontend && npm run typecheck && npx vitest run`
-  (`Test Files  19 passed (19)`, `Tests  88 passed (88)`), then `make build && uv run pytest -m
+  (`Test Files  20 passed (20)`, `Tests  99 passed (99)`), then `make build && uv run pytest -m
   e2e tests/e2e/test_jobs.py -q` three times (`2 passed` each; the cancel test makes a 196 s
-  clip, about two seconds). `make check`. Expected: `998 passed, 2 skipped, 35 deselected`
-  (twice), `Test Files  19 passed (19)`, `Tests  88 passed (88)`, `All checks passed!`, `no
-  leaks found`. Then `make e2e`. Expected: `31 passed`.
+  clip, about two seconds). `make check`. Expected: `1024 passed, 2 skipped, 39 deselected`
+  (twice), `Test Files  20 passed (20)`, `Tests  99 passed (99)`, `All checks passed!`, `no
+  leaks found`. Then `make e2e`. Expected: `35 passed`.
 - [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -32155,9 +34976,9 @@ def attach_punctuation(text: str, units: Sequence[tuple[str, int | None, int | N
     return fill_untimed(raw, start_ms)
 ```
 
-- [ ] **Step 5: Run the checks; they pass.** `make check`. Expected: `1000 passed, 2 skipped,
-  35 deselected` twice (Task 19's close plus 2), `Test Files  19 passed (19)`,
-  `Tests  88 passed (88)`, `All checks passed!`,
+- [ ] **Step 5: Run the checks; they pass.** `make check`. Expected: `1026 passed, 2 skipped,
+  39 deselected` twice (Task 19's close plus 2), `Test Files  20 passed (20)`,
+  `Tests  99 passed (99)`, `All checks passed!`,
   `no leaks found`. Commit: write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -32499,8 +35320,8 @@ def parse_qwen_endpoint(data: Any, *, duration_ms: int) -> ParsedChunk:
                       duration_ms=duration_ms)
 ```
 
-- [ ] **Step 9: Run the checks; they pass.** `make check`. Expected: `1023 passed, 2 skipped,
-  35 deselected` twice (23 more), `Test Files  19 passed (19)`, `Tests  88 passed (88)`,
+- [ ] **Step 9: Run the checks; they pass.** `make check`. Expected: `1049 passed, 2 skipped,
+  39 deselected` twice (23 more), `Test Files  20 passed (20)`, `Tests  99 passed (99)`,
   `All checks passed!`, `no leaks found`. Commit:
 
 ```text
@@ -32806,8 +35627,8 @@ class EndpointEngine:
         self._client.close()
 ```
 
-- [ ] **Step 13: Run the checks; they pass.** `make check`. Expected: `1033 passed, 2 skipped,
-  35 deselected` twice (10 more), `Test Files  19 passed (19)`, `Tests  88 passed (88)`,
+- [ ] **Step 13: Run the checks; they pass.** `make check`. Expected: `1059 passed, 2 skipped,
+  39 deselected` twice (10 more), `Test Files  20 passed (20)`, `Tests  99 passed (99)`,
   `All checks passed!`, `no leaks found`. Commit:
 
 ```text
@@ -32953,8 +35774,8 @@ def test_doctor_asks_the_spark_for_its_models_and_says_how_many_it_serves(tmp_pa
 ```
 
   Then `cmp src/vid2sub/example.toml vid2sub.example.toml` prints nothing.
-- [ ] **Step 17: Run the checks; they pass.** `make check`. Expected: `1037 passed, 2 skipped,
-  35 deselected` twice (4 more), `Test Files  19 passed (19)`, `Tests  88 passed (88)`,
+- [ ] **Step 17: Run the checks; they pass.** `make check`. Expected: `1063 passed, 2 skipped,
+  39 deselected` twice (4 more), `Test Files  20 passed (20)`, `Tests  99 passed (99)`,
   `All checks passed!`, `no leaks found`. Commit:
 
 ```text
@@ -33050,8 +35871,8 @@ def test_gemma_translates_a_batch_in_the_required_shape():
 - [ ] **Step 19: Run it and the checks.** `uv run pytest -m live tests/test_live_spark.py -q -rs`.
   Expected: `3 skipped`, each `needs VID2SUB_LIVE_SPARK=1`. Never run it here with
   `VID2SUB_LIVE_SPARK=1`: that reaches the real Spark with Dan's key. `make check`. Expected:
-  `1037 passed, 2 skipped, 36 deselected` twice, `Test Files  19 passed (19)`,
-  `Tests  88 passed (88)`, `All checks passed!`, `no leaks found`. Commit:
+  `1063 passed, 2 skipped, 40 deselected` twice, `Test Files  20 passed (20)`,
+  `Tests  99 passed (99)`, `All checks passed!`, `no leaks found`. Commit:
 
 ```text
 test(live): 🤖 the opt-in Spark test checks Qwen3-ASR's timed, punctuated words and detection
@@ -33394,7 +36215,7 @@ Co-Authored-By: <the model's own line>
 
 Spec §23.2's `frontend` and `e2e` jobs, hardened as §23.1 asks, in the idiom of `recordings`'
 `ci.yml` at 8deb039 (its `frontend` and `e2e` jobs). Also the triage of the Phase-end list's
-`npm audit` row.
+`npm audit` row, and Dependabot for the frontend's npm lock (Decision 35).
 
 **Why it is built this way** (read 2026-10-24):
 - **The python job needs no built frontend.** `make check` with no `www/ui.js` passes: the only
@@ -33424,8 +36245,10 @@ Spec §23.2's `frontend` and `e2e` jobs, hardened as §23.1 asks, in the idiom o
   `git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>`.
 
 **Files:**
-- Modify: `.github/workflows/ci.yml` (the `frontend` and `e2e` jobs), `Makefile` (`actionlint`;
+- Modify: `.github/workflows/ci.yml` (the `frontend` and `e2e` jobs), `.github/dependabot.yml`
+  (the `npm` ecosystem for `/frontend`, Decision 35), `Makefile` (`actionlint`;
   `help` lists targets with digits; the nvm comment), `.gitignore` (`/e2e-tmp/`)
+- Test: `tests/test_dependabot.py` (Decision 35)
 - Modify at the close: this plan's Phase-end list (the `npm audit` row's Status)
 
 **Interfaces:**
@@ -33445,6 +36268,8 @@ Spec §23.2's `frontend` and `e2e` jobs, hardened as §23.1 asks, in the idiom o
     `.github/workflows/` (shellcheck runs on `run:` steps where it is installed). Phase 4's Tasks 6,
     7 and 8 check their workflows with it.
   - `make help` lists every target, `e2e` included.
+  - Dependabot watches `frontend/package-lock.json` (`package-ecosystem: npm`, `directory:
+    /frontend`) weekly on Friday, as it does the Actions pins and uv's lock (Decision 35).
 
 The counts below are the branch's with Tasks 2–20 (Task 20's Steps 2–20); if Task 20's Step 22
 committed the Spark's recorded answers, the suite's are higher by 4 (6 with the Cantonese answer).
@@ -33460,8 +36285,8 @@ rm -f src/vid2sub/web/www/ui.js src/vid2sub/web/www/ui.css
 make check
 ```
 
-  Expected: `1037 passed, 2 skipped, 36 deselected` (twice), `Test Files  19 passed (19)`,
-  `Tests  85 passed | 3 skipped (88)` (the built-bundle checks skip with no `ui.js`),
+  Expected: `1063 passed, 2 skipped, 40 deselected` (twice), `Test Files  20 passed (20)`,
+  `Tests  96 passed | 3 skipped (99)` (the built-bundle checks skip with no `ui.js`),
   `All checks passed!`, `no leaks found`. If a test fails for want of `www/ui.js`, that is drift:
   give that test a stand-in `ui.js`, as `tests/test_cli_serve.py` does, rather than building the
   frontend in the python job's six runners, with a "Built differently" note.
@@ -33590,9 +36415,9 @@ mv src/vid2sub/web/www/ui.js .git/ui.js.held
 unset CI
 ```
 
-  Expected: the build writes `../src/vid2sub/web/www/ui.css` and `ui.js`; `Test Files  19 passed
-  (19)`, `Tests  88 passed (88)`. With no venv, as the job has none: `Tests  87 passed | 1
-  skipped (88)` (`src/build.test.ts (4 tests | 1 skipped)`). With no `ui.js`: `FAIL
+  Expected: the build writes `../src/vid2sub/web/www/ui.css` and `ui.js`; `Test Files  20 passed
+  (20)`, `Tests  99 passed (99)`. With no venv, as the job has none: `Tests  98 passed | 1
+  skipped (99)` (`src/build.test.ts (4 tests | 1 skipped)`). With no `ui.js`: `FAIL
   src/build.test.ts > the built bundle > exists (CI builds before it tests)` and
   `ui.js is missing: run npm run build first`, which is why the job builds first.
 - [ ] **Step 7: Run the e2e job's steps here,** from the repository's root (on a Mac, `ffmpeg
@@ -33612,12 +36437,12 @@ rm -rf e2e-tmp
 unset UV_FROZEN CI PYTEST_ADDOPTS
 ```
 
-  Expected: `Tests  4 passed (4)` for `build.test.ts`; `31 passed, 1044 deselected` for `make e2e`
+  Expected: `Tests  4 passed (4)` for `build.test.ts`; `35 passed, 1070 deselected` for `make e2e`
   (Tasks 17–19's `test_retranslate.py`, `test_settings.py` and `test_jobs.py` among them);
   `32` server logs (one per server the tests started), the files the upload's glob takes
   on a failure; `git status` shows no `e2e-tmp/` (it is ignored).
-- [ ] **Step 8: Run the checks; they pass.** `make check`. Expected: `1037 passed, 2 skipped,
-  36 deselected` (twice), `Test Files  19 passed (19)`, `Tests  88 passed (88)`,
+- [ ] **Step 8: Run the checks; they pass.** `make check`. Expected: `1063 passed, 2 skipped,
+  40 deselected` (twice), `Test Files  20 passed (20)`, `Tests  99 passed (99)`,
   `All checks passed!`, `no leaks found`.
 - [ ] **Step 9: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -33633,14 +36458,14 @@ UV_FROZEN=1, and Node from frontend/.nvmrc.
 - frontend: npm ci, typecheck, build, Vitest, as recordings' frontend job (8deb039): build
   first, since build.test.ts checks the built ui.js and CI=true fails a missing one (shown
   locally: "ui.js is missing: run npm run build first"). It has no venv, so build.test.ts's
-  React major.minor check skips there (87 passed, 1 skipped, run locally without .venv).
+  React major.minor check skips there (98 passed, 1 skipped, run locally without .venv).
 - e2e: Ubuntu 24.04's apt ffmpeg (6.1.1-3ubuntu5; libavcodec60 depends on libvpx9 and libopus0,
   read from the noble archive's Packages index) for the demo's VP9 and Opus; uv sync; Playwright's
   Chromium with its system packages (`uv run playwright install --with-deps chromium`); make
   build; build.test.ts with VID2SUB_REQUIRE_SHINYREACT=1 (the venv holds shinyreact.js here); make
   e2e. Its server logs go under e2e-tmp/ (PYTEST_ADDOPTS=--basetemp=e2e-tmp) and are uploaded
   only when the job fails, as recordings' e2e job does; e2e-tmp/ is git-ignored.
-- The python job needs no built frontend: make check with no www/ui.js passed (1037 passed, 2
+- The python job needs no built frontend: make check with no www/ui.js passed (1063 passed, 2
   skipped), since tests/test_cli_serve.py and tests/test_demo_guard.py write their own stand-in
   ui.js. So it is unchanged.
 - make actionlint (actionlint-py 1.7.12.25 through uvx; shellcheck on run steps where installed)
@@ -33651,8 +36476,8 @@ UV_FROZEN=1, and Node from frontend/.nvmrc.
   no Node installed and `default` aliased to system (runner-images' install-nvm.sh), so
   `nvm use 22` fails quietly and setup-node's Node runs. The comment says so now.
 
-Run locally: each job's steps in order; Vitest 88 passed; build.test.ts with the venv 4 passed;
-make e2e 31 passed, with the server.log files under e2e-tmp/ for the upload glob.
+Run locally: each job's steps in order; Vitest 99 passed; build.test.ts with the venv 4 passed;
+make e2e 35 passed, with the server.log files under e2e-tmp/ for the upload glob.
 
 Docs read: actions/setup-node v7.1.0 README (node-version-file, cache, cache-dependency-path;
 v6's automatic npm caching applies only with a packageManager field, which package.json lacks);
@@ -33667,7 +36492,80 @@ Co-Authored-By: <the model's own line>
 
   `git add .github/workflows/ci.yml Makefile .gitignore`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
-- [ ] **Step 10: Review, look forward, close.** The Tier 3 self-review from
+#### Dependabot for the frontend's npm lock (Decision 35)
+
+Spec §23.1 asks for Dependabot on Fridays, and Task 12 added `frontend/package-lock.json`, which
+`.github/dependabot.yml` doesn't watch (the kickoff council's security finding 7). No test reads
+that file yet, so the smallest test that pins its entries comes first.
+
+- [ ] **Step 10: Write the failing test,** `tests/test_dependabot.py`:
+
+```python
+"""Dependabot watches every lock vid2sub is built from, on Fridays (spec §23.1): the GitHub
+Actions pins, uv's lock and the frontend's npm lock, since ui.js runs on the engine's own origin
+and an advisory against one of its packages must raise a pull request too (the Phase 2 plan's
+Decision 35, from the kickoff council's security finding 7)."""
+
+from pathlib import Path
+
+import yaml
+
+DEPENDABOT = Path(__file__).resolve().parents[1] / ".github" / "dependabot.yml"
+FRIDAYS = {"interval": "weekly", "day": "friday"}
+
+
+def test_dependabot_watches_the_frontends_npm_lock_on_fridays_as_it_does_the_others():
+    updates = yaml.safe_load(DEPENDABOT.read_text(encoding="utf-8"))["updates"]
+    watched = {(u["package-ecosystem"], u["directory"]): u["schedule"] for u in updates}
+    assert set(watched) == {("github-actions", "/"), ("uv", "/"), ("npm", "/frontend")}
+    assert all(schedule == FRIDAYS for schedule in watched.values())
+```
+
+- [ ] **Step 11: Run it; watch it fail.** `uv run pytest tests/test_dependabot.py -q`. Expected:
+  `AssertionError: assert {('github-act..., ('uv', '/')} == {('github-act..., ('uv', '/')}`,
+  `Extra items in the right set: ('npm', '/frontend')`, and `1 failed`.
+- [ ] **Step 12: Watch the npm lock.** At the end of `.github/dependabot.yml`, add (in its other
+  entries' form, as GitHub's Dependabot options reference gives `package-ecosystem: npm`, the
+  manifest's `directory` and `schedule.day`):
+
+```yaml
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly, day: friday }
+```
+
+- [ ] **Step 13: Run the checks; they pass.** `uv run pytest tests/test_dependabot.py -q` first
+  (`1 passed`), then `make check`. Expected: `1064 passed, 2 skipped, 40 deselected` (twice),
+  `Test Files  20 passed (20)`, `Tests  99 passed (99)`, `All checks passed!`, `no leaks found`.
+- [ ] **Step 14: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+ci: 🤖 Dependabot watches the frontend's npm lock on Fridays, as it does the Actions pins and uv's lock
+
+Spec §23.1 asks for Dependabot on Fridays, and Task 12 added
+frontend/package-lock.json, which nothing watched: ui.js runs on the
+engine's own origin, so an advisory against one of its packages must
+raise a pull request too (Decision 35, from the kickoff council's
+security finding 7). .github/dependabot.yml gains the npm ecosystem for
+/frontend, weekly on Friday, in its other entries' form. Whether
+`npm ci --ignore-scripts` still builds is the Phase-end list's row.
+
+No test read dependabot.yml, so tests/test_dependabot.py pins its three
+entries and their schedule. It failed first with: AssertionError:
+assert {('github-act..., ('uv', '/')} == {('github-act..., ('uv', '/')}
+(Extra items in the right set: ('npm', '/frontend')).
+
+Docs read: GitHub's Dependabot options reference (package-ecosystem
+"npm"; directory, the manifest's folder relative to the repository's
+root; schedule.interval "weekly" and schedule.day "friday").
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 21
+Co-Authored-By: <the model's own line>
+```
+
+  `git add .github/dependabot.yml tests/test_dependabot.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 15: Review, look forward, close.** The Tier 3 self-review from
   `$(cat .git/TASK_BASE)` (*Standards*, *Spec*) plus `make check` and `make actionlint`. Worth
   checking: every new action line is `uses: <owner>/<repo>@<40 hex> # v<version>`; both jobs
   have `permissions`, `timeout-minutes` and `persist-credentials: false`; no `${{` reaches a
@@ -33895,15 +36793,20 @@ for the request you ticked it for.
 always, and ASS too when **ASS too** is ticked (it starts ticked where the episode had ASS files,
 or where the session's defaults ask for them). Glossary terms you added are written to the
 `vid2sub.glossary.toml` beside the video. Save rewrites only the files vid2sub wrote: a file
-someone else wrote, or changed since, is left alone, and the editor names it.
+someone else wrote, or changed since, is left alone, and the editor names it, with the command
+that replaces one vid2sub didn't write, run in the video's folder:
+`vid2sub write <video> --overwrite-foreign`.
 
 If another tab, or a `vid2sub` command, saved the same track while you edited it, nothing is
 lost: both versions are kept, and the track says it has two. **Pick a version** shows them, with
 the cues where they differ, and keeps the one you pick; while the source track has two versions,
 the cue list stays empty until you pick. A subtitle file edited in another program comes back as
 a version of its own when you open the episode again, and the editor says it kept your outside
-edit. Unsaved edits are kept in the browser too: after a crash, opening the episode offers them
-back (**Restore them** or **Discard**), and closing the tab with unsaved edits asks first.
+edit. Unsaved edits are kept in the browser too, each tab's on its own: after a crash, opening
+the episode offers every tab's, each with its time, to restore (**Restore them**) or set aside
+(**Discard**). A restored draft is cleared once every step of it was done again; otherwise the
+editor says how many steps couldn't be, and keeps it. Closing the tab with unsaved edits asks
+first.
 
 **Settings**, in the top bar, shows the endpoints and models `vid2sub.toml` declares, read-only
 (change them in the file), with each endpoint's key shown only as set or not. **Test** asks an
@@ -33984,8 +36887,8 @@ diff <(grep -oE '^make [a-z0-9-]+' README.md | cut -d' ' -f2 | sort) <(make help
 
   Expected: `model table unchanged` and `every target named` (the README names each target
   `make help` lists, and no other). Then `make check`. Expected:
-  `1037 passed, 2 skipped, 36 deselected` twice, `Test Files  19 passed (19)`,
-  `Tests  88 passed (88)`, `All checks passed!`, `no leaks found`.
+  `1064 passed, 2 skipped, 40 deselected` twice, `Test Files  20 passed (20)`,
+  `Tests  99 passed (99)`, `All checks passed!`, `no leaks found`.
 - [ ] **Step 3: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -34005,8 +36908,11 @@ being planned. It now says, from what was built:
   Decision 12) and --no-browser; --demo; opening an episode and the
   playback audio; every key, from frontend/src/lib/keys.ts (Task 15,
   Decision 16); Retranslate (Decision 8, the cloud box unticked after
-  every request, the route's model, Decision 26); Save, conflicts and
-  the picker (Decision 20), outside edits and the crash draft; the
+  every request, the route's model, Decision 26); Save, someone else's
+  file left alone with `vid2sub write <video> --overwrite-foreign`
+  named (Decision 32), conflicts and the picker (Decision 20), outside
+  edits and each tab's own crash draft, kept until every step of it
+  was done again (Decision 31); the
   settings drawer (typed keys only for allow_typed_key, 8 to 1,024
   characters, Decision 25, never written; Copy settings; the cue rules
   "shown, not yet changeable", which stays true whichever way Decision
@@ -34501,3 +37407,8 @@ fi
 | Task 20 (planning) | Minor | `tests/test_live_spark.py` | If local-ai doesn't serve Qwen3-ASR by Task 20's Step 21, its recording, live test and Cantonese run (Steps 21–23) wait; they run once it does, in whichever phase that is, and S22 becomes `verified` then (the kickoff council's goal fit finding 1) | open |
 | Task 16 (planning) | Minor | `tests/e2e/test_saving.py` | The close-warning test waits a fixed 500 ms before checking for the `beforeunload` dialog, and some server tests sleep, then assert nothing happened, so a slow runner flakes the first and passes the others without their fix; wait on `page.expect_event("dialog")`, and send a later request through the same queue before asserting (reliability finding 13) | open |
 | Task 17 (planning) | Minor | `src/vid2sub/web/server.py` | A whole-episode Retranslate holds the tab's queue, with no Cancel, so a slow Spark keeps edits and Save waiting for minutes; a Cancel checked between batches, or Save allowed past a running retranslation (reliability finding 15) | open |
+| Task 6 (planning) | Minor | `src/vid2sub/store.py` | The glossary file's write takes no `store.write_lock` (the build's Tier 1 review) | open |
+| Task 6 (planning) | Minor | `src/vid2sub/pipeline.py` | `pipeline._write` can fail an input with `StoreError` when one of its tracks went into conflict meanwhile, where it could write the others and report the conflict (the build's Tier 1 re-review) | open |
+| Task 16 (planning) | Minor | `frontend/src/App.tsx` | An edit sent while a Save runs is cleared from the draft by the Save's publish, so a crash right after loses it | open |
+| Task 16 (planning) | Minor | `frontend/src/lib/draft.ts` | A step still unanswered when the tab crashes stays in the draft and is replayed; comments in `App.tsx`, `draft.ts`, `server.py`'s docstring and `types.ts` still describe only refusals | open |
+| Task 17 (planning) | Minor | `frontend/src/lib/draft.ts` | A draft holding only retranslation markers lingers in storage, though restoring it does nothing (the build's Tier 1 review) | open |
