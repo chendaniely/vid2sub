@@ -361,13 +361,1025 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 3 · **Scenarios:** S66 · Runs right after Task 1 (Q&A item 34)
 
-**Interfaces:**
-- Consumes: M1's `commands/_common.Output` (`progress(kind, fields)`, `tty`, `say`, `name`) and
-  the pipeline's progress events (`stage`, `chunk`, `batch`, `waiting`), which `new_context`
-  hands to `RunContext.events`; spec §18.2 as Decision 38 left it.
-- Produces: the terminal's bar; nothing a later task consumes.
+Decision 38, from Dan's "we should have a progressbar or something. when we run this it should
+display stats!" (Q&A item 34, answer A). In a terminal, each input of `vid2sub run` and
+`vid2sub translate` gets one bar, redrawn in place, and each finished stage leaves a line above
+it. Output that isn't a terminal gets those lines with no bar. `--json` is unchanged apart from
+one number on the chunk event.
 
-<!-- steps: written in the next pass -->
+**Why it is built this way** (read 2026-10-30):
+- **Where it lives:** `commands/_progress.py`, beside `_common.py`. `Output` owns one `Bar`,
+  except with `--json`. The bar is drawn (`live`) only in a terminal, so a title reaches nothing
+  else (§6.8). Elsewhere `Output.name` gives `input N`, and the bar's lines carry no name at all.
+- **No new dependency** (Decision 38). The bar is redrawn with CR and `ESC [2K`; xterm's ctlseqs
+  give `CSI Ps K`, Erase in Line, with Ps = 2 erasing the whole line.
+  `shutil.get_terminal_size()` reads `COLUMNS` first, then the terminal on `sys.__stdout__`, and
+  falls back to 80×24, also (from 3.11) when the terminal reports zeros, as `script`'s does. The
+  bar keeps off the last column, where some terminals wrap.
+  `unicodedata.east_asian_width`'s `W` and `F` count two columns, so a Japanese or Chinese title
+  can't wrap the line: a wrapped line can't be redrawn in place. A control character (category
+  `Cc`) in a name shows as `?`.
+- **The clock and the width are injected:** `Output(..., clock=, columns=)`, so the unit tests
+  move a fake clock and need no sleeps. The CLI tests stop the clock by patching
+  `_progress.monotonic` (`time.monotonic`, which never goes backwards), which `Bar` looks up when
+  it is made.
+- **When events come:** the pipeline sends `chunk` as each chunk starts, and `batch` once each
+  batch has ended (`translate.run.translate_cues`' `on_batch`). The bar's fill and time left
+  count the finished ones; its n/N names the one in progress. So the first batch shows no n/N,
+  since its count arrives when it ends. An `on_batch(0, N)` would add a `--json` event, so
+  `translate.run` stays as it is.
+- **Speed needs one field, `until_ms`, on the chunk event:** no event said where on the audio a
+  chunk is. It is `ChunkPlan.core_end_ms`. The cores tile 0 to the audio's length
+  (`media/chunk.py`), so when chunk n starts, the audio done is chunk n−1's `until_ms`, and the
+  last one is the audio's length. That makes the speed (audio seconds done ÷ wall seconds) exact
+  mid-way and at the end. It is a number, so §6.8 and S17 hold. No later listing's
+  `pipeline.py` anchor includes that line. Task 4 anchors the docstring, `StopRun`, `_no_event`,
+  `candidates`, `_guarded` and `_retrying`. Task 19 anchors the imports, `RunContext`'s fields
+  and `_translate_targets`' `make_ask`. Task 20 anchors `_waits_for`'s return. Task 4's queue
+  reads `index` and `of` only.
+- **Elapsed is the stage's,** beside the stage's time left, and each finished stage's line gives
+  that stage's time. The bar is redrawn on each event with no timer thread, which would need a
+  lock around the stream and stopping on Ctrl-C. So during a long chunk its clock stands still.
+- **Output that isn't a terminal** gets the same lines as above the bar: each finished stage and
+  each wait for a server. M1's line per input follows. M1 printed no progress there; §18.2 asks
+  for "a plain line per file and stage", and Dan's answer A said "plain lines when piped".
+- **A failed input leaves no line for the stage it failed in** (`Output.end(ok=False)`). Paused,
+  StopRun and Ctrl-C leave through `Output.warn`, which erases the bar first.
+- **A link has no title until its download** (the pipeline's `_resolve` sets it), and events
+  never carry titles. So a link's bar reads `input N` until its result line names it.
+
+**Files:**
+- Create: `src/vid2sub/commands/_progress.py`
+- Modify: `src/vid2sub/commands/_common.py` (`Output`), `src/vid2sub/commands/run.py` and
+  `src/vid2sub/commands/translate.py` (`begin` and `end` around each input),
+  `src/vid2sub/pipeline.py` (the chunk event's `until_ms`)
+- Test: `tests/test_cli_progress.py`
+- Modify at the close: this plan (the boxes, **Now**, the **Run order** note's count), the spec's
+  row S66
+
+**Interfaces:**
+- Consumes: M1's `commands/_common.Output` (`progress(kind, fields)`, `tty`, `say`, `warn`,
+  `name`) and the pipeline's progress events, which `new_context` hands to `RunContext.events`:
+  `stage` `{stage}`, `chunk` `{index, of}`, `batch` `{index, of}` and `waiting`
+  `{kind, seconds}`. Also `media.chunk.ChunkPlan.core_end_ms`, and spec §18.2 as Decision 38
+  left it.
+- Produces:
+  - `commands._progress.Bar(stream: TextIO, *, clock: Callable[[], float] | None = None,
+    columns: Callable[[], int] | None = None, live: bool = True)`, with these methods:
+    - `start(name: str) -> None`
+    - `event(kind: str, fields: dict[str, Any]) -> None`
+    - `finish(ok: bool) -> None`: the last stage's line only if `ok`, then the bar is erased.
+    - `clear() -> None`: erases the bar if it is drawn.
+
+    `live=False` writes the lines only. The defaults are `time.monotonic` and
+    `shutil.get_terminal_size().columns`. The module also has
+    `clock_text(seconds: float) -> str` (`m:ss`, or `h:mm:ss` from an hour) and the constants
+    `ERASE`, `CELLS`, `STAGES` and `UNITS`.
+  - `Output(json_mode, stream=None, err=None, *, clock=None, columns=None)` gains:
+    - `begin(item: str, n: int) -> None`: the bar's name is `Output.name(<the file's name>, n)`,
+      and `input N` for a link.
+    - `end(ok: bool) -> None`
+
+    `say` and `warn` erase the bar first. `progress` feeds the bar; with `--json` it writes the
+    event, as before.
+  - The `chunk` event is `{"index", "of", "until_ms"}`, in `--json` too.
+  - Lines: `  probed in m:ss`, `  decoded in …`, `  found speech in …`,
+    `  detected the language in …`, `  downloaded in …`,
+    `  transcribed N chunks in …, X.X× real time`, `  translated N batches in …`,
+    `  hashed the video in …` and M1's `  waiting N s (kind)…`. In a terminal the bar reads
+    `<name> · transcribing chunk n/N [###-------] · m:ss · X.X× · m:ss left`.
+  - Nothing a later task consumes.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing test,** `tests/test_cli_progress.py`:
+
+```python
+import io
+import re
+
+import pytest
+
+from vid2sub.commands._common import Output
+
+ERASE = "\r\x1b[2K"
+VIDEO = "/videos/Show/Show - S01E01.mkv"
+
+
+class Terminal(io.StringIO):
+    """Output that goes to an interactive terminal."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+class Clock:
+    """A clock the test moves by hand, so nothing sleeps."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def screen(text: str) -> list[str]:
+    """The lines a terminal shows after `text`: CR goes back to the line's start, ESC [2K blanks
+    the line, and a character overwrites the one under the cursor."""
+    lines: list[str] = []
+    line: list[str] = []
+    col = 0
+    for part in re.split(r"(\r|\n|\x1b\[2K)", text):
+        if part == "\r":
+            col = 0
+        elif part == "\n":
+            lines.append("".join(line).rstrip())
+            line, col = [], 0
+        elif part == "\x1b[2K":
+            line = [" "] * col
+        else:
+            for ch in part:
+                line[col:col + 1] = [ch]
+                col += 1
+    if "".join(line).strip():
+        lines.append("".join(line).rstrip())
+    return lines
+
+
+def terminal(columns: int = 100) -> tuple[Output, Terminal, Clock]:
+    """An Output whose stdout and stderr are one terminal, `columns` wide."""
+    tty, clock = Terminal(), Clock()
+    return Output(False, tty, tty, clock=clock, columns=lambda: columns), tty, clock
+
+
+def at(out: Output, clock: Clock, seconds: float, event: str, /, **fields) -> None:
+    """The pipeline's `event` with its `fields`, `seconds` into the run."""
+    clock.now = seconds
+    out.progress(event, fields)
+
+
+def bar(tty: Terminal) -> str:
+    return screen(tty.getvalue())[-1]
+
+
+def test_the_bar_shows_the_name_the_stage_and_the_chunk_with_elapsed_speed_and_time_left():
+    out, tty, clock = terminal()
+    out.begin(VIDEO, 1)
+    at(out, clock, 0, "stage", stage="decode")
+    assert bar(tty) == "Show - S01E01.mkv · decoding · 0:00"
+    at(out, clock, 50, "chunk", index=1, of=11, until_ms=77_000)
+    assert bar(tty) == "Show - S01E01.mkv · transcribing chunk 1/11 [----------] · 0:00"
+    for i in range(2, 6):
+        at(out, clock, 50 + 32.5 * (i - 1), "chunk", index=i, of=11, until_ms=77_000 * i)
+    # 4 chunks (308 s of audio) in 130 s: 2.4× real time, and 7 more at 32.5 s each.
+    assert bar(tty) == ("Show - S01E01.mkv · transcribing chunk 5/11 [###-------] · 2:10 · 2.4× · "
+                        "3:47 left")
+
+
+def test_translation_shows_the_batch_and_time_left_but_no_speed():
+    out, tty, clock = terminal()
+    out.begin(VIDEO, 1)
+    at(out, clock, 0, "stage", stage="translate")
+    assert bar(tty) == "Show - S01E01.mkv · translating · 0:00"
+    at(out, clock, 20, "batch", index=1, of=5)
+    assert bar(tty) == "Show - S01E01.mkv · translating batch 2/5 [##--------] · 0:20 · 1:20 left"
+    at(out, clock, 100, "batch", index=5, of=5)
+    assert bar(tty) == "Show - S01E01.mkv · translating batch 5/5 [##########] · 1:40 · 0:00 left"
+
+
+def test_the_bar_is_erased_and_redrawn_in_place_on_one_line():
+    out, tty, clock = terminal()
+    out.begin(VIDEO, 1)
+    at(out, clock, 0, "chunk", index=1, of=2, until_ms=60_000)
+    at(out, clock, 3, "chunk", index=2, of=2, until_ms=90_000)
+    assert tty.getvalue() == (
+        ERASE + "Show - S01E01.mkv · transcribing chunk 1/2 [----------] · 0:00"
+        + ERASE + "Show - S01E01.mkv · transcribing chunk 2/2 [#####-----] · 0:03 · 20.0× · "
+        "0:03 left")
+
+
+def test_a_finished_stage_leaves_its_own_line_above_the_bar():
+    out, tty, clock = terminal()
+    out.begin(VIDEO, 1)
+    at(out, clock, 0, "stage", stage="decode")
+    at(out, clock, 42, "stage", stage="speech")
+    assert screen(tty.getvalue()) == ["  decoded in 0:42",
+                                      "Show - S01E01.mkv · finding speech · 0:00"]
+    for i in range(1, 12):
+        at(out, clock, 50 + 30 * (i - 1), "chunk", index=i, of=11,
+           until_ms=851_000 if i == 11 else 77_000 * i)
+    clock.now = 420
+    out.end(True)
+    # 851 s of audio transcribed in 370 s.
+    assert screen(tty.getvalue()) == ["  decoded in 0:42", "  found speech in 0:08",
+                                      "  transcribed 11 chunks in 6:10, 2.3× real time"]
+
+
+def test_the_bar_is_cleared_before_a_warning_or_the_summary_so_nothing_is_drawn_over():
+    out, tty, clock = terminal()
+    out.begin(VIDEO, 1)
+    at(out, clock, 0, "chunk", index=1, of=3, until_ms=60_000)
+    out.warn("vid2sub: paused: the model server isn't reachable")
+    out.say("1 failed")
+    assert tty.getvalue() == (
+        ERASE + "Show - S01E01.mkv · transcribing chunk 1/3 [----------] · 0:00"
+        + ERASE + "vid2sub: paused: the model server isn't reachable\n1 failed\n")
+
+
+def test_a_stage_that_failed_leaves_no_line_and_its_bar_goes():
+    out, tty, clock = terminal()
+    out.begin(VIDEO, 1)
+    at(out, clock, 0, "stage", stage="probe")
+    at(out, clock, 1, "stage", stage="decode")
+    clock.now = 3
+    out.end(False)
+    assert screen(tty.getvalue()) == ["  probed in 0:01"]
+    assert tty.getvalue().endswith(ERASE)
+
+
+def test_a_wait_for_the_server_is_a_line_above_the_bar():
+    out, tty, clock = terminal()
+    out.begin(VIDEO, 1)
+    at(out, clock, 0, "stage", stage="translate")
+    at(out, clock, 1, "waiting", kind="connection", seconds=5)
+    assert screen(tty.getvalue()) == ["  waiting 5 s (connection)…",
+                                      "Show - S01E01.mkv · translating · 0:01"]
+
+
+@pytest.mark.parametrize(("name", "shown"), [
+    ("Detective Conan - S01E05 - The Case.mkv", "Detective Conan - S0…"),
+    ("名探偵コナン 第1話 江戸川コナン誕生.mkv", "名探偵コナン 第1話…"),  # two columns each
+], ids=["latin", "wide"])
+def test_a_long_name_is_cut_so_the_bar_fits_on_one_line(name, shown):
+    out, tty, clock = terminal(columns=40)
+    out.begin(f"/videos/{name}", 1)
+    at(out, clock, 0, "stage", stage="decode")
+    assert tty.getvalue() == ERASE + f"{shown} · decoding · 0:00"
+
+
+def test_a_control_character_in_a_name_never_reaches_the_terminal():
+    out, tty, clock = terminal()
+    out.begin("/videos/Show\x1b[2J\r\n - S01E01.mkv", 1)
+    at(out, clock, 0, "stage", stage="decode")
+    assert tty.getvalue() == ERASE + "Show?[2J?? - S01E01.mkv · decoding · 0:00"
+
+
+def test_output_that_isnt_a_terminal_gets_each_finished_stages_line_but_no_bar_or_name():
+    pipe, clock = io.StringIO(), Clock()
+    out = Output(False, pipe, pipe, clock=clock, columns=lambda: 100)
+    out.begin(VIDEO, 1)
+    at(out, clock, 0, "stage", stage="decode")
+    at(out, clock, 5, "chunk", index=1, of=2, until_ms=60_000)
+    at(out, clock, 8, "chunk", index=2, of=2, until_ms=90_000)
+    at(out, clock, 9, "waiting", kind="connection", seconds=5)
+    clock.now = 12
+    out.end(True)
+    out.say("✓ input 1 (1/1): done, wrote 1 file")
+    # 90 s of audio in 7 s.
+    assert pipe.getvalue() == ("  decoded in 0:05\n  waiting 5 s (connection)…\n"
+                               "  transcribed 2 chunks in 0:07, 12.9× real time\n"
+                               "✓ input 1 (1/1): done, wrote 1 file\n")
+```
+
+- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_cli_progress.py -q`.
+  Expected: `E       TypeError: Output.__init__() got an unexpected keyword argument 'clock'`
+  (11 times) and `11 failed`.
+- [ ] **Step 3: Write the code.** `src/vid2sub/commands/_progress.py`:
+
+```python
+"""The progress a run shows: in a terminal a bar per input, elsewhere its plain lines (§18.2, S66).
+
+Why: an episode takes minutes and a season hours, and M1 printed a line per chunk; Dan asked for
+a bar with stats instead (Q&A item 34; the Phase 2 plan's Decision 38). Each input gets one bar,
+redrawn in place on one line with a carriage return and the erase-line code (`ESC [2K`, xterm's
+and ECMA-48's EL): its name, the stage, chunk or batch n/N with a simple bar, the stage's elapsed
+time, its speed in × real time (audio seconds done ÷ wall seconds: transcription only, whose chunk
+events say where on the audio each chunk ends) and its time left (the average time per chunk or
+batch so far × those left). A finished stage leaves its own line above the bar. The bar is erased
+before any other output, so nothing is drawn over it, and cut to the terminal's width, wide
+characters counted twice, since a wrapped line can't be redrawn in place; a control character in
+a name is shown as `?`. It is redrawn on each event, with no timer thread. Only a terminal gets the
+bar (`live`), because titles reach nothing else (§6.8): output that isn't a terminal gets the same
+lines with no bar, no codes and no name, before M1's line per input, and `--json` keeps its events
+(Dan's answer to Q&A item 34, "plain lines when piped"). The standard library only, as Decision 38
+asks; the clock and the width are injected, so tests need neither sleeps nor a terminal.
+"""
+
+from __future__ import annotations
+
+import shutil
+import unicodedata
+from collections.abc import Callable
+from time import monotonic
+from typing import Any, TextIO
+
+ERASE = "\r\x1b[2K"  # back to the line's start, then erase the whole line
+CELLS = 10  # the bar's width, in characters
+# Each stage's words while it runs and once it has finished.
+STAGES = {
+    "download": ("downloading", "downloaded"),
+    "probe": ("probing", "probed"),
+    "decode": ("decoding", "decoded"),
+    "speech": ("finding speech", "found speech"),
+    "detect": ("detecting the language", "detected the language"),
+    "transcribe": ("transcribing", "transcribed"),
+    "translate": ("translating", "translated"),
+    "hash": ("hashing the video", "hashed the video"),
+}
+UNITS = {"transcribe": ("chunk", "chunks"), "translate": ("batch", "batches")}
+
+
+def clock_text(seconds: float) -> str:
+    """`m:ss`, or `h:mm:ss` from an hour."""
+    s = max(0, int(seconds))
+    if s >= 3600:
+        return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
+    return f"{s // 60}:{s % 60:02d}"
+
+
+def _cells(ch: str) -> int:
+    """The columns a character takes: two if East Asian wide or fullwidth, none for a mark."""
+    if unicodedata.category(ch) in ("Mn", "Me", "Cf"):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def _width(text: str) -> int:
+    return sum(_cells(ch) for ch in text)
+
+
+def _cut(text: str, cells: int) -> str:
+    """The longest start of `text` that fits in `cells` columns."""
+    out: list[str] = []
+    used = 0
+    for ch in text:
+        used += _cells(ch)
+        if used > cells:
+            break
+        out.append(ch)
+    return "".join(out)
+
+
+def _columns() -> int:
+    return shutil.get_terminal_size().columns
+
+
+class Bar:
+    """One input at a time on `stream`, fed the pipeline's progress events; with `live` False,
+    only the lines above the bar are written."""
+
+    def __init__(self, stream: TextIO, *, clock: Callable[[], float] | None = None,
+                 columns: Callable[[], int] | None = None, live: bool = True):
+        self._stream = stream
+        self._live = live
+        self._clock = clock or monotonic
+        self._columns = columns or _columns
+        self._name = ""
+        self._stage: str | None = None
+        self._since = 0.0
+        self._done = self._total = 0
+        self._heard_ms: int | None = 0  # the audio the finished chunks cover
+        self._until_ms: int | None = 0  # where the chunk in progress ends
+        self._drawn = False
+
+    def start(self, name: str) -> None:
+        self.clear()
+        self._name = "".join("?" if unicodedata.category(ch) == "Cc" else ch for ch in name)
+        self._stage = None
+
+    def event(self, kind: str, fields: dict[str, Any]) -> None:
+        now = self._clock()
+        if kind == "stage":
+            self._begin(fields["stage"], now)
+        elif kind in ("chunk", "batch"):
+            stage = "transcribe" if kind == "chunk" else "translate"
+            if self._stage != stage:
+                self._begin(stage, now)
+            # A chunk's event comes as it starts, a batch's once it has finished.
+            self._done = fields["index"] - (1 if kind == "chunk" else 0)
+            self._total = fields["of"]
+            if kind == "chunk":
+                self._heard_ms, self._until_ms = self._until_ms, fields.get("until_ms")
+        elif kind == "waiting":
+            self._line(f"waiting {fields['seconds']} s ({fields['kind']})…")
+        else:
+            return
+        self._draw(now)
+
+    def finish(self, ok: bool) -> None:
+        """The input is over: its last stage leaves a line if it finished, and the bar goes."""
+        if ok and self._stage is not None:
+            self._line(self._finished(self._clock()))
+        self.clear()
+        self._name, self._stage = "", None
+
+    def clear(self) -> None:
+        if self._drawn:
+            self._write(ERASE)
+            self._drawn = False
+
+    def _begin(self, stage: str, now: float) -> None:
+        if self._stage is not None:
+            self._line(self._finished(now))
+        self._stage, self._since = stage, now
+        self._done = self._total = 0
+        self._heard_ms = self._until_ms = 0
+
+    def _finished(self, now: float) -> str:
+        took = now - self._since
+        words = STAGES.get(self._stage, (self._stage, f"{self._stage} done"))[1]
+        if self._stage in UNITS and self._total:
+            one, many = UNITS[self._stage]
+            words += f" {self._total} {one if self._total == 1 else many}"
+        line = f"{words} in {clock_text(took)}"
+        if self._until_ms and took > 0:
+            line += f", {self._until_ms / 1000 / took:.1f}× real time"
+        return line
+
+    def _draw(self, now: float) -> None:
+        if self._stage is None or not self._live:
+            return
+        elapsed = now - self._since
+        doing = STAGES.get(self._stage, (self._stage, ""))[0]
+        if self._total:
+            filled = CELLS * self._done // self._total
+            doing += (f" {UNITS[self._stage][0]} {min(self._done + 1, self._total)}/{self._total}"
+                      f" [{'#' * filled}{'-' * (CELLS - filled)}]")
+        parts = [doing, clock_text(elapsed)]
+        if self._heard_ms and elapsed > 0:
+            parts.append(f"{self._heard_ms / 1000 / elapsed:.1f}×")
+        if self._done and self._total:
+            parts.append(f"{clock_text(elapsed / self._done * (self._total - self._done))} left")
+        line = " · ".join(parts)
+        width = self._columns() - 1  # never the last column, where some terminals wrap
+        if self._name:
+            room = width - _width(line) - 3
+            name = self._name
+            if _width(name) > room:
+                name = _cut(name, room - 1).rstrip() + "…"
+            line = f"{name} · {line}"
+        self._write(ERASE + _cut(line, width))
+        self._drawn = True
+
+    def _line(self, text: str) -> None:
+        self.clear()
+        self._write(f"  {text}\n")
+
+    def _write(self, text: str) -> None:
+        self._stream.write(text)
+        self._stream.flush()
+```
+
+  In `src/vid2sub/commands/_common.py`, replace the module docstring's lines
+
+```python
+stages, counts and error kinds, never names (spec §6.8, §18.2). Folders expand to their videos in
+episode order (`S01E02` before `S01E10`), others by natural name order after them.
+```
+
+  with
+
+```python
+stages, counts and error kinds, never names (spec §6.8, §18.2). In a terminal each input gets a
+progress bar (`_progress.Bar`; Decision 38 of the Phase 2 plan), erased before any other output;
+other plain output gets a line per finished stage.
+Folders expand to their videos in episode order (`S01E02` before `S01E10`), others by natural name
+order after them.
+```
+
+  replace `from collections.abc import Sequence` with
+  `from collections.abc import Callable, Sequence`; below `from vid2sub import exitcodes`, add
+  `from vid2sub.commands._progress import Bar`; in `class Output`, replace
+
+```python
+    def __init__(self, json_mode: bool, stream: TextIO | None = None, err: TextIO | None = None):
+        self.json = json_mode
+        self.stream = stream or sys.stdout
+        self.err = err or sys.stderr
+        self.tty = not json_mode and self.stream.isatty()
+```
+
+  with
+
+```python
+    def __init__(self, json_mode: bool, stream: TextIO | None = None, err: TextIO | None = None,
+                 *, clock: Callable[[], float] | None = None,
+                 columns: Callable[[], int] | None = None):
+        self.json = json_mode
+        self.stream = stream or sys.stdout
+        self.err = err or sys.stderr
+        self.tty = not json_mode and self.stream.isatty()
+        # Only a terminal gets the live bar, and with it a title; other plain output gets its
+        # lines alone, and --json the events themselves (spec §6.8, §18.2).
+        self._bar = None if json_mode else Bar(self.stream, clock=clock, columns=columns,
+                                                live=self.tty)
+```
+
+  and replace `say`, `warn` and `progress`, from `    def say(self, text: str) -> None:` down to
+  `            self.say(lines[kind](fields))`:
+
+```python
+    def say(self, text: str) -> None:
+        if not self.json:
+            print(text, file=self.stream, flush=True)
+
+    def warn(self, text: str) -> None:
+        print(text, file=self.err, flush=True)
+
+    def progress(self, kind: str, fields: dict[str, Any]) -> None:
+        if self.json:
+            self.event(kind, **fields)
+            return
+        if not self.tty:
+            return
+        lines = {
+            "stage": lambda f: f"  {f['stage']}…",
+            "chunk": lambda f: f"  transcribing {f['index']}/{f['of']}",
+            "batch": lambda f: f"  translating {f['index']}/{f['of']}",
+            "waiting": lambda f: f"  waiting {f['seconds']} s ({f['kind']})…",
+        }
+        if kind in lines:
+            self.say(lines[kind](fields))
+```
+
+  with
+
+```python
+    def say(self, text: str) -> None:
+        if not self.json:
+            self._clear()
+            print(text, file=self.stream, flush=True)
+
+    def warn(self, text: str) -> None:
+        self._clear()
+        print(text, file=self.err, flush=True)
+
+    def progress(self, kind: str, fields: dict[str, Any]) -> None:
+        if self.json:
+            self.event(kind, **fields)
+        elif self._bar is not None:
+            self._bar.event(kind, fields)
+
+    def begin(self, item: str, n: int) -> None:
+        """A new input: in a terminal, its bar shows the file's name; a link's title comes only
+        with its download, so a link is `input N` there."""
+        if self._bar is not None:
+            self._bar.start(self.name("" if is_url(item) else Path(item).name, n))
+
+    def end(self, ok: bool) -> None:
+        """The input is over: a last stage that finished (`ok`) leaves its line; the bar goes."""
+        if self._bar is not None:
+            self._bar.finish(ok)
+
+    def _clear(self) -> None:
+        if self._bar is not None:
+            self._bar.clear()
+```
+
+  (`is_url` and `Path` are imported already; Phase 3's Task 1 anchors on the
+  `from vid2sub.security import …` line and `_EPISODE`, which stay as they are.)
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_cli_progress.py -q` first
+  (`11 passed`), then the guard checks, then `make check`. **Guard checks:** do each, run
+  `uv run pytest tests/test_cli_progress.py -q`, and restore it before the next:
+  - In `_progress.py`, `ERASE = "\r"` gives `8 failed, 3 passed`, because the old text shows
+    through.
+  - In `Output.warn`, delete `self._clear()`. The run gives `FAILED
+    tests/test_cli_progress.py::test_the_bar_is_cleared_before_a_warning_or_the_summary_so_nothing_is_drawn_over`.
+  - In `_cells`, `return 1` for the last line gives `FAILED
+    tests/test_cli_progress.py::test_a_long_name_is_cut_so_the_bar_fits_on_one_line[wide]`.
+  - In `Output.__init__`, `live=True` for `live=self.tty` gives `FAILED
+    tests/test_cli_progress.py::test_output_that_isnt_a_terminal_gets_each_finished_stages_line_but_no_bar_or_name`,
+    with `[2Kinput 1 · decoding · 0:00` in a pipe.
+
+  `make check`. Expected: `476 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
+  `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(cli): 🤖 in a terminal each input's progress is one bar redrawn in place, and every finished stage leaves a line
+
+commands._progress.Bar (spec §18.2, S66; the Phase 2 plan's Decision 38,
+from Dan's Q&A item 34) replaces M1's line per stage and per chunk in a
+terminal: one line, redrawn with CR and ESC [2K, holding the input's
+name, the stage, chunk or batch n/N with a ten-cell bar, the stage's
+elapsed time, its speed in × real time (transcription only, from the
+chunk events' until_ms, which the pipeline sends from this task's next
+commit) and its time left (the average per chunk or batch so far). A
+finished stage leaves "decoded in 0:42" or "transcribed 11 chunks in
+6:10, 2.3× real time" above the bar. Output.say and Output.warn erase
+the bar first, so nothing is drawn over it; the bar is cut to the
+terminal's width less one column (wide characters count two, so a
+Japanese title can't wrap it), and a control character in a name shows
+as ?. Output that isn't a terminal gets the same lines with no bar, no
+codes and no name ("plain lines when piped", Dan's answer A), where M1
+printed none; --json is unchanged (spec §6.8). Output gains begin(item,
+n) and end(ok), and clock and columns keywords for tests.
+
+The new tests failed first with: TypeError: Output.__init__() got an
+unexpected keyword argument 'clock' (11 failed). Guards checked by
+reverting each fix: with ERASE a bare "\r", 8 fail (the old text shows
+through); without the clear in warn, the warning lands on the bar's
+line; counting every character as one column, the wide name isn't cut;
+with the bar live in a pipe too, the pipe gets codes and "input 1 ·
+decoding".
+
+Docs read: Python 3.14's shutil.get_terminal_size (COLUMNS first, then
+the terminal on sys.__stdout__, else 80×24), time.monotonic (never goes
+backwards; only differences mean anything), unicodedata's
+east_asian_width and category (UAX #11: W and F take two columns; UCD
+17.0.0); xterm's ctlseqs (CSI Ps K, Erase in Line; Ps = 2, Erase All).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 25
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/commands/_progress.py src/vid2sub/commands/_common.py
+  tests/test_cli_progress.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
+- [ ] **Step 6: Write the failing test.** In `tests/test_cli_progress.py`, replace the imports
+  (from `import io` down to `from vid2sub.commands._common import Output`) with:
+
+```python
+import io
+import json
+import re
+import sys
+
+import pytest
+from fakes import FakeEngine, fake_make_ask
+from helpers import SPEECH, make_clip
+from test_cli_run import CONFIG
+
+from vid2sub import pipeline
+from vid2sub.catalog import Candidate
+from vid2sub.cli import main
+from vid2sub.commands import _common, _progress
+from vid2sub.commands._common import Output
+```
+
+  then append at the end of the file, after two blank lines:
+
+```python
+@pytest.fixture
+def clip(tmp_path, monkeypatch):
+    """A 14 s episode, the fake engines, a 120-column terminal and a clock that stands still."""
+    cfg = tmp_path / "vid2sub.toml"
+    cfg.write_text(CONFIG)
+    real = _common.new_context
+
+    def with_fakes(config, options, output):
+        ctx = real(config, options, output)
+        ctx.engines["fake"] = FakeEngine()
+        ctx.candidates = [Candidate("fake", "whisper-large-v3-turbo", "endpoint", True),
+                          Candidate("gemma", "gemma-4-26b-a4b", "endpoint", True)]
+        return ctx
+
+    monkeypatch.setattr(_common, "new_context", with_fakes)
+    monkeypatch.setattr(pipeline, "make_ask", fake_make_ask)
+    monkeypatch.setattr(_progress, "monotonic", lambda: 0.0)
+    monkeypatch.setenv("COLUMNS", "120")
+    return make_clip(tmp_path, "Show - S01E01.mkv", seconds=14, speech=SPEECH), cfg
+
+
+def run_in(stdout, monkeypatch, *args: str) -> int:
+    monkeypatch.setattr(sys, "stdout", stdout)
+    return main(list(args))
+
+
+@pytest.mark.media
+def test_a_run_in_a_terminal_shows_a_bar_with_the_title_and_a_line_per_finished_stage(
+        clip, monkeypatch):
+    video, cfg = clip
+    tty = Terminal()
+    assert run_in(tty, monkeypatch, "run", str(video), "--from", "ja", "--to", "none",
+                  "--config", str(cfg)) == 0
+    assert ERASE + "Show - S01E01.mkv · transcribing chunk 1/1 [----------] · 0:00" \
+        in tty.getvalue()
+    assert screen(tty.getvalue()) == [
+        "  probed in 0:00", "  decoded in 0:00", "  found speech in 0:00",
+        "  transcribed 1 chunk in 0:00", "  hashed the video in 0:00",
+        "✓ Show - S01E01.mkv (1/1): done, wrote 1 file", "    Show - S01E01.ja.srt", "1 done"]
+
+
+@pytest.mark.media
+def test_translate_in_a_terminal_shows_a_bar_for_its_batches(clip, monkeypatch):
+    video, cfg = clip
+    assert main(["run", str(video), "--from", "ja", "--to", "none", "--config", str(cfg)]) == 0
+    tty = Terminal()
+    assert run_in(tty, monkeypatch, "translate", str(video), "--to", "en",
+                  "--config", str(cfg)) == 0
+    assert ERASE + "Show - S01E01.mkv · translating · 0:00" in tty.getvalue()
+    assert screen(tty.getvalue()) == [
+        "  translated 1 batch in 0:00", "✓ Show - S01E01.mkv (1/1): done, wrote 1 file",
+        "    Show - S01E01.en.srt", "1 done"]
+
+
+@pytest.mark.media
+def test_a_run_piped_elsewhere_prints_a_plain_line_per_finished_stage_and_no_title(clip, capsys):
+    video, cfg = clip
+    assert main(["run", str(video), "--from", "ja", "--to", "none", "--config", str(cfg)]) == 0
+    assert capsys.readouterr().out == (
+        "  probed in 0:00\n  decoded in 0:00\n  found speech in 0:00\n"
+        "  transcribed 1 chunk in 0:00\n  hashed the video in 0:00\n"
+        "✓ input 1 (1/1): done, wrote 1 file\n1 done\n")
+
+
+@pytest.mark.media
+def test_json_in_a_terminal_is_unchanged_and_its_chunk_events_carry_only_numbers(clip,
+                                                                                 monkeypatch):
+    video, cfg = clip
+    tty = Terminal()
+    assert run_in(tty, monkeypatch, "run", str(video), "--from", "ja", "--to", "none",
+                  "--config", str(cfg), "--json") == 0
+    out = tty.getvalue()
+    assert "\r" not in out and "\x1b" not in out and "Show - S01E01" not in out
+    events = [json.loads(line) for line in out.splitlines()]
+    assert [e["event"] for e in events] == [
+        "input", "stage", "stage", "stage", "chunk", "stage", "result", "summary"]
+    [chunk] = [e for e in events if e["event"] == "chunk"]
+    assert {k: type(v) for k, v in chunk.items()} == {
+        "event": str, "index": int, "of": int, "until_ms": int}
+    assert abs(chunk["until_ms"] - 14_000) < 500  # one chunk: the whole 14 s of audio
+```
+
+- [ ] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_cli_progress.py -q`. Expected:
+  the bar drawn with no title, `E       AssertionError: assert ('\r\x1b[2K' + 'Show - S01E01.mkv
+  · transcribing chunk 1/1 [----------] · 0:00') in '\r\x1b[2Kprobing · 0:00…` and
+  `… ('\r\x1b[2K' + 'Show - S01E01.mkv · translating · 0:00') in '\r\x1b[2Ktranslating · 0:00…`.
+  The piped run is missing `E         -   hashed the video in 0:00`, and the chunk event
+  `E         {'until_ms': <class 'int'>}`. The summary is `4 failed, 11 passed`.
+- [ ] **Step 8: Write the code.** In `src/vid2sub/commands/run.py`, replace
+
+```python
+                out.event("input", index=n, of=len(inputs))
+                result = run_one(item, ctx)
+                results.append(result)
+```
+
+  with
+
+```python
+                out.event("input", index=n, of=len(inputs))
+                out.begin(item, n)
+                result = run_one(item, ctx)
+                out.end(result.status != "failed")
+                results.append(result)
+```
+
+  In `src/vid2sub/commands/translate.py`, replace
+
+```python
+                out.event("input", index=n, of=len(inputs))
+                result = translate_one(item, ctx, fresh=not args.stale_only)
+                results.append(result)
+```
+
+  with
+
+```python
+                out.event("input", index=n, of=len(inputs))
+                out.begin(item, n)
+                result = translate_one(item, ctx, fresh=not args.stale_only)
+                out.end(result.status != "failed")
+                results.append(result)
+```
+
+  In `src/vid2sub/pipeline.py`, replace the line
+
+```python
+        ctx.events("chunk", {"index": plan.index + 1, "of": len(plans)})
+```
+
+  with
+
+```python
+        # until_ms: where this chunk's share of the audio ends; the last chunk's is its length.
+        ctx.events("chunk", {"index": plan.index + 1, "of": len(plans),
+                             "until_ms": plan.core_end_ms})
+```
+
+- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_cli_progress.py
+  tests/test_cli_run.py tests/test_cli_more.py tests/test_pipeline.py -q` first (`100 passed`:
+  M1's CLI tests with the new lines in their piped output), then the guard checks, then
+  `make check`. **Guard checks:**
+  - Delete `out.end(result.status != "failed")` from `run.py`. `uv run pytest
+    tests/test_cli_progress.py -q` gives `FAILED
+    tests/test_cli_progress.py::test_a_run_in_a_terminal_shows_a_bar_with_the_title_and_a_line_per_finished_stage`
+    and `FAILED
+    tests/test_cli_progress.py::test_a_run_piped_elsewhere_prints_a_plain_line_per_finished_stage_and_no_title`.
+    Restore it.
+  - Take `"until_ms": plan.core_end_ms` out of the chunk event. The run gives `FAILED
+    tests/test_cli_progress.py::test_json_in_a_terminal_is_unchanged_and_its_chunk_events_carry_only_numbers`.
+    Restore it.
+
+  `make check`. Expected: `480 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
+  `no leaks found`.
+- [ ] **Step 10: See it for real,** in a pseudo-terminal at 80 columns, then piped. Write
+  `.git/t25-show.py` (inside `.git/`, so it is never committed):
+
+```python
+"""Task 25, Step 10: `run TO` runs vid2sub run for real on a 14 s clip, through the tests' fake
+engines slowed so the bar moves; `show FILE` prints each frame a run drew in FILE, then what the
+terminal showed at the end."""
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd() / "tests"))
+
+from fakes import FakeEngine, fake_make_ask  # noqa: E402
+from helpers import SPEECH, make_clip  # noqa: E402
+from test_cli_run import CONFIG  # noqa: E402
+
+from vid2sub import pipeline  # noqa: E402
+from vid2sub.catalog import Candidate  # noqa: E402
+from vid2sub.cli import main  # noqa: E402
+from vid2sub.commands import _common  # noqa: E402
+
+
+class Slow(FakeEngine):
+    max_chunk_s = 5.0  # five chunks from the 14 s clip
+
+    def transcribe(self, chunk, *, language, prompt):
+        time.sleep(0.7)
+        return super().transcribe(chunk, language=language, prompt=prompt)
+
+
+def slow_ask(*args, **kwargs):
+    inner = fake_make_ask()
+
+    def ask(system, prompt, model):
+        time.sleep(0.7)
+        return inner(system, prompt, model)
+    return ask
+
+
+def with_fakes(config, options, output, _real=_common.new_context):
+    ctx = _real(config, options, output)
+    ctx.engines["fake"] = Slow(language="en")
+    ctx.candidates = [Candidate("fake", "whisper-large-v3-turbo", "endpoint", True),
+                      Candidate("gemma", "gemma-4-26b-a4b", "endpoint", True)]
+    return ctx
+
+
+if sys.argv[1] == "show":
+    from test_cli_progress import screen
+    with open(sys.argv[2], encoding="utf-8", newline="") as f:
+        raw = f.read().removeprefix("^D\b\b")  # macOS script's echo of an EOF on stdin
+    print("frames:", *(repr(frame) for frame in raw.split("\r\x1b[2K")[1:]), sep="\n  ")
+    print("screen:", *screen(raw), sep="\n  ")
+    sys.exit()
+_common.new_context = with_fakes
+pipeline.make_ask = slow_ask
+pipeline.translate_cues.__kwdefaults__["batch_size"] = 2  # three batches
+with tempfile.TemporaryDirectory() as tmp:
+    cfg = Path(tmp) / "vid2sub.toml"
+    cfg.write_text(CONFIG)
+    clip = make_clip(Path(tmp), "Show - S01E01.mkv", seconds=14, speech=SPEECH)
+    sys.exit(main(["run", str(clip), "--from", "en", "--to", sys.argv[2], "--config", str(cfg)]))
+```
+
+  From the repository's root, with `COLUMNS` unset (on Linux, `script -qc '<command>' /dev/null`
+  instead):
+
+```bash
+unset COLUMNS
+script -q /dev/null uv run python .git/t25-show.py run none > .git/t25-none.raw 2>&1
+script -q /dev/null uv run python .git/t25-show.py run ja > .git/t25-ja.raw 2>&1
+uv run python .git/t25-show.py run ja > .git/t25-piped.txt
+uv run python .git/t25-show.py show .git/t25-none.raw
+uv run python .git/t25-show.py show .git/t25-ja.raw | grep translat
+cat .git/t25-piped.txt
+```
+
+  Expected (the speeds and times vary with the machine): the frames of `run none` include
+  `'Show - S01E01.mkv · transcribing chunk 1/5 [----------] · 0:00'`, then, with the name cut to
+  fit 80 columns, `'Show - S01E01.… · transcribing chunk 2/5 [##--------] · 0:00 · 5.5× · 0:02
+  left'` through `chunk 5/5 [########--]`. Its screen:
+
+```text
+  probed in 0:00
+  decoded in 0:00
+  found speech in 0:00
+  transcribed 5 chunks in 0:03, 3.8× real time
+  hashed the video in 0:00
+✓ Show - S01E01.mkv (1/1): done, wrote 1 file
+    Show - S01E01.en.srt
+1 done
+```
+
+  `run ja`'s frames include `'Show - S01E01.mkv · translating batch 2/3 [###-------] · 0:00 · 0:01
+  left'` and its screen `  translated 3 batches in 0:02`. The piped file has no `\r`, no escape
+  and no title: the same six stage lines (`  transcribed 5 chunks in 0:03, 3.8× real time`,
+  `  translated 3 batches in 0:02` among them), then `✓ input 1 (1/1): done, wrote 2 files` and
+  `1 done`. Then `rm .git/t25-*`.
+- [ ] **Step 11: Commit.** Write the message to `.git/COMMIT_MSG`, with Step 10's own frames,
+  screen and speeds where this one has its builder's:
+
+```text
+feat(cli): 🤖 vid2sub run and translate show each file's bar under its title, with transcription's speed in × real time
+
+run and translate tell Output when each input begins (its file's name
+in a terminal; a link is "input N" until its download names it) and
+ends (the last stage's line only when the input didn't fail), so the
+bar from this task's first commit shows the title, and a stage that
+finished leaves its line before the result, in a terminal and in
+plain output alike (spec §18.2, S66). The pipeline's chunk event gains
+one number, until_ms: where the chunk's core ends on the audio's
+timeline (ChunkPlan.core_end_ms; the cores tile the timeline, so the
+last is the audio's length), from which the bar takes audio seconds
+done ÷ wall seconds. It is a number, never a title or path (spec §6.8),
+so --json keeps its events and S17 holds; no later listing's
+pipeline.py anchor includes that line.
+
+The new tests failed first with: the bar drawn without the title
+('\r\x1b[2Kprobing · 0:00...', 2 tests), the piped run missing
+"  hashed the video in 0:00", and the chunk event missing
+{'until_ms': <class 'int'>} (4 failed, 11 passed). Guards checked by
+reverting each line: without out.end in run, "hashed the video in 0:00"
+is missing in a terminal and in a pipe; without until_ms the --json
+test fails.
+
+Run for real (the tests' fake engine slowed to 0.7 s a chunk, 5 s
+chunks, on a 14 s clip of tests/fixtures/speech/jfk-14s.wav), as
+`vid2sub run <clip> --from en --to none`, in a pseudo-terminal (script
+-q /dev/null, 80 columns). Frames, each drawn after CR and ESC [2K:
+  Show - S01E01.mkv · transcribing chunk 1/5 [----------] · 0:00
+  Show - S01E01.… · transcribing chunk 2/5 [##--------] · 0:00 · 5.5× · 0:02 left
+  Show - S01E01.… · transcribing chunk 5/5 [########--] · 0:02 · 4.2× · 0:00 left
+and what the terminal showed at the end:
+    probed in 0:00
+    decoded in 0:00
+    found speech in 0:00
+    transcribed 5 chunks in 0:03, 3.8× real time
+    hashed the video in 0:00
+  ✓ Show - S01E01.mkv (1/1): done, wrote 1 file
+      Show - S01E01.en.srt
+  1 done
+With --to ja and batches of 2 cues: "translating batch 2/3 [###-------]
+· 0:00 · 0:01 left", then "translated 3 batches in 0:02". The same run
+piped to a file printed only plain lines, no codes and no title: the
+six stage lines, then "✓ input 1 (1/1): done, wrote 2 files", "1 done".
+
+Docs read: none beyond the code (media.chunk's ChunkPlan and
+plan_chunks, whose cores tile 0 to the audio's length; the plan's
+later listings that edit pipeline.py: Tasks 4, 19 and 20).
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 25
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/commands/run.py src/vid2sub/commands/translate.py src/vid2sub/pipeline.py
+  tests/test_cli_progress.py`, `git commit -F .git/COMMIT_MSG`, then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 12: Review, look forward, close.** Run the Tier 3 self-review from
+  `$(cat .git/TASK_BASE)` under the two headings (*Standards*, *Spec*), plus `make check`.
+  Worth checking:
+  - No title or path reaches a pipe or `--json`: `Output.name` off a terminal, and lines that
+    carry no name.
+  - Every new chunk-event field is a number.
+  - `say` and `warn` erase the bar before writing.
+  - The pipeline's docstring ("Events carry stages and counts, never titles or paths") and
+    §18.2's `--json` bullet ("ids, stages, counts, error kinds") stay true: `until_ms` is a count
+    of milliseconds.
+
+  Expected Minor findings, recorded and not looped:
+  - Bidi controls (category `Cf`) in a title pass to the bar, counted as zero width, as M1's
+    result line passes them too.
+  - `ESC [2K` on Windows' legacy console, without VT processing, is unchecked. Windows Terminal
+    has it on, and Windows comes in M3.
+
+  The forward review over Tasks 2–24: only counts change. Every later listing's `make check`
+  count is 15 higher, so in the header's **Run order** note replace `by their own number` with
+  `by 15`. Task 4's queue reads `index` and `of` only, Task 11's
+  `Output(False)` draws nothing, and Phase 3's Task 1 anchors in `_common.py` are untouched.
+
+  The docs this task made untrue: none. The README's *Use* section doesn't describe the output,
+  and §18.2 already says what this task builds.
+
+  Then the close, its own commit. It holds this plan with this task's boxes ticked, the **Run
+  order** note's count, and **Now** set to `Task 2: Edit operations, open.`. It also holds the
+  spec's row S66 with *Phase and task* `Phase 2, Task 25` and status `built` (proof
+  `tests/test_cli_progress.py`). The message goes in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 25: A progress bar with stats in the terminal
+
+Drift: none
+Rulings: none
+Phase-end: none
+Forward: the Run order note: every later make check count is 15 higher
+Tier: 3
+Rounds: self-review (Standards, Spec); make check
+Findings: 2 Minor, recorded: bidi controls in a title reach the bar (as M1's result line); ESC [2K on Windows' legacy console unchecked (M3)
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 25
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -37449,3 +38461,5 @@ fi
 | Task 16 (planning) | Minor | `frontend/src/lib/draft.ts` | A step still unanswered when the tab crashes stays in the draft and is replayed; comments in `App.tsx`, `draft.ts`, `server.py`'s docstring and `types.ts` still describe only refusals | open |
 | Task 17 (planning) | Minor | `frontend/src/lib/draft.ts` | A draft holding only retranslation markers lingers in storage, though restoring it does nothing (the build's Tier 1 review) | open |
 | Task 16 (planning) | Minor | `tests/e2e/` | The e2e helpers `seek`, `texts` and `open_demo` are copied into `test_editor_view.py`, `test_editing.py`, `test_saving.py` and `test_retranslate.py`, and `client_for` into the Task 18 and 19 test modules, which also import from each other's test files; move them to `tests/e2e/conftest.py` and `tests/helpers.py` (the pre-flight scan) | open |
+| Task 25 (planning) | Minor | `src/vid2sub/commands/_progress.py` | Windows' legacy console may not honour `ESC [2K`, so the bar could leave its old text behind there; Windows Terminal and the newer console do (Task 25's build) | open |
+| Task 25 (planning) | Minor | `src/vid2sub/commands/_progress.py` | A title's bidi control characters reach the bar as they already reach M1's result line, so a crafted name could reorder what the terminal shows; strip them for display (Task 25's build) | open |
