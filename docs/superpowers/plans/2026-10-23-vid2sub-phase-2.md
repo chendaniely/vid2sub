@@ -34,6 +34,10 @@ ffmpeg ≥6 for the playback audio.
 
 **Now:** waiting on Dan: Task 1, Step 2
 
+**Run order:** Task 1, then Task 25 (added after the plan's approval, Q&A item 34), then Task 2
+onward. Task 25's tests raise every later task's `make check` count by their own number: the
+later listings were built without it.
+
 ## Decisions made while planning (review these)
 
 1. **Media tokens are bound to the launch,** not to a Shiny session: a `/media/` request carries
@@ -165,6 +169,10 @@ ffmpeg ≥6 for the playback audio.
 37. **The sidecar lock folds a name's case and Unicode form everywhere** (Task 6): on a
     case-sensitive volume, two files that differ only in case take turns rather than write at
     once, which costs nothing but a wait.
+38. **A progress bar with stats in the terminal** (Task 25; Dan, Q&A item 34): one bar per file,
+    redrawn in place, with its stage, chunk or batch n/N, elapsed time, speed (× real time) and
+    time left; a line per finished stage stays above it. Output that isn't a terminal keeps
+    M1's plain lines, and `--json` is unchanged. No new dependency. §18.2 says so.
 
 ## Global Constraints
 
@@ -325,8 +333,8 @@ Co-Authored-By: <the model's own line>
   forward review over Tasks 2–23 (a changed default, such as a file code, rewrites every later
   listing that names it); the docs this task made untrue (the README's naming table, if a code
   changed). Then the close, its own commit, holding this plan with this task's boxes ticked and
-  **Now** set to `Task 2: Edit operations, open.`, and the spec's rows S01–S05 as Step 9 left
-  them, with the message in `.git/CLOSE_MSG`:
+  **Now** set to `Task 25: A progress bar with stats in the terminal, open.` (the run order),
+  and the spec's rows S01–S05 as Step 9 left them, with the message in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 1: The M1 exit test (with Dan)
@@ -345,6 +353,20 @@ Co-Authored-By: <the model's own line>
 
   `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
   docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
+
+***
+
+### Task 25: A progress bar with stats in the terminal
+
+**Tier:** 3 · **Scenarios:** S66 · Runs right after Task 1 (Q&A item 34)
+
+**Interfaces:**
+- Consumes: M1's `commands/_common.Output` (`progress(kind, fields)`, `tty`, `say`, `name`) and
+  the pipeline's progress events (`stage`, `chunk`, `batch`, `waiting`), which `new_context`
+  hands to `RunContext.events`; spec §18.2 as Decision 38 left it.
+- Produces: the terminal's bar; nothing a later task consumes.
+
+<!-- steps: written in the next pass -->
 
 ***
 

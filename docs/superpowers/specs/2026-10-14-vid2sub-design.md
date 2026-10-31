@@ -93,6 +93,7 @@ test names.
 | S52 | a `v*` tag pushed | a GitHub Release with the wheel and sdist (`www/` inside) and attestations; the index lists it with `#sha256=` | Phase 4 | the `release.yml` and `pages.yml` runs | planned |
 | S53 | the `subs/` tests run inside Pyodide 0.27.7 | they pass | Phase 4 | CI's `pyodide` job | planned |
 | S63 | **Make preview copy** on a video the browser can't play | an H.264 480p MP4 with AAC stereo, from a hardware encoder when there is one, else `libx264 -preset veryfast`, plays in the editor | Phase 3 | `tests/test_preview.py`; Playwright | planned |
+| S66 | `vid2sub run` on an episode, in a terminal | a bar per file, redrawn in place: stage, chunk or batch n/N, elapsed, speed (× real time), time left; plain lines when not a terminal; `--json` unchanged | Phase 2 | `tests/test_cli_progress.py` | planned |
 
 ### Later
 
