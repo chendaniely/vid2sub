@@ -171,8 +171,9 @@ later listings were built without it.
     once, which costs nothing but a wait.
 38. **A progress bar with stats in the terminal** (Task 25; Dan, Q&A item 34): one bar per file,
     redrawn in place, with its stage, chunk or batch n/N, elapsed time, speed (× real time) and
-    time left; a line per finished stage stays above it. Output that isn't a terminal keeps
-    M1's plain lines, and `--json` is unchanged. No new dependency. §18.2 says so.
+    time left; a line per finished stage stays above it. Output that isn't a terminal gets that
+    plain line per finished stage, with no bar and no title (M1 printed none there), and `--json`
+    is unchanged. No new dependency. §18.2 says so.
 
 ## Global Constraints
 
