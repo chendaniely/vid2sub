@@ -1222,9 +1222,11 @@ UI run from a terminal or a script.
 
 ### 18.2 Output and exit codes
 
-- **In an interactive terminal:** a progress line per file and stage, titles included (titles
-  reach only an interactive terminal, §6.8), and a summary table at the end listing what was
-  done, skipped and failed, with reasons.
+- **In an interactive terminal:** a progress bar per file, redrawn in place: its stage, chunk n/N
+  or batch n/N, elapsed time, speed (× real time) and time left, titles included (titles reach
+  only an interactive terminal, §6.8); a line per finished stage stays above it; and a summary
+  table at the end listing what was done, skipped and failed, with reasons (Dan, 2026-10-30).
+- **Not a terminal:** a plain line per file and stage, no redrawing.
 - **`--json`:** JSON Lines events (ids, stages, counts, error kinds) for scripts, never titles or
   paths.
 - **Exit codes** follow sysexits, as in `audio-router`: 0 everything done, 1 at least one input
