@@ -1177,7 +1177,7 @@ Rulings: none
 Phase-end: none
 Forward: none
 Tier: 2
-Rounds: none
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 2
@@ -2697,7 +2697,7 @@ Rulings: none
 Phase-end: none
 Forward: none
 Tier: 2
-Rounds: none
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 4
@@ -4641,8 +4641,9 @@ Co-Authored-By: <the model's own line>
   `tests/test_backend_open.py::test_an_outside_edit_comes_back_as_the_head_and_the_editor_says_so;
   the exit test`. Then the close, its own commit, holding this plan with this task's boxes ticked
   and **Now** set to `Task 6: The editor backend: edits and Save, open.`, and the spec with S31's
-  Proof corrected; S27 and S31 stay `planned` (their Playwright and exit-test proofs are Tasks
-  14 and 23). The message, in `.git/CLOSE_MSG`:
+  Proof corrected; S27 and S31 stay `planned` (their Playwright proofs are Task 14's, for S27,
+  and Task 16's `tests/e2e/test_saving.py`, for S31; their exit test is Task 23). The message,
+  in `.git/CLOSE_MSG`:
 
 ```text
 docs(plan): 🤖 close Task 5: The editor backend: opening an episode
@@ -4652,7 +4653,7 @@ Rulings: none
 Phase-end: none
 Forward: none
 Tier: 2
-Rounds: none
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 5
@@ -8883,7 +8884,8 @@ Co-Authored-By: <the model's own line>
   `tests/test_backend_save.py` (S29: `tests/test_backend_save.py; the exit test`). Then the
   close, its own commit, holding this plan with this task's boxes ticked and **Now** set to
   `Task 7: The editor backend: retranslate, open.`, and the spec's S32 set to `built`; S28 and
-  S29 stay `planned` (Task 15's Playwright and the exit test). The message, in
+  S29 stay `planned` (S28's Playwright is Task 15's, S29's Task 16's `tests/e2e/test_saving.py`,
+  and both have the exit test). The message, in
   `.git/CLOSE_MSG`:
 
 ```text
@@ -8894,7 +8896,13 @@ Rulings: none
 Phase-end: none
 Forward: none
 Tier: 1
-Rounds: none
+Rounds: <Matt's code-review, Standards and Spec in two subagents; any re-review>
+  secrets: fine | a finding | n/a: why
+  permissions: fine | a finding | n/a: why
+  network exposure: fine | a finding | n/a: why
+  failing closed: fine | a finding | n/a: why
+  injection: fine | a finding | n/a: why
+  logging: fine | a finding | n/a: why
 Findings: none
 
 Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 6
@@ -10955,7 +10963,8 @@ Co-Authored-By: <the model's own line>
   8deb039:packages/ui/src/recordings_ui/hosts.py` in `~/git/hub/recordings`); that `/media/`
   is matched as a prefix with its slash, so `/mediafile` keeps the page CSP. The forward review
   over Tasks 9, 10, 11, 12 and 13 (Task 11 wraps the app as
-  `HostGuard(WriteGuard(TokenGuard(api), LOCAL_HOSTS), LOCAL_HOSTS)`; Task 12 checks the CSP in
+  `HostGuard(WriteGuard(TokenGuard(api), HOSTS), HOSTS)` with `app.HOSTS`, 127.0.0.1 alone
+  (Decision 11); Task 12 checks the CSP in
   a real browser). The docs this task made untrue: none expected (grep `docs/` and `README.md`
   for "planned" next to the guards). Then the close, its own commit, holding this plan with this
   task's boxes ticked and **Now** set to `Task 9: The launch token, open.`, and the spec's
@@ -16717,9 +16726,10 @@ Co-Authored-By: <the model's own line>
   `start_server(..., toml=...)`; Tasks 14–19 add each output to `App`'s subscriptions and each
   message to its handlers, use `notice` for plain-text errors, and build their modal parts on the
   native `<dialog>` described above, never a modal Radix part or Radix Select; Task 18's drawer is
-  that dialog with `side="right"`; Task 21's CI frontend job runs `make test-js` with `CI=true` and
-  the e2e job `make e2e`, both on Node 22; Task 22's README says `make build` comes before `vid2sub
-  serve`; Task 23's Step 2 builds with `make build`). The docs this task made untrue: spec §29's M2
+  that dialog with `side="right"`; Task 21's CI frontend job runs `npm run typecheck`, `npm run
+  build` and `npm test` with `CI=true`, and the e2e job `make e2e`, both on Node 22; Task 22's
+  README and Task 23's Step 2 build the frontend with `npm ci` and `npm run build` before
+  `vid2sub serve`). The docs this task made untrue: spec §29's M2
   bullet on the CSP, which this task settles: add to it "*Result (2026-10-24, Chromium via
   Playwright 1.64.1):* Shiny 1.8.0's one inline script, its busy indicators, is served as a file
   instead (`server.BUSY_INDICATORS`), so `script-src 'self'` holds with no violation; no `style-src`
@@ -18070,8 +18080,8 @@ visible), its editing half is Task 15's and its job progress Task 19's, so it st
 - Produces, round 14a (the Pages-safe split, spec §3.3, §21):
   - `vid2sub.web.episode`, pure (only `vid2sub.subs` and the standard library): `OpenError`,
     `SaveError`, `SaveResult`, `Capabilities`, `Episode`, `glossary_with`, `track_setup`,
-    `setup_changed`, `all_stale`, moved from `web.backend`, which imports and so re-exports the
-    five classes; `views` imports them from `web.episode`.
+    `setup_changed`, `all_stale`, moved from `web.backend`, which imports and so re-exports all
+    nine (Tasks 5 to 7's tests use `backend.all_stale`); `views` imports them from `web.episode`.
   - `vid2sub.web.server` and `vid2sub.web.views` import at module level only the pure packages,
     shiny, shinyreact, htmltools, pydantic and `vid2sub.web.{episode, views, runtime, ops}`
     (`ops` is pure, and Task 15 needs it); `views.local_endpoints` imports `is_local` inside;
@@ -20992,8 +21002,8 @@ audio once and its own token is revoked; that the list renders only what
   importing `vid2sub.config` at the top of `server.py`; Task 19's runner lives behind
   `Runtime`; Task 21's e2e job needs ffmpeg with libvpx and libopus, and the 2,000-cue test calls
   `make_episode`, which needs ffmpeg in the test process too; Task 23's Step 3 opens through the
-  path box this task builds). The docs this task made untrue: the plan's Global Constraints'
-  module list now includes `vid2sub.web.ops` (pure, and the server parses edits with it). Then the
+  path box this task builds). The docs this task made untrue: none in the plan (the Global
+  Constraints' module list already names `vid2sub.web.ops`). Then the
   close, its own commit, holding this plan with this task's boxes ticked and **Now** set to
   `Task 15: Editing in the editor, open.`, and the spec's scenario rows S26 and S27 set to
   `built` (S43's Proof gains `tests/e2e/test_editor_view.py`, the playback audio in the browser;
@@ -25444,8 +25454,8 @@ Co-Authored-By: <the model's own line>
   native `<dialog>` with zero CSP violations, focus in, Tab never on the page behind, Esc closing it
   and focus back on the opener; that the picker's differences are right (matched by id, a cue
   missing from one version shown as missing, at most 50) and plain text. The forward review over
-  Tasks 17, 18, 19, 22 and 23 (Task 17's retranslation is an undo step but not a draft step: a draft
-  replays edits only, so a restored draft never asks a model again (record it if that changes); Task
+  Tasks 17, 18, 19, 22 and 23 (Task 17's retranslation is an undo step, and in the draft a marker
+  that is never replayed, so a restored draft never asks a model again (Decision 27); Task
   18's settings drawer is `Dialog` with `side="right"`, and its per-session formats default feeds
   `SaveBar`'s `formats`; Task 19's "Open in editor" opens through the `open` input; Task 22's README
   says Save writes SRT, ASS when ticked, and leaves someone else's files alone; Task 23's Steps 4
@@ -29116,9 +29126,10 @@ Co-Authored-By: <the model's own line>
   `session_defaults`; message `endpoint_test_result`; `status` and `episode` read the session),
   `src/vid2sub/web/runtime.py` (`Runtime.session`, `Runtime.endpoint_models`),
   `src/vid2sub/web/views.py` (`episode_view(…, default_formats)`, `track_label`),
-  `frontend/src/{App.tsx,types.ts}`, `frontend/src/components/TopBar.tsx` (+ test)
+  `frontend/src/{App.tsx,types.ts}`, `frontend/src/components/TopBar.tsx` (+ test),
+  `src/vid2sub/engines/clients.py` and `src/vid2sub/translate/run.py` (round 18c)
 - Test: `tests/test_web_settings.py`, `tests/test_pages_imports.py` (`web.settings` is bundled),
-  `tests/e2e/test_settings.py`
+  `tests/e2e/test_settings.py`, `tests/test_translate.py` (round 18c)
 
 **Interfaces:**
 - Consumes: `engines.clients.KeyRing` (`typed`, `key_for`, the method listing every configured
@@ -32389,8 +32400,8 @@ Co-Authored-By: <the model's own line>
 - Consumes: Task 4's `jobs.Queue` (`submit`, `cancel`, `jobs`, `on_change`, `close`), `JobView`,
   `Runner` and `pipeline.Cancelled`, `RunContext.cancelled`, `run_one`, `InputResult`; Task 18's
   `Runtime.session` (`Session.defaults()`, read on the worker thread) and its test helper
-  `tests/test_web_settings.Browser`; Task 14's `open` input and `server.MAX_PATH`, `as_json`,
-  `notice`; Task 13's `CannedEngine`, `canned_ask` and the demo's copy; Task 15's `pacer`;
+  `tests/test_web_settings.Browser`; Task 14's `open` input, `server.MAX_PATH` and `notice`; Task
+  13's `CannedEngine`, `canned_ask` and the demo's copy; Task 15's `pacer` and `server.as_json`;
   `capabilities.generate`; `tests/helpers.make_clip`, `SPEECH` and `tests/fakes.FakeServer`.
 - Produces:
   - `jobs.Queue.on_change(fn) -> Callable[[], None]` (was `-> None`): what stops `fn` hearing
@@ -37414,3 +37425,4 @@ fi
 | Task 16 (planning) | Minor | `frontend/src/App.tsx` | An edit sent while a Save runs is cleared from the draft by the Save's publish, so a crash right after loses it | open |
 | Task 16 (planning) | Minor | `frontend/src/lib/draft.ts` | A step still unanswered when the tab crashes stays in the draft and is replayed; comments in `App.tsx`, `draft.ts`, `server.py`'s docstring and `types.ts` still describe only refusals | open |
 | Task 17 (planning) | Minor | `frontend/src/lib/draft.ts` | A draft holding only retranslation markers lingers in storage, though restoring it does nothing (the build's Tier 1 review) | open |
+| Task 16 (planning) | Minor | `tests/e2e/` | The e2e helpers `seek`, `texts` and `open_demo` are copied into `test_editor_view.py`, `test_editing.py`, `test_saving.py` and `test_retranslate.py`, and `client_for` into the Task 18 and 19 test modules, which also import from each other's test files; move them to `tests/e2e/conftest.py` and `tests/helpers.py` (the pre-flight scan) | open |
