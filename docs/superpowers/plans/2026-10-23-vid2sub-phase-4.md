@@ -4827,7 +4827,7 @@ def test_the_demo_plays_with_its_captions_and_its_translation(page: Page, site_u
     expect(rows).to_have_count(4)
     expect(app.get_by_test_id("cue-text").first).to_have_text(DEMO_EN)
     expect(app.get_by_test_id("cue-translation").first).to_have_text(
-        "ここに来られて、とてもうれしく思います。この機会に来られたことは格別の喜びです。")
+        "ここに来られて光栄です。")
     media = app.get_by_test_id("media")
     media.evaluate("m => { m.muted = true; return m.play(); }")
     frame = page.locator("iframe").first.element_handle().content_frame()
@@ -6428,7 +6428,7 @@ index 4630cd3..4e1c566 100644
      began = time.monotonic()
      app = boot(page, site_url)
 @@ -107,8 +69,7 @@ def test_the_demo_plays_with_its_captions_and_its_translation(page: Page, site_u
-         "ここに来られて、とてもうれしく思います。この機会に来られたことは格別の喜びです。")
+         "ここに来られて光栄です。")
      media = app.get_by_test_id("media")
      media.evaluate("m => { m.muted = true; return m.play(); }")
 -    frame = page.locator("iframe").first.element_handle().content_frame()
