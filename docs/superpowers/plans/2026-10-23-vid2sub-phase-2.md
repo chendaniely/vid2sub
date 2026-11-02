@@ -1398,15 +1398,747 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 2 · **Scenarios:** S68 · Runs after Task 25 (Q&A item 36)
 
-**Interfaces:**
-- Consumes: M1's translation (`vid2sub.translate`: batches of about 40 source cues, items
-  `{"src": [ids…], "text": …}` with `max_chars`, the validator that items partition the batch,
-  `cues_body` for the translation track) and `vid2sub.subs`' line breaking and §12.2's rules; the
-  chunk and batch events Task 25 draws.
-- Produces: translation cues within §12.2's rules, each item over its limit, or spread over cues
-  more than about a second apart, split back over its source cues (Decision 39).
+Decision 39, from M1's exit test on Dan's TV (Q&A item 36, answer A). E01, an episode of a
+Mandarin drama, got its English from Qwen3.6, and Dan reported two problems: "some of the english
+subtitles are giant blocks of text" and "sometimes i see subtitles for lines much later on because
+there is no dialogue". M1's output had 430 English cues against 496 Mandarin ones. Nineteen were
+over 84 characters, the largest 218, and 13 lasted over 7 s. One was on screen for 31 s across a
+27-second silence: an item whose `src` held two Mandarin cues, 179.1–180.5 s and 207.4–210.1 s.
+The cause is §13.2 letting an item cover several contiguous source cues, §13.4 timing it over
+their whole span, and nothing enforcing `max_chars`, which the prompt only states. After this
+task, an item that won't fit two lines, spreads across a silence, or would stay on screen too
+long goes back to its own cues.
 
-<!-- steps: written in the next pass -->
+**Why it is built this way** (read 2026-11-02):
+- **Where:** `subs.translate_shape.split_items`. It is pure (§3.2), like the rest of the module,
+  so Pages can run it in Phase 4. `translate.run.translate_cues` calls it on each batch once the
+  batch validates, so `vid2sub run`, `vid2sub translate`, the job queue and the editor's
+  Retranslate all get it (Task 7 calls `translate_cues`). `assemble` is unchanged apart from its
+  last resort, below.
+- **When an item goes back to its cues** (Dan, Q&A item 39, a question from the build's review):
+  - it won't fit two lines of the target's width (`wrap` returns None: 2 × 42 for English, 2 × 26
+    in EAW units for Japanese, 2 × 32 for Chinese);
+  - two of its cues are more than `SPLIT_GAP_MS` = 1000 ms apart, Dan's "about a second";
+  - or it would be on screen longer than §12.2's 7 s.
+
+  Reading speed never triggers it. §13.2's `max_chars` keeps its reading-speed term, but only in
+  the prompt, so the model condenses. A cue that reads too fast stays a lint (§12.2: "Reading
+  speed never splits or merges cues"). Triggering on `max_chars` would cut a 56-character item
+  that fits two lines over two 1.2 s cues mid-phrase, and each half would then read faster than
+  the whole.
+- **Where the text is cut:** each part's share is its cue's share of the item's source text
+  (`reading_chars`), which marks where each cut would ideally fall. The candidates are the places
+  `subs.text.breaks` allows. Before this task it was the private `_breaks` that `wrap` uses: at
+  spaces, or between CJK characters under kinsoku. The cuts are chosen together, by a small
+  dynamic programme over those places:
+  - first, so every part fits two lines wherever any choice can;
+  - then, by each cut's distance from its mark, measured in parts' average lengths, plus
+    `BREAK_COST`. A sentence end (`. ! ? 。 ！ ？ …`, a closing quote or bracket after it allowed)
+    costs nothing; a clause end (`, ; : 、 ， ； ：`) costs 0.25; any other word break costs 0.5.
+
+  So a sentence end just under half a part from its mark beats a word break exactly on it. The
+  brief's "sentence and clause breaks first, else word boundaries" is a preference, weighed
+  against the source's proportions, which §13.4 also asks for. E01's 218-character shape splits
+  only at sentence and clause ends.
+- **Each part records only its own cue,** so its time is that cue's (§13.4's span, unchanged) and
+  its `src_sha` is that cue's text. A later edit to one source cue makes only its part stale, and
+  Retranslate redoes that part alone.
+- **Too few places to break:** when the text has fewer places to break than the item has cues,
+  the parts go to runs of cues cut at the widest gaps first. "Wait, okay." over cues at 0, 1.6
+  and 30 s becomes "Wait," over the first two and "okay." over the third. Text with nowhere to
+  break at all, one word over cues 27 s apart, stays one cue over their span. The `duration` lint
+  marks it in the editor (Dan, Q&A item 40).
+- **A part still too long for two lines is wrapped, never dropped** (Dan, Q&A item 41). The model can write 150 characters for one short cue, and there is nothing to
+  split it over. `subs.text.fill` breaks it into lines of the width, as many as it takes, where M1
+  left one line of 150 characters. §13.4 and S68 say so at this task's close. `fill` keeps
+  kinsoku, since it breaks only where `breaks` allows. A word wider than a line keeps a line of
+  its own.
+- **Cost:** `split_items` on a batch of eight 218-character items over five cues each takes
+  0.3 s. One item over 40 cues with 300 words takes 3.3 s, on this Mac. `_cut` caches each part's
+  fit, and a part wider than two full lines is rejected before `wrap` is called.
+- **Translations made before this task aren't re-split:** `run` keeps a translation that isn't
+  stale. `vid2sub translate <episode> --to en`, which retranslates every unedited cue, gives E01
+  the new English.
+- **The demo:** Task 13's canned Japanese has one item over two short source cues ("I am
+  delighted … on this" / "occasion.", 3.7 s and 0.8 s). It was 38 characters, over the 26 that
+  two Japanese lines hold, so this task would have split it. That would change Task 13's demo
+  and the e2e tests of Tasks 14 and 15, which rely on a translation spanning two rows. The ruling
+  made when this listing was written keeps the span: the canned line becomes
+  「ここに来られて光栄です。」 (12 characters, one line). This task's close rewrites Tasks 13 and
+  14 to match. The demo was rebuilt with `scripts/demo_sidecar.py`'s steps on this task's code,
+  and its `jfk.ja.srt` reads as Task 13's rewritten listing says. Phase 4's plan asserted the old
+  line twice; those two lines were changed with this listing.
+
+**Files:**
+- Modify: `src/vid2sub/subs/text.py` (`_breaks` becomes `breaks`; `fill`),
+  `src/vid2sub/subs/translate_shape.py` (`SPLIT_GAP_MS`, `BREAK_COST`, `split_items`; `assemble`'s
+  last resort), `src/vid2sub/translate/run.py` (`translate_cues` calls `split_items`)
+- Test: `tests/test_translate_split.py`
+- Modify at the close: this plan (the boxes, **Now**, the **Run order** note's count, Tasks 13 and
+  14's canned Japanese), the spec's §13.4 and row S68
+
+**Interfaces:**
+- Consumes: M1's `subs.translate_shape` (`Item(src, text)`, `assemble(items, source,
+  target_track, taken)`, `item_limits`, `_target`, `src_sha`, `stale_ids`, `untranslated`),
+  `subs.text` (`wrap`, `unwrap`, `width`, `_breaks`, `SENTENCE_END`, `CLAUSE_END`,
+  `strip_line_ends`), `subs.rules` (`CueRules.max_width`, `max_lines`, `max_ms`;
+  `reading_chars`) and `translate.run.translate_cues`; spec §12.2, §12.3, §13.2 and §13.4 as
+  Decision 39 left them.
+- Produces:
+  - `translate_shape.SPLIT_GAP_MS = 1000`, `translate_shape.BREAK_COST: dict[str, float]` (keys
+    `sentence`, `clause`, `word`).
+  - `translate_shape.split_items(items: Sequence[Item], source: Mapping[str, Cue], target_track:
+    str) -> list[Item]`: each item that won't fit two lines, has cues more than `SPLIT_GAP_MS`
+    apart, or spans more than `max_ms` goes back to its cues, one `Item((cue_id,), part)` per
+    cue. With too few places to break, it goes to runs of cues between the widest gaps. Other
+    items pass unchanged.
+  - `subs.text.breaks(text: str) -> list[tuple[int, int]]` (public; was `_breaks`) and
+    `subs.text.fill(text: str, max_width: int) -> list[str]`.
+  - `assemble` wraps text that won't fit two lines with `fill` instead of one long line.
+  - `translate_cues` returns translation cues that each fit two lines and 7 s. The exceptions are
+    a part with no room to break further (more lines) and text with nowhere to break (its span).
+  - Nothing a later task consumes beyond these. Task 7's Retranslate goes through `translate_cues`
+    as before.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing test,** `tests/test_translate_split.py`:
+
+```python
+import re
+
+import pytest
+
+from vid2sub.subs import text as subs_text
+from vid2sub.subs import translate_shape as ts
+from vid2sub.subs.glossary import EMPTY_GLOSSARY
+from vid2sub.subs.model import Cue, check_track
+from vid2sub.subs.text import unwrap, width
+from vid2sub.translate.run import translate_cues
+
+# Made-up lines in the shape of M1's exit-test episode (spec §13.4, S68): its largest English
+# item was 218 characters, and one item covered two cues 27 seconds apart.
+LONGEST = ("I told you this morning that the shop would close early, but you never listen to me. "
+           "Now the shelves are empty, the rent is due on Friday, and we still have to pay the "
+           "drivers before they leave for the harbour tonight.")
+FIVE = [(60_000, 62_400, "我早上就跟你说了今天店要早关"), (62_500, 65_100, "可你就是不听"),
+        (65_200, 67_000, "现在货架都空了"), (67_100, 69_800, "房租礼拜五就要交"),
+        (69_900, 72_300, "司机今晚去码头之前我们还得把钱付了")]
+APART = [(179_100, 180_500, "你先别走"), (207_400, 210_100, "我去拿钥匙马上回来")]
+ACROSS_THE_SILENCE = "Don't go yet. I'll get the keys and come right back."
+TOO_LONG = ("Pack the van, lock the back door and leave the keys with the old man at the corner, "
+            "because nobody else will be here when the lorry comes back at six.")
+
+
+def cues(spans, prefix: str = "s", shift: int = 0) -> dict[str, Cue]:
+    return {f"{prefix}{i}": Cue(id=f"{prefix}{i}", start_ms=s + shift, end_ms=e + shift, text=t)
+            for i, (s, e, t) in enumerate(spans)}
+
+
+def split(source: dict[str, Cue], text: str, track: str = "en") -> list[Cue]:
+    """The cues one item covering every cue of `source` becomes."""
+    items = ts.split_items([ts.Item(tuple(source), text)], source, track)
+    return ts.assemble(items, source, track, set())
+
+
+def shown(out: list[Cue]) -> list[tuple[int, int, tuple[str, ...] | None, str]]:
+    return [(c.start_ms, c.end_ms, c.src, c.text) for c in out]
+
+
+def test_a_218_character_item_goes_back_to_its_five_cues_at_its_sentence_and_clause_ends():
+    source = cues(FIVE)
+    out = split(source, LONGEST)
+    assert shown(out) == [
+        (60_000, 62_400, ("s0",), "I told you this morning that\nthe shop would close early,"),
+        (62_500, 65_100, ("s1",), "but you never listen to me."),
+        (65_200, 67_000, ("s2",), "Now the shelves are empty,"),
+        (67_100, 69_800, ("s3",), "the rent is due on Friday,"),
+        (69_900, 72_300, ("s4",), ("and we still have to pay the drivers\n"
+                                   "before they leave for the harbour tonight."))]
+    assert " ".join(unwrap(c.text) for c in out) == LONGEST  # nothing dropped
+
+
+def test_an_item_across_a_27_second_silence_is_shown_only_while_each_of_its_cues_is_spoken():
+    out = split(cues(APART), ACROSS_THE_SILENCE)
+    assert shown(out) == [(179_100, 180_500, ("s0",), "Don't go yet."),
+                          (207_400, 210_100, ("s1",), "I'll get the keys and come right back.")]
+
+
+def test_an_item_within_its_limit_over_cues_close_together_stays_one_cue():
+    source = cues([(0, 2000, "你要去哪儿"), (2300, 4500, "这么晚了")])
+    assert shown(split(source, "Where are you going this late?")) == [
+        (0, 4500, ("s0", "s1"), "Where are you going this late?")]
+
+
+def test_an_item_that_fits_two_lines_but_reads_fast_stays_one_cue():
+    # 56 characters in 2.6 s is 21.5 characters a second, over English's 20: reading speed is a
+    # lint, and never splits a cue (spec §12.2).
+    source = cues([(0, 1200, "你去哪儿"), (1400, 2600, "这么晚了")])
+    (out,) = split(source, "Where are you off to at this hour of the night, so late?")
+    assert out.src == ("s0", "s1") and out.text.count("\n") == 1
+
+
+@pytest.mark.parametrize(("gap", "parts"), [(1000, 1), (1001, 2)])
+def test_cues_more_than_a_second_apart_are_split_and_a_second_apart_are_not(gap, parts):
+    assert ts.SPLIT_GAP_MS == 1000
+    source = cues([(0, 2000, "你要去哪儿"), (2000 + gap, 4500 + gap, "这么晚了")])
+    assert len(split(source, "Where are you going? It's so late.")) == parts
+
+
+def test_an_item_lasting_longer_than_seven_seconds_goes_back_to_its_cues():
+    source = cues([(0, 3000, "等等"), (3500, 6000, "我还没说完"), (6500, 9000, "听我说")])
+    assert [c.text for c in split(source, "Wait, I'm not done. Listen to me.")] == [
+        "Wait,", "I'm not done.", "Listen to me."]
+
+
+def test_a_chinese_target_is_split_at_its_full_stop_and_its_lines_keep_chinese_rules():
+    source = cues([(0, 2500, "I can't find my phone anywhere, or my wallet."),
+                   (2600, 5200, "Did you leave them in the car again? We have to go back.")])
+    out = split(source, "我到处都找不到我的手机，钱包也不见了。"
+                        "你是不是又把它们落在车里了？我们得马上回去找。", "zh-Hans")
+    assert shown(out) == [(0, 2500, ("s0",), "我到处都找不到我的\n手机，钱包也不见了"),
+                          (2600, 5200, ("s1",), "你是不是又把它们落在车\n里了？我们得马上回去找")]
+    assert all(width(line) <= 32 for c in out for line in c.text.split("\n"))
+
+
+def test_each_part_records_only_its_own_cue_so_only_the_part_whose_source_changed_goes_stale():
+    source = cues(APART)
+    first, second = split(source, ACROSS_THE_SILENCE)
+    assert first.src_sha == ts.src_sha(["你先别走"])
+    assert second.src_sha == ts.src_sha(["我去拿钥匙马上回来"])
+    edited = dict(source, s1=source["s1"].model_copy(update={"text": "我去拿钥匙"}))
+    assert ts.stale_ids([first, second], edited) == {second.id}
+    assert ts.untranslated(list(source), [first, second]) == []
+
+
+def test_a_sentence_that_ends_inside_quotes_is_still_a_sentence_end():
+    source = cues([(0, 2000, "她跟我说别再回来"), (5000, 7000, "我就没再说什么")])
+    assert [c.text for c in split(source, 'She told me, "Never come back here." So I left it '
+                                          "at that.")] == [
+        'She told me, "Never come back here."', "So I left it at that."]
+
+
+def test_a_word_wider_than_a_line_keeps_a_line_of_its_own():
+    assert subs_text.fill("Pneumonoultramicroscopicsilicovolcanoconiosis is a long word", 20) == [
+        "Pneumonoultramicroscopicsilicovolcanoconiosis", "is a long word"]
+
+
+def test_a_one_cue_translation_too_long_for_two_lines_is_wrapped_in_more_never_cut():
+    (out,) = split(cues([(0, 6000, "把车装好")]), TOO_LONG)
+    lines = out.text.split("\n")
+    assert len(lines) == 4 and all(width(line) <= 42 for line in lines)
+    assert unwrap(out.text) == TOO_LONG
+
+
+def test_an_item_with_fewer_places_to_break_than_cues_is_split_at_the_widest_gaps_first():
+    source = cues([(0, 1500, "等等"), (1600, 3000, "别走"), (30_000, 31_500, "好吧")])
+    assert shown(split(source, "Wait, okay.")) == [(0, 3000, ("s0", "s1"), "Wait,"),
+                                                   (30_000, 31_500, ("s2",), "okay.")]
+
+
+def test_an_item_with_nowhere_to_break_stays_whole():
+    assert shown(split(cues(APART), "Wait!")) == [(179_100, 210_100, ("s0", "s1"), "Wait!")]
+
+
+def test_every_english_cue_of_an_episode_keeps_two_lines_of_42_and_at_most_seven_seconds():
+    # Twelve cues as the model grouped M1's episode: three cues as one 150-character item, a
+    # short one, two across a 27-second silence, five as the 218-character item, a short one.
+    source = {**cues([(57_000, 59_400, "装车"), (59_500, 62_000, "锁好后门"),
+                      (62_100, 64_800, "把钥匙给街角的老人")]),
+              **cues([(65_600, 66_800, "快点")], prefix="t"),
+              **cues(APART, prefix="u"), **cues(FIVE, prefix="v", shift=240_000),
+              **cues([(313_000, 314_500, "走吧")], prefix="w")}
+    groups = [(["s0", "s1", "s2"], TOO_LONG), (["t0"], "Hurry up."),
+              (["u0", "u1"], ACROSS_THE_SILENCE), ([f"v{i}" for i in range(5)], LONGEST),
+              (["w0"], "Let's go.")]
+
+    def ask(system, prompt, model):
+        asked = re.findall(r"^\[(\S+)\] \(max", prompt, flags=re.MULTILINE)
+        assert asked == list(source)
+        return model.model_validate({"items": [{"src": g, "text": t} for g, t in groups]})
+
+    out = translate_cues(list(source.values()), source_lang="zh", target_track="en",
+                         glossary=EMPTY_GLOSSARY, ask=ask)
+    check_track(out)
+    assert [c.src for c in out] == [(cid,) for cid in source]
+    for c in out:
+        lines = c.text.split("\n")
+        assert len(lines) <= 2 and all(width(line) <= 42 for line in lines), c.text
+        assert c.end_ms - c.start_ms <= 7000
+    assert " ".join(unwrap(c.text) for c in out) == " ".join(t for _, t in groups)
+```
+
+- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_translate_split.py -q`.
+  Expected: `E       AttributeError: module 'vid2sub.subs.translate_shape' has no attribute
+  'split_items'` (11 times), `… has no attribute 'SPLIT_GAP_MS'` (twice), `E
+  AttributeError: module 'vid2sub.subs.text' has no attribute 'fill'`, and the episode's track
+  through `translate_cues` keeping its merged items: `E         At index 0 diff: ('s0', 's1',
+  's2') != ('s0',)`. `15 failed`.
+- [ ] **Step 3: Write the code.** In `src/vid2sub/subs/text.py`, replace the end of the module
+  docstring
+
+```python
+starts with closing punctuation or small kana, and none ends with an opening bracket.
+"""
+```
+
+  with
+
+```python
+starts with closing punctuation or small kana, and none ends with an opening bracket. A
+translation too long for two lines is filled into as many as it takes, never cut (spec §13.4;
+Dan, Q&A item 41).
+"""
+```
+
+  replace
+
+```python
+def _breaks(text: str) -> list[tuple[int, int]]:
+    """Where `text` may break: (end of line 1, start of line 2)."""
+```
+
+  with
+
+```python
+def breaks(text: str) -> list[tuple[int, int]]:
+    """Where `text` may break: (end of line 1, start of line 2), in order."""
+```
+
+  in `wrap`, replace `for end1, start2 in _breaks(text):` with
+  `for end1, start2 in breaks(text):`, and replace the line
+  `def strip_line_ends(lines: list[str], chars: str = "，。") -> list[str]:` with `fill` and that
+  line:
+
+```python
+def fill(text: str, max_width: int) -> list[str]:
+    """Lines no wider than `max_width` where the text may break, as many as it takes: the last
+    resort for text that won't fit two lines, so none of it is dropped. A word wider than a line
+    keeps a line of its own."""
+    rest = unwrap(text)
+    lines: list[str] = []
+    while width(rest) > max_width:
+        points = breaks(rest)
+        if not points:
+            break
+        fitting = [p for p in points if width(rest[:p[0]]) <= max_width]
+        end1, start2 = fitting[-1] if fitting else points[0]
+        lines.append(rest[:end1].rstrip())
+        rest = rest[start2:].lstrip()
+    return lines + ([rest] if rest else [])
+
+
+def strip_line_ends(lines: list[str], chars: str = "，。") -> list[str]:
+```
+
+  In `src/vid2sub/subs/translate_shape.py`, replace the end of the module docstring
+
+```python
+A translation records its source cues' ids and a hash of their text, so a source edit marks it
+stale.
+"""
+```
+
+  with
+
+```python
+A translation records its source cues' ids and a hash of their text, so a source edit marks it
+stale.
+
+An item is split back over its source cues when it won't fit two lines, its cues are more than
+`SPLIT_GAP_MS` apart, or it would be on screen longer than the longest duration (spec §13.4;
+Dan, Q&A item 36, after M1's exit test showed 218-character English cues and one shown for 31 s
+across a 27-second silence). Each cue gets a part in proportion to its share of the source text,
+cut where the text may break: sentence and clause ends are preferred, weighed against the
+distance from that mark (`BREAK_COST`). Each part is timed to its own cue and records only that
+cue, so it goes stale on its own. With fewer places to break than cues, the parts go to runs of
+cues between the widest gaps; text with nowhere to break stays whole (Dan, Q&A item 40). Reading
+speed never splits a cue: `max_chars` is only asked of the model, and a cue that reads too fast
+is a lint (§12.2; Dan, Q&A item 39). A part still too long for two lines is filled into more
+lines of the width, never cut (§13.4; Dan, Q&A item 41).
+"""
+```
+
+  replace
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+```
+
+  with
+
+```python
+from dataclasses import dataclass
+from functools import cache
+from itertools import pairwise
+from typing import Literal
+```
+
+  replace
+
+```python
+from vid2sub.subs.rules import rules_for, width_chars
+from vid2sub.subs.text import canonical, strip_line_ends, wrap
+```
+
+  with
+
+```python
+from vid2sub.subs.rules import CueRules, reading_chars, rules_for, width_chars
+from vid2sub.subs.text import (
+    CLAUSE_END,
+    SENTENCE_END,
+    breaks,
+    canonical,
+    fill,
+    strip_line_ends,
+    unwrap,
+    width,
+    wrap,
+)
+
+SPLIT_GAP_MS = 1000  # source cues further apart than this never share a translation cue
+# What a cut costs at each kind of break, on top of its distance from where the source's
+# proportions put it (in parts' average lengths): a sentence end just under half a part away
+# still beats a word break exactly there, a clause end just under a quarter of a part away.
+BREAK_COST = {"sentence": 0.0, "clause": 0.25, "word": 0.5}
+_UNFIT = 1000.0  # a part that won't fit two lines: chosen only when no cut avoids one
+_CLOSERS = "\"'”’」』）)]】》〉"  # closing quotes and brackets after a sentence's end
+```
+
+  replace the line `def src_sha(texts: Sequence[str]) -> str:` with these functions and that
+  line:
+
+```python
+def _kind(left: str) -> str:
+    """The break after `left`: a sentence's end, a clause's, or only a word's."""
+    last = left.rstrip().rstrip(_CLOSERS)[-1:]
+    if last and last in SENTENCE_END:
+        return "sentence"
+    return "clause" if last and last in CLAUSE_END else "word"
+
+
+def _groups(cues: Sequence[Cue], count: int) -> list[list[Cue]]:
+    """`cues` in at most `count` runs, cut at the widest gaps first: one cue a run when the text
+    has places enough to break."""
+    gaps = sorted(range(1, len(cues)), key=lambda i: -(cues[i].start_ms - cues[i - 1].end_ms))
+    cuts = sorted(gaps[:count - 1])
+    return [list(cues[a:b]) for a, b in zip([0, *cuts], [*cuts, len(cues)], strict=True)]
+
+
+def _cut(text: str, weights: Sequence[int], rules: CueRules) -> list[str]:
+    """`text` in len(weights) parts, each as near its share of `weights` as the breaks allow
+    (the text has at least len(weights) - 1 places to break). The cuts are chosen together, by
+    dynamic programming over the break points: first so every part fits two lines where any
+    choice can, then by each cut's distance from its mark, in parts' average lengths, plus its
+    BREAK_COST."""
+    points = breaks(text)
+    n = len(weights)
+    size = len(text) / n
+    marks = [len(text) * sum(weights[:k + 1]) / (sum(weights) or 1) for k in range(n - 1)]
+    kinds = [BREAK_COST[_kind(text[:end])] for end, _ in points]
+    widest = rules.max_lines * rules.max_width + 1  # two full lines and the space between
+
+    @cache
+    def unfit(start: int, end: int) -> float:
+        part = text[start:end]
+        if width(part) > widest or not wrap(part, rules.max_width, rules.max_lines):
+            return _UNFIT
+        return 0.0
+
+    def step(k: int, j: int) -> float:
+        return abs(points[j][0] - marks[k]) / size + kinds[j]
+
+    # best[j]: the cheapest first cuts whose last is at points[j], as (cost, their indices)
+    best = {j: (step(0, j) + unfit(0, end), (j,)) for j, (end, _) in enumerate(points)}
+    for k in range(1, n - 1):
+        following: dict[int, tuple[float, tuple[int, ...]]] = {}
+        for j, (end, _) in enumerate(points):
+            options = [(cost + step(k, j) + unfit(points[i][1], end), path + (j,))
+                       for i, (cost, path) in best.items() if i < j]
+            if options:
+                following[j] = min(options)
+        best = following
+    _, path = min((cost + unfit(points[p[-1]][1], len(text)), p) for cost, p in best.values())
+    starts = [0] + [points[j][1] for j in path]
+    ends = [points[j][0] for j in path] + [len(text)]
+    return [text[a:b].strip() for a, b in zip(starts, ends, strict=True)]
+
+
+def _too_big(text: str, cues: Sequence[Cue], rules: CueRules) -> bool:
+    """Too much for one subtitle: more than two lines, across a silence, or too long on screen."""
+    return (wrap(text, rules.max_width, rules.max_lines) is None
+            or any(b.start_ms - a.end_ms > SPLIT_GAP_MS for a, b in pairwise(cues))
+            or cues[-1].end_ms - cues[0].start_ms > rules.max_ms)
+
+
+def split_items(items: Sequence[Item], source: Mapping[str, Cue],
+                target_track: str) -> list[Item]:
+    """Each item longer than two lines, spread over cues more than SPLIT_GAP_MS apart or longer
+    than the longest duration, split back over its source cues: one item per cue, or, when the
+    text has fewer places to break than it has cues, per run of cues between the widest gaps.
+    Text that can't break at all stays one item."""
+    _, rules, _ = _target(target_track)
+    out: list[Item] = []
+    for it in items:
+        cues = [source[cid] for cid in it.src]
+        text = unwrap(it.text)
+        groups = _groups(cues, len(breaks(text)) + 1)
+        if len(cues) < 2 or len(groups) < 2 or not _too_big(text, cues, rules):
+            out.append(it)
+            continue
+        parts = _cut(text, [sum(reading_chars(c.text) for c in g) for g in groups], rules)
+        out += [Item(tuple(c.id for c in g), part)
+                for g, part in zip(groups, parts, strict=True)]
+    return out
+
+
+def src_sha(texts: Sequence[str]) -> str:
+```
+
+  and in `assemble`, replace
+
+```python
+        lines = wrap(text, rules.max_width, rules.max_lines) or [text.replace("\n", " ")]
+```
+
+  with
+
+```python
+        lines = wrap(text, rules.max_width, rules.max_lines) or fill(text, rules.max_width)
+```
+
+  In `src/vid2sub/translate/run.py`, replace the docstring's line
+
+```python
+track loudly. Items may cover several adjacent cues (Japanese→English reorders across cues).
+```
+
+  with
+
+```python
+track loudly. Items may cover several adjacent cues (Japanese→English reorders across cues); once
+a batch validates, an item too long for two lines or for the screen, or spread across a silence,
+is split back over its own cues (`split_items`, spec §13.4).
+```
+
+  in the import from `vid2sub.subs.translate_shape`, replace
+
+```python
+    split_batch,
+    validate_partition,
+```
+
+  with
+
+```python
+    split_batch,
+    split_items,
+    validate_partition,
+```
+
+  and in `translate_cues`, replace
+
+```python
+        items += _translate(batch, all_ids, cues, limits, system, ask)
+```
+
+  with
+
+```python
+        items += split_items(_translate(batch, all_ids, cues, limits, system, ask), cues,
+                             target_track)
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_translate_split.py
+  tests/test_translate_shape.py tests/test_translate.py -q` first (`33 passed`: M1's translation
+  tests unchanged, since their fakes answer one item per cue), then the guard checks, then `make
+  check`. **Guard checks:** first `git add src/vid2sub/subs/text.py
+  src/vid2sub/subs/translate_shape.py src/vid2sub/translate/run.py
+  tests/test_translate_split.py`; then for each row make the change, run `uv run pytest
+  tests/test_translate_split.py -q`, see it fail, and restore the file from the index with `git
+  checkout -- <the file>`. The last column is what this listing's build saw.
+
+| Guard | Change | To | Failed |
+|---|---|---|---|
+| the split runs on every batch (`run.py`) | `items += split_items(_translate(batch, all_ids, cues, limits, system, ask), cues,` and its next line, `target_track)` | `items += _translate(batch, all_ids, cues, limits, system, ask)` | `test_every_english_cue_of_an_episode_keeps_two_lines_of_42_and_at_most_seven_seconds` |
+| the gap | the line `or any(b.start_ms - a.end_ms > SPLIT_GAP_MS for a, b in pairwise(cues))` | deleted | `[1001-2]` and the quotes test (its cues are 3 s apart) |
+| the longest duration | the line `or cues[-1].end_ms - cues[0].start_ms > rules.max_ms)` | deleted, its `)` moved to the end of the line before | `test_an_item_lasting_longer_than_seven_seconds_goes_back_to_its_cues` |
+| never cut | `or fill(text, rules.max_width)` | `or [text.replace("\n", " ")]` | `test_a_one_cue_translation_too_long_for_two_lines_is_wrapped_in_more_never_cut` |
+| sentence ends first | `BREAK_COST = {"sentence": 0.0, "clause": 0.25, "word": 0.5}` | every value `0.0` | the 218-character, 27-second, 7-second and quotes tests (4) |
+| quotes | `_CLOSERS = "\"'”’」』）)]】》〉"` | `_CLOSERS = ""` | `test_a_sentence_that_ends_inside_quotes_is_still_a_sentence_end` |
+| widest gaps first | `cuts = sorted(gaps[:count - 1])` | `cuts = list(range(1, len(cues)))[:count - 1]` | `test_an_item_with_fewer_places_to_break_than_cues_is_split_at_the_widest_gaps_first` |
+
+  `make check`. Expected: `495 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
+  `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(translate): 🤖 an item too long for two lines or the screen, or spread across a silence, is split back over its own cues, each part timed to its cue
+
+translate_shape.split_items (spec §13.4, S68; the Phase 2 plan's
+Decision 39, from Dan's Q&A item 36) runs on each batch once it
+validates. An item covering several source cues goes back to them when
+it won't fit two lines of the target's width, two of its cues are more
+than SPLIT_GAP_MS (1000 ms) apart, or it would last longer than §12.2's
+7 s. Reading speed never triggers it: max_chars stays in the prompt and
+a fast cue stays a lint (§12.2). Each cue gets a part in proportion to
+its share of the source text, cut where subs.text.breaks allows (spaces,
+or between CJK characters under kinsoku). The cuts are chosen together
+by a small dynamic programme: every part fitting two lines first, then
+each cut's distance from its proportional mark plus BREAK_COST (a
+sentence end free, a clause end 0.25 of a part, a word 0.5). Each part
+records only its own cue, so its time is that cue's and it goes stale on
+its own. With fewer places to break than cues, the parts go to runs of
+cues cut at the widest gaps; text with nowhere to break stays whole.
+subs.text.fill wraps a part still too long for two lines into as many
+lines of the width as it takes, where M1 left one long line: nothing is
+cut. text._breaks becomes text.breaks, public, for the split.
+
+The new tests failed first with: AttributeError: module
+'vid2sub.subs.translate_shape' has no attribute 'split_items' (11) and
+'SPLIT_GAP_MS' (2), module 'vid2sub.subs.text' has no attribute 'fill',
+and the episode-shaped track through translate_cues kept its merged
+items: At index 0 diff: ('s0', 's1', 's2') != ('s0',) (15 failed).
+Guards checked by reverting each fix: without split_items in
+translate_cues, the episode test fails; without the gap rule, the
+1001 ms case; without the 7 s rule, the 7-second test; with M1's one
+long line for fill, the wrap test; with every break costing the same,
+the 218-character, 27-second, 7-second and quotes tests; with no
+closing quotes, the quotes test; cutting at the first gaps instead of
+the widest, the widest-gap test.
+
+Docs read: the spec's §12.2, §12.3, §13.2 and §13.4; Python 3.14's
+functools.cache (an unbounded memo, 3.9+) and itertools.pairwise. No
+library outside the standard one is touched.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 26
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/subs/text.py src/vid2sub/subs/translate_shape.py
+  src/vid2sub/translate/run.py tests/test_translate_split.py`, `git commit -F .git/COMMIT_MSG`,
+  then `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 6: Review, look forward, close.** Run the Tier 2 review: Matt Pocock's `code-review`
+  from `$(cat .git/TASK_BASE)`, Standards and Spec in two subagents. Give the Spec reviewer this
+  task's Why, S68 and §12.2–§13.4. Worth checking:
+  - every translation cue `translate_cues` returns fits two lines and 7 s, apart from the two
+    exceptions in the Produces line;
+  - no text is lost: the parts joined are the item's text;
+  - a part's `src` and `src_sha` are its own cue's;
+  - `subs` stays pure (`tests/test_purity.py`).
+
+  This listing's build had that review, one round, before this listing was written. Its fixes are
+  in the code above:
+  - an item with too few places to break, which had stayed whole across silences, now splits at
+    the widest gaps;
+  - each part's fit is cached, and a wide part is rejected before `wrap` (a 20-cue item had taken
+    78 s);
+  - the trigger, the stays-whole case and the fill went to Dan, who answered A to each (Q&A items
+    39–41);
+  - the closing quotes were tested, `fill`'s wide word was tested, and the docstrings no longer
+    claim a strict order of breaks.
+
+  Expected Minor findings, recorded and not looped: an abbreviation such as "Mr." counts as a
+  sentence end (a cut there is free); the dynamic programme is cubic in the number of break
+  points (3.3 s at 40 cues and 300 words).
+
+  The forward review over Tasks 2–24:
+  - The counts. Every later listing's `make check` count is 15 higher again. In the header's
+    **Run order** note, replace `Task 25's tests raise every later task's `make check` count by
+    15: the` with `Tasks 25 and 26's tests raise every later task's `make check` count by 30:
+    the`.
+  - Later listings that edit `translate/` or `subs/`. Task 2 creates `subs/edit.py`, and Task 6
+    edits `subs/glossary.py`. None edits `text.py`, `translate_shape.py` or `translate/run.py`,
+    and every fake translator in Tasks 2–24 answers one item per cue (Tasks 3, 7, 17 and 19),
+    which this task never splits.
+  - Task 13's canned Japanese, the one translator that answers an item over two cues (see the
+    Why): Task 13's and Task 14's listings were rewritten while this task was planned (the demo's
+    first line is 「ここに来られて光栄です。」, inside its limit, so it stays one item over two
+    cues), and Phase 4's two lines with them; every `^ここに来られて` regex (Tasks 14 and 15)
+    still matches, and Task 15's "—" row still has no translation starting in it.
+
+  The docs this task made untrue. In the spec's §13.4, replace
+
+```text
+- A translation cue's time is the span of its `src` cues, unless the user detaches it. An item
+  over its `max_chars`, or whose `src` cues are more than about a second apart, is split back over
+  its `src` cues: at sentence and clause breaks, in proportion to each cue's share of the source
+  text, each part timed to its own cue. Every translation cue keeps §12.2's line width, lines and
+  longest duration (Dan, 2026-11-02, after M1's exit test showed 218-character cues spanning
+  silences).
+```
+
+  with
+
+```text
+- A translation cue's time is the span of its `src` cues, unless the user detaches it. An item
+  longer than two lines, whose `src` cues are more than a second apart, or that would last longer
+  than §12.2's 7 s is split back over its `src` cues: at sentence and clause breaks, in proportion
+  to each cue's share of the source text, each part timed to its own cue. With fewer places to
+  break than cues, the parts go to runs of cues between the widest gaps. Reading speed never
+  triggers the split: `max_chars` (§13.2) is asked of the model, not enforced (§12.2). Every
+  translation cue keeps §12.2's line width, lines and longest duration, with two exceptions: text
+  with nowhere to break stays one cue over its span, flagged by the editor's `duration` lint, and
+  a one-cue part too long for two lines is wrapped into more lines of the width, never cut (Dan,
+  2026-11-02, after M1's exit test showed 218-character cues spanning silences; Q&A items 36 and
+  39–41).
+```
+
+  In this plan's Decision 39, replace
+
+```text
+39. **An English item over its limit, or spread over cues more than about a second apart, is
+    split back over its source cues** (Task 26; Dan, Q&A item 36): at sentence and clause breaks,
+    in proportion to each cue's share of the source text, each part timed to its own cue, and
+    every translation cue keeps §12.2's line width, lines and longest duration. M1's exit test
+    found 218-character English cues and one shown for 31 s across a 27-second silence. §13.4
+    says so.
+```
+
+  with
+
+```text
+39. **An English item longer than two lines, spread over cues more than a second apart, or on
+    screen over 7 s is split back over its source cues** (Task 26; Dan, Q&A items 36 and 39–41):
+    at sentence and clause breaks, in proportion to each cue's share of the source text, each
+    part timed to its own cue, and every translation cue keeps §12.2's line width, lines and
+    longest duration. Reading speed never triggers it. Text with nowhere to break stays one cue
+    over its span, and a one-cue part too long for two lines wraps into more lines, never cut.
+    M1's exit test found 218-character English cues and one shown for 31 s across a 27-second
+    silence. §13.4 says so.
+```
+
+  The README doesn't describe translation cues, and no diagram shows them.
+
+  Then the close, its own commit. It holds this plan with this task's boxes ticked, the **Run
+  order** note's count, Decision 39, Tasks 13 and 14's rewritten lines, and **Now** set to `Task 27: The
+  speech detector's threshold, measured on a real episode, open.`. It also holds the spec's §13.4
+  and its row S68:
+
+```text
+| S68 | an English item longer than two lines, spread over source cues more than a second apart, or over 7 s | split back over its source cues at sentence and clause breaks, each part timed to its own cue, every cue within §12.2's rules, except text with nowhere to break (one cue over its span, flagged `duration`) and a one-cue part too long for two lines (wrapped into more lines, never cut) | Phase 2, Task 26 | `tests/test_translate_split.py` | built |
+```
+
+  The message goes in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 26: English cues split back over their source cues
+
+Drift: none
+Rulings: the demo's first canned Japanese line shortened to stay one item, so Tasks 13–15 keep a translation spanning two rows (made when this listing was written); the review's three spec questions went to Dan, who answered A to each (Q&A items 39–41), and Decision 39, §13.4 and S68 say so
+Phase-end: none
+Forward: Tasks 13 and 14: the demo's first canned Japanese line shortened so it stays one item over two cues; Phase 4's two assertions of that line changed with this listing; the Run order note: every later make check count is 30 higher
+Tier: 2
+Rounds: Matt's code-review, Standards and Spec in two subagents, one round; no re-review (the fixes changed nothing beyond their findings)
+Findings: 3 Important fixed (too few breaks kept an item whole across silences; a long item's cut was slow; docstrings cited §13.4 for what it didn't say), 3 to Dan (the trigger, nowhere to break, the fill: Q&A items 39–41, answered A), 3 Minor fixed (closing quotes and fill's wide word tested, the cut written as plain loops, BREAK_COST's comment), 2 Minor recorded (an abbreviation's full stop counts as a sentence end; the programme is cubic in break points, 3.3 s at 40 cues and 300 words)
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 26
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -1414,14 +2146,707 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 2 · **Scenarios:** S69 · Runs after Task 26 (Q&A item 37)
 
-**Interfaces:**
-- Consumes: `media.vad.speech_regions(samples, *, threshold=…)`, the pipeline's call to it and
-  `VAD_ID` in the pipeline's version hash; `config`'s `[defaults]`; `run`'s options; E01's audio
-  for the measurement (Dan's episode, read only, never committed).
-- Produces: the measured default threshold, `[defaults] vad_threshold`, `--vad-threshold N`
-  (Decision 40).
+Decision 40, from M1's exit test: "not all the audio is transcribed, so some of the lines in the
+show are missing". On E01, Silero at its own threshold of 0.5 found 16.5 of 45.6 minutes as
+speech, and skipped dialogue under music. Dan's answer to Q&A item 37: "let's use the lower
+threshold as the new default but then also provide a setting flag so we're combinign A and C
+options". This task measures the thresholds on E01 and makes the measured one the default. It
+adds `[defaults] vad_threshold` in `vid2sub.toml` and `vid2sub run --vad-threshold N`.
 
-<!-- steps: written in the next pass -->
+**Why it is built this way** (read 2026-11-02):
+- **The measurement, made when this listing was written** (Dan, Q&A item 37: "use the lower
+  threshold as the new default"). E01, the 45.6-minute Mandarin drama episode of M1's exit test,
+  was decoded to 16 kHz mono. Silero's regions were found at each threshold. The added spans were
+  transcribed on the Spark's `whisper-large-v3-turbo`, through `/v1/audio/transcriptions` with
+  `language=zh` and `response_format=verbose_json`.
+  - "Added" is what a threshold finds beyond 0.5's regions.
+  - Every added piece of 1 s or more was transcribed, and so was every whole new region under
+    1 s.
+  - Each span was classified by hand. **Dialogue** is real Mandarin words, one-word replies and
+    laughter. **Unclear** is words that make no sense alone, heard from a clip under a second long
+    with no context; the end-to-end run below hears the same moments as real words (a name,
+    "popsicle"), so they count as speech. **Song** is the closing song's lyrics, real but sung.
+    **Invented** is a stock line Whisper writes over music (a subtitle volunteer's credit, a
+    channel's slogan) or a repetition loop. **Empty** is no text.
+  - No text is recorded here: it is Dan's show's dialogue.
+
+| Threshold | Speech found | Added beyond 0.5 | Spans transcribed | Dialogue | Unclear | Song | Invented | Empty |
+|---|---|---|---|---|---|---|---|---|
+| 0.5 (Silero's) | 16.5 min, 390 regions | — | — | — | — | — | — | — |
+| 0.4 | 17.4 min, 386 regions | 0.9 min, 420 pieces (5 of 1 s or more; 23 whole new regions) | 25 | 21 | 2 | 2 | 0 (0%) | 0 |
+| 0.35 | 18.0 min, 390 regions | 1.5 min, 560 pieces (14; 42) | 48 | 35 | 7 | 5 | 1 (2%) | 0 |
+| 0.3 | 18.7 min, 374 regions | 2.2 min, 615 pieces (23; 44) | 59 | 43 | 7 | 6 | 3 (5%) | 0 |
+| 0.25 | 19.7 min, 355 regions | 3.1 min, 638 pieces (40; 48) | 72 | 54 | 7 | 7 | 4 (6%) | 0 |
+
+  Every threshold's additions are mostly speech, with under 10% invented, so the lowest, **0.25**,
+  is the default, as Decision 40's rule says. That counts the unclear fragments as speech; counted
+  as invented, only 0.4 would pass (2 of 25). Most of the added minutes are the edges of spans
+  0.5 already found: a few hundred milliseconds each, the starts and ends of lines that 0.5 cut.
+  0.15 (25.4 min; Q&A item 37) merges spans across music and wasn't a candidate.
+- **The same episode end to end,** as `vid2sub run` transcribes it: vid2sub's chunking (non-speech
+  over 2 s silenced), turbo on the Spark, and the cues built. A cue is new when no 0.5 cue
+  overlaps it.
+
+| Threshold | Chunks | Audio sent | Cues | Cues repeating the one before | New cues | Dialogue | Song | Invented |
+|---|---|---|---|---|---|---|---|---|
+| 0.5 | 32 | 26.6 min | 774 | 109 | — | — | — | — |
+| 0.4 | 31 | 27.4 min | 856 | 83 | 70 | 46 | 1 | 23 |
+| 0.35 | 32 | 28.2 min | 875 | 58 | 61 | 46 | 5 | 10 |
+| 0.3 | 32 | 28.4 min | 956 | 177 | 125 | 76 | 7 | 42 |
+| 0.25 | 29 | 29.4 min | 913 | 71 | 128 | 92 | 6 | 30 |
+
+  Here "invented" is mostly turbo's repetition loops: a line repeated cue after cue over music.
+  They come and go from run to run, at every threshold, 0.5's own run included (109 repeats), so
+  that column is noise, not a trend. The new dialogue isn't: whole exchanges 0.5 skipped come
+  back at every lower threshold, and 0.25 brings back twice as many new dialogue cues as 0.4 or
+  0.35. Dan's episode was transcribed by Qwen3-ASR on the Mac (Q&A item 35), which this
+  measurement didn't use: Whisper turbo is the model on the Spark.
+- **Where the number lives:** `media.vad.THRESHOLD`, `speech_regions`' default, and also
+  `config.Defaults.vad_threshold`'s default. It is written in both, because loading the config
+  mustn't import numpy (`vad` does). A test pins the two to the same number.
+- **Precedence** (§5.4): `--vad-threshold`, else `vid2sub.toml`'s, else the measured default.
+  `RunOptions.vad_threshold` is `None` unless the flag is given, and `pipeline.speech_threshold(ctx)`
+  falls back to `ctx.config.defaults.vad_threshold`. So every caller follows `vid2sub.toml`
+  without passing the setting along:
+  - `vid2sub detect`, whose options don't carry it;
+  - Task 19's job context, `RunOptions()`;
+  - Phase 3's Review.
+
+  `run` has the flag, as §18.1 lists. `translate` doesn't transcribe, so it doesn't have one.
+- **Validation** (§5.2): a float above 0 and below 1, refused at load naming
+  `defaults.vad_threshold`, as pydantic's `gt` and `lt` say. 0 would call everything speech and 1
+  nothing. TOML's `nan` and `true` are refused too, and `0.3` given as a string passes, as
+  pydantic's lax floats do for `cache_max_gb`. The flag gives the same range, with `vid2sub run:
+  error: argument --vad-threshold: a number above 0 and below 1, like 0.25` and exit 64 (§18.2).
+  Its help says it applies when a video is transcribed, and takes the default from `THRESHOLD`.
+- **The cache** (§8.9): finished chunks are kept for the engine's life under a key whose
+  `plan_hash` "identifies the plan only; a cache key must also include the media identity and the
+  VAD settings" (`media/chunk.py`). `chunk_samples` silences non-speech by the regions, so the
+  same plan at another threshold sends other audio, and the threshold joins the key.
+- **The version** (§9.6): a transcript's `version` ends `+p<pipeline8>`, "a hash of the VAD model
+  and settings, chunker version and prompt policy". `pipeline8(threshold)` hashes `PIPELINE` with
+  the threshold, so a transcript made at another threshold has another version. `PIPELINE`
+  itself stays as it is, since Phase 4's Task 1 quotes its line as diff context.
+- **The record:** the transcript's `meta["vad"]` becomes `{"id": VAD_ID, "threshold": …}`. It was
+  the id alone. Nothing reads it, and the rendition contract's `meta` is an open object
+  (`tests/contracts/recordings-rendition.schema.json`).
+- **Transcripts made before this task stay:** `run` reuses a sidecar's source track. To hear E01
+  again at the new threshold, its sidecar has to be moved aside first. That is a question for Dan
+  at the M2 exit test, not this task.
+- **The starter** gets a commented `vad_threshold` line. It is ASCII, like the rest of
+  `config init`'s output, and the two copies stay identical (`tests/test_config.py`). The
+  README's *Configure* section lists no `[defaults]` keys, so it is unchanged.
+
+**Files:**
+- Modify: `src/vid2sub/media/vad.py` (`THRESHOLD`; with the file tools, since a hook blocks shell
+  commands that name `src/vid2sub/media/`), `src/vid2sub/config.py` (`Defaults.vad_threshold`),
+  `src/vid2sub/example.toml` and `vid2sub.example.toml`, `src/vid2sub/pipeline.py`
+  (`RunOptions.vad_threshold`, `speech_threshold`, the cache key, `meta["vad"]`, `detect_one`),
+  `src/vid2sub/commands/run.py` (`--vad-threshold`)
+- Test: `tests/test_vad_threshold.py`
+- Modify at the close: this plan (the boxes, **Now**, the **Run order** note's count), the spec's
+  §8.6, §5.1's sample and row S69
+
+**Interfaces:**
+- Consumes: `media.vad.speech_regions(samples, *, threshold=…)` and `VAD_ID`; the pipeline's two
+  calls to it (`_transcribe`, `detect_one`) and its chunk cache (`RunContext.chunk_cache`, keyed
+  by the plan's hash); `config.Defaults`; `commands.run.options_from`; Task 26's close as the base.
+- Produces:
+  - `media.vad.THRESHOLD = 0.25`, `speech_regions`' default.
+  - `config.Defaults.vad_threshold: float = 0.25`, in (0, 1).
+  - `pipeline.RunOptions.vad_threshold: float | None = None` (None: `vid2sub.toml`'s).
+  - `pipeline.speech_threshold(ctx: RunContext) -> float` and `pipeline.pipeline8(threshold:
+    float) -> str`; the transcript's `version` ends `+p` and `pipeline8(threshold)`.
+  - `commands.run._threshold(value: str) -> float`, the flag's argparse type.
+  - `vid2sub run --vad-threshold N`.
+  - The chunk cache key's last element is the threshold.
+  - The transcript's `meta["vad"]` is `{"id": VAD_ID, "threshold": float}`.
+  - Phase 3's Review samples speech for detection; it should call
+    `speech_regions(…, threshold=pipeline.speech_threshold(ctx))`.
+
+- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [ ] **Step 1: Write the failing test,** `tests/test_vad_threshold.py`:
+
+```python
+import inspect
+
+import pytest
+from fakes import FakeEngine, fake_make_ask
+from helpers import SPEECH, make_clip
+from test_cli_run import CONFIG
+from test_pipeline import make_ctx
+
+from vid2sub import config as c
+from vid2sub import pipeline, store
+from vid2sub.catalog import Candidate
+from vid2sub.cli import main
+from vid2sub.commands import _common
+from vid2sub.media import vad
+
+pytestmark = pytest.mark.media
+MEASURED = 0.25  # Phase 2 Task 27's measurement on M1's exit-test episode (spec §8.6)
+
+
+@pytest.fixture
+def heard(monkeypatch) -> list[float | None]:
+    """The threshold each call to speech_regions was given (None: none); the regions are real."""
+    given: list[float | None] = []
+    real = pipeline.speech_regions
+
+    def spy(samples, **kwargs):
+        given.append(kwargs.get("threshold"))
+        return real(samples, **kwargs)
+
+    monkeypatch.setattr(pipeline, "speech_regions", spy)
+    return given
+
+
+@pytest.fixture
+def cli(tmp_path, monkeypatch):
+    """A 14 s episode, the fake engines, and a vid2sub.toml that sets vad_threshold = 0.4."""
+    cfg = tmp_path / "vid2sub.toml"
+    cfg.write_text(CONFIG + "[defaults]\nvad_threshold = 0.4\n")
+    real = _common.new_context
+
+    def with_fakes(config, options, output):
+        ctx = real(config, options, output)
+        ctx.engines["fake"] = FakeEngine()
+        ctx.candidates = [Candidate("fake", "whisper-large-v3-turbo", "endpoint", True),
+                          Candidate("gemma", "gemma-4-26b-a4b", "endpoint", True)]
+        return ctx
+
+    monkeypatch.setattr(_common, "new_context", with_fakes)
+    monkeypatch.setattr(pipeline, "make_ask", fake_make_ask)
+    return make_clip(tmp_path, "Show - S01E01.mkv", seconds=14, speech=SPEECH), cfg
+
+
+def test_the_default_is_the_threshold_measured_on_a_drama_episode():
+    assert vad.THRESHOLD == MEASURED
+    assert inspect.signature(vad.speech_regions).parameters["threshold"].default == MEASURED
+    assert c.Config().defaults.vad_threshold == MEASURED
+    assert f"# vad_threshold = {MEASURED}" in c.STARTER
+
+
+def test_vad_threshold_in_vid2sub_toml_is_read(tmp_path):
+    path = tmp_path / "vid2sub.toml"
+    path.write_text("[defaults]\nvad_threshold = 0.4\n", encoding="utf-8")
+    assert c.load_config(path).defaults.vad_threshold == 0.4
+
+
+@pytest.mark.parametrize("value", ["0", "1", "1.5", "-0.2", "nan", "true"])
+def test_a_threshold_outside_0_to_1_is_refused_at_load_naming_the_setting(tmp_path, value):
+    path = tmp_path / "vid2sub.toml"
+    path.write_text(f"[defaults]\nvad_threshold = {value}\n", encoding="utf-8")
+    with pytest.raises(c.ConfigError,
+                       match=r"^defaults\.vad_threshold: Input should be (greater|less) than"):
+        c.load_config(path)
+
+
+def test_a_run_with_no_setting_uses_the_measured_default(tmp_path, heard):
+    clip = make_clip(tmp_path, "Show - S01E01.mkv", seconds=14, speech=SPEECH)
+    assert pipeline.run_one(str(clip), make_ctx(FakeEngine(), targets=[])).status == "done"
+    assert heard == [MEASURED]
+
+
+def test_the_threshold_in_vid2sub_toml_reaches_speech_regions(cli, heard):
+    clip, cfg = cli
+    assert main(["run", str(clip), "--from", "ja", "--to", "none", "--config", str(cfg)]) == 0
+    assert heard == [0.4]
+
+
+def test_vad_threshold_on_the_command_line_overrides_vid2sub_toml(cli, heard):
+    clip, cfg = cli
+    assert main(["run", str(clip), "--from", "ja", "--to", "none", "--config", str(cfg),
+                 "--vad-threshold", "0.3"]) == 0
+    assert heard == [0.3]
+
+
+@pytest.mark.parametrize("value", ["0", "1", "1.5", "loud"])
+def test_a_vad_threshold_flag_outside_0_to_1_is_a_usage_error(cli, capsys, value):
+    clip, cfg = cli
+    with pytest.raises(SystemExit) as err:
+        main(["run", str(clip), "--config", str(cfg), "--vad-threshold", value])
+    assert err.value.code == 64
+    assert "--vad-threshold: a number above 0 and below 1" in capsys.readouterr().err
+
+
+def test_detect_finds_speech_with_the_threshold_in_vid2sub_toml_too(cli, heard):
+    clip, cfg = cli
+    assert main(["detect", str(clip), "--config", str(cfg), "--json"]) == 0
+    assert heard == [0.4]
+
+
+def test_a_chunk_heard_at_one_threshold_is_not_reused_at_another(tmp_path, monkeypatch):
+    # The same regions whatever the threshold, so the chunk plan is the same and only the cache
+    # key can tell the two runs apart.
+    regions = pipeline.speech_regions
+    monkeypatch.setattr(pipeline, "speech_regions",
+                        lambda samples, **kwargs: regions(samples, threshold=0.5))
+    clip = make_clip(tmp_path, "Show - S01E01.mkv", seconds=14, speech=SPEECH)
+    engine = FakeEngine()
+    ctx = make_ctx(engine, targets=[], vad_threshold=0.3)
+    pipeline.run_one(str(clip), ctx)
+    store.sidecar_path(clip).unlink()
+    calls = len(engine.calls)
+    pipeline.run_one(str(clip), ctx)
+    assert len(engine.calls) == calls  # the same threshold: the cached chunk is used
+    store.sidecar_path(clip).unlink()
+    ctx.options.vad_threshold = 0.4
+    pipeline.run_one(str(clip), ctx)
+    assert len(engine.calls) > calls
+
+
+def test_the_transcript_records_the_threshold_it_used_and_its_version_changes_with_it(tmp_path):
+    clip = make_clip(tmp_path, "Show - S01E01.mkv", seconds=14, speech=SPEECH)
+    versions = []
+    for threshold in (0.3, 0.4):
+        store.sidecar_path(clip).unlink(missing_ok=True)
+        pipeline.run_one(str(clip), make_ctx(FakeEngine(), targets=[], vad_threshold=threshold))
+        [transcript] = store.load(clip)[0].transcripts()
+        assert transcript.body["meta"]["vad"] == {"id": vad.VAD_ID, "threshold": threshold}
+        versions.append(transcript.body["version"])
+    # §9.6: pipeline8 hashes the VAD's settings, so another threshold mints another version.
+    assert versions[0] != versions[1]
+    assert versions[0].endswith(f"+p{pipeline.pipeline8(0.3)}")
+```
+
+- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_vad_threshold.py -q`. Expected:
+  - `E       AttributeError: module 'vid2sub.media.vad' has no attribute 'THRESHOLD'`.
+  - `vid2sub.config.ConfigError: defaults.vad_threshold: Extra inputs are not permitted`, where
+    the key is read. The same text is the `Actual message` of the six refused-at-load cases.
+  - `E       TypeError: RunOptions.__init__() got an unexpected keyword argument
+    'vad_threshold'`, twice.
+  - `E       assert [None] == [0.25]`: with no setting, the pipeline passes no threshold.
+  - `AssertionError: assert 78 == 0`, twice: `vid2sub.toml`'s unknown key stops `run` and `detect`.
+  - `E       SystemExit: 64`: the flag is an unknown argument.
+  - `unrecognized arguments: --vad-threshold 0` and its three siblings.
+
+  The summary is `18 failed`.
+- [ ] **Step 3: Write the code.** In `src/vid2sub/media/vad.py`, with the file tools (Read, then
+  Edit: a hook blocks shell commands that name the folder), replace
+
+```python
+Regions are in milliseconds on the decoded audio's timeline.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from vid2sub.media._vendor.silero import VadOptions, get_speech_timestamps
+
+VAD_ID = "silero-v6@faster-whisper-1.2.1"
+
+
+def speech_regions(samples: np.ndarray, *, threshold: float = 0.5, min_speech_ms: int = 250,
+                   min_silence_ms: int = 500, pad_ms: int = 200) -> list[tuple[int, int]]:
+```
+
+  with
+
+```python
+Regions are in milliseconds on the decoded audio's timeline. The threshold, the speech
+probability a window needs, defaults to THRESHOLD, lower than Silero's 0.5, which skipped
+dialogue under music in M1's exit-test episode; it was measured on that episode (Dan, Q&A item
+37; the Phase 2 plan's Task 27), and `[defaults] vad_threshold` and `--vad-threshold` change it
+(spec §8.6).
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from vid2sub.media._vendor.silero import VadOptions, get_speech_timestamps
+
+VAD_ID = "silero-v6@faster-whisper-1.2.1"
+THRESHOLD = 0.25  # config.Defaults.vad_threshold's default says the same
+
+
+def speech_regions(samples: np.ndarray, *, threshold: float = THRESHOLD,
+                   min_speech_ms: int = 250, min_silence_ms: int = 500,
+                   pad_ms: int = 200) -> list[tuple[int, int]]:
+```
+
+  In `src/vid2sub/config.py`, in `class Defaults`, replace
+
+```python
+    cache_max_gb: float = Field(20, gt=0)
+```
+
+  with
+
+```python
+    cache_max_gb: float = Field(20, gt=0)
+    # The speech detector's threshold (spec §8.6): media.vad.THRESHOLD, measured on a drama
+    # episode (the Phase 2 plan's Task 27), written here too so loading the config needs no numpy.
+    vad_threshold: float = Field(0.25, gt=0, lt=1)
+```
+
+  In both `src/vid2sub/example.toml` and `vid2sub.example.toml`, replace the last two lines
+
+```toml
+formats = ["srt"]
+# youtube_dir = "~/Movies/vid2sub"
+```
+
+  with
+
+```toml
+formats = ["srt"]
+# youtube_dir = "~/Movies/vid2sub"
+# How sure the speech detector must be (0 to 1). Lower finds more speech under music, and more
+# noise; --vad-threshold sets it for one run.
+# vad_threshold = 0.25
+```
+
+  Then `cmp src/vid2sub/example.toml vid2sub.example.toml` prints nothing.
+
+  In `src/vid2sub/pipeline.py`, in `class RunOptions`, replace
+
+```python
+    replace_edited: bool = False
+```
+
+  with
+
+```python
+    replace_edited: bool = False
+    vad_threshold: float | None = None  # None: vid2sub.toml's [defaults] vad_threshold
+```
+
+  below `_with_retries` (after its `return` line and two blank lines) add these two functions,
+  followed by two blank lines,
+
+```python
+    return _retrying(lambda: engine.transcribe(chunk, language=language, prompt=prompt), ctx)
+
+
+def pipeline8(threshold: float) -> str:
+    """§9.6's pipeline8 for a run: PIPELINE (the VAD model, chunker and prompt policy) with the
+    speech threshold, so transcripts made at different thresholds have different versions."""
+    return hashlib.sha256(f"{PIPELINE}|vad_threshold={threshold}".encode()).hexdigest()[:8]
+
+
+def speech_threshold(ctx: RunContext) -> float:
+    """The speech detector's threshold for this run: --vad-threshold, else vid2sub.toml's,
+    whose default is the one measured on a drama episode (spec §8.6, §5.4)."""
+    given = ctx.options.vad_threshold
+    return ctx.config.defaults.vad_threshold if given is None else given
+
+
+def _transcribe(
+```
+
+  in `_transcribe`, replace
+
+```python
+    speech = speech_regions(to_float(samples))
+```
+
+  with
+
+```python
+    threshold = speech_threshold(ctx)
+    speech = speech_regions(to_float(samples), threshold=threshold)
+```
+
+  replace
+
+```python
+        key = (header.video.quick_sha256, track.stream_index, model_name, lang, plan.plan_hash(),
+               vocab)
+```
+
+  with
+
+```python
+        # The threshold too: the same plan at another threshold silences other stretches.
+        key = (header.video.quick_sha256, track.stream_index, model_name, lang, plan.plan_hash(),
+               vocab, threshold)
+```
+
+  replace
+
+```python
+        version=f"{stamp.label}+v{vocab or '0'}+p{PIPELINE}", created_at=now,
+```
+
+  with
+
+```python
+        version=f"{stamp.label}+v{vocab or '0'}+p{pipeline8(threshold)}", created_at=now,
+```
+
+  replace
+
+```python
+        meta={"vad": VAD_ID, "chunker": CHUNKER_VERSION, "prompt_policy": PROMPT_POLICY,
+```
+
+  with
+
+```python
+        meta={"vad": {"id": VAD_ID, "threshold": threshold}, "chunker": CHUNKER_VERSION,
+              "prompt_policy": PROMPT_POLICY,
+```
+
+  and in `detect_one`, replace
+
+```python
+                    speech_regions(to_float(samples)), len(samples) // SAMPLES_PER_MS,
+```
+
+  with
+
+```python
+                    speech_regions(to_float(samples), threshold=speech_threshold(ctx)),
+                    len(samples) // SAMPLES_PER_MS,
+```
+
+  In `src/vid2sub/commands/run.py`, replace
+
+```python
+from vid2sub.engines.clients import quiet_libraries
+```
+
+  with
+
+```python
+from vid2sub.engines.clients import quiet_libraries
+from vid2sub.media.vad import THRESHOLD
+```
+
+  insert before `def add_parser(sub) -> None:`, with two blank lines after it,
+
+```python
+def _threshold(value: str) -> float:
+    """--vad-threshold: above 0 and below 1, as in vid2sub.toml (spec §8.6)."""
+    message = f"a number above 0 and below 1, like {THRESHOLD}"
+    try:
+        number = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(message) from None
+    if not 0 < number < 1:  # nan fails too
+        raise argparse.ArgumentTypeError(message)
+    return number
+```
+
+  replace
+
+```python
+                   help="how long to wait for a dropped connection (default 10m)")
+```
+
+  with
+
+```python
+                   help="how long to wait for a dropped connection (default 10m)")
+    p.add_argument("--vad-threshold", type=_threshold, metavar="N",
+                   help="how sure the speech detector must be when a video is transcribed, "
+                        f"above 0 and below 1 (default from vid2sub.toml, else {THRESHOLD}); "
+                        "lower finds more speech under music")
+```
+
+  and in `options_from`, replace
+
+```python
+        wait_on_connection_s=args.wait_on_connection, replace_edited=args.replace_edited)
+```
+
+  with
+
+```python
+        wait_on_connection_s=args.wait_on_connection, replace_edited=args.replace_edited,
+        vad_threshold=args.vad_threshold)
+```
+
+- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_vad_threshold.py
+  tests/test_vad.py tests/test_config.py tests/test_pipeline.py -q` first (`97 passed`), then
+  the guard checks, then `make check`. **Guard checks:** first `git add src/vid2sub/config.py
+  src/vid2sub/pipeline.py src/vid2sub/commands/run.py tests/test_vad_threshold.py`; then for each
+  row make the change, run `uv run pytest tests/test_vad_threshold.py -q`, see it fail, and
+  restore the file with `git checkout -- <the file>`. The last column is what this listing's build
+  saw.
+
+| Guard | Change | To | Failed |
+|---|---|---|---|
+| the threshold reaches the detector (`pipeline.py`) | `speech = speech_regions(to_float(samples), threshold=threshold)` | `speech = speech_regions(to_float(samples))` | the measured-default, `vid2sub.toml` and flag tests (3) |
+| the cache key | `vocab, threshold)` | `vocab)` | `test_a_chunk_heard_at_one_threshold_is_not_reused_at_another` |
+| the record | `meta={"vad": {"id": VAD_ID, "threshold": threshold}, "chunker": CHUNKER_VERSION,` | `meta={"vad": VAD_ID, "chunker": CHUNKER_VERSION,` | `test_the_transcript_records_the_threshold_it_used_and_its_version_changes_with_it` |
+| the version | `+p{pipeline8(threshold)}` | `+p{PIPELINE}` | the same test |
+| detect too | `speech_regions(to_float(samples), threshold=speech_threshold(ctx)),` | `speech_regions(to_float(samples)),` | `test_detect_finds_speech_with_the_threshold_in_vid2sub_toml_too` |
+| the range (`config.py`) | `vad_threshold: float = Field(0.25, gt=0, lt=1)` | `vad_threshold: float = Field(0.25, gt=0)` | `[1]`, `[1.5]` and `[true]` of the refused-at-load test (3) |
+| the flag (`run.py`) | `replace_edited=args.replace_edited,` and the next line `vad_threshold=args.vad_threshold)` | `replace_edited=args.replace_edited)` | `test_vad_threshold_on_the_command_line_overrides_vid2sub_toml` |
+
+  `make check`. Expected: `513 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
+- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+feat(pipeline): 🤖 the speech detector's threshold defaults to 0.25, measured on a drama episode, and vid2sub.toml and --vad-threshold set it
+
+Silero's own 0.5 skipped dialogue under music in M1's exit-test
+episode (Dan, Q&A item 37; the Phase 2 plan's Decision 40, spec §8.6,
+S69). Measured on that episode: 0.5 found 16.5 of 45.6 minutes as
+speech, 0.4 17.4, 0.35 18.0, 0.3 18.7 and 0.25 19.7. Every added span
+of a second or more, and every whole new region, was transcribed on the
+Spark's whisper-large-v3-turbo and classified by hand (no text kept):
+invented lines were 0 of 25, 1 of 48, 3 of 59 and 4 of 72, the rest
+dialogue, unclear fragments and the closing song. So the lowest, 0.25,
+is the default: media.vad.THRESHOLD, speech_regions' default, and
+config.Defaults.vad_threshold's (written twice so loading the config
+needs no numpy; a test pins them together). End to end, 0.25 brought
+back 92 dialogue cues 0.5 had missed.
+
+[defaults] vad_threshold is a float above 0 and below 1, refused at
+load naming the setting; vid2sub run --vad-threshold N overrides it
+(exit 64 outside the range). RunOptions.vad_threshold is None unless the flag is
+given, and pipeline.speech_threshold(ctx) falls back to vid2sub.toml's,
+so detect, the web app's jobs (RunOptions()) and anything else that
+builds options follow the setting (§5.4). The threshold joins the chunk
+cache key: plan_hash identifies the plan only, and chunk_samples
+silences non-speech by the regions, so the same plan at another
+threshold sends other audio (§8.9). The transcript's version takes
+pipeline8(threshold), PIPELINE hashed with the threshold, since §9.6
+says pipeline8 covers the VAD's settings; its meta["vad"] is {"id":
+VAD_ID, "threshold": …}. The starter carries a commented line.
+
+The new tests failed first with: AttributeError: module
+'vid2sub.media.vad' has no attribute 'THRESHOLD'; ConfigError:
+defaults.vad_threshold: Extra inputs are not permitted; TypeError:
+RunOptions.__init__() got an unexpected keyword argument
+'vad_threshold'; assert [None] == [0.25]; exit 78 for run and detect;
+unrecognized arguments: --vad-threshold (18 failed). Guards checked by
+reverting each fix: the threshold left out of _transcribe's call (3
+fail), of the cache key, of meta, of the version (PIPELINE for
+pipeline8), of detect_one's call; the upper bound dropped (1, 1.5 and
+true load); the flag not passed to RunOptions.
+
+Docs read: faster-whisper 1.2.1's vad.py (VadOptions: threshold 0.5,
+neg_threshold None, then max(threshold - 0.15, 0.01)); pydantic's
+standard library types page (a float's gt and lt are strict, and a
+string is converted in lax mode); the spec's §5.1, §5.2, §5.4, §8.6,
+§8.9 and §18.1; media/chunk.py's plan_hash note.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 27
+Co-Authored-By: <the model's own line>
+```
+
+  `git add src/vid2sub/media/vad.py src/vid2sub/config.py src/vid2sub/example.toml
+  vid2sub.example.toml src/vid2sub/pipeline.py src/vid2sub/commands/run.py
+  tests/test_vad_threshold.py` (when this listing was built the hook let `git add` name the path;
+  if it blocks it, say so and stop rather than rephrasing the command), `git commit -F
+  .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
+- [ ] **Step 6: Review, look forward, close.** Run the Tier 2 review: Matt Pocock's `code-review`
+  from `$(cat .git/TASK_BASE)`, Standards and Spec in two subagents. Give the Spec reviewer this
+  task's Why, S69 and §5.1, §5.2, §8.6, §8.9 and §18.1. Worth checking:
+  - the setting reaches every call to `speech_regions` in the pipeline;
+  - no chunk heard at one threshold is reused at another;
+  - a bad value names the setting and never echoes anything else (§5.2);
+  - the starter stays ASCII and loads.
+
+  This listing's build had that review, one round, before this listing was written. Its fixes
+  are in the code above:
+  - the transcript's version changes with the threshold (§9.6's pipeline8; both reviewers);
+  - the flag's help takes its default from `THRESHOLD` and says it applies when a video is
+    transcribed, its message says "above 0 and below 1", and its type function raises rather than
+    use a stand-in value (Standards);
+  - §5.1's sample and §8.6's numbers are fixed at this close (both).
+
+  Expected Minor findings, recorded and not looped: `meta["vad"]` changes from a string to a
+  dict, which nothing reads; `vid2sub detect` has no flag of its own (§18.1 lists it for `run`
+  only), and follows `vid2sub.toml`.
+
+  The forward review over Tasks 2–24:
+  - The counts. Every later listing's `make check` count is 18 higher again. In the header's
+    **Run order** note, replace `Tasks 25 and 26's tests raise every later task's `make check`
+    count by 30: the` with `Tasks 25 to 27's tests raise every later task's `make check` count
+    by 48: the`.
+  - Later listings that edit `pipeline.py`, `config.py`, `commands/run.py` or the starter keep
+    their anchors:
+    - Task 4: the docstring, `StopRun`, `_no_event`, `RunContext.candidates`, `_guarded`'s and
+      `detect_one`'s `except (Paused, StopRun):` and `_retrying`'s docstring.
+    - Task 19: the imports, `RunContext`'s fields and `_translate_targets`' `make_ask`.
+    - Task 20: `_waits_for`'s return, `ModelEntry.parser` and its error, and the starter's
+      `engine = "mlx-qwen3-asr"` block.
+
+    None of them includes a line this task changed.
+  - What later tasks build. Task 19's job context is `RunOptions()`, whose `vad_threshold` is
+    None, so the web app's jobs follow `vid2sub.toml` with no change. Task 13's demo sidecar,
+    made by the real pipeline at its build, records `{"id": …, "threshold": 0.25}`. Its
+    `jfk.en.srt` and `jfk.ja.srt` are unchanged: rebuilt on this task's code, they read as Task
+    13's listing (after Task 26's rewrite) says. No later listing reads `meta["vad"]`, the chunk
+    cache's key or `speech_regions`' default.
+  - Outside this plan, for main:
+    - Phase 3's Review samples speech for detection with `speech_regions(to_float(samples))`
+      (its `_sampled`). That gets the measured default but not `vid2sub.toml`'s, and should pass
+      `threshold=pipeline.speech_threshold(ctx)`.
+    - Phase 3's `RunOptions` anchor, `replace_edited: bool = False`, still applies. Its new
+      field lands between that line and `vad_threshold`.
+
+  The docs this task made untrue. In the spec's §8.6, replace
+
+```text
+non-speech (§12.5). The speech threshold defaults lower than Silero's 0.5, to catch dialogue
+under music; its value is measured on a real episode (Phase 2 Task 27), and it is settable as
+`[defaults] vad_threshold` in `vid2sub.toml` and per run with `--vad-threshold` (Dan,
+2026-11-02).
+```
+
+  with
+
+```text
+non-speech (§12.5). The speech threshold is 0.25, lower than Silero's 0.5, to catch dialogue
+under music. It was measured on M1's exit-test episode, a 45.6-minute Mandarin drama (Phase 2
+Task 27). 0.5 found 16.5 minutes of speech and 0.25 found 19.7. Of the spans 0.25 added, 4 of
+72 transcribed as invented lines; the rest were dialogue, fragments too short to make out alone,
+and the closing song. Transcribed end to end, 0.25 brought back 92 dialogue cues that 0.5 had
+missed. It is settable as `[defaults] vad_threshold` in `vid2sub.toml` and per run with
+`--vad-threshold` (Dan, 2026-11-02). The transcript's `meta` and its version (§9.6) record the
+threshold used, and finished chunks are cached per threshold (§8.9).
+```
+
+  In §5.1's sample, replace the line
+
+```toml
+# vad_threshold = 0.5   # lower finds more speech under music (§8.6)
+```
+
+  with
+
+```toml
+# vad_threshold = 0.25  # lower finds more speech under music, and more noise (§8.6)
+```
+
+  §18.1 already lists `--vad-threshold N (§8.6)` among `run`'s options. The README's
+  *Configure* section names no `[defaults]` key, and no diagram shows the detector's settings.
+
+  Then the close, its own commit. It holds this plan with this task's boxes ticked, the **Run
+  order** note's count and **Now** set to `Task 2: Edit operations, open.`. It also holds the
+  spec's §8.6, §5.1's sample and its row S69:
+
+```text
+| S69 | dialogue under music in a drama | found by the detector's measured default threshold; `vid2sub.toml`'s `vad_threshold` and `--vad-threshold` change it | Phase 2, Task 27 | `tests/test_vad_threshold.py`; the measurement on E01 (Task 27's Why) | built |
+```
+
+  The message goes in `.git/CLOSE_MSG`:
+
+```text
+docs(plan): 🤖 close Task 27: The speech detector's threshold, measured on a real episode
+
+Drift: none
+Rulings: the measurement counted unclear fragments (sub-second clips heard without context) as speech, so 0.25 is the lowest threshold under 10% invented; counted as invented, only 0.4 would pass
+Phase-end: none
+Forward: the Run order note: every later make check count is 48 higher; Phase 3's Review sampling should pass pipeline.speech_threshold(ctx) to speech_regions (outside this plan)
+Tier: 2
+Rounds: Matt's code-review, Standards and Spec in two subagents, one round; no re-review (the fixes changed nothing beyond their findings)
+Findings: 2 Important fixed (the version stamp ignored the threshold, §9.6; §5.1's sample said 0.5), 3 Minor fixed (the help's hand-copied default, the type function's stand-in value, the range's wording), 1 Important outside this plan (Phase 3's Review sampling), 2 Minor recorded (meta["vad"] changes type; detect has no flag of its own)
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 27
+Co-Authored-By: <the model's own line>
+```
+
+  `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
+  docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
 
 ***
 
@@ -18223,10 +19648,12 @@ WORDS: tuple[tuple[str, int, int], ...] = (
     (" noted", 12940, 13220), (" for", 13220, 13420), (" strength,", 13420, 13780),
 )
 # A hand-written Japanese translation: each English run of cues (as the pipeline cuts the clip
-# into cues, line breaks as spaces) with its Japanese. A sentence across two cues is one item.
+# into cues, line breaks as spaces) with its Japanese. A sentence across two cues is one item,
+# short enough to stay one: two Japanese lines hold 26 full-width characters, and over that
+# Phase 2's Task 26 would split it back over the two cues (spec §13.4).
 JAPANESE: tuple[tuple[tuple[str, ...], str], ...] = (
     (("I am delighted to be here, and I am particularly delighted to be here on this",
-      "occasion."), "ここに来られて、とてもうれしく思います。この機会に来られたことは格別の喜びです。"),
+      "occasion."), "ここに来られて光栄です。"),
     (("We meet at a college noted for knowledge,",), "私たちが集うのは、知識で知られる大学、"),
     (("in a city noted for progress, in a state noted for strength,",),
      "進歩で知られる都市、力強さで知られる州です。"),
@@ -18736,7 +20163,7 @@ in a state noted for strength,
 ```text
 1
 00:00:00,000 --> 00:00:04,653
-ここに来られて、とてもうれしく思います。この機会に来られたことは格別の喜びです。
+ここに来られて光栄です。
 
 2
 00:00:04,940 --> 00:00:09,276
@@ -20484,7 +21911,7 @@ def test_the_demo_episode_plays_with_captions_and_the_cue_list_follows_playback(
     expect(rows).to_have_count(4)
     assert page.get_by_test_id("cue-text").all_inner_texts() == DEMO_EN
     expect(page.get_by_test_id("cue-translation").first).to_have_text(
-        "ここに来られて、とてもうれしく思います。この機会に来られたことは格別の喜びです。")
+        "ここに来られて光栄です。")
     media = page.get_by_test_id("media")
     expect(media).to_have_attribute("src", re.compile(r"^/media/[A-Za-z0-9_-]{43}$"))
     # It plays (muted: Chromium lets a muted video play without a gesture).
