@@ -110,6 +110,7 @@ test names.
 | S62 | a sidecar after many saves | compacted without losing a head or a projection | optional | about 50 KB per saved version (§14.7) |
 | S64 | Save meets a subtitle file vid2sub didn't write | the UI asks, file by file, whether to replace it (§6.6) | optional | Save names the file and the `--overwrite-foreign` command meanwhile ([Q&A item 22](2026-10-14-vid2sub-qa.md)) |
 | S65 | a video renamed outside vid2sub, its sidecar under the old name | the sidecar re-linked by identity (§8.3) | optional | nothing is lost: renaming the video back finds it ([Q&A item 23](2026-10-14-vid2sub-qa.md)) |
+| S67 | a show with its subtitles burned into the picture | the burned-in text read by OCR (frames, the subtitle band cropped, Chinese OCR, timing from text changes) as a source track, beside or instead of speech recognition | optional | a new engine; waits for §13.4's split and §8.6's threshold to show how much is still missing ([Q&A item 38](2026-10-14-vid2sub-qa.md)) |
 
 ## Open items and risks
 
@@ -430,6 +431,7 @@ targets = ["en"]
 formats = ["srt"]
 youtube_dir = "~/Movies/vid2sub"
 cache_max_gb = 20
+# vad_threshold = 0.5   # lower finds more speech under music (§8.6)
 ```
 
 ### 5.2 Validation
@@ -685,7 +687,10 @@ Silero VAD v6 (ONNX) on onnxruntime with numpy, using the model file and the tor
 `get_speech_timestamps` vendored from `faster-whisper` (MIT). ffmpeg's `silencedetect` is
 energy-only and fails under music; the `silero-vad` PyPI package needs torch (council). Speech
 regions are kept in the transcript's `meta` so the cue builder can drop words that fall in
-non-speech (§12.5).
+non-speech (§12.5). The speech threshold defaults lower than Silero's 0.5, to catch dialogue
+under music; its value is measured on a real episode (Phase 2 Task 27), and it is settable as
+`[defaults] vad_threshold` in `vid2sub.toml` and per run with `--vad-threshold` (Dan,
+2026-11-02).
 
 ### 8.7 Chunking
 
@@ -953,7 +958,12 @@ translations (§16). No file names or titles.
 
 ### 13.4 Timing and pairing
 
-- A translation cue's time is the span of its `src` cues, unless the user detaches it.
+- A translation cue's time is the span of its `src` cues, unless the user detaches it. An item
+  over its `max_chars`, or whose `src` cues are more than about a second apart, is split back over
+  its `src` cues: at sentence and clause breaks, in proportion to each cue's share of the source
+  text, each part timed to its own cue. Every translation cue keeps §12.2's line width, lines and
+  longest duration (Dan, 2026-11-02, after M1's exit test showed 218-character cues spanning
+  silences).
 - Translation cues have their own ids. Each records `src` and `src_sha`, a hash of its source cues'
   text when translated.
 - **Stale:** any `src` id is gone from the source head, or `src_sha` no longer matches, or the
@@ -1187,7 +1197,7 @@ UI run from a terminal or a script.
     `--to none` writes source-language captions only), `--model ID`, `--translate-model ID`,
     `--format srt|ass…`, `--script hant|hans`, `--glossary FILE`, `--audio-track N|LANG`,
     `--keep-video`, `--skip-existing` (per target language, §15.3), `--overwrite-foreign`,
-    `--allow-cloud`, `--dry-run`, `--json`.
+    `--vad-threshold N` (§8.6), `--allow-cloud`, `--dry-run`, `--json`.
   - **Unattended detection:** with `--from auto` and no `--model`, each input is detected and
     routed as on the Review screen (§10, §11.2), without asking. The sampled files' choices apply
     to the rest of their folder. `--on-uncertain proceed|skip|stop` (default `skip`) decides what
