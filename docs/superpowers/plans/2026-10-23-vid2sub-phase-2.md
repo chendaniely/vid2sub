@@ -34,8 +34,8 @@ ffmpeg ≥6 for the playback audio.
 
 **Now:** waiting on Dan: Task 1, Step 2
 
-**Run order:** Task 1, then Task 25 (added after the plan's approval, Q&A item 34), then Task 2
-onward. Task 25's tests raise every later task's `make check` count by their own number: the
+**Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
+36 and 37), then Task 2 onward. Task 25's tests raise every later task's `make check` count by their own number: the
 later listings were built without it.
 
 ## Decisions made while planning (review these)
@@ -174,6 +174,17 @@ later listings were built without it.
     time left; a line per finished stage stays above it. Output that isn't a terminal gets that
     plain line per finished stage, with no bar and no title (M1 printed none there), and `--json`
     is unchanged. No new dependency. §18.2 says so.
+39. **An English item over its limit, or spread over cues more than about a second apart, is
+    split back over its source cues** (Task 26; Dan, Q&A item 36): at sentence and clause breaks,
+    in proportion to each cue's share of the source text, each part timed to its own cue, and
+    every translation cue keeps §12.2's line width, lines and longest duration. M1's exit test
+    found 218-character English cues and one shown for 31 s across a 27-second silence. §13.4
+    says so.
+40. **The speech detector's threshold defaults lower, measured on E01** (Task 27; Dan, Q&A item
+    37): Silero's 0.5 found 16.5 of 45.6 minutes as speech and skipped dialogue under music; the
+    task transcribes what lower thresholds add on that episode and keeps the lowest whose
+    additions are dialogue. `[defaults] vad_threshold` in `vid2sub.toml` and `--vad-threshold`
+    set it per show and per run. §8.6, §5.1 and §18.1 say so.
 
 ## Global Constraints
 
@@ -1359,7 +1370,7 @@ Co-Authored-By: <the model's own line>
   and §18.2 already says what this task builds.
 
   Then the close, its own commit. It holds this plan with this task's boxes ticked, the **Run
-  order** note's count, and **Now** set to `Task 2: Edit operations, open.`. It also holds the
+  order** note's count, and **Now** set to `Task 26: English cues split back over their source cues, open.`. It also holds the
   spec's row S66 with *Phase and task* `Phase 2, Task 25` and status `built` (proof
   `tests/test_cli_progress.py`). The message goes in `.git/CLOSE_MSG`:
 
@@ -1380,6 +1391,37 @@ Co-Authored-By: <the model's own line>
 
   `git add docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md
   docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/CLOSE_MSG`.
+
+***
+
+### Task 26: English cues split back over their source cues
+
+**Tier:** 2 · **Scenarios:** S68 · Runs after Task 25 (Q&A item 36)
+
+**Interfaces:**
+- Consumes: M1's translation (`vid2sub.translate`: batches of about 40 source cues, items
+  `{"src": [ids…], "text": …}` with `max_chars`, the validator that items partition the batch,
+  `cues_body` for the translation track) and `vid2sub.subs`' line breaking and §12.2's rules; the
+  chunk and batch events Task 25 draws.
+- Produces: translation cues within §12.2's rules, each item over its limit, or spread over cues
+  more than about a second apart, split back over its source cues (Decision 39).
+
+<!-- steps: written in the next pass -->
+
+***
+
+### Task 27: The speech detector's threshold, measured on a real episode
+
+**Tier:** 2 · **Scenarios:** S69 · Runs after Task 26 (Q&A item 37)
+
+**Interfaces:**
+- Consumes: `media.vad.speech_regions(samples, *, threshold=…)`, the pipeline's call to it and
+  `VAD_ID` in the pipeline's version hash; `config`'s `[defaults]`; `run`'s options; E01's audio
+  for the measurement (Dan's episode, read only, never committed).
+- Produces: the measured default threshold, `[defaults] vad_threshold`, `--vad-threshold N`
+  (Decision 40).
+
+<!-- steps: written in the next pass -->
 
 ***
 
