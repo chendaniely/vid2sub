@@ -69,7 +69,7 @@ test names.
 | S28 | a source cue edited, split, merged, nudged, inserted or deleted, then undone | the pure `subs.edit` rules apply; translations re-point and are flagged (§13.5) | Phase 2 | `tests/test_edit.py`; Playwright | planned |
 | S29 | Save | an editor rendition, a head and projection records are appended, then only vid2sub's files are rewritten | Phase 2 | `tests/test_save.py`; the exit test | planned |
 | S30 | Retranslate stale, from the editor | only the stale cues change; edited translations are kept | Phase 2 | Playwright; the exit test | planned |
-| S31 | the SRT edited in another editor, then the episode reopened | the change comes back as an `external` version and becomes the head, and the editor says so | Phase 2 | `tests/test_external.py`; the exit test | planned |
+| S31 | the SRT edited in another editor, then the episode reopened | the change comes back as an `external` version and becomes the head, and the editor says so | Phase 2 | `tests/test_backend_open.py::test_an_outside_edit_comes_back_as_the_head_and_the_editor_says_so`; the exit test | planned |
 | S32 | two tabs, or a tab and a CLI job, save the same episode | nothing is lost; a track that diverged shows both versions for the user to pick | Phase 2 | `tests/test_save.py` | planned |
 | S33 | Enter pressed to commit a Japanese or Chinese IME candidate | the candidate is committed and no editor action fires | Phase 2 | Playwright | planned |
 | S34 | the tab crashes with unsaved edits | the `localStorage` draft is offered back; closing with unsaved edits warns first | Phase 2 | Playwright | planned |

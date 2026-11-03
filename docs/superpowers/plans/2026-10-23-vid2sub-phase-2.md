@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 5: The editor backend: opening an episode, open.
+**Now:** Task 6: The editor backend: edits and Save, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it.
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing): from Task 5's close on, every later listed count is 51 lower than the real one.
 
 ## Decisions made while planning (review these)
 
@@ -63,8 +63,10 @@ later listings were built without it.
    person asked, so it isn't "replaced automatically" (spec §13.4). **Retranslate stale** never
    replaces an edited cue (S30).
 9. **Stale follows spec §13.4 in full, as M1 does:** a cue is stale when its source changed, and
-   every unedited cue of a track is stale when the glossary or the translation model changed. So a
-   term added at Save makes the whole track stale on the next open. An outside edit keeps the
+   every cue of a track is stale when the glossary or the translation model changed (an edited
+   one keeps `edited` and is never replaced automatically), unless no translator made the track
+   (an import: no model, so neither leg). So a term added at Save makes the whole track stale on
+   the next open. An outside edit keeps the
    glossary hash and model of the version its file was written from, so fixing a typo in an SRT
    marks nothing stale (Task 5, Task 6 round 6f, Task 7).
 10. **An outside edit to a file written from an older version diverges** rather than replacing the
@@ -5221,6 +5223,10 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 2 · **Scenarios:** S27, S31
 
+**Built differently:** (1) `backend.setup_changed` returns False when the version's model is None (an import, or an editor's or outside version of one): no translator made it, and M1 never retranslates it (Spec review Important 1; fix round 1, commit a935a2c). Three of this task's view tests name `en_model="gemma"` for that reason, and a fourth guards the import. (2) No `OSError` leaves `open` with a path: an unreadable glossary opens with `glossary=None` and the note `couldn't read vid2sub.glossary.toml (<strerror>)`, and `store.load`, `identify` and the twin scan raise the path-free `OpenError` through `_files_error` (Spec review Minor 5, raised to Important; commit e1cabc1). The listings below are as planned.
+
+**Ruling:** Decision 9 now says "in full, as M1 does" and no more: every cue of a track is stale when the glossary or the translation model changed, an edited one keeps `edited` and is never replaced, and a track no translator made (an import) has neither leg (Spec review Minor 3, ruled by the controller).
+
 **Files:**
 - Create: `src/vid2sub/web/__init__.py`, `src/vid2sub/web/backend.py`, `src/vid2sub/web/views.py`
 - Create: `tests/episodes.py` (M1-shaped episodes for the editor's tests; Tasks 6 and 7 use it)
@@ -5300,8 +5306,8 @@ Co-Authored-By: <the model's own line>
   `ca…`, `cb…`); `LINES`, `ENGLISH`; `source_cues(n)`, `translation_cues(source)`,
   `header_of(video)`, `track_body(cues, track, *, role, engine="vid2sub", model=None)`.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
-- [ ] **Step 1: Write the failing test,** in two files. First `tests/episodes.py`, the episodes
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 1: Write the failing test,** in two files. First `tests/episodes.py`, the episodes
   the editor's tests open (built with store's own functions in the shape M1 writes):
 
 ```python
@@ -5626,9 +5632,9 @@ def test_an_episode_holds_tracks_the_edit_rules_take(backend, video):
     assert isinstance(ep.tracks, Tracks) and set(ep.tracks.translations) == {"en"}
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_backend_open.py -q`. Expected:
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_backend_open.py -q`. Expected:
   `E   ModuleNotFoundError: No module named 'vid2sub.web'` and `1 error`.
-- [ ] **Step 3: Write the code.** `src/vid2sub/web/__init__.py` (Tasks 8–11 add modules to this
+- [x] **Step 3: Write the code.** `src/vid2sub/web/__init__.py` (Tasks 8–11 add modules to this
   package):
 
 ```python
@@ -5885,10 +5891,10 @@ def _audio_track(p: Probe, transcript: RenditionRecord | None, info: naming.Trac
     return pick_track(p, info.lang if info else None)
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_backend_open.py -q` first
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_backend_open.py -q` first
   (`22 passed`), then `make check`. Expected: `566 passed, 2 skipped, 4 deselected` twice (the
   local zone, then UTC), `All checks passed!` and `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 the editor's backend opens an M1 episode from its sidecar and keeps outside edits
@@ -5925,7 +5931,7 @@ Co-Authored-By: <the model's own line>
   tests/test_backend_open.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1
   --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 6: Write the failing test,** `tests/test_views.py`:
+- [x] **Step 6: Write the failing test,** `tests/test_views.py`:
 
 ```python
 import dataclasses
@@ -6120,10 +6126,10 @@ def test_a_two_hour_episode_opens_and_becomes_a_view_in_under_a_second(tmp_path)
     assert elapsed < 1.0, f"{elapsed:.2f} s"
 ```
 
-- [ ] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_views.py -q`. Expected:
+- [x] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_views.py -q`. Expected:
   `E   ImportError: cannot import name 'views' from 'vid2sub.web' (…/src/vid2sub/web/__init__.py)`
   and `1 error`.
-- [ ] **Step 8: Write the code,** `src/vid2sub/web/views.py`:
+- [x] **Step 8: Write the code,** `src/vid2sub/web/views.py`:
 
 ```python
 """The editor's view of an episode: plain JSON for the React frontend (spec §19.1, §20, §12.5).
@@ -6253,11 +6259,11 @@ def _label(track: str) -> str:
     return name + _SCRIPTS.get(info.script or "", "")
 ```
 
-- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_views.py -q` first
+- [x] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_views.py -q` first
   (`14 passed`; the two-hour test took about 0.08 s where this listing was built: 0.06 s to open,
   0.02 s for the view), then `make check`. Expected: `580 passed, 2 skipped, 4 deselected` twice,
   `All checks passed!` and `no leaks found`.
-- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 the editor's view lists one row per source cue with its translations, flags and words, as JSON
@@ -6291,7 +6297,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/web/views.py tests/test_views.py`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 11: Write the failing tests:** a translation made with another glossary or model is
+- [x] **Step 11: Write the failing tests:** a translation made with another glossary or model is
   stale (spec §13.4). Replace `tests/test_views.py` with this version (the `episode` helper
   gains the glossary and model; each track says `all_stale`; six new tests above the two-hour
   test):
@@ -6782,11 +6788,11 @@ def test_a_cloud_model_is_never_the_one_retranslate_would_use_unasked(tmp_path, 
     assert ep.translate_model is None
 ```
 
-- [ ] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_views.py
+- [x] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_views.py
   tests/test_backend_open.py -q`. Expected: `E       TypeError: Episode.__init__() got an
   unexpected keyword argument 'glossary'` (19 times), `E       AttributeError: 'Episode' object
   has no attribute 'glossary'` and `… 'translate_model'`, and `24 failed, 22 passed`.
-- [ ] **Step 13: Write the code.**
+- [x] **Step 13: Write the code.**
   In `src/vid2sub/web/backend.py`, replace the module docstring
 
 ```python
@@ -7092,10 +7098,10 @@ def _label(track: str) -> str:
     return name + _SCRIPTS.get(info.script or "", "")
 ```
 
-- [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_views.py
+- [x] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_views.py
   tests/test_backend_open.py -q` first (`46 passed`), then `make check`. Expected: `590
   passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
-- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 a translation made with another glossary or model shows every cue stale, as spec §13.4 says
@@ -7133,7 +7139,7 @@ Co-Authored-By: <the model's own line>
   tests/test_backend_open.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1
   --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*); the forward review over Tasks 6, 7, 10, 14, 16 and 17 (Task 6 adds
   `apply`, `undo`, `redo`, `save` and `resolve` on this `Episode`, reading `heads`, `base` and
   `sidecar`; Task 7's `retranslate` reads `stale_ids` and `untranslated` as this view does;
@@ -10732,12 +10738,13 @@ is never replaced automatically.
   the previous record again (at a microsecond time, so it never merges
   into the record it copies), and the file counts as the version it
   holds.
-- The external version had model None and no glossary_sha, so one typo
-  fixed in en.srt made every English cue stale (§13.4's model and
-  glossary legs) and Retranslate stale would redo every unedited one. It
-  now copies the model and payload.glossary_sha of the version its file
-  was written from, as editor versions copy their head's: a text edit
-  changes neither.
+- The external version had model None and no glossary_sha, and since
+  Task 5's round 1 a version with no model escapes both of §13.4's legs,
+  so a glossary or model changed after an outside edit never flagged the
+  track, and Retranslate stale would keep it. It now copies the model and
+  payload.glossary_sha of the version its file was written from, as
+  editor versions copy their head's: a text edit changes neither, so the
+  track keeps both legs.
 - align_ids flagged a changed line `edited` only when it kept its times
   (within 100 ms); a line the person added, or reworded and retimed, got
   no flag and no src, so Retranslate stale could replace it through the
@@ -20921,8 +20928,12 @@ def track_setup(ep: Episode, track: str) -> tuple[str, str | None]:
 def setup_changed(setup: tuple[str, str | None], glossary_sha: str | None,
                   model: str | None) -> bool:
     """Spec §13.4's other two legs, as M1 decides them: the glossary's hash, or the model, isn't
-    the one the cues were made with. A leg whose current value is unknown (None) is left out."""
+    the one the cues were made with. A leg whose current value is unknown (None) is left out, and
+    both are when the version has no model: no translator made it (an import, or an editor's or
+    an outside version of one), and M1 never retranslates what it didn't make."""
     made_sha, made_model = setup
+    if made_model is None:
+        return False
     return ((glossary_sha is not None and made_sha != glossary_sha)
             or (model is not None and made_model != model))
 
@@ -39942,3 +39953,7 @@ fi
 | Task 27 (review) | Minor | `src/vid2sub/pipeline.py` | When an episode's sidecar already has a source track, run reuses it, so --vad-threshold or a changed vad_threshold is silently ignored; say so in run's output (and on the Review screen in Phase 3), naming how to re-transcribe | open |
 | Task 3 (review) | Minor | `src/vid2sub/media/preview.py` | Two playback_audio calls for different keys at once can evict each other's half-made entry, so one fails and is retried; keep every entry being made (a marker file, or the keys in flight) from eviction | open |
 | Task 4 (review) | Minor | `src/vid2sub/pipeline.py` | Decision 7 lets a running ffmpeg or yt-dlp finish its step on Cancel, where spec §17.3 says Cancel "kills child processes"; a YouTube download or a long decode isn't always short. Settle with Dan: kill the child on Cancel, or reword §17.3 | open |
+| Task 5 (review) | Minor | `src/vid2sub/web/backend.py` | A translation made by a cloud model (`--allow-cloud`) opens all stale, because the route's pick is local-only (`allow_cloud=False`) and never equals the cloud model; Retranslate stale would redo the track locally. Settle with Dan: accept it, or leave the model leg out for a head whose model is a cloud catalog entry | open |
+| Task 5 (review) | Minor | `src/vid2sub/web/backend.py` | `_lang` is defined in both `backend.py` and `views.py`; Task 14 may unify them | open |
+| Task 5 (review) | Minor | `src/vid2sub/web/backend.py` | `Episode` is frozen yet holds lists, sets and dicts, so a caller can still change one in place; use tuples, frozensets and mappingproxies, or say so | open |
+| Task 5 (review) | Minor | `src/vid2sub/web/backend.py` | `load_tracks` types its inner dict as `dict[str, tuple]`, and `_audio_track` has no return type | open |
