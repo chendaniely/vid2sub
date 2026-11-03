@@ -55,7 +55,10 @@ stale never replaces a translation a person edited (§13.4); naming a cue does, 
 person asking. Translations are replaced in whole groups: every source cue a replaced translation
 covers is translated with it, and a translation whose time overlaps the cues being translated is
 replaced too (a cue inserted inside a translation that spans two cues), so the track never
-overlaps; where that would replace an edited translation, those cues are left as they are.
+overlaps; where that would replace an edited translation, those cues are left as they are. When
+the glossary or the model this call uses isn't the one the track was made with, every unedited
+cue is stale (§13.4, as M1 decides it); once a retranslation has redone them all, the track counts
+as made with the new pair, which Save records, for as long as none of the cues it replaced is back.
 """
 
 from __future__ import annotations
@@ -158,6 +161,7 @@ class Episode:
     redo: list[tuple[Tracks, dict[str, str]]] = field(default_factory=list)
     taken: set[str] = field(default_factory=set)
     glossary_adds: dict[str, str] = field(default_factory=dict)
+    made_with: dict[str, tuple[str, str | None]] = field(default_factory=dict)  # since a redo-all
 
     @property
     def dirty(self) -> bool:
@@ -296,7 +300,8 @@ class LocalBackend:
         source_key, tracks, heads, in_conflict = load_tracks(side)
         saved = replace(ep, sidecar=side, source_key=source_key, tracks=tracks, base=tracks,
                         heads=heads, conflicts=in_conflict, undo=[], redo=[],
-                        taken=ep.taken | cue_ids(side), glossary_adds=adds, glossary=glossary)
+                        taken=ep.taken | cue_ids(side), glossary_adds=adds, glossary=glossary,
+                        made_with={})
         return saved, SaveResult(tuple(written), tuple(foreign), tuple(conflicts),
                                  tuple(notes + glossary_notes))
 
@@ -351,31 +356,37 @@ class LocalBackend:
                     on_batch: Callable[[int, int], None] | None = None) -> Episode:
         """`ids=None`: every stale or untranslated source cue, never replacing an edited
         translation; else those source cues, whatever their translation. One undo step; `ep`
-        itself when there's nothing to translate. Blocks on the model's server. Raises EditError
-        (a track in conflict, an unknown track or cue), EngineError (no usable model, a cloud
-        model this call doesn't allow, the server down or refusing: `.hint` names the fix),
-        TranslationFailed, or GlossaryError (a glossary beside the video vid2sub can't read);
-        nothing changes then."""
+        itself when there's nothing to translate (no model is asked to translate; with none
+        named, the route's servers are asked which models they serve). Blocks on the network.
+        Raises EditError (a track in conflict, an unknown track or cue), EngineError (no usable
+        model, a cloud model this call doesn't allow, the server down or refusing: `.hint` names
+        the fix), TranslationFailed, or GlossaryError (a glossary beside the video vid2sub can't
+        read); nothing changes then."""
         self._check_open(ep)
         if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
             raise EditError("there's no such track")
         _editable(ep, track)
         if track not in ep.tracks.translations:
             raise EditError(f"there is no {track} track")
-        source, cues = ep.tracks.source, ep.tracks.translations[track]
-        wanted, replaced = retranslation(source, cues, ids)
-        if not wanted:
+        if ids is not None and not ids:
             return ep
+        source, cues = ep.tracks.source, ep.tracks.translations[track]
         lang = _lang(ep.source_key)
         name = self._translator(lang, model, allow_cloud)
         entry = self.config.models[name]
+        glossary = glossary_with(read_glossary(ep.video), ep.glossary_adds)
+        everything = ids is None and setup_changed(track_setup(ep, track), glossary.sha(),
+                                                   entry.model)
+        wanted, replaced = retranslation(source, cues, ids, everything=everything)
+        if not wanted:
+            return ep
         policy = RunPolicy(allow_cloud)
         check_allowed(name, entry, self.config, policy)
         ask = make_ask(name, entry, self.config, policy, self.keys)
         taken = set(ep.taken)
         new = translate_cues(source, source_lang=lang, target_track=track,
-                             glossary=glossary_with(read_glossary(ep.video), ep.glossary_adds),
-                             ask=ask, only=wanted, taken=taken, on_batch=on_batch)
+                             glossary=glossary, ask=ask, only=wanted, taken=taken,
+                             on_batch=on_batch)
         result = tuple(sorted([c for c in cues if c.id not in replaced] + new,
                               key=lambda c: (c.start_ms, c.end_ms)))
         try:
@@ -383,7 +394,9 @@ class LocalBackend:
         except TrackError as err:
             raise EditError(f"the {track} track would break: {err}") from None
         tracks = Tracks(source, {**ep.tracks.translations, track: result})
-        return replace(ep, tracks=tracks, taken=taken, redo=[],
+        made_with = ({**ep.made_with, track: (glossary.sha(), entry.model)} if everything
+                     else ep.made_with)
+        return replace(ep, tracks=tracks, taken=taken, made_with=made_with, redo=[],
                        undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
 
     def _translator(self, lang: str, model: str | None, allow_cloud: bool) -> str:
@@ -440,18 +453,19 @@ def _files_error(err: OSError) -> OpenError:
                      + (f" ({err.strerror})" if err.strerror else ""))
 
 
-def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str] | None
-                  ) -> tuple[list[str], set[str]]:
+def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str] | None, *,
+                  everything: bool = False) -> tuple[list[str], set[str]]:
     """The source cue ids to translate, in order, and the translation cue ids they replace.
 
     Whole groups, so the new cues never overlap the kept ones: a replaced translation brings
     every source cue it covers, and a translation that covers a cue being translated, or whose
     time overlaps a run of them, is replaced too. With `ids=None` an edited translation is never
-    replaced; the cues it would have brought in are left out instead."""
+    replaced; the cues it would have brought in are left out instead. `everything`: the track
+    was made with another glossary or model, so with `ids=None` every cue of it is stale."""
     order = {c.id: k for k, c in enumerate(source)}
     by_id = {c.id: c for c in source}
     if ids is None:
-        stale = stale_ids(cues, by_id)
+        stale = {c.id for c in cues} if everything else stale_ids(cues, by_id)
         wanted = {i for c in cues if c.id in stale and "edited" not in c.flags
                   for i in c.src or () if i in by_id}
         wanted |= set(untranslated(list(order), cues))
@@ -545,7 +559,8 @@ def _versions(ep: Episode, side: Sidecar) -> list:
             raise SaveError("the subtitles' history was replaced since this episode was opened: "
                             "reopen it")
         body = _editor_body(renditions[parent].body, cues, is_source=is_source, created_at=now,
-                            inputs={} if is_source or not source_rid else {"source": source_rid})
+                            inputs={} if is_source or not source_rid else {"source": source_rid},
+                            setup=track_setup(ep, track))
         rec = make_rendition([parent], track, body)
         if is_source:
             source_rid = rec.id
@@ -578,15 +593,17 @@ def _words(transcript: RenditionRecord | None) -> tuple[Word, ...]:
 
 
 def _editor_body(head: dict, cues: Sequence[Cue], *, is_source: bool, created_at: str,
-                 inputs: dict[str, str]) -> dict:
-    """The head's language, script and glossary hash; its model too, since the cues the person
-    didn't touch are still that model's, and M1 reads a changed model as every cue stale."""
+                 inputs: dict[str, str], setup: tuple[str, str | None]) -> dict:
+    """The head's language and script, and the glossary hash and model the cues were made with
+    (`track_setup`): the head's, or a retranslation's that redid them all; M1 reads a changed
+    glossary or model as every cue stale."""
     payload = head.get("payload", {})
+    glossary_sha, model = setup
     return cues_body(cues, language=payload["language"], script=payload.get("script"),
-                     engine="editor", model=head.get("model"), version=f"editor@{__version__}",
+                     engine="editor", model=model, version=f"editor@{__version__}",
                      created_at=created_at, inputs=inputs,
                      meta={"role": "source" if is_source else "translation"},
-                     glossary_sha=payload.get("glossary_sha"))
+                     glossary_sha=glossary_sha or None)
 
 
 def _project(video: Path, header: Header, side: Sidecar, tracks: Sequence[str],
@@ -648,7 +665,8 @@ def _with_track(ep: Episode, side: Sidecar, track: str) -> Episode:
         conflicts[track] = head.leaves
         heads.pop(track, None)
     return replace(ep, sidecar=side, heads=heads, conflicts=conflicts, tracks=tracks, base=base,
-                   words=words, undo=[], redo=[], taken=ep.taken | cue_ids(side))
+                   words=words, undo=[], redo=[], taken=ep.taken | cue_ids(side),
+                   made_with={k: v for k, v in ep.made_with.items() if k != track})
 
 
 def _put(t: Tracks, track: str, cues: tuple[Cue, ...], source_key: str) -> Tracks:
@@ -855,7 +873,15 @@ def glossary_with(glossary: Glossary, adds: dict[str, str]) -> Glossary:
 
 
 def track_setup(ep: Episode, track: str) -> tuple[str, str | None]:
-    """The glossary hash ("" for none) and the model the track's cues were made with."""
+    """The glossary hash ("" for none) and the model the track's cues were made with: those of a
+    retranslation that redid every unedited cue, while none of the cues it replaced is back (an
+    undo), else its head's."""
+    made = ep.made_with.get(track)
+    if made is not None:
+        before = {c.id for c in ep.base.translations.get(track, ())}
+        if not any(c.id in before for c in ep.tracks.translations.get(track, ())
+                   if "edited" not in c.flags):
+            return made
     body = ep.sidecar.renditions()[ep.heads[track]].body
     return body.get("payload", {}).get("glossary_sha") or "", body.get("model")
 

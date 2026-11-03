@@ -14,9 +14,11 @@ from vid2sub.engines.base import EngineError
 from vid2sub.engines.clients import KeyRing
 from vid2sub.media.tools import Tools
 from vid2sub.subs.edit import EditError
+from vid2sub.subs.glossary import parse_glossary
 from vid2sub.subs.model import Cue, check_track
 from vid2sub.subs.translate_shape import src_sha
 from vid2sub.web import backend as web_backend
+from vid2sub.web import views
 from vid2sub.web.backend import LocalBackend
 from vid2sub.web.ops import parse_op
 
@@ -194,6 +196,63 @@ def test_a_track_in_conflict_or_an_unknown_one_cant_be_retranslated(backend, vid
 def test_a_named_cue_that_isnt_in_the_source_is_refused_without_echoing_it(backend, video, asked):
     with pytest.raises(EditError, match="^one of those cues isn't in the source track$"):
         backend.retranslate(backend.open(str(video)), "en", ids=["<script>"])
+
+
+# Spec §13.4's other two legs: a track made with another glossary or model is stale throughout
+
+TERMS = '[terms]\n"工藤新一" = "Shinichi Kudo"\n'
+
+
+def stale_flags(ep) -> list[bool]:
+    return ["stale" in c["flags"]
+            for row in views.episode_view(ep, video_url=None, audio_url=None)["rows"]
+            for c in row["tr"]["en"]["cues"]]
+
+
+def test_retranslating_stale_redoes_every_unedited_cue_when_the_glossary_changed(backend, video,
+                                                                                asked):
+    video.with_name("vid2sub.glossary.toml").write_text(TERMS, encoding="utf-8")
+    ep = edit(backend, backend.open(str(video)), op="set_translation_text", track="en",
+              cue=tid(1), text="How have you been?")
+    out = backend.retranslate(ep, "en", ids=None)
+    assert asked == [[sid(0)], [sid(2)]]
+    assert en(out)[1] == (tid(1), "How have you been?")
+
+
+def test_retranslating_stale_redoes_every_unedited_cue_when_the_model_changed(tmp_path, video,
+                                                                             asked):
+    newer = GEMMA.model_copy(update={"model": "gemma-2"})
+    backend = make_backend(tmp_path, Config(endpoints={"spark": Endpoint(
+        base_url="http://127.0.0.1:9/v1")}, models={"gemma": newer}))
+    backend.retranslate(backend.open(str(video)), "en", ids=None)
+    assert asked == [[sid(0), sid(1), sid(2)]]
+
+
+def test_the_model_leg_compares_with_the_model_this_retranslation_uses(tmp_path, video, asked):
+    other = GEMMA.model_copy(update={"model": "other-model"})
+    backend = make_backend(tmp_path, Config(endpoints={"spark": Endpoint(
+        base_url="http://127.0.0.1:9/v1")}, models={"gemma": GEMMA, "other": other}))
+    ep = backend.open(str(video))
+    assert backend.retranslate(ep, "en", ids=None) is ep and asked == []
+    backend.retranslate(ep, "en", ids=None, model="other")
+    assert asked == [[sid(0), sid(1), sid(2)]]
+
+
+def test_after_retranslating_everything_and_saving_nothing_is_stale_any_more(backend, video,
+                                                                            asked):
+    video.with_name("vid2sub.glossary.toml").write_text(TERMS, encoding="utf-8")
+    ep = backend.open(str(video))
+    assert stale_flags(ep) == [True] * 3
+    out = backend.retranslate(ep, "en", ids=None)
+    assert stale_flags(out) == [False] * 3
+    assert stale_flags(backend.undo(out)) == [True] * 3  # undone: the old glossary's again
+    saved, _ = backend.save(out, formats=["srt"])
+    body = store.load(video)[0].renditions()[saved.heads["en"]].body
+    assert (body["payload"]["glossary_sha"], body["model"]) == (parse_glossary(TERMS).sha(),
+                                                                "gemma")
+    reopened = backend.open(str(video))
+    assert stale_flags(saved) == stale_flags(reopened) == [False] * 3
+    assert backend.retranslate(reopened, "en", ids=None) is reopened and len(asked) == 1
 
 
 # The model: chosen as M1 chooses it, cloud only when this call allows it (spec §7.2, §11.2)
