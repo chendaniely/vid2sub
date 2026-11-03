@@ -32,7 +32,7 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 3: The cache and the playback audio, open.
+**Now:** Task 4: The job queue, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
@@ -3699,6 +3699,8 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 1 · **Scenarios:** S43, S46
 
+**Built differently:** the module docstring of `src/vid2sub/media/preview.py` claimed an entry being made is never evicted; only the entry just made is kept, so the docstring says so (Tier 1 review, fix round 1, commit 3cc00bc). The listing above is as planned.
+
 **Files:**
 - Create: `src/vid2sub/cache.py`, `src/vid2sub/media/preview.py`,
   `src/vid2sub/commands/cache.py`
@@ -3731,8 +3733,8 @@ Co-Authored-By: <the model's own line>
   - `vid2sub doctor` gains a non-essential `cache` check, detail `<used> MB of <cap> GB`, in its
     human and `--json` output.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
-- [ ] **Step 1: Write the failing test,** `tests/test_cache.py`:
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 1: Write the failing test,** `tests/test_cache.py`:
 
 ```python
 import os
@@ -3846,9 +3848,9 @@ def test_a_missing_cache_is_empty(tmp_path):
     assert not (tmp_path / "never-made").exists()
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_cache.py -q`. Expected:
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_cache.py -q`. Expected:
   `E   ImportError: cannot import name 'cache' from 'vid2sub'` and `1 error`.
-- [ ] **Step 3: Write the code,** `src/vid2sub/cache.py`:
+- [x] **Step 3: Write the code,** `src/vid2sub/cache.py`:
 
 ```python
 """The cache of playback audio and preview copies, one folder per video (spec §8.9).
@@ -3961,7 +3963,7 @@ def _remove(folder: Path) -> int:
     return before - (_bytes(folder) if folder.exists() else 0)
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_cache.py -q` first
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_cache.py -q` first
   (`14 passed` on macOS and Linux; Windows skips two), then the guard checks, then `make check`.
   **Guard checks** (data loss): in `Cache._entries`, change the return line to
   `return [p for p in found if _is_real_dir(p)]`; `uv run pytest tests/test_cache.py -q` gives
@@ -3971,7 +3973,7 @@ def _remove(folder: Path) -> int:
   `FAILED tests/test_cache.py::test_clear_never_follows_a_symlink - assert 3300 ...`; restore
   all three. `make check`. Expected: `520 passed, 2 skipped, 4 deselected` twice (the local zone,
   then UTC), `All checks passed!` and `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(cache): 🤖 the cache keeps one private folder per video and drops the least recently used past its cap
@@ -4004,7 +4006,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/cache.py tests/test_cache.py`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 6: Write the failing test,** in two parts. First, in `tests/helpers.py`, replace the
+- [x] **Step 6: Write the failing test,** in two parts. First, in `tests/helpers.py`, replace the
   whole `make_clip` function (from `def make_clip(` to its `return out`) with:
 
 ```python
@@ -4157,9 +4159,9 @@ def test_a_negative_track_index_is_refused(clip, cache):
         make(clip, cache, -1)
 ```
 
-- [ ] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_playback.py -q`. Expected:
+- [x] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_playback.py -q`. Expected:
   `E   ImportError: cannot import name 'preview' from 'vid2sub.media'` and `1 error`.
-- [ ] **Step 8: Write the code,** `src/vid2sub/media/preview.py`, with the file tools (a hook
+- [x] **Step 8: Write the code,** `src/vid2sub/media/preview.py`, with the file tools (a hook
   blocks shell commands that name `src/vid2sub/media/`):
 
 ```python
@@ -4208,7 +4210,7 @@ def playback_audio(video: Path, *, key: str, audio_index: int, tools: Tools, cac
     return out
 ```
 
-- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_playback.py
+- [x] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_playback.py
   tests/test_decode.py tests/test_probe.py -q` first (`25 passed`: the old media tests still pass
   with the new `make_clip`), then the metadata check, then `make check`. **Metadata check:** with
   the file tools, delete `"-map_metadata", "-1",` and `"-map_chapters", "-1",` from the ffmpeg
@@ -4216,7 +4218,7 @@ def playback_audio(video: Path, *, key: str, audio_index: int, tools: Tools, cac
   tests/test_playback.py::test_an_ac3_track_becomes_aac_stereo_in_mp4_with_no_title_or_chapters`;
   restore both. `make check`. Expected: `526 passed, 2 skipped, 4 deselected` twice, `All checks
   passed!` and `no leaks found`.
-- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(media): 🤖 an episode's audio track becomes a metadata-free AAC stereo .m4a in the cache, made once
@@ -4255,7 +4257,7 @@ Co-Authored-By: <the model's own line>
   rather than rephrasing the command), `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 11: Write the failing test.** Replace `tests/test_cache.py` with this version:
+- [x] **Step 11: Write the failing test.** Replace `tests/test_cache.py` with this version:
   Step 1's file plus `import json`, `from vid2sub.cli import main`, and the tests from
   `def home_cache` down.
 
@@ -4407,11 +4409,11 @@ def test_doctor_reports_the_cache_size_against_its_cap(home_cache, tmp_path, cap
     assert "✓ cache: 2.5 MB of 20 GB" in capsys.readouterr().out.splitlines()
 ```
 
-- [ ] **Step 12: Run it; watch it fail.** `uv run pytest tests/test_cache.py -q`. Expected:
+- [x] **Step 12: Run it; watch it fail.** `uv run pytest tests/test_cache.py -q`. Expected:
   `E           argparse.ArgumentError: argument COMMAND: invalid choice: 'cache' (choose from
   run, detect, translate, import, write, models, doctor, config)` (twice), `E       KeyError:
   'cache'`, and `3 failed, 14 passed`.
-- [ ] **Step 13: Write the code.** `src/vid2sub/commands/cache.py`:
+- [x] **Step 13: Write the code.** `src/vid2sub/commands/cache.py`:
 
 ```python
 """`vid2sub cache clear`: empty the cache of playback audio and preview copies (spec §8.9, §18.1).
@@ -4485,11 +4487,11 @@ def _cache(config: Config) -> Check:
                  essential=False)
 ```
 
-- [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_cache.py
+- [x] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_cache.py
   tests/test_doctor_config.py tests/test_cli_scaffold.py -q` first (`27 passed`), then
   `make check`. Expected: `529 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
   `no leaks found`.
-- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(cli): 🤖 vid2sub cache clear empties the cache, and vid2sub doctor shows the cache's size against its cap
@@ -4515,7 +4517,7 @@ Co-Authored-By: <the model's own line>
   tests/test_cache.py`, `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'`
   shows `Plan:`.
 
-- [ ] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
   kickoff council, because it deletes cache folders with rmtree); the forward review over Tasks 5,
   10, 11 and 23 (Task 5's `LocalBackend` takes a `Cache` and its `Episode.audio_index` is the `a:N`
@@ -39938,3 +39940,4 @@ fi
 | Task 25 (planning) | Minor | `src/vid2sub/commands/_progress.py` | A title's bidi control characters reach the bar as they already reach M1's result line, so a crafted name could reorder what the terminal shows; strip them for display (Task 25's build) | open |
 | Task 1 (planning) | Important | `docs/superpowers/specs/2026-10-14-vid2sub-design.md` | M1's exit test steps still owed (Dan had no Japanese episode or YouTube link, and Cantonese waits for the Spark): a Cantonese episode (S01, on the Spark once local-ai issue #35 serves Qwen3-ASR), a Japanese episode (S02, with Open items' reading-speed and routing notes), a real YouTube download (S03), a season run twice, the second with `--skip-existing` (S04), and Plex's codes and Jellyfin's `zh-CN` (S05); each passing step sets its row to `verified` in §29 (Q&A item 44) | open |
 | Task 27 (review) | Minor | `src/vid2sub/pipeline.py` | When an episode's sidecar already has a source track, run reuses it, so --vad-threshold or a changed vad_threshold is silently ignored; say so in run's output (and on the Review screen in Phase 3), naming how to re-transcribe | open |
+| Task 3 (review) | Minor | `src/vid2sub/media/preview.py` | Two playback_audio calls for different keys at once can evict each other's half-made entry, so one fails and is retried; keep every entry being made (a marker file, or the keys in flight) from eviction | open |

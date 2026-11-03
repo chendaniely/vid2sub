@@ -84,7 +84,7 @@ test names.
 | S43 | an MKV with AC-3 audio opened in the editor | the playback audio (AAC stereo `.m4a`, made on demand) plays straight away ([Q&A item 13](2026-10-14-vid2sub-qa.md); the preview copy is S63) | Phase 2 | `tests/test_playback.py`; Playwright; the exit test | planned |
 | S44 | the Models page | the catalog, each model marked usable now or why not | Phase 3 | Playwright | planned |
 | S45 | `faster-whisper` on Windows and Linux | transcribes on CPU, or on NVIDIA with cuBLAS 12; CI passes on all three systems | Phase 3 | CI; one manual run | planned |
-| S46 | `vid2sub cache clear`, or the cache past `cache_max_gb` | cleared; the least recently used goes first ([Q&A item 13](2026-10-14-vid2sub-qa.md): with the playback audio) | Phase 2 | `tests/test_cache.py` | planned |
+| S46 | `vid2sub cache clear`, or the cache past `cache_max_gb` | cleared; the least recently used goes first ([Q&A item 13](2026-10-14-vid2sub-qa.md): with the playback audio) | Phase 2 | `tests/test_cache.py` | built |
 | S47 | Pages in Chrome: a local folder opened, edited and saved | saved next to the video through File System Access, the sidecar re-read first | Phase 4 | the Pages Playwright test; the exit test | planned |
 | S48 | Pages in Safari | edited, then the subtitle files and the sidecar downloaded | Phase 4 | the exit test | planned |
 | S49 | the Pages editor put inside a frame, or reaching for the network | it refuses to run in a frame and requests nothing outside its own files | Phase 4 | the Pages Playwright test (`Watch`) | planned |
