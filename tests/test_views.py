@@ -11,6 +11,7 @@ from vid2sub.config import Config
 from vid2sub.engines.clients import KeyRing
 from vid2sub.media.tools import Tools
 from vid2sub.subs.edit import Tracks
+from vid2sub.subs.glossary import EMPTY_GLOSSARY, parse_glossary
 from vid2sub.subs.model import Cue, Word
 from vid2sub.subs.rendition import cues_body
 from vid2sub.subs.sidecar import Header, HeadRecord, Sidecar, VideoInfo, make_rendition
@@ -21,18 +22,22 @@ VIDEO = Path("/Users/someone/Secret Shows/Show - S01E01.mkv")
 HEADER = Header(video=VideoInfo(name=VIDEO.name, size=1, quick_sha256="a" * 64,
                                 duration_ms=20_000))
 AT = "2026-10-23T10:00:00Z"
+GLOSSARY = parse_glossary('[terms]\n"工藤新一" = "Shinichi Kudo"\n')
 
 
-def body(cues, lang: str, role: str) -> dict:
-    return cues_body(cues, language=lang, script=None, engine="vid2sub", model=None,
-                     version="t", created_at=AT, inputs={}, meta={"role": role})
+def body(cues, lang: str, role: str, *, model=None, glossary_sha=None) -> dict:
+    return cues_body(cues, language=lang, script=None, engine="vid2sub", model=model,
+                     version="t", created_at=AT, inputs={}, meta={"role": role},
+                     glossary_sha=glossary_sha)
 
 
-def episode(source=None, en=None, *, records=(), **changes) -> Episode:
+def episode(source=None, en=None, *, records=(), en_model=None, en_glossary_sha=None,
+            **changes) -> Episode:
     source = tuple(source_cues(3) if source is None else source)
     en = tuple(translation_cues(source) if en is None else en)
     ja_rec = make_rendition([], "ja", body(source, "ja", "source"))
-    en_rec = make_rendition([ja_rec.id], "en", body(en, "en", "translation"))
+    en_rec = make_rendition([ja_rec.id], "en", body(en, "en", "translation", model=en_model,
+                                                    glossary_sha=en_glossary_sha))
     side = Sidecar(HEADER, (ja_rec, HeadRecord(track="ja", rendition=ja_rec.id, by="auto", at=AT),
                             en_rec, HeadRecord(track="en", rendition=en_rec.id, by="editor",
                                                at="2026-10-23T11:00:00Z"), *records))
@@ -41,7 +46,8 @@ def episode(source=None, en=None, *, records=(), **changes) -> Episode:
                   for k, t in enumerate(["おは", "よう"]))
     ep = Episode(id="e1", video=VIDEO, header=HEADER, source_key="ja", tracks=tracks,
                  heads={"ja": ja_rec.id, "en": en_rec.id}, conflicts={}, words=words, notes=[],
-                 playable_audio=True, audio_index=0, sidecar=side, base=tracks)
+                 playable_audio=True, audio_index=0, sidecar=side, base=tracks,
+                 glossary=EMPTY_GLOSSARY, translate_model=None)
     return dataclasses.replace(ep, **changes)
 
 
@@ -118,11 +124,11 @@ def test_the_tracks_say_their_role_who_set_their_head_and_whether_they_are_in_co
         HeadRecord(track="zh-Hant", rendition="r_other", by="editor", at=AT))))
     assert view(ep)["tracks"] == [
         {"key": "ja", "label": "Japanese", "role": "source", "head_by": "auto",
-         "in_conflict": False},
+         "in_conflict": False, "all_stale": False},
         {"key": "en", "label": "English", "role": "translation", "head_by": "editor",
-         "in_conflict": False},
+         "in_conflict": False, "all_stale": False},
         {"key": "zh-Hant", "label": "Mandarin (Traditional)", "role": "translation",
-         "head_by": None, "in_conflict": True},
+         "head_by": None, "in_conflict": True, "all_stale": False},
     ]
 
 
@@ -173,6 +179,47 @@ def test_a_view_is_plain_json():
     assert v["rows"][0]["tr"]["en"]["cues"][0] == {
         "id": tid(0), "start_ms": 0, "end_ms": 3000, "text": ENGLISH[0], "src": [sid(0)],
         "detached": False, "flags": []}
+
+
+# Spec §13.4: a translation made with another glossary or model is stale, as M1 decides it
+
+
+def en_flags(v: dict) -> list[list[str]]:
+    return [c["flags"] for row in v["rows"] for c in row["tr"]["en"]["cues"]]
+
+
+def test_a_translation_made_with_another_glossary_is_stale_in_every_cue():
+    v = view(episode(glossary=GLOSSARY))
+    assert en_flags(v) == [["stale"]] * 3
+    assert [t["all_stale"] for t in v["tracks"]] == [False, True]
+
+
+def test_a_translation_made_with_the_glossary_beside_the_video_is_not():
+    assert en_flags(view(episode(glossary=GLOSSARY, en_glossary_sha=GLOSSARY.sha()))) == [[]] * 3
+
+
+def test_a_glossary_term_waiting_for_save_makes_every_translation_stale():
+    ep = episode()
+    assert en_flags(view(ep)) == [[]] * 3
+    waiting = dataclasses.replace(ep, glossary_adds={"工藤新一": "Shinichi Kudo"})
+    assert en_flags(view(waiting)) == [["stale"]] * 3
+
+
+def test_a_translation_made_with_another_model_is_stale_in_every_cue():
+    assert en_flags(view(episode(en_model="gemma", translate_model="gemma-2"))) == [["stale"]] * 3
+    assert en_flags(view(episode(en_model="gemma", translate_model="gemma"))) == [[]] * 3
+
+
+def test_an_edited_translation_is_stale_too_and_keeps_its_edited_flag():
+    source = source_cues(3)
+    en = translation_cues(source)
+    en[1] = en[1].model_copy(update={"flags": ("edited",)})
+    assert en_flags(view(episode(source, en, glossary=GLOSSARY)))[1] == ["edited", "stale"]
+
+
+def test_an_unreadable_glossary_or_no_usable_model_leaves_that_leg_out():
+    ep = episode(en_model="old", en_glossary_sha="abcd1234", glossary=None, translate_model=None)
+    assert en_flags(view(ep)) == [[]] * 3
 
 
 @pytest.mark.media

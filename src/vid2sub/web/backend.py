@@ -11,7 +11,12 @@ translations hang off source cues. The spoken words come from the transcript the
 built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
 in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
 playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
-every call returns a new one, so a reactive value that holds it sees each change.
+every call returns a new one, so a reactive value that holds it sees each change. A translation
+is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
+changed, and every cue of it is when the glossary's hash or the translation model differs from
+the ones its head was made with; so the episode holds the glossary beside the video and the model
+Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
+taking every configured local server to answer (no request is made at open).
 """
 
 from __future__ import annotations
@@ -24,8 +29,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from vid2sub import detect as detecting
 from vid2sub import store
 from vid2sub.cache import Cache
+from vid2sub.catalog import suggest
 from vid2sub.config import Config
 from vid2sub.engines.clients import KeyRing
 from vid2sub.media.identity import identify
@@ -35,6 +42,7 @@ from vid2sub.pipeline import MEDIA_SUFFIXES, video_change
 from vid2sub.security import InputRefused, WriteRefused, resolve_input
 from vid2sub.subs import naming
 from vid2sub.subs.edit import Tracks
+from vid2sub.subs.glossary import EMPTY_GLOSSARY, Glossary, GlossaryError, parse_glossary
 from vid2sub.subs.model import Word
 from vid2sub.subs.rendition import cues_from_body, transcript_from_body
 from vid2sub.subs.sidecar import (
@@ -77,6 +85,8 @@ class Episode:
     audio_index: int  # among audio tracks: ffmpeg's a:N, as preview.playback_audio takes
     sidecar: Sidecar  # as of the open or the last Save
     base: Tracks  # the tracks as of the open or the last Save
+    glossary: Glossary | None  # beside the video at open; None if it couldn't be read
+    translate_model: str | None  # the model Retranslate would use with none named (offline)
     undo: list[tuple[Tracks, dict[str, str]]] = field(default_factory=list)
     redo: list[tuple[Tracks, dict[str, str]]] = field(default_factory=list)
     taken: set[str] = field(default_factory=set)
@@ -130,12 +140,18 @@ class LocalBackend:
         source_key, tracks, heads, conflicts = load_tracks(side)
         transcript = _transcript(side, heads.get(source_key))
         track = _audio_track(p, transcript, naming.TRACKS.get(source_key))
+        try:
+            glossary: Glossary | None = read_glossary(video)
+        except GlossaryError as err:
+            glossary = None
+            notes.append(f"couldn't read {naming.GLOSSARY_NAME}: {err}")
         ep = Episode(
             id="e" + secrets.token_hex(8), video=video, header=header, source_key=source_key,
             tracks=tracks, heads=heads, conflicts=conflicts,
             words=tuple(transcript_from_body(transcript.body).words()) if transcript else (),
             notes=notes, playable_audio=track.codec not in UNPLAYABLE_AUDIO,
-            audio_index=track.index, sidecar=side, base=tracks, taken=cue_ids(side))
+            audio_index=track.index, sidecar=side, base=tracks, taken=cue_ids(side),
+            glossary=glossary, translate_model=self._route_model(_lang(source_key)))
         with self._lock:
             self._open[ep.id] = video
         return ep
@@ -148,6 +164,13 @@ class LocalBackend:
         """Forgets the episode; unsaved edits in it are dropped (the tab keeps a draft, §14.5)."""
         with self._lock:
             self._open.pop(episode_id, None)
+
+    def _route_model(self, lang: str) -> str | None:
+        """The model Retranslate would use with none named and no cloud: M1's catalog route over
+        the configured models, each local server taken to answer (`probe_endpoints=False`)."""
+        cands = detecting.candidates(self.config, self.keys, probe_endpoints=False)
+        name = suggest(lang, cands, "translate", allow_cloud=False).model
+        return self.config.models[name].model if name else None
 
     def _probe(self, video: Path) -> Probe:
         try:
@@ -243,3 +266,48 @@ def _audio_track(p: Probe, transcript: RenditionRecord | None, info: naming.Trac
         if value.isdigit() and int(value) < len(p.audio):
             return p.audio[int(value)]
     return pick_track(p, info.lang if info else None)
+
+
+def read_glossary(video: Path) -> Glossary:
+    """The glossary beside the video, read as M1 reads it; EMPTY_GLOSSARY when there's none."""
+    path = video.with_name(naming.GLOSSARY_NAME)
+    if not path.is_file():
+        return EMPTY_GLOSSARY
+    try:
+        return parse_glossary(path.read_text(encoding="utf-8-sig"))
+    except UnicodeDecodeError:
+        raise GlossaryError("the glossary isn't UTF-8; save it as UTF-8") from None
+
+
+def glossary_with(glossary: Glossary, adds: dict[str, str]) -> Glossary:
+    """The glossary as it will read once Save has added `adds`: a term it has keeps its own."""
+    have = dict(glossary.terms)
+    return Glossary(glossary.description, glossary.terms + tuple(
+        (term, translation) for term, translation in adds.items() if term not in have))
+
+
+def track_setup(ep: Episode, track: str) -> tuple[str, str | None]:
+    """The glossary hash ("" for none) and the model the track's cues were made with."""
+    body = ep.sidecar.renditions()[ep.heads[track]].body
+    return body.get("payload", {}).get("glossary_sha") or "", body.get("model")
+
+
+def setup_changed(setup: tuple[str, str | None], glossary_sha: str | None,
+                  model: str | None) -> bool:
+    """Spec §13.4's other two legs, as M1 decides them: the glossary's hash, or the model, isn't
+    the one the cues were made with. A leg whose current value is unknown (None) is left out."""
+    made_sha, made_model = setup
+    return ((glossary_sha is not None and made_sha != glossary_sha)
+            or (model is not None and made_model != model))
+
+
+def all_stale(ep: Episode, track: str) -> bool:
+    """Every cue of a loaded translation track is stale: against the glossary beside the video
+    with the terms waiting for Save, and the model Retranslate would use with none named."""
+    sha = None if ep.glossary is None else glossary_with(ep.glossary, ep.glossary_adds).sha()
+    return setup_changed(track_setup(ep, track), sha, ep.translate_model)
+
+
+def _lang(track: str) -> str:
+    info = naming.TRACKS.get(track)
+    return info.lang if info else track.split("-")[0]

@@ -10,18 +10,21 @@ from episodes import (
     track_body,
     write_track,
 )
+from fakes import FakeServer
 from helpers import make_clip
 
 from vid2sub import store
 from vid2sub.cache import Cache
-from vid2sub.config import Config
+from vid2sub.config import Config, Endpoint, ModelEntry
 from vid2sub.engines.clients import KeyRing
 from vid2sub.media.tools import Tools
 from vid2sub.subs.edit import Tracks
+from vid2sub.subs.glossary import EMPTY_GLOSSARY, parse_glossary
 from vid2sub.subs.model import Cue, Segment, Transcript, Word
 from vid2sub.subs.rendition import transcript_body
 from vid2sub.subs.sidecar import HeadRecord, make_rendition
 from vid2sub.web import backend as web_backend
+from vid2sub.web import views
 from vid2sub.web.backend import Capabilities, LocalBackend, OpenError
 
 pytestmark = pytest.mark.media
@@ -55,6 +58,7 @@ def test_an_m1_episode_opens_with_its_source_its_translation_and_their_heads(bac
     assert ep.undo == [] and ep.redo == [] and ep.glossary_adds == {}
     assert {sid(0), sid(2), tid(1)} <= ep.taken
     assert ep.header.video.quick_sha256 == side.header.video.quick_sha256
+    assert ep.glossary == EMPTY_GLOSSARY and ep.translate_model is None
     assert backend.is_open(ep.id)
 
 
@@ -194,3 +198,43 @@ def test_a_replaced_video_is_noted_with_the_difference(backend, video):
 def test_an_episode_holds_tracks_the_edit_rules_take(backend, video):
     ep = backend.open(str(video))
     assert isinstance(ep.tracks, Tracks) and set(ep.tracks.translations) == {"en"}
+
+
+def test_the_glossary_beside_the_video_is_read_at_open(backend, video):
+    text = '[terms]\n"工藤新一" = "Shinichi Kudo"\n'
+    video.with_name("vid2sub.glossary.toml").write_text(text, encoding="utf-8")
+    assert backend.open(str(video)).glossary == parse_glossary(text)
+
+
+def test_a_glossary_vid2sub_cant_read_is_noted_and_left_out(backend, video):
+    video.with_name("vid2sub.glossary.toml").write_text("nonsense = [", encoding="utf-8")
+    ep = backend.open(str(video))
+    assert ep.glossary is None and len(ep.notes) == 1
+    assert ep.notes[0].startswith("couldn't read vid2sub.glossary.toml: the glossary isn't valid")
+
+
+def test_the_model_retranslate_would_use_is_picked_without_asking_any_server(tmp_path, video):
+    with FakeServer() as srv:
+        config = Config(endpoints={"spark": Endpoint(base_url=srv.url),
+                                   "openai": Endpoint(base_url=srv.url)},
+                        models={"gpt": ModelEntry(catalog="openai-gpt", endpoint="openai",
+                                                  model="gpt", task="translate"),
+                                "gemma": ModelEntry(catalog="gemma-4-26b-a4b", endpoint="spark",
+                                                    model="gemma-2", task="translate",
+                                                    local=True)})
+        ep = LocalBackend(config, Tools.find(), KeyRing(environ={}),
+                          Cache(tmp_path / "cache", max_bytes=10**9)).open(str(video))
+        assert srv.requests == []
+    assert ep.translate_model == "gemma-2"
+    flags = [c["flags"] for row in views.episode_view(ep, video_url=None, audio_url=None)["rows"]
+             for c in row["tr"]["en"]["cues"]]
+    assert flags == [["stale"]] * 3  # the episode's English was made by "gemma"
+
+
+def test_a_cloud_model_is_never_the_one_retranslate_would_use_unasked(tmp_path, video):
+    config = Config(endpoints={"openai": Endpoint(base_url="https://api.openai.com/v1")},
+                    models={"gpt": ModelEntry(catalog="openai-gpt", endpoint="openai",
+                                              model="gpt", task="translate")})
+    ep = LocalBackend(config, Tools.find(), KeyRing(environ={}),
+                      Cache(tmp_path / "cache", max_bytes=10**9)).open(str(video))
+    assert ep.translate_model is None
