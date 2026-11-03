@@ -122,14 +122,16 @@ def split(t: Tracks, cue_id: str, *, at_char: int, at_ms: int, ids: tuple[str, s
         raise EditError("split at a time inside the cue")
     if len(ids) != 2:
         raise EditError("a split needs two new ids")
-    _claim(taken, *ids)
+    _check_new_ids(taken, *ids)
     a = Cue(id=ids[0], start_ms=c.start_ms, end_ms=at_ms, text=left, from_=(c.id,),
             flags=c.flags)
     b = Cue(id=ids[1], start_ms=at_ms, end_ms=c.end_ms, text=right, from_=(c.id,),
             flags=c.flags)
     pairs = {c.id: (a.id, b.id)}
     translations = {k: tuple(_repoint(x, pairs) for x in v) for k, v in t.translations.items()}
-    return _done(_splice(t.source, i, 1, a, b), translations), (a.id, b.id)
+    out = _done(_splice(t.source, i, 1, a, b), translations)
+    taken.update(ids)
+    return out, (a.id, b.id)
 
 
 def merge_next(t: Tracks, cue_id: str, *, new_id: str, joined_ids: Mapping[str, str],
@@ -147,14 +149,16 @@ def merge_next(t: Tracks, cue_id: str, *, new_id: str, joined_ids: Mapping[str, 
     for k, v in t.translations.items():
         if k not in joined_ids and len(_parts(v, pairs)) > 1:
             raise EditError(f"merging joins the {k} track's translations, which needs a new id")
-    _claim(taken, new_id, *joined_ids.values())
+    _check_new_ids(taken, new_id, *joined_ids.values())
     m = Cue(id=new_id, start_ms=a.start_ms, end_ms=b.end_ms,
             text=canonical(a.text + "\n" + b.text),
             w=(a.w[0], b.w[1]) if a.w and b.w else None, from_=(a.id, b.id),
             flags=tuple(sorted(set(a.flags) | set(b.flags))))
     translations = {k: _merge_translations(v, pairs, joined_ids.get(k))
                     for k, v in t.translations.items()}
-    return _done(_splice(t.source, i, 2, m), translations), m.id
+    out = _done(_splice(t.source, i, 2, m), translations)
+    taken.update((new_id, *joined_ids.values()))
+    return out, m.id
 
 
 def insert(t: Tracks, *, start_ms: int, end_ms: int, text: str, new_id: str,
@@ -169,9 +173,11 @@ def insert(t: Tracks, *, start_ms: int, end_ms: int, text: str, new_id: str,
     end = end_ms if i == len(t.source) else min(end_ms, t.source[i].start_ms)
     if start >= end:
         raise EditError("a cue must start before it ends, in the gap between its neighbours")
-    _claim(taken, new_id)
+    _check_new_ids(taken, new_id)
     new = Cue(id=new_id, start_ms=start, end_ms=end, text=body)
-    return _done(_splice(t.source, i, 0, new), t.translations), new.id
+    out = _done(_splice(t.source, i, 0, new), t.translations)
+    taken.add(new_id)
+    return out, new.id
 
 
 def delete(t: Tracks, cue_id: str) -> Tracks:
@@ -227,14 +233,13 @@ def _done(source: Sequence[Cue], translations: Mapping[str, Sequence[Cue]]) -> T
     return out
 
 
-def _claim(taken: set[str], *ids: str) -> None:
+def _check_new_ids(taken: set[str], *ids: str) -> None:
     """New cues' ids come from the caller, so each is checked: `model.new_cue_id`'s shape, none
-    twice, none taken. All of them join `taken`, or none does."""
+    twice, none taken. They join `taken` only once the edit is made."""
     if not all(isinstance(i, str) and _NEW_ID.fullmatch(i) for i in ids):
         raise EditError("a new cue's id is c and 8 lowercase hex digits")
     if len(set(ids)) < len(ids) or any(i in taken for i in ids):
         raise EditError("a new cue's id is already in use; try again")
-    taken.update(ids)
 
 
 def _parts(cues: Sequence[Cue], pairs: Mapping[str, tuple[str, ...]]) -> list[Cue]:

@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 
 import pytest
 
@@ -12,6 +13,7 @@ from vid2sub.subs.rendition import cues_body
 from vid2sub.subs.sidecar import (
     Conflict,
     HeadRecord,
+    Sidecar,
     SidecarError,
     make_rendition,
     parse_sidecar,
@@ -96,6 +98,67 @@ def test_a_writer_that_replaces_the_sidecar_while_the_temporary_file_is_written_
     side = store.append(video, header(video), [mine])
     assert other.id in side.renditions() and mine.id in side.renditions()
     assert side == store.load(video)[0]
+
+
+def test_a_sidecar_another_writer_makes_after_vid2sub_found_none_is_merged(video, monkeypatch):
+    other = make_rendition([], "ja", {"kind": "cues"})
+    real, calls = store.serialize, []
+
+    def racing(sidecar):  # another process makes the sidecar after vid2sub looked for it
+        if not calls:
+            calls.append(1)
+            store.sidecar_path(video).write_text(real(Sidecar(header(video), (other,))),
+                                                 encoding="utf-8")
+        return real(sidecar)
+
+    monkeypatch.setattr(store, "serialize", racing)
+    mine = make_rendition([], "en", {"kind": "cues", "n": 2})
+    side = store.append(video, header(video), [mine])
+    assert other.id in side.renditions() and mine.id in side.renditions()
+
+
+def test_a_sidecar_read_before_another_writers_save_is_read_again_and_nothing_is_adopted(video):
+    side = with_track(video)
+    stale, path, _ = store.project(video, header(video), side, "en", "srt",
+                                   overwrite_foreign=False)
+    # meanwhile another writer (the editor's Save) puts a newer version and writes its file
+    side = with_track(video, cues=[CUES[0], CUES[1].model_copy(update={"text": "Planet"})])
+    store.project(video, header(video), side, "en", "srt", overwrite_foreign=False)
+    now, _ = store.load(video)
+    side, changed = store.check_external(video, header(video), stale)
+    assert changed == [] and side == now  # its file is no outside edit
+    side, _, written = store.project(video, header(video), stale, "en", "srt",
+                                     overwrite_foreign=False)
+    assert not written and side == now and "Planet" in path.read_text(encoding="utf-8")
+
+
+def locked_elsewhere(video) -> bool:
+    """Whether another thread would have to wait for the video's sidecar lock just now."""
+    got: list[bool] = []
+
+    def try_it() -> None:
+        lock = store.write_lock(video)
+        got.append(lock.acquire(blocking=False))
+        if got[0]:
+            lock.release()
+
+    other = threading.Thread(target=try_it)
+    other.start()
+    other.join()
+    return not got[0]
+
+
+def test_a_projection_holds_the_sidecars_write_lock_while_it_writes(video, monkeypatch):
+    side = with_track(video)
+    real, held = security._replace, []
+
+    def watched(src, dst, **kwargs):
+        held.append((dst.name, locked_elsewhere(video)))
+        real(src, dst, **kwargs)
+
+    monkeypatch.setattr(security, "_replace", watched)
+    store.project(video, header(video), side, "en", "srt", overwrite_foreign=False)
+    assert held == [(store.sidecar_path(video).name, True), ("Show - S01E02.en.srt", True)]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")

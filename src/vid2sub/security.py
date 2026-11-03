@@ -32,6 +32,7 @@ _ENV_KEEP = ("PATH", "HOME", "USERPROFILE", "TMP", "TEMP", "TMPDIR", "LANG", "LC
              "DENO_DIR", "SSL_CERT_FILE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
              "http_proxy", "https_proxy", "no_proxy")
 _TAILNET = ipaddress.ip_network("100.64.0.0/10")
+_WINDOWS = os.name == "nt"
 
 
 class WriteRefused(Exception):
@@ -59,13 +60,16 @@ def safe_component(name: str, *, max_bytes: int = 200) -> str:
     return out.rstrip(". ") or "untitled"
 
 
-def _replace(src: Path, dst: Path, attempts: int = 6) -> None:
+def _replace(src: Path, dst: Path, attempts: int = 6,
+             check: Callable[[], None] | None = None) -> None:
     for i in range(attempts):
+        if check is not None:  # before every attempt: a retry may come seconds later
+            check()
         try:
             os.replace(src, dst)
             return
         except PermissionError:
-            if os.name != "nt" or i == attempts - 1:
+            if not _WINDOWS or i == attempts - 1:
                 raise WriteRefused(f"{dst.name} is open in another program (Plex or antivirus?);"
                                    " try again") from None
             time.sleep(0.2 * 2 ** i)
@@ -73,8 +77,8 @@ def _replace(src: Path, dst: Path, attempts: int = 6) -> None:
 
 def safe_write(path: Path, data: bytes, *, overwrite: bool,
                check: Callable[[], None] | None = None) -> None:
-    """`check`, when given, runs once the data is on disk and just before the replace; if it
-    raises, the target is left as it was."""
+    """`check`, when given, runs once the data is on disk and just before the replace (before
+    each try of it, on Windows); if it raises, the target is left as it was."""
     path = Path(path)
     try:
         st = os.lstat(path)
@@ -94,9 +98,7 @@ def safe_write(path: Path, data: bytes, *, overwrite: bool,
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        if check is not None:
-            check()
-        _replace(tmp, path)
+        _replace(tmp, path, check=check)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise

@@ -224,6 +224,19 @@ def test_a_malformed_or_taken_new_id_is_refused_and_nothing_changes(call):
     assert taken == {"a", "b", "c", "ta", "tb", USED}
 
 
+def test_an_edit_the_tracks_refuse_leaves_taken_as_it_was():
+    # merging joins ta and tb across a detached cue between them, which the en track can't hold
+    a, b = cue("a", 0, 1000, "x"), cue("b", 2000, 3000, "y")
+    en = (cue("ta", 0, 1000, "X", src=("a",)),
+          cue("tx", 1200, 1800, "Z", src=("gone",), detached=True),
+          cue("tb", 2000, 3000, "Y", src=("b",)))
+    taken = {"a", "b", "ta", "tx", "tb"}
+    with pytest.raises(EditError, match="the en track would break"):
+        edit.merge_next(Tracks((a, b), {"en": en}), "a", new_id=M, joined_ids={"en": J},
+                        taken=taken)
+    assert taken == {"a", "b", "ta", "tx", "tb"}
+
+
 def test_the_same_edits_with_the_same_ids_make_the_same_tracks():
     # what lets a crash draft replay exactly: a later edit names the cue an earlier one made
     def run() -> Tracks:

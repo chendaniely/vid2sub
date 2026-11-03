@@ -154,11 +154,15 @@ def append(video: Path, header: Header, records: Sequence) -> Sidecar:
             data = serialize(current.add(*records)).encode("utf-8")
 
             def unchanged(before: bytes | None = before) -> None:  # just before the rename
-                if (path.read_bytes() if path.exists() else None) != before:
+                try:
+                    latest = path.read_bytes()
+                except FileNotFoundError:
+                    latest = None
+                if latest != before:
                     raise _Raced
 
-            try:
-                safe_write(path, data, overwrite=before is not None, check=unchanged)
+            try:  # a sidecar made meanwhile is caught by `unchanged`, then merged
+                safe_write(path, data, overwrite=True, check=unchanged)
             except _Raced:
                 continue
             return parse_sidecar(data.decode("utf-8"))[0]
@@ -218,10 +222,13 @@ def project(video: Path, header: Header, sidecar: Sidecar, track: str, fmt: str,
     """EditedOnDisk assumes the caller ran `check_external` first; that makes the edit a version.
 
     A file holding an earlier projection's bytes (an interrupted write) is overwritten. The
-    sidecar's write lock is held throughout, so a record and the file it describes go in together.
+    sidecar's write lock is held throughout, so a record and the file it describes go in together,
+    and the sidecar is read again inside it: the caller's may be from before another writer's
+    Save, whose file would otherwise look like an outside edit.
     """
     with write_lock(video):
-        return _project(video, header, sidecar, track, fmt, overwrite_foreign=overwrite_foreign)
+        return _project(video, header, load(video)[0] or sidecar, track, fmt,
+                        overwrite_foreign=overwrite_foreign)
 
 
 def _project(video: Path, header: Header, sidecar: Sidecar, track: str, fmt: str, *,
@@ -304,8 +311,17 @@ def check_external(video: Path, header: Header, sidecar: Sidecar, *,
     An unreadable or emptied file is neither adopted nor touched, so `project` later refuses it
     as `EditedOnDisk`. The new version's head replaces the version the file was written from, so
     if the head has moved on since, the two diverge (spec §14.4); two edited files of one track
-    chain their heads rather than diverge.
+    chain their heads rather than diverge. Like `project`, it holds the sidecar's write lock and
+    reads the sidecar again inside it, so another writer's Save is never taken for an outside edit.
     """
+    with write_lock(video):
+        return _check_external(video, header, load(video)[0] or sidecar,
+                               on_unreadable=on_unreadable)
+
+
+def _check_external(video: Path, header: Header, sidecar: Sidecar, *,
+                    on_unreadable: Callable[[str], None] | None,
+                    ) -> tuple[Sidecar, list[str]]:
     renditions = sidecar.renditions()
     latest: dict[str, str] = {}
     records: list = []

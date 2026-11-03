@@ -78,6 +78,24 @@ def test_safe_write_checks_last_just_before_the_replace_and_a_failed_check_leave
     assert target.read_bytes() == b"new" and order[-1] == "fine"
 
 
+def test_on_windows_each_retry_of_a_refused_replace_checks_again_first(tmp_path, monkeypatch):
+    # Plex or antivirus holding the file makes Windows refuse the replace, retried for seconds;
+    # another writer may change things meanwhile, so the check runs before every try.
+    monkeypatch.setattr(s, "_WINDOWS", True)
+    monkeypatch.setattr(s.time, "sleep", lambda seconds: None)
+    target, real, order = tmp_path / "a.srt", os.replace, []
+
+    def held_once(src, dst):
+        order.append("replace")
+        if order.count("replace") == 1:
+            raise PermissionError(13, "in use")
+        real(src, dst)
+
+    monkeypatch.setattr(s.os, "replace", held_once)
+    s.safe_write(target, b"new", overwrite=False, check=lambda: order.append("check"))
+    assert order == ["check", "replace", "check", "replace"] and target.read_bytes() == b"new"
+
+
 def test_redact_removes_every_secret_value():
     assert s.redact("auth sk-abcdef123 failed for sk-abcdef123", ["sk-abcdef123", ""]) == \
         "auth [redacted] failed for [redacted]"

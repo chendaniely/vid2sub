@@ -30,6 +30,7 @@ from vid2sub.subs.sidecar import (
     Sidecar,
     make_rendition,
 )
+from vid2sub.web import backend as web_backend
 from vid2sub.web import views
 from vid2sub.web.backend import LocalBackend, OpenError, SaveError, SaveResult
 from vid2sub.web.ops import parse_op
@@ -414,21 +415,47 @@ def test_a_jobs_write_during_a_save_waits_for_it_and_both_keep_their_records(bac
     ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
     # what a Jobs-page job appends first, from its worker thread
     theirs = make_rendition([], None, transcript_for(source_cues(3), audio_track=0, quick="q"))
-    real_replace, appended, job = security._replace, threading.Event(), []
+    real_replace, appended, job, held = security._replace, threading.Event(), [], []
 
-    def mid_save(src, dst):  # the Save has re-read the sidecar and is about to rename its own
+    def mid_save(src, dst, **kwargs):  # each file the Save writes, just before it is renamed
+        held.append((dst.name, locked_elsewhere(video)))
         if dst == store.sidecar_path(video) and not job:
             job.append(threading.Thread(target=lambda: (
                 store.append(video, ep.header, [theirs]), appended.set())))
             job[0].start()
             appended.wait(0.5)  # done by now, unless the Save's lock holds it back (Decision 30)
-        real_replace(src, dst)
+        real_replace(src, dst, **kwargs)
 
+    def versions(ep, side):  # between reading the sidecar and writing to it
+        held.append(("deciding", locked_elsewhere(video)))
+        return real_versions(ep, side)
+
+    real_versions = web_backend._versions
+    monkeypatch.setattr(web_backend, "_versions", versions)
     monkeypatch.setattr(security, "_replace", mid_save)
     saved, _ = backend.save(ep, formats=["srt"])
     job[0].join(5)
     side, _ = store.load(video)
     assert theirs.id in side.renditions() and saved.heads["ja"] in side.renditions()
+    # the lock was held throughout: deciding, then writing its versions, record and SRT
+    assert {name for name, _ in held} == {"deciding", store.sidecar_path(video).name, JA}
+    assert all(locked for _, locked in held)
+
+
+def locked_elsewhere(video) -> bool:
+    """Whether another thread would have to wait for the video's sidecar lock just now."""
+    got: list[bool] = []
+
+    def try_it() -> None:
+        lock = store.write_lock(video)
+        got.append(lock.acquire(blocking=False))
+        if got[0]:
+            lock.release()
+
+    other = threading.Thread(target=try_it)
+    other.start()
+    other.join()
+    return not got[0]
 
 
 def test_a_save_cut_short_after_the_sidecar_never_makes_the_next_save_conflict_with_itself(
