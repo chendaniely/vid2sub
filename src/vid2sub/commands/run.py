@@ -154,7 +154,9 @@ def run(args: argparse.Namespace) -> int:
         with keep_awake():
             for n, item in enumerate(inputs, 1):
                 out.event("input", index=n, of=len(inputs))
+                out.begin(item, n)
                 result = run_one(item, ctx)
+                out.end(result.status != "failed")
                 results.append(result)
                 report(out, n, len(inputs), result)
     except Paused as err:

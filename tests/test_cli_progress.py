@@ -1,8 +1,17 @@
 import io
+import json
 import re
+import sys
 
 import pytest
+from fakes import FakeEngine, fake_make_ask
+from helpers import SPEECH, make_clip
+from test_cli_run import CONFIG
 
+from vid2sub import pipeline
+from vid2sub.catalog import Candidate
+from vid2sub.cli import main
+from vid2sub.commands import _common, _progress
 from vid2sub.commands._common import Output
 
 ERASE = "\r\x1b[2K"
@@ -182,3 +191,85 @@ def test_output_that_isnt_a_terminal_gets_each_finished_stages_line_but_no_bar_o
     assert pipe.getvalue() == ("  decoded in 0:05\n  waiting 5 s (connection)…\n"
                                "  transcribed 2 chunks in 0:07, 12.9× real time\n"
                                "✓ input 1 (1/1): done, wrote 1 file\n")
+
+
+@pytest.fixture
+def clip(tmp_path, monkeypatch):
+    """A 14 s episode, the fake engines, a 120-column terminal and a clock that stands still."""
+    cfg = tmp_path / "vid2sub.toml"
+    cfg.write_text(CONFIG)
+    real = _common.new_context
+
+    def with_fakes(config, options, output):
+        ctx = real(config, options, output)
+        ctx.engines["fake"] = FakeEngine()
+        ctx.candidates = [Candidate("fake", "whisper-large-v3-turbo", "endpoint", True),
+                          Candidate("gemma", "gemma-4-26b-a4b", "endpoint", True)]
+        return ctx
+
+    monkeypatch.setattr(_common, "new_context", with_fakes)
+    monkeypatch.setattr(pipeline, "make_ask", fake_make_ask)
+    monkeypatch.setattr(_progress, "monotonic", lambda: 0.0)
+    monkeypatch.setenv("COLUMNS", "120")
+    return make_clip(tmp_path, "Show - S01E01.mkv", seconds=14, speech=SPEECH), cfg
+
+
+def run_in(stdout, monkeypatch, *args: str) -> int:
+    monkeypatch.setattr(sys, "stdout", stdout)
+    return main(list(args))
+
+
+@pytest.mark.media
+def test_a_run_in_a_terminal_shows_a_bar_with_the_title_and_a_line_per_finished_stage(
+        clip, monkeypatch):
+    video, cfg = clip
+    tty = Terminal()
+    assert run_in(tty, monkeypatch, "run", str(video), "--from", "ja", "--to", "none",
+                  "--config", str(cfg)) == 0
+    assert ERASE + "Show - S01E01.mkv · transcribing chunk 1/1 [----------] · 0:00" \
+        in tty.getvalue()
+    assert screen(tty.getvalue()) == [
+        "  probed in 0:00", "  decoded in 0:00", "  found speech in 0:00",
+        "  transcribed 1 chunk in 0:00", "  hashed the video in 0:00",
+        "✓ Show - S01E01.mkv (1/1): done, wrote 1 file", "    Show - S01E01.ja.srt", "1 done"]
+
+
+@pytest.mark.media
+def test_translate_in_a_terminal_shows_a_bar_for_its_batches(clip, monkeypatch):
+    video, cfg = clip
+    assert main(["run", str(video), "--from", "ja", "--to", "none", "--config", str(cfg)]) == 0
+    tty = Terminal()
+    assert run_in(tty, monkeypatch, "translate", str(video), "--to", "en",
+                  "--config", str(cfg)) == 0
+    assert ERASE + "Show - S01E01.mkv · translating · 0:00" in tty.getvalue()
+    assert screen(tty.getvalue()) == [
+        "  translated 1 batch in 0:00", "✓ Show - S01E01.mkv (1/1): done, wrote 1 file",
+        "    Show - S01E01.en.srt", "1 done"]
+
+
+@pytest.mark.media
+def test_a_run_piped_elsewhere_prints_a_plain_line_per_finished_stage_and_no_title(clip, capsys):
+    video, cfg = clip
+    assert main(["run", str(video), "--from", "ja", "--to", "none", "--config", str(cfg)]) == 0
+    assert capsys.readouterr().out == (
+        "  probed in 0:00\n  decoded in 0:00\n  found speech in 0:00\n"
+        "  transcribed 1 chunk in 0:00\n  hashed the video in 0:00\n"
+        "✓ input 1 (1/1): done, wrote 1 file\n1 done\n")
+
+
+@pytest.mark.media
+def test_json_in_a_terminal_is_unchanged_and_its_chunk_events_carry_only_numbers(clip,
+                                                                                 monkeypatch):
+    video, cfg = clip
+    tty = Terminal()
+    assert run_in(tty, monkeypatch, "run", str(video), "--from", "ja", "--to", "none",
+                  "--config", str(cfg), "--json") == 0
+    out = tty.getvalue()
+    assert "\r" not in out and "\x1b" not in out and "Show - S01E01" not in out
+    events = [json.loads(line) for line in out.splitlines()]
+    assert [e["event"] for e in events] == [
+        "input", "stage", "stage", "stage", "chunk", "stage", "result", "summary"]
+    [chunk] = [e for e in events if e["event"] == "chunk"]
+    assert {k: type(v) for k, v in chunk.items()} == {
+        "event": str, "index": int, "of": int, "until_ms": int}
+    assert abs(chunk["until_ms"] - 14_000) < 500  # one chunk: the whole 14 s of audio

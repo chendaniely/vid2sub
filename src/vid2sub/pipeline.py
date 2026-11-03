@@ -543,7 +543,9 @@ def _transcribe(video: Path, p: Probe, header, sidecar: Sidecar | None, glossary
     segments: list[Segment] = []
     tail, answered = "", None
     for plan in plans:
-        ctx.events("chunk", {"index": plan.index + 1, "of": len(plans)})
+        # until_ms: where this chunk's share of the audio ends; the last chunk's is its length.
+        ctx.events("chunk", {"index": plan.index + 1, "of": len(plans),
+                             "until_ms": plan.core_end_ms})
         key = (header.video.quick_sha256, track.stream_index, model_name, lang, plan.plan_hash(),
                vocab)
         if key not in ctx.chunk_cache:
