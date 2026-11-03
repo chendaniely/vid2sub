@@ -4,7 +4,8 @@ Python, ffmpeg and ffprobe are essential; deno (YouTube), yt-dlp's age and the M
 warnings. Endpoints serving local models are asked for their model list (not with --offline);
 cloud endpoints are never contacted. Keys are reported by presence only, never their values. A
 check's hint is its fix, shown only when it fails; a note is advice shown either way (final
-review: a passing Python printed "needs Python 3.12 or later").
+review: a passing Python printed "needs Python 3.12 or later"). The cache's size is shown
+against its cap, never its path (spec §18.1, §6.8).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from vid2sub import __version__, exitcodes
+from vid2sub import cache as caching
 from vid2sub import detect as detecting
 from vid2sub.commands._common import Output
 from vid2sub.config import Config, ConfigError, config_path, is_local, load_config
@@ -97,8 +99,15 @@ def checks(config_arg: str | None, environ: Mapping[str, str] = os.environ,
     out.append(Check("vid2sub.toml", True, "found" if path.exists() else "not found: defaults",
                      essential=False,
                      note="" if path.exists() else "`vid2sub config init` prints a starter"))
+    out.append(_cache(config))
     out += _endpoints(config, environ, offline)
     return out, True
+
+
+def _cache(config: Config) -> Check:
+    used = caching.from_config(config).size()
+    return Check("cache", True, f"{used / 1_000_000:.1f} MB of {config.defaults.cache_max_gb:g} GB",
+                 essential=False)
 
 
 def _endpoints(config: Config, environ: Mapping[str, str], offline: bool) -> list[Check]:

@@ -1,3 +1,4 @@
+import json
 import os
 import stat
 import sys
@@ -7,6 +8,7 @@ import pytest
 
 from vid2sub import cache as caching
 from vid2sub.cache import Cache
+from vid2sub.cli import main
 from vid2sub.config import Config
 
 OLD, MID, NEW = ("a" * 64, "b" * 64, "c" * 64)
@@ -107,3 +109,37 @@ def test_a_missing_cache_is_empty(tmp_path):
     c = Cache(tmp_path / "never-made", max_bytes=1)
     assert (c.size(), c.evict(), c.clear()) == (0, 0, 0)
     assert not (tmp_path / "never-made").exists()
+
+
+@pytest.fixture
+def home_cache(tmp_path, monkeypatch) -> Cache:
+    monkeypatch.setattr(caching, "default_root", lambda: tmp_path / "cache")
+    c = Cache(tmp_path / "cache", max_bytes=1)
+    entry(c, OLD, 2_500_000, 1_000)
+    return c
+
+
+def test_cache_clear_reports_the_bytes_freed_as_one_json_line(home_cache, capsys):
+    assert main(["cache", "clear", "--json"]) == 0
+    out = capsys.readouterr().out
+    assert [json.loads(line) for line in out.splitlines()] == [
+        {"event": "cache_cleared", "bytes": 2_500_000}]
+    assert str(home_cache.root) not in out
+    assert not (home_cache.root / OLD).exists()
+
+
+def test_cache_clear_tells_a_person_how_much_it_freed(home_cache, capsys):
+    assert main(["cache", "clear"]) == 0
+    assert capsys.readouterr().out == "cleared 2.5 MB from the cache\n"
+
+
+def test_doctor_reports_the_cache_size_against_its_cap(home_cache, tmp_path, capsys):
+    args = ["doctor", "--config", str(tmp_path / "none.toml"), "--offline"]
+    main(args + ["--json"])
+    out = capsys.readouterr().out
+    rows = {e["check"]: e for e in map(json.loads, out.splitlines())}
+    assert rows["cache"] == {"event": "check", "check": "cache", "ok": True,
+                             "essential": False, "detail": "2.5 MB of 20 GB"}
+    assert str(home_cache.root) not in out
+    main(args)
+    assert "✓ cache: 2.5 MB of 20 GB" in capsys.readouterr().out.splitlines()
