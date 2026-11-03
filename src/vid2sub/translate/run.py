@@ -4,7 +4,9 @@ Batches of about 40 source cues, with read-only context either side, go to a fre
 (chat_structured adds turns to the Chat it's called on). The schema is built per batch so the
 model can only name real cue ids; an answer that doesn't cover the batch exactly once, in order,
 is split in half and retried, down to one cue at a time, and a cue that still fails stops the
-track loudly. Items may cover several adjacent cues (Japanese→English reorders across cues).
+track loudly. Items may cover several adjacent cues (Japanese→English reorders across cues); once
+a batch validates, an item too long for two lines or for the screen, or spread across a silence,
+is split back over its own cues (`split_items`, spec §13.4).
 Thinking is switched off through the model entry's `request_extra` (spec §13.1). The prompts
 carry the glossary but never file names or titles.
 """
@@ -29,6 +31,7 @@ from vid2sub.subs.translate_shape import (
     items_from,
     plan_batches,
     split_batch,
+    split_items,
     validate_partition,
 )
 
@@ -133,7 +136,8 @@ def translate_cues(source: Sequence[Cue], *, source_lang: str, target_track: str
     batches = plan_batches(all_ids, only, size=batch_size)
     items: list[Item] = []
     for n, batch in enumerate(batches, 1):
-        items += _translate(batch, all_ids, cues, limits, system, ask)
+        items += split_items(_translate(batch, all_ids, cues, limits, system, ask), cues,
+                             target_track)
         if on_batch is not None:
             on_batch(n, len(batches))
     return assemble(items, cues, target_track, set() if taken is None else taken)

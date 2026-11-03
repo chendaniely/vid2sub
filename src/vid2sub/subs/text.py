@@ -4,7 +4,9 @@ Width is in East Asian Width units: a wide or full-width character counts 2, any
 one limit table covers English (42) and Japanese (26, i.e. 13 full-width characters), as
 Netflix's timed-text guides count them. Lines break at spaces, or between two characters where
 either is CJK; never inside a run of Latin letters or digits, and never against kinsoku: no line
-starts with closing punctuation or small kana, and none ends with an opening bracket.
+starts with closing punctuation or small kana, and none ends with an opening bracket. A
+translation too long for two lines is filled into as many as it takes, never cut (spec §13.4;
+Dan, Q&A item 41).
 """
 
 from __future__ import annotations
@@ -57,8 +59,8 @@ def unwrap(text: str) -> str:
     return out
 
 
-def _breaks(text: str) -> list[tuple[int, int]]:
-    """Where `text` may break: (end of line 1, start of line 2)."""
+def breaks(text: str) -> list[tuple[int, int]]:
+    """Where `text` may break: (end of line 1, start of line 2), in order."""
     points: list[tuple[int, int]] = []
     for i in range(1, len(text)):
         prev, cur = text[i - 1], text[i]
@@ -92,7 +94,7 @@ def wrap(text: str, max_width: int, max_lines: int = 2) -> list[str] | None:
     if max_lines < 2:
         return None
     best: tuple[float, list[str]] | None = None
-    for end1, start2 in _breaks(text):
+    for end1, start2 in breaks(text):
         first, second = text[:end1].rstrip(), text[start2:].lstrip()
         if not first or not second:
             continue
@@ -105,6 +107,23 @@ def wrap(text: str, max_width: int, max_lines: int = 2) -> list[str] | None:
         if best is None or score < best[0]:
             best = (score, [first, second])
     return best[1] if best else None
+
+
+def fill(text: str, max_width: int) -> list[str]:
+    """Lines no wider than `max_width` where the text may break, as many as it takes: the last
+    resort for text that won't fit two lines, so none of it is dropped. A word wider than a line
+    keeps a line of its own."""
+    rest = unwrap(text)
+    lines: list[str] = []
+    while width(rest) > max_width:
+        points = breaks(rest)
+        if not points:
+            break
+        fitting = [p for p in points if width(rest[:p[0]]) <= max_width]
+        end1, start2 = fitting[-1] if fitting else points[0]
+        lines.append(rest[:end1].rstrip())
+        rest = rest[start2:].lstrip()
+    return lines + ([rest] if rest else [])
 
 
 def strip_line_ends(lines: list[str], chars: str = "，。") -> list[str]:
