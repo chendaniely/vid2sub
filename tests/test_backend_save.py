@@ -458,6 +458,22 @@ def locked_elsewhere(video) -> bool:
     return not got[0]
 
 
+def test_a_file_another_program_holds_open_is_a_note_and_not_someone_elses_file(backend, video,
+                                                                               monkeypatch):
+    real = store.safe_write
+
+    def held(path, data, **kwargs):
+        if path.suffix == ".srt":
+            raise security.WriteRefused(f"{path.name} is open in another program")
+        return real(path, data, **kwargs)
+
+    monkeypatch.setattr(store, "safe_write", held)
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    _, result = backend.save(ep, formats=["srt"])
+    assert result.foreign == () and result.written == ()
+    assert result.notes == (f"couldn't write {JA}: {JA} is open in another program",)
+
+
 def test_a_save_cut_short_after_the_sidecar_never_makes_the_next_save_conflict_with_itself(
         backend, video, monkeypatch):
     real = store.safe_write
@@ -644,7 +660,7 @@ def test_a_glossary_that_cant_take_the_terms_is_left_alone_and_they_wait(backend
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
-def test_a_glossary_that_is_a_link_is_neither_read_nor_written(backend, video, tmp_path):
+def test_a_glossary_that_is_a_link_is_never_written(backend, video, tmp_path):
     target = tmp_path / "elsewhere.toml"
     target.write_text('[terms]\n"a" = "b"\n', encoding="utf-8")
     video.with_name(GLOSSARY).symlink_to(target)

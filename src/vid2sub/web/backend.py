@@ -457,8 +457,11 @@ def _project(video: Path, header: Header, side: Sidecar, tracks: Sequence[str],
             try:
                 side, _, did = store.project(video, header, side, track, fmt,
                                              overwrite_foreign=False)
-            except (store.ForeignFile, WriteRefused):
+            except store.ForeignFile:  # someone else's file, or edited outside since
                 foreign.append(name)
+                continue
+            except WriteRefused as err:  # a link, or a file held open: not someone else's
+                notes.append(f"couldn't write {name}: {err}")
                 continue
             except (SidecarError, store.StoreError) as err:
                 notes.append(f"couldn't write {name}: {err}")
