@@ -154,7 +154,7 @@ def test_a_track_in_conflict_cant_be_edited_until_a_version_is_picked(backend, v
     assert out.tracks.source[0].text == "こんばんは"
 
 
-def test_no_cue_can_be_split_merged_or_deleted_while_a_translation_is_in_conflict(backend,
+def test_no_cue_can_be_split_merged_deleted_or_retimed_while_a_translation_is_in_conflict(backend,
                                                                                     video):
     head = store.load(video)[0].head("en").rendition
     for text in ("Mine", "Theirs"):
@@ -163,10 +163,12 @@ def test_no_cue_can_be_split_merged_or_deleted_while_a_translation_is_in_conflic
     ep = backend.open(str(video))
     for data in ({"op": "delete", "cue": sid(0)},
                  {"op": "merge_next", "cue": sid(0), "id": NEW[0], "joined": {}},
-                 {"op": "split", "cue": sid(0), "at_char": 2, "at_ms": 1500, "ids": list(NEW)}):
+                 {"op": "split", "cue": sid(0), "at_char": 2, "at_ms": 1500, "ids": list(NEW)},
+                 {"op": "nudge", "cue": sid(0), "delta_ms": 100},
+                 {"op": "set_times", "cue": sid(0), "end_ms": 2900}):
         with pytest.raises(EditError, match="the en track has two versions: pick one"):
             backend.apply(ep, parse_op(data))
-    assert backend.apply(ep, op(op="nudge", cue=sid(0), delta_ms=100)).dirty
+    assert backend.apply(ep, op(op="set_text", cue=sid(0), text="こんばんは")).dirty
 
 
 def test_nothing_but_a_glossary_add_can_be_made_while_the_source_is_in_conflict(backend, video):

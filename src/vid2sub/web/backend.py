@@ -554,11 +554,11 @@ def _edit(ep: Episode, op: ops.EditOp, taken: set[str]) -> tuple[Tracks, dict[st
             _editable(ep, op.track)
             return edit.set_translation_text(t, op.track, op.cue, op.text), ep.glossary_adds
         case ops.SetTimes():
-            _editable(ep, ep.source_key)
+            _editable(ep, ep.source_key, *ep.conflicts)
             return (edit.set_times(t, op.cue, start_ms=op.start_ms, end_ms=op.end_ms),
                     ep.glossary_adds)
         case ops.Nudge():
-            _editable(ep, ep.source_key)
+            _editable(ep, ep.source_key, *ep.conflicts)
             return edit.nudge(t, op.cue, op.delta_ms, edge=op.edge), ep.glossary_adds
         case ops.Split():
             _editable(ep, ep.source_key, *ep.conflicts)
