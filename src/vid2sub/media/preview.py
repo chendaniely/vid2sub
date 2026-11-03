@@ -7,7 +7,8 @@ Phase 2, S43). Only the chosen audio track is kept, with no video, subtitles, da
 chapters, so the show's title never reaches the file, as with chunks (§7.3); `+faststart` puts
 the index first so playback starts before the whole file is read. ffmpeg writes to a temporary
 name in the entry's folder and the result is renamed into place, so a half-made file is never
-served, and an entry being made is never evicted.
+served; the entry just made is kept by the eviction that follows it, though an entry another
+call is still making isn't protected yet (the Phase-end list).
 """
 
 from __future__ import annotations
