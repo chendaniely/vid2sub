@@ -652,7 +652,10 @@ plan's Decision 5), appended to the file beside the video so its comments surviv
 read back: a term just added makes every translation made without it stale (§13.4), as M1 decides
 it too, and that is intended. A Save, like a pick, starts the undo history again, because the
 tracks are read back from the sidecar. While a translation is in conflict, no source cue can be
-split, merged or deleted: the unloaded version's cues would keep pointing at ids that are gone.
+split, merged, deleted or retimed: the unloaded version's cues would keep pointing at ids that
+are gone or at old times. A pick first records outside edits as a version, and supersedes only
+the versions the person was shown: one that arrived since keeps the track in conflict, so the
+person picks again (the Phase 2 plan's Task 6, round 6i).
 """
 
 from __future__ import annotations
@@ -799,23 +802,33 @@ def save(ep: Episode, *, formats: Sequence[Literal["srt", "ass"]]
 
 def resolve(ep: Episode, track: str, rendition: str) -> tuple[Episode, SaveResult]:
     """A person's pick of one of a conflicted track's versions (spec §14.4): it replaces every
-    other version, by "user", and the track is loaded and written. Unsaved edits on other tracks
-    are kept. The caller holds the video's lock."""
+    version they were shown, by "user", and the track is loaded and written; a version that
+    arrived since (an outside edit, another Save) stays, and the track stays in conflict. Unsaved
+    edits on other tracks are kept. The caller holds the video's lock."""
     if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
         raise SaveError("there's no such track")
     if track not in ep.conflicts:  # a stale request must never reload a track being edited
         raise SaveError(f"the {track} track has only one version: there's nothing to pick")
+    shown = ep.conflicts[track]
+    if rendition not in shown:  # only a version the person was shown can be picked
+        raise SaveError(f"that isn't one of the {track} track's versions")
     notes: list[str] = []
     try:
-        side = _reload(ep.video)
+        side, changed = store.check_external(ep.video, ep.header, _reload(ep.video),
+                                             on_unreadable=_unreadable(notes))
+        notes += [f"kept your outside edit to {t}" for t in changed]
         head = side.head(track)
         if isinstance(head, Conflict):
-            if rendition not in head.leaves:
-                raise SaveError(f"that isn't one of the {track} track's versions")
-            now = store.now()
-            side = store.append(ep.video, ep.header, [
-                HeadRecord(track=track, rendition=rendition, replaces=other, by="user", at=now)
-                for other in head.leaves if other != rendition])
+            if rendition in head.leaves:  # supersede only what the person was shown
+                now = store.now()
+                records = [HeadRecord(track=track, rendition=rendition, replaces=other,
+                                      by="user", at=now)
+                           for other in shown if other != rendition and other in head.leaves]
+                if records:
+                    side = store.append(ep.video, ep.header, records)
+            if isinstance(side.head(track), Conflict):  # a version the person never saw
+                notes.append(f"another version of the {track} track arrived: pick again")
+                return _with_track(ep, side, track), SaveResult((), (), (track,), tuple(notes))
         else:
             notes.append(f"the {track} track's version was already picked elsewhere: showing it")
     except (SidecarError, store.StoreError, WriteRefused) as err:
@@ -937,6 +950,9 @@ def _versions(ep: Episode, side: Sidecar) -> list:
                 source_rid = same
             continue
         parent = ep.heads[track]
+        if parent not in renditions:  # the sidecar was replaced; nothing here can build on it
+            raise SaveError("the subtitles' history was replaced since this episode was opened: "
+                            "reopen it")
         body = _editor_body(renditions[parent].body, cues, is_source=is_source, created_at=now,
                             inputs={} if is_source or not source_rid else {"source": source_rid},
                             setup=track_setup(ep, track))
@@ -1004,8 +1020,11 @@ def _project(video: Path, header: Header, side: Sidecar, tracks: Sequence[str],
             try:
                 side, _, did = store.project(video, header, side, track, fmt,
                                              overwrite_foreign=False)
-            except (store.ForeignFile, WriteRefused):
+            except store.ForeignFile:  # someone else's file, or edited outside since
                 foreign.append(name)
+                continue
+            except WriteRefused as err:  # a link, or a file held open: not someone else's
+                notes.append(f"couldn't write {name}: {err}")
                 continue
             except (SidecarError, store.StoreError) as err:
                 notes.append(f"couldn't write {name}: {err}")
@@ -1099,11 +1118,11 @@ def _edit(ep: Episode, op: ops.EditOp, taken: set[str]) -> tuple[Tracks, dict[st
             editable(ep, op.track)
             return edit.set_translation_text(t, op.track, op.cue, op.text), ep.glossary_adds
         case ops.SetTimes():
-            editable(ep, ep.source_key)
+            editable(ep, ep.source_key, *ep.conflicts)
             return (edit.set_times(t, op.cue, start_ms=op.start_ms, end_ms=op.end_ms),
                     ep.glossary_adds)
         case ops.Nudge():
-            editable(ep, ep.source_key)
+            editable(ep, ep.source_key, *ep.conflicts)
             return edit.nudge(t, op.cue, op.delta_ms, edge=op.edge), ep.glossary_adds
         case ops.Split():
             editable(ep, ep.source_key, *ep.conflicts)
@@ -1295,7 +1314,8 @@ class LocalBackend:
 
     def resolve(self, ep: Episode, track: str, rendition: str) -> tuple[Episode, SaveResult]:
         """A person's pick of one of a conflicted track's versions (spec §14.4): it replaces
-        every other version, by "user", and the track is loaded and written. Unsaved edits on
+        every version they were shown, by "user", and the track is loaded and written; a
+        version that arrived since stays, and the track stays in conflict. Unsaved edits on
         other tracks are kept."""
         self._check_open(ep)
         with self._writing_lock(ep.video):

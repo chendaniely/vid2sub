@@ -67,10 +67,10 @@ test names.
 | S26 | a subtitle with `<script>` or ASS overrides, or a hostile file name or YouTube title | shown as plain text; the CSP blocks any script; the caption overlay renders `<i>` only | Phase 2 | Playwright with hostile fixtures | planned |
 | S27 | an M1 episode opened in the editor | the video plays with captions; the cue list follows playback; the spoken word is highlighted | Phase 2 | Playwright against `vid2sub serve --demo`; the exit test | planned |
 | S28 | a source cue edited, split, merged, nudged, inserted or deleted, then undone | the pure `subs.edit` rules apply; translations re-point and are flagged (§13.5) | Phase 2 | `tests/test_edit.py`; Playwright | planned |
-| S29 | Save | an editor rendition, a head and projection records are appended, then only vid2sub's files are rewritten | Phase 2 | `tests/test_save.py`; the exit test | planned |
+| S29 | Save | an editor rendition, a head and projection records are appended, then only vid2sub's files are rewritten | Phase 2 | `tests/test_backend_save.py`; the exit test | planned |
 | S30 | Retranslate stale, from the editor | only the stale cues change; edited translations are kept | Phase 2 | Playwright; the exit test | planned |
 | S31 | the SRT edited in another editor, then the episode reopened | the change comes back as an `external` version and becomes the head, and the editor says so | Phase 2 | `tests/test_backend_open.py::test_an_outside_edit_comes_back_as_the_head_and_the_editor_says_so`; the exit test | planned |
-| S32 | two tabs, or a tab and a CLI job, save the same episode | nothing is lost; a track that diverged shows both versions for the user to pick | Phase 2 | `tests/test_save.py` | planned |
+| S32 | two tabs, or a tab and a CLI job, save the same episode | nothing is lost; a track that diverged shows both versions for the user to pick | Phase 2 | `tests/test_backend_save.py` | built |
 | S33 | Enter pressed to commit a Japanese or Chinese IME candidate | the candidate is committed and no editor action fires | Phase 2 | Playwright | planned |
 | S34 | the tab crashes with unsaved edits | the `localStorage` draft is offered back; closing with unsaved edits warns first | Phase 2 | Playwright | planned |
 | S35 | the settings drawer | endpoints and models read-only, with Test; a typed key only for an `allow_typed_key` endpoint, shown back only as "key entered for this session" | Phase 2 | `tests/test_settings.py`; Playwright | planned |
@@ -159,6 +159,9 @@ test names.
   ([Q&A items 18–26](2026-10-14-vid2sub-qa.md)) (`6ce7434`).
 - 2026-10-25: the spec and the Phase 2, 3 and 4 plans approved, with the plans' eleven flagged
   spec changes ([Q&A item 27](2026-10-14-vid2sub-qa.md)).
+- 2026-11-03: §14.5 says a Save's parent is the head its edits started from, not the current head
+  (a clarification S32 needs: a head that moved meanwhile leaves a conflict, not a silent
+  replacement) (Phase 2, Task 6).
 
 ## Contents
 
@@ -1054,7 +1057,7 @@ Ln  {"type":"projection","path":"<basename>","format":"srt|ass","track","renditi
 
 ### 14.5 What a Save writes
 
-One `cues` rendition per changed track (`engine: editor`, parent = the current head), a `head`
+One `cues` rendition per changed track (`engine: editor`, parent = the head its edits started from), a `head`
 record for each, then for each projected file a `projection` record (with the hash of the bytes
 about to be written), then the subtitle files (§15.2). Unsaved edits live in the tab, with a
 `localStorage` draft for crash recovery (wrapped in try/catch) and a warning on close.

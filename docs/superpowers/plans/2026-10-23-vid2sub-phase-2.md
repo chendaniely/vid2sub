@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 6: The editor backend: edits and Save, open.
+**Now:** Task 7: The editor backend: retranslate, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing): from Task 5's close on, every later listed count is 51 lower than the real one.
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): from Task 6's close on, every later listed count is 57 lower than the real one.
 
 ## Decisions made while planning (review these)
 
@@ -7183,6 +7183,10 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 1 · **Scenarios:** S28, S29, S32
 
+**Built differently:** round 6i, after the Tier 1 review (Standards approved with 7 Minor; Spec: 4 Important and 7 Minor), then its re-review (all addressed). (1) A pick records outside edits first and supersedes only the versions the person was shown; a version that arrived since keeps the track in conflict, writes nothing and notes "pick again" (I1 with M2; commit 40481ec). (2) `store.check_external` keys its `latest` by (track, the version a file was written from), so outside edits to files of different versions diverge (I2; a6959a0). (3) `SetTimes` and `Nudge` are refused while any translation is in conflict, as split, merge and delete are (I3; af209fd). (4) `_project` reports a `WriteRefused` (a file held open, or a link) as a note, not as `foreign` (I4; 40c3b5c); the link test is renamed `test_a_glossary_that_is_a_link_is_never_written` (M5, same commit). (5) A Save on a sidecar replaced since the open raises `SaveError` (M6; bd2b3ab). (6) The lock's key and `store.append`'s `overwrite=True` are described as they are (M7 and Standards Minor 5; f09cb79). The steps below are as planned.
+
+**Ruling:** (1) I3: a retime is refused while a translation is in conflict, not followed at the pick, since the unloaded version cannot follow it (spec §13.4, §13.5); a source retimed before a conflict arose still leaves a picked translation at its old times (Phase-end row). (2) I2: two files written from the same version, both edited outside, still chain (the later leads the head, both are kept in history); Phase-end row. (3) M5: the glossary read-back follows a link, as M1's reader does, and the writer refuses it; the test is renamed, no code changed. (4) Spec §14.5 now reads "parent = the head its edits started from" (a clarification S32 needs; spec Revisions).
+
 **Files:**
 - Create: `src/vid2sub/web/ops.py`
 - Modify: `src/vid2sub/web/backend.py`, `src/vid2sub/subs/glossary.py` (`add_terms`: the
@@ -7220,7 +7224,7 @@ Co-Authored-By: <the model's own line>
   - `LocalBackend.apply(self, ep, op: ops.EditOp) -> Episode` (one undo step; `ep` itself when
     nothing changed; `EditError` when the rules refuse, when a new cue's id is one any version in
     the sidecar or the tab has used, when the track or the source is in conflict, and for a
-    split, merge or delete while any translation is); `undo(self, ep) ->
+    split, merge, delete, set_times or nudge while any translation is); `undo(self, ep) ->
     Episode`; `redo(self, ep) -> Episode` (`ep` itself with
     nothing to step to); `backend.UNDO_STEPS = 200`. The undo and redo stacks hold
     `(tracks, glossary_adds)`, so a glossary add is undone like an edit. A closed episode raises
@@ -7228,18 +7232,26 @@ Co-Authored-By: <the model's own line>
   - `class SaveError(Exception)` (nothing was saved; a reason fit to show);
     `@dataclass(frozen=True) class SaveResult: written: tuple[str, ...]; foreign: tuple[str, ...];
     conflicts: tuple[str, ...]; notes: tuple[str, ...]` (bare file names; `foreign` is left
-    alone: someone else's, or changed outside since; `conflicts` is every track in conflict after
-    the call, none of whose files were written)
+    alone: someone else's file, or one changed outside since (`store.ForeignFile` and
+    `EditedOnDisk`, and only those); a file held open or a link (`WriteRefused`) is a note;
+    `conflicts` is every track in conflict after the call, none of whose files were written)
   - `LocalBackend.save(self, ep, *, formats: Sequence[Literal["srt", "ass"]])
     -> tuple[Episode, SaveResult]` (SRT always; blocks on the disk). It records outside edits
     first (`store.check_external`; its notes come back in `notes`), skips a track whose head on
     disk already holds these cues, and once the versions are appended never raises. Afterwards
     the episode's tracks, heads and conflicts are read back from the sidecar, `dirty` is false
-    unless glossary terms are still waiting, and undo and redo are empty.
+    unless glossary terms are still waiting, and undo and redo are empty. It raises `SaveError`
+    when the sidecar was replaced since the open (a changed track's parent is gone).
   - `LocalBackend.resolve(self, ep, track: str, rendition: str) -> tuple[Episode, SaveResult]`
     (changed from the skeleton's `-> Episode`: a pick writes the track's files, and the server
     must say which it couldn't); `SaveError` for an unknown track, a track not in conflict in
-    `ep`, or a rendition that isn't one of the track's versions. Saves and picks hold the
+    `ep`, or a rendition that isn't one of the versions the person was shown (`ep.conflicts`).
+    It records outside edits first (`store.check_external`; its notes join `notes`), supersedes
+    only the shown versions that are still leaves, other than the pick, and writes the track's
+    files when one version is left. When a version arrived since (another Save, an outside
+    edit), it writes nothing and returns the episode with the track still in conflict, showing
+    the new leaves, with the note `another version of the <track> track arrived: pick again`
+    (`SaveResult.conflicts` names the track). Saves and picks hold the
     sidecar's write lock throughout (`store.write_lock`), so they take turns with each other and
     with every other write to that sidecar in the engine (Decision 30).
   - `store.write_lock(video: Path) -> threading.RLock` (round 6e): this process's one lock for
@@ -7256,7 +7268,9 @@ Co-Authored-By: <the model's own line>
     intended (round 6g).
   - `store.check_external`: an outside edit's head replaces the version its file was written
     from (`proj.rendition`), not the current head, so an edit to a file the head has moved on
-    from diverges from it (spec §14.4); `store.project`: a write that fails with `OSError` or
+    from diverges from it (spec §14.4), and `latest` is keyed by (track, that version), so
+    edits to files written from different versions diverge from each other (round 6i; two
+    files of one version still chain); `store.project`: a write that fails with `OSError` or
     `WriteRefused` puts the file's previous projection record back; the external version copies
     the `model` and `payload.glossary_sha` of the version its file was written from; `align_ids`
     marks a line with no match (added, or reworded and retimed) `edited`, as it already marked a
@@ -7264,8 +7278,8 @@ Co-Authored-By: <the model's own line>
   - `subs.glossary.add_terms(text: str, adds: Mapping[str, str]) -> tuple[str, list[str]]`
     (pure: the new text, and the terms kept with the file's other translation).
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
-- [ ] **Step 1: Write the failing test,** `tests/test_ops.py`:
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 1: Write the failing test,** `tests/test_ops.py`:
 
 ```python
 import pytest
@@ -7411,10 +7425,10 @@ def test_every_kind_of_edit_is_in_the_union():
                      "merge_next", "insert", "delete", "detach", "replace_all", "glossary_add"}
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_ops.py -q`. Expected:
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_ops.py -q`. Expected:
   `E   ImportError: cannot import name 'ops' from 'vid2sub.web' (…/src/vid2sub/web/__init__.py)`
   and `1 error`.
-- [ ] **Step 3: Write the code,** `src/vid2sub/web/ops.py`:
+- [x] **Step 3: Write the code,** `src/vid2sub/web/ops.py`:
 
 ```python
 """The edits the editor sends, as typed values checked at the door (spec §20, §6.3).
@@ -7618,14 +7632,14 @@ def parse_op(data: object) -> EditOp:
     raise BadOp(names[0] if names else str(first["loc"][0]), _REASONS.get(kind, "isn't valid"))
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_ops.py -q` first
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_ops.py -q` first
   (`50 passed`), then the guard check, then `make check`. **Guard check** (an unknown field):
   in `class _Op`, change `ConfigDict(extra="forbid", frozen=True, strict=True)` to
   `ConfigDict(frozen=True, strict=True)`; `uv run pytest tests/test_ops.py -q` gives
   `FAILED tests/test_ops.py::test_an_unknown_field_is_refused_without_naming_it` and
   `1 failed, 49 passed`; restore it. `make check`. Expected: `640 passed, 2 skipped, 4
   deselected` twice (the local zone, then UTC), `All checks passed!` and `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 the editor's edits are typed and checked at the door, and a bad one is refused without echoing it
@@ -7663,7 +7677,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/web/ops.py tests/test_ops.py`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 6: Write the failing test,** `tests/test_backend_edit.py`:
+- [x] **Step 6: Write the failing test,** `tests/test_backend_edit.py`:
 
 ```python
 import time
@@ -7864,10 +7878,10 @@ def test_each_edit_on_a_two_hour_episode_and_its_new_view_take_well_under_a_seco
         assert elapsed < 1.0, f"{data['op']}: {elapsed:.2f} s"
 ```
 
-- [ ] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_backend_edit.py -q`.
+- [x] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_backend_edit.py -q`.
   Expected: `E       AttributeError: 'LocalBackend' object has no attribute 'apply'` (and
   `undo`, and `module 'vid2sub.web.backend' has no attribute 'UNDO_STEPS'`), `22 failed`.
-- [ ] **Step 8: Write the code.**
+- [x] **Step 8: Write the code.**
   In `src/vid2sub/web/backend.py`, replace the module docstring
 
 ```python
@@ -8102,7 +8116,7 @@ def _editable(ep: Episode, *tracks: str) -> None:
             raise EditError(f"the {name} track has two versions: pick one before editing")
 ```
 
-- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_backend_edit.py -q` first
+- [x] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_backend_edit.py -q` first
   (`22 passed`), then the guard check, then `make check`. **Guard check** (no edit on a
   conflicted track): in `_editable`, change `for name in (ep.source_key, *tracks):` to
   `for name in ():`; the run gives `FAILED
@@ -8110,7 +8124,7 @@ def _editable(ep: Episode, *tracks: str) -> None:
   `FAILED tests/test_backend_edit.py::test_nothing_but_a_glossary_add_can_be_made_while_the_source_is_in_conflict`
   and `2 failed, 20 passed`; restore it. `make check`. Expected: `662 passed, 2 skipped, 4
   deselected` twice, `All checks passed!` and `no leaks found`.
-- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 the editor's backend applies, undoes and redoes edits, and refuses them on a track in conflict
@@ -8144,7 +8158,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/web/backend.py tests/test_backend_edit.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 11: Write the failing test.** In `tests/test_glossary.py`, replace
+- [x] **Step 11: Write the failing test.** In `tests/test_glossary.py`, replace
 
 ```python
 from vid2sub.subs.glossary import (
@@ -8220,10 +8234,10 @@ def test_a_glossary_that_isnt_toml_is_refused():
         add_terms("nonsense = [", {"c": "d"})
 ```
 
-- [ ] **Step 12: Run it; watch it fail.** `uv run pytest tests/test_glossary.py -q`. Expected:
+- [x] **Step 12: Run it; watch it fail.** `uv run pytest tests/test_glossary.py -q`. Expected:
   `E   ImportError: cannot import name 'add_terms' from 'vid2sub.subs.glossary'
   (…/src/vid2sub/subs/glossary.py)` and `1 error`.
-- [ ] **Step 13: Write the code,** in `src/vid2sub/subs/glossary.py`.
+- [x] **Step 13: Write the code,** in `src/vid2sub/subs/glossary.py`.
   In the module docstring, replace
 
 ```python
@@ -8302,10 +8316,10 @@ def _toml_string(s: str) -> str:
     return '"' + "".join(out) + '"'
 ```
 
-- [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_glossary.py
+- [x] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_glossary.py
   tests/test_purity.py -q` first (`21 passed`: `subs` stays pure), then `make check`. Expected:
   `671 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
-- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(subs): 🤖 a glossary takes new terms by appending to its [terms], keeping the person's comments and layout
@@ -8339,7 +8353,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/subs/glossary.py tests/test_glossary.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 16: Write the failing test,** `tests/test_backend_save.py`:
+- [x] **Step 16: Write the failing test,** `tests/test_backend_save.py`:
 
 ```python
 import sys
@@ -8769,10 +8783,10 @@ def test_a_save_next_to_a_video_with_a_hostile_name_lands_next_to_it(backend, tm
     assert str(folder) not in repr(result)
 ```
 
-- [ ] **Step 17: Run it; watch it fail.** `uv run pytest tests/test_backend_save.py -q`.
+- [x] **Step 17: Run it; watch it fail.** `uv run pytest tests/test_backend_save.py -q`.
   Expected: `E   ImportError: cannot import name 'SaveError' from 'vid2sub.web.backend'
   (…/src/vid2sub/web/backend.py)` and `1 error`.
-- [ ] **Step 18: Write the code.**
+- [x] **Step 18: Write the code.**
   In `src/vid2sub/web/backend.py`, replace the module docstring
 
 ```python
@@ -9185,7 +9199,7 @@ def _write_glossary(video: Path, adds: dict[str, str]) -> tuple[dict[str, str], 
     return {}, notes
 ```
 
-- [ ] **Step 19: Run the checks; they pass.** `uv run pytest tests/test_backend_save.py -q` first
+- [x] **Step 19: Run the checks; they pass.** `uv run pytest tests/test_backend_save.py -q` first
   (`25 passed`), then the guard checks, then `make check`. **Guard checks** (Tier 1: each must
   fail without its fix; revert one, run `uv run pytest tests/test_backend_save.py -q`, restore it,
   then the next):
@@ -9220,7 +9234,7 @@ def _write_glossary(video: Path, adds: dict[str, str]) -> tuple[dict[str, str], 
 
   `make check`. Expected: `696 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
   `no leaks found`.
-- [ ] **Step 20: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 20: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 Save appends an editor version per changed track and writes only vid2sub's files, and a diverged track waits for the person's pick
@@ -9278,7 +9292,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/web/backend.py tests/test_backend_save.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 21: Write the failing tests:** Save and pick with other writers about (an outside
+- [x] **Step 21: Write the failing tests:** Save and pick with other writers about (an outside
   edit since the open, the same Save sent twice, two picks at once, a stale pick, a Jobs-page
   job's append during a Save, another process replacing the sidecar while its temporary file is
   written), two spellings of one sidecar, the words of a picked source, an empty glossary file,
@@ -9609,7 +9623,7 @@ def test_safe_write_checks_last_just_before_the_replace_and_a_failed_check_leave
     assert target.read_bytes() == b"new" and order[-1] == "fine"
 ```
 
-- [ ] **Step 22: Run them; watch them fail.** `uv run pytest tests/test_backend_save.py
+- [x] **Step 22: Run them; watch them fail.** `uv run pytest tests/test_backend_save.py
   tests/test_backend_edit.py tests/test_store.py tests/test_security.py -q`. Expected:
   `12 failed, 86 passed, 1 skipped`, the twelve being
   `test_a_file_changed_outside_since_the_episode_opened_is_kept_and_both_versions_wait`
@@ -9628,7 +9642,7 @@ def test_safe_write_checks_last_just_before_the_replace_and_a_failed_check_leave
   (`AttributeError: module 'vid2sub.store' has no attribute 'write_lock'`) and
   `test_safe_write_checks_last_just_before_the_replace_and_a_failed_check_leaves_the_file`
   (`TypeError: safe_write() got an unexpected keyword argument 'check'`).
-- [ ] **Step 23: Write the code.**
+- [x] **Step 23: Write the code.**
   In `src/vid2sub/web/backend.py`, replace the module docstring
 
 ```python
@@ -10254,7 +10268,7 @@ def safe_write(path: Path, data: bytes, *, overwrite: bool,
         _replace(tmp, path)
 ```
 
-- [ ] **Step 24: Run the checks; they pass.** `uv run pytest tests/test_backend_save.py
+- [x] **Step 24: Run the checks; they pass.** `uv run pytest tests/test_backend_save.py
   tests/test_backend_edit.py tests/test_store.py tests/test_security.py -q` first (`98 passed, 1
   skipped`: a Windows-only test), then the guard checks, then `make check`. **Guard checks**
   (Tier 1, Decision 30: revert one, run the same command, restore it, then the next):
@@ -10273,7 +10287,7 @@ def safe_write(path: Path, data: bytes, *, overwrite: bool,
 
   `make check`. Expected: `707 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
   `no leaks found`.
-- [ ] **Step 25: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 25: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 Save keeps an outside edit made since the open as a version, saves each change once, and picks take turns
@@ -10331,7 +10345,7 @@ Co-Authored-By: <the model's own line>
   tests/test_backend_save.py tests/test_backend_edit.py tests/test_store.py tests/test_security.py`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 26: Write the failing tests:** an outside edit to a file written from an older
+- [x] **Step 26: Write the failing tests:** an outside edit to a file written from an older
   version than the head diverges from it (spec §14.4); a failed write leaves the file counted as
   the version it holds; an outside edit keeps the glossary hash and model its translation was
   made with (a text edit changes neither, §13.4), so fixing one typo doesn't make every cue
@@ -10557,7 +10571,7 @@ def test_a_line_reworded_and_retimed_outside_is_kept_as_a_persons_edit(backend, 
     assert fixed.flags == ("edited",)  # so Retranslate stale never replaces it (§13.4)
 ```
 
-- [ ] **Step 27: Run them; watch them fail.** `uv run pytest tests/test_store.py
+- [x] **Step 27: Run them; watch them fail.** `uv run pytest tests/test_store.py
   tests/test_backend_save.py -q`. Expected: `6 failed, 53 passed`:
   `test_an_outside_edit_to_a_file_from_an_older_version_diverges_from_the_head`
   (`E       AssertionError: assert False`, at `isinstance(head, Conflict)`),
@@ -10571,7 +10585,7 @@ def test_a_line_reworded_and_retimed_outside_is_kept_as_a_persons_edit(backend, 
   (`E       AssertionError: assert () == ('edited',)`), and M1's
   `test_a_write_interrupted_after_its_record_is_not_taken_for_an_outside_edit`, whose one changed
   line now asserts what the file holds (`E       AssertionError: assert '…' == '…'`).
-- [ ] **Step 28: Write the code,** in `src/vid2sub/store.py`.
+- [x] **Step 28: Write the code,** in `src/vid2sub/store.py`.
   Replace the module docstring's last sentence
 
 ```python
@@ -10688,7 +10702,7 @@ automatically (Phase 2, Task 6).
         latest.setdefault(proj.track, proj.rendition)
 ```
 
-- [ ] **Step 29: Run the checks; they pass.** `uv run pytest tests/test_store.py
+- [x] **Step 29: Run the checks; they pass.** `uv run pytest tests/test_store.py
   tests/test_backend_save.py tests/test_pipeline.py tests/test_cli_more.py -q` first (every M1
   external-edit test passes unchanged but the one line above), then the guard checks, then
   `make check`. **Guard checks** (revert one, run `uv run pytest tests/test_store.py
@@ -10711,7 +10725,7 @@ automatically (Phase 2, Task 6).
 
   `make check`. Expected: `713 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
   `no leaks found`.
-- [ ] **Step 30: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 30: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 fix(store): 🤖 an outside edit diverges from a newer head, keeps its glossary and model, and marks the person's lines edited
@@ -10782,7 +10796,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/store.py tests/test_store.py tests/test_backend_save.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 31: Write the failing test:** a term added at Save makes every translation stale
+- [x] **Step 31: Write the failing test:** a term added at Save makes every translation stale
   straight away, as it does while it waits and on the next open (spec §13.4; M1 decides it the
   same way, and this is intended, not a side effect).
   In `tests/test_backend_save.py`, directly above `def test_a_new_glossary_is_made_when_there_is_none(`, add (each function followed by two blank lines):
@@ -10806,11 +10820,11 @@ def test_a_term_added_at_save_makes_every_translation_stale_as_intended(backend,
     assert every_translation_stale(saved) and every_translation_stale(backend.open(str(video)))
 ```
 
-- [ ] **Step 32: Run it; watch it fail.** `uv run pytest tests/test_backend_save.py -q`.
+- [x] **Step 32: Run it; watch it fail.** `uv run pytest tests/test_backend_save.py -q`.
   Expected: `E       AssertionError: assert Glossary(desc...='', terms=()) == Glossary(desc...ichi
   Kudo'),))` (the saved episode still held the glossary as it was at open) and `1 failed, 36
   passed`.
-- [ ] **Step 33: Write the code.**
+- [x] **Step 33: Write the code.**
   In `src/vid2sub/web/backend.py`'s module docstring, replace
 
 ```python
@@ -10852,10 +10866,10 @@ cues would keep pointing at ids that are gone.
                         taken=ep.taken | cue_ids(side), glossary_adds=adds, glossary=glossary)
 ```
 
-- [ ] **Step 34: Run the checks; they pass.** `uv run pytest tests/test_backend_save.py -q` first
+- [x] **Step 34: Run the checks; they pass.** `uv run pytest tests/test_backend_save.py -q` first
   (`37 passed`), then `make check`. Expected: `714 passed, 2 skipped, 4 deselected` twice,
   `All checks passed!` and `no leaks found`.
-- [ ] **Step 35: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 35: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 Save reads the glossary back, so a term just added makes every translation stale, as spec §13.4 intends
@@ -10890,7 +10904,7 @@ glossary's own write, one file per folder, with no lock) goes on the Phase-end l
 re-review then found one new Minor (`pipeline._write` decides from the sidecar it holds while
 `project` now projects the head on disk), also for the Phase-end list.
 
-- [ ] **Step 36: Write the failing tests.** In `tests/test_store.py`, below `import sys` add
+- [x] **Step 36: Write the failing tests.** In `tests/test_store.py`, below `import sys` add
   `import threading`, and in the `vid2sub.subs.sidecar` import, below `    HeadRecord,` add
   `    Sidecar,`. Then directly above
   `@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")` (the
@@ -11078,7 +11092,7 @@ def locked_elsewhere(video) -> bool:
     return not got[0]
 ```
 
-- [ ] **Step 37: Run them; watch them fail.** `uv run pytest tests/test_store.py
+- [x] **Step 37: Run them; watch them fail.** `uv run pytest tests/test_store.py
   tests/test_security.py tests/test_backend_save.py tests/test_edit.py -q`. Expected:
   `4 failed, 124 passed, 1 skipped`, the four being
   `test_a_sidecar_another_writer_makes_after_vid2sub_found_none_is_merged` (`WriteRefused: … already
@@ -11089,7 +11103,7 @@ def locked_elsewhere(video) -> bool:
   (`AssertionError: assert {'a', 'b', 'c...a', 'tb', ...} == {'a', 'b', 'ta', 'tb', 'tx'}`). The
   projection-lock test and the changed job test pass already: they pin what round 6e built, and
   Step 39's guard checks show them failing without it.
-- [ ] **Step 38: Write the code.** In `src/vid2sub/subs/edit.py`, in `split`, replace
+- [x] **Step 38: Write the code.** In `src/vid2sub/subs/edit.py`, in `split`, replace
 
 ```python
     _claim(taken, *ids)
@@ -11299,7 +11313,7 @@ def _check_external(video: Path, header: Header, sidecar: Sidecar, *,
     renditions = sidecar.renditions()
 ```
 
-- [ ] **Step 39: Run the checks; they pass.** The same `uv run pytest` command first (`128
+- [x] **Step 39: Run the checks; they pass.** The same `uv run pytest` command first (`128
   passed, 1 skipped`), then the guard checks, then `make check`. **Guard checks** (revert one,
   run the command, restore it, then the next; each fails alone):
   1. *Read again under the lock:* in `project` and `check_external`, change
@@ -11323,7 +11337,7 @@ def _check_external(video: Path, header: Header, sidecar: Sidecar, *,
 
   Each run gives `1 failed, 127 passed, 1 skipped`. `make check`. Expected: `719 passed, 2
   skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
-- [ ] **Step 40: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 40: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 fix(store): 🤖 a projection and an outside-edit check read the sidecar again under its lock, and a retried replace checks again first
@@ -11374,7 +11388,7 @@ Co-Authored-By: <the model's own line>
   tests/test_store.py tests/test_security.py tests/test_backend_save.py tests/test_edit.py`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 41: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 41: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist: secrets (none touched: no key or
   token is read here); permissions (the glossary and subtitle files go through `safe_write`,
   never through a link); network exposure (none: no network call in this task); failing closed
@@ -11833,15 +11847,17 @@ someone else's file is left alone and reported (§6.6, §15.3), and a track in c
 written until a person picks a version with `resolve`, the only thing that moves a head on a
 conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
 written is a note, and the episode moves to the new heads either way. Saves and picks hold the
-sidecar's write lock (`store.write_lock`, keyed by its real path), which every other append and
+sidecar's write lock (`store.write_lock`, keyed by the folder's device and inode and the name, NFC and casefolded), which every other append and
 projection in this engine takes too, so two picks at once can't replace each other in a cycle and
 a job's write never lands inside a Save (Decision 30).
 Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
 so its comments survive, and the file is read back: a term just added makes every translation
 made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
 starts the undo history again, because the tracks are read back from the sidecar. While a
-translation is in conflict, no source cue can be split, merged or deleted: the unloaded version's
-cues would keep pointing at ids that are gone.
+translation is in conflict, no source cue can be split, merged, deleted or retimed: the unloaded
+version's cues would keep pointing at ids that are gone or at old times. A pick first records
+outside edits as a version, and supersedes only the versions the person was shown: one that
+arrived since keeps the track in conflict, so the person picks again.
 """
 ```
 
@@ -11885,15 +11901,17 @@ someone else's file is left alone and reported (§6.6, §15.3), and a track in c
 written until a person picks a version with `resolve`, the only thing that moves a head on a
 conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
 written is a note, and the episode moves to the new heads either way. Saves and picks hold the
-sidecar's write lock (`store.write_lock`, keyed by its real path), which every other append and
+sidecar's write lock (`store.write_lock`, keyed by the folder's device and inode and the name, NFC and casefolded), which every other append and
 projection in this engine takes too, so two picks at once can't replace each other in a cycle and
 a job's write never lands inside a Save (Decision 30).
 Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
 so its comments survive, and the file is read back: a term just added makes every translation
 made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
 starts the undo history again, because the tracks are read back from the sidecar. While a
-translation is in conflict, no source cue can be split, merged or deleted: the unloaded version's
-cues would keep pointing at ids that are gone.
+translation is in conflict, no source cue can be split, merged, deleted or retimed: the unloaded
+version's cues would keep pointing at ids that are gone or at old times. A pick first records
+outside edits as a version, and supersedes only the versions the person was shown: one that
+arrived since keeps the track in conflict, so the person picks again.
 
 Retranslate (spec §13.4, §20) redoes the stale and untranslated cues, or the cues a person names,
 as one undoable edit. The model is the one named, else the one M1's catalog route picks; a cloud
@@ -12335,15 +12353,17 @@ someone else's file is left alone and reported (§6.6, §15.3), and a track in c
 written until a person picks a version with `resolve`, the only thing that moves a head on a
 conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
 written is a note, and the episode moves to the new heads either way. Saves and picks hold the
-sidecar's write lock (`store.write_lock`, keyed by its real path), which every other append and
+sidecar's write lock (`store.write_lock`, keyed by the folder's device and inode and the name, NFC and casefolded), which every other append and
 projection in this engine takes too, so two picks at once can't replace each other in a cycle and
 a job's write never lands inside a Save (Decision 30).
 Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
 so its comments survive, and the file is read back: a term just added makes every translation
 made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
 starts the undo history again, because the tracks are read back from the sidecar. While a
-translation is in conflict, no source cue can be split, merged or deleted: the unloaded version's
-cues would keep pointing at ids that are gone.
+translation is in conflict, no source cue can be split, merged, deleted or retimed: the unloaded
+version's cues would keep pointing at ids that are gone or at old times. A pick first records
+outside edits as a version, and supersedes only the versions the person was shown: one that
+arrived since keeps the track in conflict, so the person picks again.
 
 Retranslate (spec §13.4, §20) redoes the stale and untranslated cues, or the cues a person names,
 as one undoable edit. The model is the one named, else the one M1's catalog route picks; a cloud
@@ -12397,15 +12417,17 @@ someone else's file is left alone and reported (§6.6, §15.3), and a track in c
 written until a person picks a version with `resolve`, the only thing that moves a head on a
 conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
 written is a note, and the episode moves to the new heads either way. Saves and picks hold the
-sidecar's write lock (`store.write_lock`, keyed by its real path), which every other append and
+sidecar's write lock (`store.write_lock`, keyed by the folder's device and inode and the name, NFC and casefolded), which every other append and
 projection in this engine takes too, so two picks at once can't replace each other in a cycle and
 a job's write never lands inside a Save (Decision 30).
 Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
 so its comments survive, and the file is read back: a term just added makes every translation
 made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
 starts the undo history again, because the tracks are read back from the sidecar. While a
-translation is in conflict, no source cue can be split, merged or deleted: the unloaded version's
-cues would keep pointing at ids that are gone.
+translation is in conflict, no source cue can be split, merged, deleted or retimed: the unloaded
+version's cues would keep pointing at ids that are gone or at old times. A pick first records
+outside edits as a version, and supersedes only the versions the person was shown: one that
+arrived since keeps the track in conflict, so the person picks again.
 
 Retranslate (spec §13.4, §20) redoes the stale and untranslated cues, or the cues a person names,
 as one undoable edit. The model is the one named, else the one M1's catalog route picks; a cloud
@@ -25543,7 +25565,10 @@ Co-Authored-By: <the model's own line>
     `"saving"` or `"picking"`; a `SaveError` or `OpenError` is a notice with its message.
   - Message `save_result`: `{"episode": str, "kind": "save" | "pick", "written": [file names],
     "foreign": [file names left alone], "conflicts": [track keys], "notes": [str]}`, sent after
-    the new episode is published.
+    the new episode is published. `foreign` means only someone else's file or one changed
+    outside since; a file held open or a link arrives as a note. A pick that left the track in
+    conflict (a version arrived since) has that track in `conflicts` and the note to pick again,
+    so the picker opens again.
   - Message `applied`: `{"episode": str, "n": int, "ok": bool}` after each edit, undo and redo
     (Task 15's inputs), `n` the request's own count, sent only when it is an integer; `ok` is
     false when the edit was refused (an undo or redo with nothing to step to counts as made), so
@@ -26159,6 +26184,11 @@ describe("what a Save says (spec §14.5, §15.3)", () => {
   it("says a pick kept the version picked", () => {
     expect(resultNotices({ ...BASE, kind: "pick", written: ["a.ja.srt"] }, TRACKS, VIDEO)).toEqual([
       { kind: "info", text: "Kept the version you picked: wrote a.ja.srt" }]);
+    // a version arrived since the picker opened: nothing was written, the track is still in conflict
+    expect(resultNotices({ ...BASE, kind: "pick", conflicts: ["ja"],
+      notes: ["another version of the ja track arrived: pick again"] }, TRACKS, VIDEO)).toEqual([
+      { kind: "info", text: "Another version of the ja track arrived: pick again" },
+      { kind: "error", text: "Japanese has two versions: pick the one to keep" }]);
   });
 });
 ```
@@ -26760,7 +26790,8 @@ export function resultNotices(r: SaveResultMessage, tracks: readonly TrackInfo[]
   const label = (key: string) => tracks.find((t) => t.key === key)?.label ?? key;
   const out: Notice[] = [];
   const wrote = r.written.length ? `: wrote ${r.written.join(", ")}` : "";
-  if (r.kind === "pick") out.push({ kind: "info", text: `Kept the version you picked${wrote}` });
+  // a pick that left the track in conflict (a version arrived since) says only so, below
+  if (r.kind === "pick") { if (!r.conflicts.length) out.push({ kind: "info", text: `Kept the version you picked${wrote}` }); }
   else if (wrote || !r.conflicts.length) out.push({ kind: "info", text: `Saved${wrote}` });
   if (r.foreign.length) {
     const one = r.foreign.length === 1;
@@ -39941,7 +39972,7 @@ fi
 | Task 20 (planning) | Minor | `tests/test_live_spark.py` | If local-ai doesn't serve Qwen3-ASR by Task 20's Step 21, its recording, live test and Cantonese run (Steps 21–23) wait; they run once it does, in whichever phase that is, and S22 becomes `verified` then (the kickoff council's goal fit finding 1) | open |
 | Task 16 (planning) | Minor | `tests/e2e/test_saving.py` | The close-warning test waits a fixed 500 ms before checking for the `beforeunload` dialog, and some server tests sleep, then assert nothing happened, so a slow runner flakes the first and passes the others without their fix; wait on `page.expect_event("dialog")`, and send a later request through the same queue before asserting (reliability finding 13) | open |
 | Task 17 (planning) | Minor | `src/vid2sub/web/server.py` | A whole-episode Retranslate holds the tab's queue, with no Cancel, so a slow Spark keeps edits and Save waiting for minutes; a Cancel checked between batches, or Save allowed past a running retranslation (reliability finding 15) | open |
-| Task 6 (planning) | Minor | `src/vid2sub/store.py` | The glossary file's write takes no `store.write_lock` (the build's Tier 1 review) | open |
+| Task 6 (planning) | Minor | `src/vid2sub/store.py` | The glossary file's write takes no `store.write_lock` (the build's Tier 1 review), and `_write_glossary`'s re-read is not passed to `safe_write` as `check`, so its window also covers the temporary write and the fsync (Standards Minor 1) | open |
 | Task 6 (planning) | Minor | `src/vid2sub/pipeline.py` | `pipeline._write` can fail an input with `StoreError` when one of its tracks went into conflict meanwhile, where it could write the others and report the conflict (the build's Tier 1 re-review) | open |
 | Task 16 (planning) | Minor | `frontend/src/App.tsx` | An edit sent while a Save runs is cleared from the draft by the Save's publish, so a crash right after loses it | open |
 | Task 16 (planning) | Minor | `frontend/src/lib/draft.ts` | A step still unanswered when the tab crashes stays in the draft and is replayed; comments in `App.tsx`, `draft.ts`, `server.py`'s docstring and `types.ts` still describe only refusals | open |
@@ -39957,3 +39988,20 @@ fi
 | Task 5 (review) | Minor | `src/vid2sub/web/backend.py` | `_lang` is defined in both `backend.py` and `views.py`; Task 14 may unify them | open |
 | Task 5 (review) | Minor | `src/vid2sub/web/backend.py` | `Episode` is frozen yet holds lists, sets and dicts, so a caller can still change one in place; use tuples, frozensets and mappingproxies, or say so | open |
 | Task 5 (review) | Minor | `src/vid2sub/web/backend.py` | `load_tracks` types its inner dict as `dict[str, tuple]`, and `_audio_track` has no return type | open |
+| Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | Save drops the sidecar's load warnings (`_reload` discards `store.load`'s), so a truncated last line is rewritten away unreported, where spec §14.6 says it is reported (Spec Minor 1) | open |
+| Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | A pick's `SaveResult.conflicts` names only the picked track, where Save's names every track in conflict (Spec Minor 3) | open |
+| Task 6 (review) | Minor | `src/vid2sub/web/ops.py` | `BadOp.field` names the edit's kind (not None) when neither edge is given to `set_times` (Spec Minor 4) | open |
+| Task 6 (review) | Minor | `src/vid2sub/store.py` | `_project`'s restore `append` after a failed write can itself raise and mask the write error (Standards Minor 2) | open |
+| Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | `save` and `resolve` duplicate the exception mapping to `SaveError`, and `_project` returns an unnamed 5-tuple (Standards Minor 3) | open |
+| Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | Commit 46bf9fe bundles about eight behaviours under one `feat(web)`; record only, to commit per behaviour next time (Standards Minor 4) | open |
+| Task 6 (review) | Minor | `src/vid2sub/store.py` | For Dan: `load(video)[0] or sidecar` in `project` and `check_external` falls back to the caller's copy when the sidecar vanishes mid-Save, so `append` then makes a sidecar holding only a projection record; raise instead, or say so (Standards Minor 6; Spec Minor 6's related note) | open |
+| Task 6 (review) | Minor | `src/vid2sub/` | Cosmetics: the ragged line in `security.py`'s module docstring; unparametrised `tuple` in `store._LOCKS` and `key`; `unchanged` could be a named helper `_unchanged(path, before)`; `backend.py`'s module docstring is about 45 lines, and its Save paragraph could move into `save`'s docstring (Standards Minor 7) | open |
+| Task 6 (review) | Minor | `src/vid2sub/store.py` | Two files written from the same version and both edited outside still chain: the later leads the head and both are kept in history (the ruling on I2); diverging them needs a design decision | open |
+| Task 6 (review) | Minor | `tests/test_backend_save.py` | No test pins that a pick refuses a current leaf the person wasn't shown (`resolve`'s `rendition not in shown`); add one in the three-version setup (re-review Minor 1) | open |
+| Task 6 (review) | Minor | `tests/test_store.py` | `test_two_edited_files_of_one_version_still_chain` duplicates an earlier test with weaker assertions; drop it or fold it in (re-review Minor 2) | open |
+| Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | When a pick leaves the track in conflict, `_with_track` still clears `undo` and `redo`, though no track was read back; keep them in that case (re-review Minor 3) | open |
+| Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | A pick's `check_external` can record an outside edit to another track and note it, but only the picked track is reloaded, so the tab shows that track's old cues until the next Save (re-review Minor 4) | open |
+| Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | A cross-process replacement cycle (every version replaced) can't be settled by a pick, and its note "another version arrived" is wrong there (re-review, out of scope) | open |
+| Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | A pick on a sidecar replaced since the open finds no heads for the track and says "already picked elsewhere" (re-review, out of scope) | open |
+| Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | A source retimed before a conflict arose (the tab's nudge saved while a CLI translate diverged the translation) leaves a picked translation at its old times (the I3 ruling's residual) | open |
+| Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | "kept your outside edit to <track>" repeats once per edited file of a track in Save and pick, because `changed` lists the track once per file (re-review, out of scope) | open |
