@@ -10,6 +10,7 @@ from vid2sub.subs.formats import to_srt
 from vid2sub.subs.model import Cue
 from vid2sub.subs.rendition import cues_body
 from vid2sub.subs.sidecar import (
+    Conflict,
     HeadRecord,
     SidecarError,
     make_rendition,
@@ -328,7 +329,7 @@ def test_a_write_interrupted_after_its_record_is_not_taken_for_an_outside_edit(v
     monkeypatch.setattr(store, "safe_write", real)
     assert path.read_bytes() == old
     side, _ = store.load(video)
-    assert side.projections()[path.name].sha256 != store.sha256_hex(old)
+    assert side.projections()[path.name].sha256 == store.sha256_hex(old)  # what the file holds
     before, head = set(side.renditions()), side.head("en")
     side, changed = store.check_external(video, header(video), side)
     assert changed == []
@@ -348,3 +349,58 @@ def test_every_digest_ever_projected_for_a_file_is_known(video):
     second = store.sha256_hex(path.read_bytes())
     assert store.projected_digests(side, path.name) == {first, second}
     assert store.projected_digests(side, "other.srt") == set()
+
+
+# Phase 2, Task 6: an outside edit to a file written from an older version diverges (spec §14.4)
+
+
+def newer_head(video, side):
+    """A newer version of en that becomes the head without being written to the file."""
+    projected = side.head("en").rendition
+    body = cues_body([CUES[0], CUES[1].model_copy(update={"text": "Planet"})], language="en",
+                     script=None, engine="editor", model=None, version="e",
+                     created_at=store.now(), inputs={}, meta={"role": "source"})
+    rec = make_rendition([projected], "en", body)
+    side = store.append(video, header(video), [rec, HeadRecord(
+        track="en", rendition=rec.id, replaces=projected, by="editor", at=store.now())])
+    return side, rec.id
+
+
+def test_an_outside_edit_to_a_file_from_an_older_version_diverges_from_the_head(video):
+    side = with_track(video)
+    side, path, _ = store.project(video, header(video), side, "en", "srt",
+                                  overwrite_foreign=False)
+    side, newer = newer_head(video, side)
+    path.write_bytes(path.read_bytes().replace(b"World", b"Earth"))
+    side, changed = store.check_external(video, header(video), side)
+    assert changed == ["en"]
+    head = side.head("en")
+    assert isinstance(head, Conflict)
+    (external,) = [r for r in head.leaves if r != newer]
+    assert newer in head.leaves and side.renditions()[external].body["engine"] == "external"
+
+
+def test_a_failed_write_leaves_the_file_counted_as_the_version_it_still_holds(video,
+                                                                             monkeypatch):
+    side = with_track(video)
+    side, path, _ = store.project(video, header(video), side, "en", "srt",
+                                  overwrite_foreign=False)
+    written = side.projections()[path.name]
+    side, newer = newer_head(video, side)
+    real = store.safe_write
+
+    def full_disk(target, data, **kwargs):
+        if target == path:
+            raise OSError(28, "No space left on device")
+        return real(target, data, **kwargs)
+
+    monkeypatch.setattr(store, "safe_write", full_disk)
+    with pytest.raises(OSError):
+        store.project(video, header(video), side, "en", "srt", overwrite_foreign=False)
+    monkeypatch.setattr(store, "safe_write", real)
+    side, _ = store.load(video)
+    latest = side.projections()[path.name]
+    assert (latest.rendition, latest.sha256) == (written.rendition, written.sha256)
+    path.write_bytes(path.read_bytes().replace(b"World", b"Earth"))
+    side, _ = store.check_external(video, header(video), side)
+    assert isinstance(side.head("en"), Conflict) and newer in side.head("en").leaves

@@ -15,7 +15,13 @@ time and text), and a change that was only bytes or styling just updates the rec
 the file counts as the current version's projection and isn't rewritten, so a restyle survives
 (final review). An automatic version never replaces a head a person set (spec §14.4). A file of
 ours edited since vid2sub wrote it is never overwritten until the edit has been recorded as a
-version (controller ruling, Task 28).
+version (controller ruling, Task 28). That version replaces the one its file was written from, not
+whatever head is current, so an edit to a file the head has moved on from diverges from the head,
+a conflict the person resolves (spec §14.4); and a write that fails puts back the file's previous
+projection record, so the file still counts as the version it holds. The external version keeps
+the glossary hash and model of the version its file was written from, since a text edit changes
+neither (§13.4), and every line the person changed or added is `edited`, so it is never replaced
+automatically (Phase 2, Task 6).
 """
 
 from __future__ import annotations
@@ -245,7 +251,14 @@ def _project(video: Path, header: Header, sidecar: Sidecar, track: str, fmt: str
     record = ProjectionRecord(path=path.name, format=fmt, track=track, rendition=rec.id,
                               sha256=digest, at=now())
     sidecar = append(video, header, [record])
-    safe_write(path, data, overwrite=existing is not None)
+    try:
+        safe_write(path, data, overwrite=existing is not None)
+    except (OSError, WriteRefused):
+        if previous is not None:  # the file still holds the version `previous` recorded
+            # a finer time than now()'s seconds, so it never merges into the record it copies
+            at = datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+            append(video, header, [previous.model_copy(update={"at": at})])
+        raise
     return sidecar, path, True
 
 
@@ -270,9 +283,9 @@ def align_ids(parsed: Sequence[ParsedCue], projected: Sequence[Cue], *,
             match = next((c for c in projected if c.id not in used
                           and abs(c.start_ms - p.start_ms) <= 100
                           and abs(c.end_ms - p.end_ms) <= 100), None)
-        if match is None:
+        if match is None:  # a line the person added, or reworded and retimed: theirs
             out.append(Cue(id=new_cue_id(taken), start_ms=p.start_ms, end_ms=p.end_ms,
-                           text=p.text))
+                           text=p.text, flags=("edited",)))
             continue
         used.add(match.id)
         flags = match.flags
@@ -289,7 +302,9 @@ def check_external(video: Path, header: Header, sidecar: Sidecar, *,
     """Record edits made outside vid2sub as versions; a file that won't parse is only reported.
 
     An unreadable or emptied file is neither adopted nor touched, so `project` later refuses it
-    as `EditedOnDisk`. Two edited files of one track chain their heads rather than diverge.
+    as `EditedOnDisk`. The new version's head replaces the version the file was written from, so
+    if the head has moved on since, the two diverge (spec §14.4); two edited files of one track
+    chain their heads rather than diverge.
     """
     renditions = sidecar.renditions()
     latest: dict[str, str] = {}
@@ -318,14 +333,13 @@ def check_external(video: Path, header: Header, sidecar: Sidecar, *,
             continue
         language, script = body_track_language(projected_body)
         body = cues_body(align_ids(parsed, projected), language=language, script=script,
-                         engine="external", model=None, version=f"external@{digest[:12]}",
-                         created_at=now(), inputs={"file_sha256": digest},
-                         meta={"file": name, "role": projected_body.get("meta", {}).get("role")})
+                         engine="external", model=projected_body.get("model"),
+                         version=f"external@{digest[:12]}", created_at=now(),
+                         inputs={"file_sha256": digest},
+                         meta={"file": name, "role": projected_body.get("meta", {}).get("role")},
+                         glossary_sha=projected_body.get("payload", {}).get("glossary_sha"))
         rec = make_rendition([proj.rendition], proj.track, body)
-        if proj.track not in latest:
-            head = sidecar.head(proj.track)
-            if isinstance(head, HeadRecord):
-                latest[proj.track] = head.rendition
+        latest.setdefault(proj.track, proj.rendition)
         records += [rec,
                     HeadRecord(track=proj.track, rendition=rec.id,
                                replaces=latest.get(proj.track), by="external", at=now()),

@@ -30,12 +30,14 @@ from vid2sub.subs.sidecar import (
     Sidecar,
     make_rendition,
 )
+from vid2sub.web import views
 from vid2sub.web.backend import LocalBackend, OpenError, SaveError, SaveResult
 from vid2sub.web.ops import parse_op
 
 pytestmark = pytest.mark.media
 JA, EN = "Show - S01E01.ja.srt", "Show - S01E01.en.srt"
 GLOSSARY = "vid2sub.glossary.toml"
+TERMS = '[terms]\n"工藤新一" = "Shinichi Kudo"\n'
 BAZARR = b"1\n00:00:00,000 --> 00:00:01,000\nBazarr's line\n"
 
 
@@ -68,16 +70,21 @@ def leaf_texts(video, track: str) -> list[tuple[str, str]]:
     return sorted((b["engine"], cues_from_body(b)[0].text) for b in bodies)
 
 
-def cli_translate(video, monkeypatch) -> None:
-    """`vid2sub translate` (not --stale-only) on the episode: M1's own pipeline, faked model."""
+def gemma() -> Config:
+    return Config(endpoints={"spark": Endpoint(base_url="http://127.0.0.1:9/v1")},
+                  models={"gemma": ModelEntry(catalog="gemma-4-26b-a4b", endpoint="spark",
+                                              model="gemma", task="translate", local=True)})
+
+
+def cli_translate(video, monkeypatch, *, fresh: bool = True) -> pipeline.InputResult:
+    """`vid2sub translate` on the episode (`--stale-only` when not `fresh`): M1's own pipeline,
+    with the model faked."""
     monkeypatch.setattr(pipeline, "make_ask", fake_make_ask)
-    config = Config(endpoints={"spark": Endpoint(base_url="http://127.0.0.1:9/v1")},
-                    models={"gemma": ModelEntry(catalog="gemma-4-26b-a4b", endpoint="spark",
-                                                model="gemma", task="translate", local=True)})
-    ctx = pipeline.RunContext(config=config, tools=Tools.find(), keys=KeyRing(environ={}),
+    ctx = pipeline.RunContext(config=gemma(), tools=Tools.find(), keys=KeyRing(environ={}),
                               options=pipeline.RunOptions(targets=["en"], translate_model="gemma"))
-    result = pipeline.translate_one(str(video), ctx, fresh=True)
+    result = pipeline.translate_one(str(video), ctx, fresh=fresh)
     assert result.status == "done", (result.reason, result.hint)
+    return result
 
 
 def conflicted(video, track: str = "en") -> None:
@@ -443,6 +450,76 @@ def test_a_save_cut_short_after_the_sidecar_never_makes_the_next_save_conflict_w
     _, result = backend.save(saved, formats=["srt"])
     assert result.written == (JA,) and result.conflicts == ()
     assert isinstance(store.load(video)[0].head("ja"), HeadRecord)
+
+
+def test_an_outside_edit_to_a_file_a_save_couldnt_write_diverges_from_the_save(backend, video,
+                                                                              monkeypatch):
+    real = store.safe_write
+
+    def full_disk(path, data, **kwargs):
+        if path.suffix == ".srt":
+            raise OSError(28, "No space left on device")
+        return real(path, data, **kwargs)
+
+    monkeypatch.setattr(store, "safe_write", full_disk)
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    backend.save(ep, formats=["srt"])  # the head moves on; the file still holds the old version
+    monkeypatch.setattr(store, "safe_write", real)
+    srt = video.with_name(JA)
+    srt.write_bytes(srt.read_bytes().replace("元気ですか".encode(), "お元気ですか".encode()))
+    reopened = backend.open(str(video))  # check_external, as every M1 command runs it
+    assert set(reopened.conflicts) == {"ja"}
+    assert leaf_texts(video, "ja") == [("editor", "こんばんは"), ("external", "おはよう")]
+
+
+def en_stale(ep) -> list[bool]:
+    return ["stale" in c["flags"]
+            for row in views.episode_view(ep, video_url=None, audio_url=None)["rows"]
+            for c in row["tr"]["en"]["cues"]]
+
+
+def test_an_outside_edit_keeps_the_glossary_and_model_its_translation_was_made_with(tmp_path,
+                                                                                  video):
+    sha = parse_glossary(TERMS).sha()
+    video.with_name(GLOSSARY).write_text(TERMS, encoding="utf-8")
+    side, _ = store.load(video)
+    head = side.head("en").rendition
+    rec = make_rendition([head], "en", cues_body(
+        translation_cues(source_cues(3)), language="en", script=None, engine="translate:gemma",
+        model="gemma", version="g", created_at=store.now(), inputs={},
+        meta={"role": "translation"}, glossary_sha=sha))
+    side = store.append(video, side.header, [rec, HeadRecord(
+        track="en", rendition=rec.id, replaces=head, by="auto", at=store.now())])
+    store.project(video, side.header, side, "en", "srt", overwrite_foreign=False)
+    srt = video.with_name(EN)
+    srt.write_bytes(srt.read_bytes().replace(b"How are you?", b"How do you do?"))
+    backend = LocalBackend(gemma(), Tools.find(), KeyRing(environ={}),
+                           Cache(tmp_path / "cache", max_bytes=10**9))
+    ep = backend.open(str(video))
+    body = ep.sidecar.renditions()[ep.heads["en"]].body
+    assert (body["engine"], body["model"], body["payload"].get("glossary_sha")) == (
+        "external", "gemma", sha)
+    assert en_stale(ep) == [False, False, False]
+    assert en_stale(edit(backend, ep, op="set_text", cue=sid(2), text="はい")) == [
+        False, False, True]
+
+
+def test_vid2sub_translate_stale_only_still_keeps_a_track_edited_outside(video, monkeypatch):
+    srt = video.with_name(EN)
+    srt.write_bytes(srt.read_bytes().replace(b"How are you?", b"How do you do?"))
+    result = cli_translate(video, monkeypatch, fresh=False)
+    assert result.kept == ["en"] and store.load(video)[0].head("en").by == "external"
+    assert "How do you do?" in srt.read_text(encoding="utf-8")
+
+
+def test_a_line_reworded_and_retimed_outside_is_kept_as_a_persons_edit(backend, video):
+    srt = video.with_name(EN)
+    srt.write_text(srt.read_text(encoding="utf-8").replace(
+        "00:00:03,600 --> 00:00:06,600\nHow are you?",
+        "00:00:04,100 --> 00:00:06,600\nHow have you been?"), encoding="utf-8")
+    ep = backend.open(str(video))
+    (fixed,) = [c for c in ep.tracks.translations["en"] if c.text == "How have you been?"]
+    assert fixed.flags == ("edited",)  # so Retranslate stale never replaces it (§13.4)
 
 
 def test_a_sidecar_that_cant_be_read_any_more_stops_the_save_before_anything_is_written(backend,
