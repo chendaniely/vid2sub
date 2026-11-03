@@ -1,14 +1,21 @@
+import os
 import sys
 
 import pytest
 
-from vid2sub import store
+from vid2sub import security, store
 from vid2sub.media.identity import VideoIdentity
 from vid2sub.security import WriteRefused
 from vid2sub.subs.formats import to_srt
 from vid2sub.subs.model import Cue
 from vid2sub.subs.rendition import cues_body
-from vid2sub.subs.sidecar import HeadRecord, SidecarError, make_rendition, parse_sidecar
+from vid2sub.subs.sidecar import (
+    HeadRecord,
+    SidecarError,
+    make_rendition,
+    parse_sidecar,
+    serialize,
+)
 
 CUES = [Cue(id="c1", start_ms=0, end_ms=1500, text="Hello"),
         Cue(id="c2", start_ms=2000, end_ms=3500, text="World")]
@@ -68,6 +75,37 @@ def test_a_concurrent_writer_is_merged_not_lost(video, monkeypatch):
     mine = make_rendition([], "en", {"kind": "cues", "n": 2})
     side = store.append(video, header(video), [mine])
     assert other.id in side.renditions() and mine.id in side.renditions()
+
+
+def test_a_writer_that_replaces_the_sidecar_while_the_temporary_file_is_written_loses_nothing(
+        video, monkeypatch):
+    with_track(video)
+    other = make_rendition([], "ja", {"kind": "cues"})
+    path, real_fsync, calls = store.sidecar_path(video), os.fsync, []
+
+    def racing(fd):  # another process writes the sidecar after the re-read M1 did, before ours
+        if not calls:  # is renamed into place
+            calls.append(1)
+            side, _ = store.load(video)
+            path.write_text(serialize(side.add(other)), encoding="utf-8")
+        real_fsync(fd)
+
+    monkeypatch.setattr(security.os, "fsync", racing)
+    mine = make_rendition([], "en", {"kind": "cues", "n": 2})
+    side = store.append(video, header(video), [mine])
+    assert other.id in side.renditions() and mine.id in side.renditions()
+    assert side == store.load(video)[0]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_two_spellings_of_one_sidecar_share_its_write_lock(tmp_path):
+    folder = tmp_path / "Show"
+    folder.mkdir()
+    (tmp_path / "linked").symlink_to(folder, target_is_directory=True)
+    lock = store.write_lock(folder / "Show - S01E01.mkv")
+    assert store.write_lock(tmp_path / "linked" / "Show - S01E01.mkv") is lock
+    assert store.write_lock(folder / "SHOW - s01e01.mkv") is lock  # a case-insensitive volume's
+    assert store.write_lock(folder / "Show - S01E02.mkv") is not lock
 
 
 def test_an_auto_version_never_replaces_a_persons(video):

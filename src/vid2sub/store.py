@@ -1,8 +1,12 @@
 """The sidecar and the subtitle files next to a video (spec §14.5, §14.6, §15).
 
-Appends use compare-and-swap: read the sidecar, add records, re-read just before replacing, and
-start over if another writer got there first; records are immutable with ids, so the merge is a
-union and nothing is lost. A sidecar vid2sub can't read is never overwritten. A subtitle file is
+Appends use compare-and-swap: read the sidecar, add records, write them to a temporary file,
+re-read the sidecar just before the rename, and start over if another writer got there first;
+records are immutable with ids, so the merge is a union and nothing is lost. Within one process
+every append and projection holds the sidecar's lock (`write_lock`), so the editor's Save and a
+job's write never overlap; between processes only the moment between that re-read and the rename
+is unguarded (spec §14.6, §18.3; the Phase 2 plan's Decision 30, Dan's answer to the kickoff
+council). A sidecar vid2sub can't read is never overwritten. A subtitle file is
 vid2sub's only if the sidecar has a projection record for it; anyone else's (Bazarr, a fansub) is
 never overwritten without `overwrite_foreign`. The projection record is written before the file.
 A projected file that changed on disk is parsed and compared at its format's precision (an ASS
@@ -16,6 +20,10 @@ version (controller ruling, Task 28).
 
 from __future__ import annotations
 
+import os
+import threading
+import unicodedata
+import weakref
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,6 +60,10 @@ from vid2sub.subs.sidecar import (
 
 class StoreError(RuntimeError):
     pass
+
+
+class _Raced(Exception):
+    """Another writer replaced the sidecar after it was read: read it again and merge."""
 
 
 class ForeignFile(StoreError):
@@ -93,6 +105,32 @@ def _decode(data: bytes, name: str) -> str:
         raise SidecarError(f"{name} isn't UTF-8; refusing to write over it") from None
 
 
+_LOCKS: weakref.WeakValueDictionary[tuple, threading.RLock] = weakref.WeakValueDictionary()
+_LOCKS_GUARD = threading.Lock()
+
+
+def write_lock(video: Path) -> threading.RLock:
+    """This process's one lock for `video`'s sidecar, held by every append and projection.
+
+    Keyed by the sidecar's folder as the file system knows it (device and inode) and its name
+    folded for case and Unicode form, so two spellings of one file (a linked folder, another case
+    on a case-insensitive volume) share it; folding a name on a case-sensitive volume only makes
+    two files take turns. Reentrant, so the editor's Save holds it around all its writes. Kept
+    only while someone holds it, so the engine doesn't gather one per video it ever saw."""
+    path = sidecar_path(video)
+    try:
+        folder = os.stat(path.parent)
+        key: tuple = (folder.st_dev, folder.st_ino,
+                      unicodedata.normalize("NFC", path.name).casefold())
+    except OSError:  # the folder is gone, and the write will say so
+        key = (os.path.normcase(os.path.realpath(path)),)
+    with _LOCKS_GUARD:
+        lock = _LOCKS.get(key)
+        if lock is None:
+            lock = _LOCKS[key] = threading.RLock()
+        return lock
+
+
 def load(video: Path) -> tuple[Sidecar | None, list[str]]:
     path = sidecar_path(video)
     if not path.exists():
@@ -102,16 +140,22 @@ def load(video: Path) -> tuple[Sidecar | None, list[str]]:
 
 def append(video: Path, header: Header, records: Sequence) -> Sidecar:
     path = sidecar_path(video)
-    for _ in range(5):
-        before = path.read_bytes() if path.exists() else None
-        current = (parse_sidecar(_decode(before, path.name))[0] if before is not None
-                   else Sidecar(header))
-        data = serialize(current.add(*records)).encode("utf-8")
-        latest = path.read_bytes() if path.exists() else None
-        if latest != before:
-            continue
-        safe_write(path, data, overwrite=before is not None)
-        return parse_sidecar(data.decode("utf-8"))[0]
+    with write_lock(video):
+        for _ in range(5):
+            before = path.read_bytes() if path.exists() else None
+            current = (parse_sidecar(_decode(before, path.name))[0] if before is not None
+                       else Sidecar(header))
+            data = serialize(current.add(*records)).encode("utf-8")
+
+            def unchanged(before: bytes | None = before) -> None:  # just before the rename
+                if (path.read_bytes() if path.exists() else None) != before:
+                    raise _Raced
+
+            try:
+                safe_write(path, data, overwrite=before is not None, check=unchanged)
+            except _Raced:
+                continue
+            return parse_sidecar(data.decode("utf-8"))[0]
     raise StoreError("the sidecar kept changing while vid2sub saved it; try again")
 
 
@@ -167,8 +211,15 @@ def project(video: Path, header: Header, sidecar: Sidecar, track: str, fmt: str,
             overwrite_foreign: bool) -> tuple[Sidecar, Path, bool]:
     """EditedOnDisk assumes the caller ran `check_external` first; that makes the edit a version.
 
-    A file holding an earlier projection's bytes (an interrupted write) is overwritten.
+    A file holding an earlier projection's bytes (an interrupted write) is overwritten. The
+    sidecar's write lock is held throughout, so a record and the file it describes go in together.
     """
+    with write_lock(video):
+        return _project(video, header, sidecar, track, fmt, overwrite_foreign=overwrite_foreign)
+
+
+def _project(video: Path, header: Header, sidecar: Sidecar, track: str, fmt: str, *,
+             overwrite_foreign: bool) -> tuple[Sidecar, Path, bool]:
     rec, cues = current_cues(sidecar, track)
     path = subtitle_path(video, track, fmt)
     if path.is_symlink() or (path.exists() and not path.is_file()):

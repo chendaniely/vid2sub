@@ -59,6 +59,25 @@ def test_safe_write_cleans_up_when_the_replace_fails(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_safe_write_checks_last_just_before_the_replace_and_a_failed_check_leaves_the_file(
+        tmp_path, monkeypatch):
+    target = tmp_path / "a.srt"
+    target.write_bytes(b"old")
+    order, real_fsync = [], os.fsync
+    monkeypatch.setattr(s.os, "fsync", lambda fd: (order.append("fsync"), real_fsync(fd)))
+
+    def changed():
+        order.append("check")
+        raise RuntimeError("changed meanwhile")
+
+    with pytest.raises(RuntimeError, match="changed meanwhile"):
+        s.safe_write(target, b"new", overwrite=True, check=changed)
+    assert order == ["fsync", "check"]
+    assert target.read_bytes() == b"old" and list(tmp_path.iterdir()) == [target]
+    s.safe_write(target, b"new", overwrite=True, check=lambda: order.append("fine"))
+    assert target.read_bytes() == b"new" and order[-1] == "fine"
+
+
 def test_redact_removes_every_secret_value():
     assert s.redact("auth sk-abcdef123 failed for sk-abcdef123", ["sk-abcdef123", ""]) == \
         "auth [redacted] failed for [redacted]"

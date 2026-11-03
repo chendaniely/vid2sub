@@ -1,10 +1,19 @@
 import sys
+import threading
 
 import pytest
-from episodes import make_episode, sid, source_cues, tid, translation_cues, write_track
+from episodes import (
+    make_episode,
+    sid,
+    source_cues,
+    tid,
+    transcript_for,
+    translation_cues,
+    write_track,
+)
 from fakes import fake_make_ask
 
-from vid2sub import __version__, pipeline, store
+from vid2sub import __version__, pipeline, security, store
 from vid2sub.cache import Cache
 from vid2sub.config import Config, Endpoint, ModelEntry
 from vid2sub.engines.clients import KeyRing
@@ -173,15 +182,30 @@ def test_someone_elses_subtitle_file_is_never_overwritten(backend, tmp_path):
     assert store.load(video)[0].head("ja").rendition == saved.heads["ja"] != ep.heads["ja"]
 
 
-def test_a_file_changed_outside_since_the_episode_opened_is_never_overwritten(backend, video):
+def test_a_file_changed_outside_since_the_episode_opened_is_kept_and_both_versions_wait(backend,
+                                                                                       video):
     ep = backend.open(str(video))
     srt = video.with_name(EN)
     outside = srt.read_bytes().replace(b"How are you?", b"How do you do?")
     srt.write_bytes(outside)
     ep = edit(backend, ep, op="set_translation_text", track="en", cue=tid(0), text="Morning!")
     saved, result = backend.save(ep, formats=["srt"])
-    assert result.foreign == (EN,) and srt.read_bytes() == outside
-    assert store.load(video)[0].head("en").rendition == saved.heads["en"]
+    assert result.conflicts == ("en",) and result.notes == ("kept your outside edit to en",)
+    assert srt.read_bytes() == outside
+    assert leaf_texts(video, "en") == [("editor", "Morning!"), ("external", "Good morning")]
+    reopened = backend.open(str(video))
+    assert reopened.conflicts == saved.conflicts and reopened.notes == []
+
+
+def test_an_outside_edit_to_another_track_is_kept_at_save_and_the_save_says_so(backend, video):
+    ep = backend.open(str(video))
+    srt = video.with_name(JA)
+    srt.write_bytes(srt.read_bytes().replace("おはよう".encode(), "おっす".encode()))
+    ep = edit(backend, ep, op="set_translation_text", track="en", cue=tid(0), text="Morning!")
+    saved, result = backend.save(ep, formats=["srt"])
+    assert result.conflicts == () and result.notes == ("kept your outside edit to ja",)
+    assert saved.tracks.source[0].text == "おっす"
+    assert saved.tracks.translations["en"][0].text == "Morning!"
 
 
 # Never lose a concurrent writer's records; a diverged track waits for a person (spec §14.4, §14.6)
@@ -298,6 +322,31 @@ def test_picking_something_that_isnt_one_of_the_versions_is_refused(backend, vid
     assert isinstance(store.load(video)[0].head("en"), Conflict)
 
 
+def test_a_pick_on_a_track_with_one_version_is_refused_and_keeps_unsaved_edits(backend, video):
+    ep = edit(backend, backend.open(str(video)), op="set_translation_text", track="en",
+              cue=tid(0), text="Unsaved!")
+    with pytest.raises(SaveError, match="the en track has only one version"):
+        backend.resolve(ep, "en", ep.heads["en"])
+    assert ep.tracks.translations["en"][0].text == "Unsaved!" and ep.dirty
+
+
+def test_picking_a_version_of_the_source_brings_the_words_it_was_built_from(backend, video):
+    side, _ = store.load(video)
+    head = side.head("ja").rendition
+    ours = [c.model_copy(update={"text": c.text + "ね"}) for c in source_cues(3)]
+    theirs = [c.model_copy(update={"text": c.text + "よ"}) for c in source_cues(3)]
+    transcripts = [make_rendition([], None, transcript_for(cues, audio_track=0, quick="q"))
+                   for cues in (ours, theirs)]
+    store.append(video, side.header, transcripts)
+    mine = write_track(video, "ja", ours, role="source", parents=(transcripts[0].id,),
+                       replaces=head)
+    write_track(video, "ja", theirs, role="source", parents=(transcripts[1].id,), replaces=head)
+    ep = backend.open(str(video))
+    assert ep.words[-1].text == "気ですよ"  # in conflict: the newest transcript's words
+    picked, _ = backend.resolve(ep, "ja", mine.id)
+    assert picked.words[-1].text == "気ですね" and picked.tracks.source[0].text == "おはようね"
+
+
 def test_a_version_picked_in_another_tab_is_shown_rather_than_picked_again(backend, video):
     conflicted(video)
     a, b = backend.open(str(video)), backend.open(str(video))
@@ -311,14 +360,78 @@ def test_a_version_picked_in_another_tab_is_shown_rather_than_picked_again(backe
 # A Save that goes wrong
 
 
+def test_saving_one_episode_twice_writes_its_versions_once(backend, video, monkeypatch):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    backend.save(ep, formats=["srt"])
+    monkeypatch.setattr(store, "now", lambda: "2099-01-01T00:00:00Z")  # a later second
+    before, _ = store.load(video)
+    again, result = backend.save(ep, formats=["srt"])  # a retry, or a second click
+    assert result.conflicts == () and isinstance(store.load(video)[0].head("ja"), HeadRecord)
+    assert not [r for r in added_since(video, before) if isinstance(r, RenditionRecord)]
+    assert again.tracks.source[0].text == "こんばんは" and not again.dirty
+
+
+def test_two_picks_at_once_are_made_one_after_the_other(backend, video, monkeypatch):
+    conflicted(video)
+    a, b = backend.open(str(video)), backend.open(str(video))
+    real, entered, release = store.append, threading.Event(), threading.Event()
+
+    def slow_append(*args, **kwargs):
+        if not entered.is_set():
+            entered.set()
+            release.wait(5)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store, "append", slow_append)
+    results = {}
+    first = threading.Thread(target=lambda: results.update(a=backend.resolve(
+        a, "en", a.conflicts["en"][0])))
+    second = threading.Thread(target=lambda: results.update(b=backend.resolve(
+        b, "en", b.conflicts["en"][1])))
+    first.start()
+    assert entered.wait(5)
+    second.start()
+    second.join(0.2)
+    assert second.is_alive()  # waiting for the first pick to finish
+    release.set()
+    first.join(5)
+    second.join(5)
+    head = store.load(video)[0].head("en")
+    assert isinstance(head, HeadRecord) and head.rendition == a.conflicts["en"][0]
+    assert results["b"][1].notes == (
+        "the en track's version was already picked elsewhere: showing it",)
+
+
+def test_a_jobs_write_during_a_save_waits_for_it_and_both_keep_their_records(backend, video,
+                                                                              monkeypatch):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    # what a Jobs-page job appends first, from its worker thread
+    theirs = make_rendition([], None, transcript_for(source_cues(3), audio_track=0, quick="q"))
+    real_replace, appended, job = security._replace, threading.Event(), []
+
+    def mid_save(src, dst):  # the Save has re-read the sidecar and is about to rename its own
+        if dst == store.sidecar_path(video) and not job:
+            job.append(threading.Thread(target=lambda: (
+                store.append(video, ep.header, [theirs]), appended.set())))
+            job[0].start()
+            appended.wait(0.5)  # done by now, unless the Save's lock holds it back (Decision 30)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(security, "_replace", mid_save)
+    saved, _ = backend.save(ep, formats=["srt"])
+    job[0].join(5)
+    side, _ = store.load(video)
+    assert theirs.id in side.renditions() and saved.heads["ja"] in side.renditions()
+
+
 def test_a_save_cut_short_after_the_sidecar_never_makes_the_next_save_conflict_with_itself(
         backend, video, monkeypatch):
     real = store.safe_write
 
-    def full_disk(path, data, *, overwrite):
+    def full_disk(path, data, **kwargs):
         if path.suffix == ".srt":
             raise OSError(28, "No space left on device")
-        return real(path, data, overwrite=overwrite)
+        return real(path, data, **kwargs)
 
     monkeypatch.setattr(store, "safe_write", full_disk)
     ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
@@ -382,6 +495,16 @@ def test_a_new_glossary_is_made_when_there_is_none(backend, video):
     ep = edit(backend, backend.open(str(video)), op="glossary_add", term="工藤新一",
               translation="Shinichi Kudo")
     backend.save(ep, formats=["srt"])
+    assert parse_glossary(video.with_name(GLOSSARY).read_text(encoding="utf-8")).terms == (
+        ("工藤新一", "Shinichi Kudo"),)
+
+
+def test_an_empty_glossary_file_takes_terms(backend, video):
+    video.with_name(GLOSSARY).write_bytes(b"")
+    ep = edit(backend, backend.open(str(video)), op="glossary_add", term="工藤新一",
+              translation="Shinichi Kudo")
+    _, result = backend.save(ep, formats=["srt"])
+    assert result.notes == (f"added 1 term to {GLOSSARY}",)
     assert parse_glossary(video.with_name(GLOSSARY).read_text(encoding="utf-8")).terms == (
         ("工藤新一", "Shinichi Kudo"),)
 

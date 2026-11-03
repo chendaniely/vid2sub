@@ -4,7 +4,9 @@
 smuggle in a path separator, a Windows reserved name or a bidi trick. `safe_write` is the only way
 vid2sub writes a file: a temporary file created exclusively without following links, fsynced,
 then atomically replaced; a target that isn't a regular file (a planted symlink) is refused, and
-Windows' sharing violations (Plex or antivirus holding the file) are retried. Child processes get
+Windows' sharing violations (Plex or antivirus holding the file) are retried. A caller's check runs
+just before the replace, which is where the sidecar's compare-and-swap re-reads it (spec §14.6;
+the Phase 2 plan's Decision 30). Child processes get
 an allowlisted environment, so they never inherit keys. Keys travel over plain http only to this
 machine or a Tailscale address (spec §5.2).
 """
@@ -18,7 +20,7 @@ import secrets
 import stat
 import time
 import unicodedata
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -69,7 +71,10 @@ def _replace(src: Path, dst: Path, attempts: int = 6) -> None:
             time.sleep(0.2 * 2 ** i)
 
 
-def safe_write(path: Path, data: bytes, *, overwrite: bool) -> None:
+def safe_write(path: Path, data: bytes, *, overwrite: bool,
+               check: Callable[[], None] | None = None) -> None:
+    """`check`, when given, runs once the data is on disk and just before the replace; if it
+    raises, the target is left as it was."""
     path = Path(path)
     try:
         st = os.lstat(path)
@@ -89,6 +94,8 @@ def safe_write(path: Path, data: bytes, *, overwrite: bool) -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
+        if check is not None:
+            check()
         _replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)

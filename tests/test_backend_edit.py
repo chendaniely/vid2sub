@@ -154,6 +154,21 @@ def test_a_track_in_conflict_cant_be_edited_until_a_version_is_picked(backend, v
     assert out.tracks.source[0].text == "こんばんは"
 
 
+def test_no_cue_can_be_split_merged_or_deleted_while_a_translation_is_in_conflict(backend,
+                                                                                    video):
+    head = store.load(video)[0].head("en").rendition
+    for text in ("Mine", "Theirs"):
+        write_track(video, "en", [Cue(id=tid(0), start_ms=0, end_ms=3000, text=text,
+                                      src=(sid(0),))], role="translation", replaces=head)
+    ep = backend.open(str(video))
+    for data in ({"op": "delete", "cue": sid(0)},
+                 {"op": "merge_next", "cue": sid(0), "id": NEW[0], "joined": {}},
+                 {"op": "split", "cue": sid(0), "at_char": 2, "at_ms": 1500, "ids": list(NEW)}):
+        with pytest.raises(EditError, match="the en track has two versions: pick one"):
+            backend.apply(ep, parse_op(data))
+    assert backend.apply(ep, op(op="nudge", cue=sid(0), delta_ms=100)).dirty
+
+
 def test_nothing_but_a_glossary_add_can_be_made_while_the_source_is_in_conflict(backend, video):
     head = store.load(video)[0].head("ja").rendition
     write_track(video, "ja", source_cues(3)[:1], role="source", replaces=head)

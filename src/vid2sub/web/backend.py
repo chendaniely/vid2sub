@@ -22,19 +22,26 @@ pushes the tracks and the pending glossary adds onto the undo stack (the last 20
 clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
 source is, until a person picks a version.
 
-Save (spec §14.5, §14.6) appends one `editor` version per changed track, whose parent is the head
-the editor's cues came from, and a head that replaces that same head: never the head on disk now,
-so a CLI run or another tab that moved it meanwhile leaves two heads, a conflict both versions
-survive, rather than one silently replacing the other (Review Focus 2 and 4). The records go in
-one `store.append`, which is compare-and-swap with a union merge, so no other writer's records
-are lost. Only then are the files written, through `store.project` with `overwrite_foreign` off:
-someone else's file, or one changed outside since, is left alone and reported (§6.6, §15.3), and
-a track in conflict isn't written until a person picks a version with `resolve`, the only thing
-that moves a head on a conflicted track. Once the versions are in the sidecar nothing raises: a
-file that can't be written is a note, and the episode moves to the new heads either way, so a
-second Save never conflicts with the first. Glossary terms are written at Save (the plan's
-Decision 5), appended to the file beside the video so its comments survive. A Save, like a pick,
-starts the undo history again, because the tracks are read back from the sidecar.
+Save (spec §14.5, §14.6) first records any outside edit to a subtitle file as M1 does, so an
+edit made in another program since the open is a version too, never something a later open puts
+over the editor's. Then it appends one `editor` version per changed track, whose parent is the
+head the editor's cues came from, and a head that replaces that same head: never the head on disk
+now, so a CLI run, another tab or that outside edit leaves two heads, a conflict both versions
+survive, rather than one silently replacing the other (Review Focus 2 and 4). A track whose head
+on disk already holds exactly these cues (the same Save sent twice) gets nothing. The records go
+in one `store.append`, compare-and-swap with a union merge, so no other writer's records are
+lost. Only then are the files written, through `store.project` with `overwrite_foreign` off:
+someone else's file is left alone and reported (§6.6, §15.3), and a track in conflict isn't
+written until a person picks a version with `resolve`, the only thing that moves a head on a
+conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
+written is a note, and the episode moves to the new heads either way. Saves and picks hold the
+sidecar's write lock (`store.write_lock`, keyed by its real path), which every other append and
+projection in this engine takes too, so two picks at once can't replace each other in a cycle and
+a job's write never lands inside a Save (Decision 30).
+Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
+so its comments survive. A Save, like a pick, starts the undo history again, because the tracks
+are read back from the sidecar. While a translation is in conflict, no source cue can be split,
+merged or deleted: the unloaded version's cues would keep pointing at ids that are gone.
 """
 
 from __future__ import annotations
@@ -44,7 +51,7 @@ import os
 import secrets
 import tempfile
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
@@ -198,9 +205,8 @@ class LocalBackend:
                          + (f" ({err.strerror})" if err.strerror else ""))
         ep = Episode(
             id="e" + secrets.token_hex(8), video=video, header=header, source_key=source_key,
-            tracks=tracks, heads=heads, conflicts=conflicts,
-            words=tuple(transcript_from_body(transcript.body).words()) if transcript else (),
-            notes=notes, playable_audio=track.codec not in UNPLAYABLE_AUDIO,
+            tracks=tracks, heads=heads, conflicts=conflicts, words=_words(transcript), notes=notes,
+            playable_audio=track.codec not in UNPLAYABLE_AUDIO,
             audio_index=track.index, sidecar=side, base=tracks, taken=cue_ids(side),
             glossary=glossary, translate_model=self._route_model(_lang(source_key)))
         with self._lock:
@@ -249,18 +255,23 @@ class LocalBackend:
         saved; once the versions are in the sidecar, every later problem is a note."""
         self._check_open(ep)
         fmts = _formats(formats)
-        records = _versions(ep)
-        try:
-            if not store.sidecar_path(ep.video).is_file():
-                raise SaveError(GONE)
-            side = store.append(ep.video, ep.header, records) if records else _reload(ep.video)
-        except (SidecarError, store.StoreError, WriteRefused) as err:
-            raise SaveError(str(err)) from None
-        except OSError as err:  # never err.filename: a full path
-            raise SaveError(_failed("couldn't save next to the video", err)) from None
-        side, written, foreign, conflicts, notes = _project(ep.video, ep.header, side,
-                                                             side.tracks(), fmts)
-        adds, glossary_notes = _write_glossary(ep.video, ep.glossary_adds)
+        notes: list[str] = []
+        with store.write_lock(ep.video):
+            try:
+                side, changed = store.check_external(ep.video, ep.header, _reload(ep.video),
+                                                     on_unreadable=_unreadable(notes))
+                notes += [f"kept your outside edit to {t}" for t in changed]
+                records = _versions(ep, side)
+                if records:
+                    side = store.append(ep.video, ep.header, records)
+            except (SidecarError, store.StoreError, WriteRefused) as err:
+                raise SaveError(str(err)) from None
+            except OSError as err:  # never err.filename: a full path
+                raise SaveError(_failed("couldn't save next to the video", err)) from None
+            side, written, foreign, conflicts, more = _project(ep.video, ep.header, side,
+                                                               side.tracks(), fmts)
+            notes += more
+            adds, glossary_notes = _write_glossary(ep.video, ep.glossary_adds)
         source_key, tracks, heads, in_conflict = load_tracks(side)
         saved = replace(ep, sidecar=side, source_key=source_key, tracks=tracks, base=tracks,
                         heads=heads, conflicts=in_conflict, undo=[], redo=[],
@@ -275,28 +286,32 @@ class LocalBackend:
         self._check_open(ep)
         if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
             raise SaveError("there's no such track")
+        if track not in ep.conflicts:  # a stale request must never reload a track being edited
+            raise SaveError(f"the {track} track has only one version: there's nothing to pick")
         notes: list[str] = []
-        try:
-            side = _reload(ep.video)
-            head = side.head(track)
-            if isinstance(head, Conflict):
-                if rendition not in head.leaves:
-                    raise SaveError(f"that isn't one of the {track} track's versions")
-                now = store.now()
-                side = store.append(ep.video, ep.header, [
-                    HeadRecord(track=track, rendition=rendition, replaces=other, by="user", at=now)
-                    for other in head.leaves if other != rendition])
-            elif track in ep.conflicts:
-                notes.append(f"the {track} track's version was already picked elsewhere: "
-                             "showing it")
-        except (SidecarError, store.StoreError, WriteRefused) as err:
-            raise SaveError(str(err)) from None
-        except OSError as err:
-            raise SaveError(_failed("couldn't save next to the video", err)) from None
-        has_ass = any(p.track == track and p.format == "ass"
-                      for p in side.projections().values())
-        side, written, foreign, conflicts, more = _project(ep.video, ep.header, side, [track],
-                                                           ["srt", "ass"] if has_ass else ["srt"])
+        with store.write_lock(ep.video):
+            try:
+                side = _reload(ep.video)
+                head = side.head(track)
+                if isinstance(head, Conflict):
+                    if rendition not in head.leaves:
+                        raise SaveError(f"that isn't one of the {track} track's versions")
+                    now = store.now()
+                    side = store.append(ep.video, ep.header, [
+                        HeadRecord(track=track, rendition=rendition, replaces=other, by="user",
+                                   at=now)
+                        for other in head.leaves if other != rendition])
+                else:
+                    notes.append(f"the {track} track's version was already picked elsewhere: "
+                                 "showing it")
+            except (SidecarError, store.StoreError, WriteRefused) as err:
+                raise SaveError(str(err)) from None
+            except OSError as err:
+                raise SaveError(_failed("couldn't save next to the video", err)) from None
+            has_ass = any(p.track == track and p.format == "ass"
+                          for p in side.projections().values())
+            side, written, foreign, conflicts, more = _project(
+                ep.video, ep.header, side, [track], ["srt", "ass"] if has_ass else ["srt"])
         return _with_track(ep, side, track), SaveResult(tuple(written), tuple(foreign),
                                                         tuple(conflicts), tuple(notes + more))
 
@@ -349,10 +364,11 @@ def _cues(t: Tracks, track: str, source_key: str) -> tuple[Cue, ...] | None:
     return t.source if track == source_key else t.translations.get(track)
 
 
-def _versions(ep: Episode) -> list:
+def _versions(ep: Episode, side: Sidecar) -> list:
     """An editor version and a head for each track whose cues differ from its head's; the head
-    replaces the one the cues came from, never the head on disk now (spec §14.4)."""
-    renditions = ep.sidecar.renditions()
+    replaces the one the cues came from, never the head on disk now (spec §14.4). A track whose
+    head on disk, or one of whose diverged versions, already holds these cues gets nothing."""
+    renditions = side.renditions()
     now = store.now()
     records: list = []
     source_rid = ep.heads.get(ep.source_key)
@@ -360,8 +376,13 @@ def _versions(ep: Episode) -> list:
         cues = _cues(ep.tracks, track, ep.source_key)
         if track not in ep.heads or cues is None or cues == _cues(ep.base, track, ep.source_key):
             continue
-        parent = ep.heads[track]
         is_source = track == ep.source_key
+        same = _holding(side, track, cues)
+        if same is not None:
+            if is_source:
+                source_rid = same
+            continue
+        parent = ep.heads[track]
         body = _editor_body(renditions[parent].body, cues, is_source=is_source, created_at=now,
                             inputs={} if is_source or not source_rid else {"source": source_rid})
         rec = make_rendition([parent], track, body)
@@ -370,6 +391,29 @@ def _versions(ep: Episode) -> list:
         records += [rec, HeadRecord(track=track, rendition=rec.id, replaces=parent, by="editor",
                                     at=now)]
     return records
+
+
+def _holding(side: Sidecar, track: str, cues: tuple[Cue, ...]) -> str | None:
+    """The rendition at the track's head on disk (or among its diverged versions) whose cues are
+    exactly `cues`, if there is one."""
+    head = side.head(track)
+    current = (head.leaves if isinstance(head, Conflict)
+               else (head.rendition,) if isinstance(head, HeadRecord) else ())
+    renditions = side.renditions()
+    for rid in current:
+        if rid in renditions and tuple(cues_from_body(renditions[rid].body)) == cues:
+            return rid
+    return None
+
+
+def _unreadable(notes: list[str]) -> Callable[[str], None]:
+    def note(name: str) -> None:
+        notes.append(f"left {name} alone: it isn't a readable subtitle file")
+    return note
+
+
+def _words(transcript: RenditionRecord | None) -> tuple[Word, ...]:
+    return tuple(transcript_from_body(transcript.body).words()) if transcript else ()
 
 
 def _editor_body(head: dict, cues: Sequence[Cue], *, is_source: bool, created_at: str,
@@ -416,6 +460,9 @@ def _project(video: Path, header: Header, side: Sidecar, tracks: Sequence[str],
             except OSError as err:
                 notes.append(_failed(f"couldn't write {name}", err))
                 continue
+            except Exception as err:  # noqa: BLE001 - the versions are saved; this is one file
+                notes.append(f"couldn't write {name} ({type(err).__name__})")
+                continue
             if did:
                 written.append(name)
     return side, written, foreign, conflicts, notes
@@ -424,18 +471,20 @@ def _project(video: Path, header: Header, side: Sidecar, tracks: Sequence[str],
 def _with_track(ep: Episode, side: Sidecar, track: str) -> Episode:
     """The episode with one track read again from the sidecar; the others as they were."""
     heads, conflicts = dict(ep.heads), dict(ep.conflicts)
-    tracks, base = ep.tracks, ep.base
+    tracks, base, words = ep.tracks, ep.base, ep.words
     head = side.head(track)
     if isinstance(head, HeadRecord):
         cues = tuple(cues_from_body(side.renditions()[head.rendition].body))
         heads[track] = head.rendition
         conflicts.pop(track, None)
         tracks, base = (_put(t, track, cues, ep.source_key) for t in (tracks, base))
+        if track == ep.source_key:
+            words = _words(_transcript(side, head.rendition))
     elif isinstance(head, Conflict):
         conflicts[track] = head.leaves
         heads.pop(track, None)
     return replace(ep, sidecar=side, heads=heads, conflicts=conflicts, tracks=tracks, base=base,
-                   undo=[], redo=[], taken=ep.taken | cue_ids(side))
+                   words=words, undo=[], redo=[], taken=ep.taken | cue_ids(side))
 
 
 def _put(t: Tracks, track: str, cues: tuple[Cue, ...], source_key: str) -> Tracks:
@@ -455,7 +504,8 @@ def _write_glossary(video: Path, adds: dict[str, str]) -> tuple[dict[str, str], 
         return dict(adds), [f"couldn't add to {name}: it isn't a regular file"]
     try:
         for _ in range(3):
-            data = path.read_bytes() if path.is_file() else b""
+            existed = path.is_file()
+            data = path.read_bytes() if existed else b""
             text = data.decode("utf-8-sig")
             out, kept = add_terms(text, adds)
             if out == text:
@@ -464,7 +514,7 @@ def _write_glossary(video: Path, adds: dict[str, str]) -> tuple[dict[str, str], 
             if latest != data:
                 continue
             bom = codecs.BOM_UTF8 if data.startswith(codecs.BOM_UTF8) else b""
-            safe_write(path, bom + out.encode("utf-8"), overwrite=bool(data))
+            safe_write(path, bom + out.encode("utf-8"), overwrite=existed)
             break
         else:
             return dict(adds), [f"couldn't add to {name}: it kept changing; save again"]
@@ -502,11 +552,11 @@ def _edit(ep: Episode, op: ops.EditOp, taken: set[str]) -> tuple[Tracks, dict[st
             _editable(ep, ep.source_key)
             return edit.nudge(t, op.cue, op.delta_ms, edge=op.edge), ep.glossary_adds
         case ops.Split():
-            _editable(ep, ep.source_key)
+            _editable(ep, ep.source_key, *ep.conflicts)
             return (edit.split(t, op.cue, at_char=op.at_char, at_ms=op.at_ms,
                                ids=(op.ids[0], op.ids[1]), taken=taken)[0], ep.glossary_adds)
         case ops.MergeNext():
-            _editable(ep, ep.source_key)
+            _editable(ep, ep.source_key, *ep.conflicts)
             return (edit.merge_next(t, op.cue, new_id=op.id, joined_ids=op.joined,
                                     taken=taken)[0], ep.glossary_adds)
         case ops.Insert():
@@ -514,7 +564,7 @@ def _edit(ep: Episode, op: ops.EditOp, taken: set[str]) -> tuple[Tracks, dict[st
             return (edit.insert(t, start_ms=op.start_ms, end_ms=op.end_ms, text=op.text,
                                 new_id=op.id, taken=taken)[0], ep.glossary_adds)
         case ops.Delete():
-            _editable(ep, ep.source_key)
+            _editable(ep, ep.source_key, *ep.conflicts)
             return edit.delete(t, op.cue), ep.glossary_adds
         case ops.Detach():
             _editable(ep, op.track)
