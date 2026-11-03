@@ -32,10 +32,10 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 26: English cues split back over their source cues, open.
+**Now:** Task 27: The speech detector's threshold, measured on a real episode, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
-36 and 37), then Task 2 onward. Task 25's tests raise every later task's `make check` count by 15: the
+36 and 37), then Task 2 onward. Tasks 25 and 26's tests raise every later task's `make check` count by 30: the
 later listings were built without it.
 
 ## Decisions made while planning (review these)
@@ -174,12 +174,14 @@ later listings were built without it.
     time left; a line per finished stage stays above it. Output that isn't a terminal gets that
     plain line per finished stage, with no bar and no title (M1 printed none there), and `--json`
     is unchanged. No new dependency. §18.2 says so.
-39. **An English item over its limit, or spread over cues more than about a second apart, is
-    split back over its source cues** (Task 26; Dan, Q&A item 36): at sentence and clause breaks,
-    in proportion to each cue's share of the source text, each part timed to its own cue, and
-    every translation cue keeps §12.2's line width, lines and longest duration. M1's exit test
-    found 218-character English cues and one shown for 31 s across a 27-second silence. §13.4
-    says so.
+39. **An English item longer than two lines, spread over cues more than a second apart, or on
+    screen over 7 s is split back over its source cues** (Task 26; Dan, Q&A items 36 and 39–41):
+    at sentence and clause breaks, in proportion to each cue's share of the source text, each
+    part timed to its own cue, and every translation cue keeps §12.2's line width, lines and
+    longest duration. Reading speed never triggers it. Text with nowhere to break stays one cue
+    over its span, and a one-cue part too long for two lines wraps into more lines, never cut.
+    M1's exit test found 218-character English cues and one shown for 31 s across a 27-second
+    silence. §13.4 says so.
 40. **The speech detector's threshold defaults lower, measured on E01** (Task 27; Dan, Q&A item
     37): Silero's 0.5 found 16.5 of 45.6 minutes as speech and skipped dialogue under music; the
     task transcribes what lower thresholds add on that episode and keeps the lowest whose
@@ -1500,8 +1502,8 @@ long goes back to its own cues.
   - Nothing a later task consumes beyond these. Task 7's Retranslate goes through `translate_cues`
     as before.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
-- [ ] **Step 1: Write the failing test,** `tests/test_translate_split.py`:
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 1: Write the failing test,** `tests/test_translate_split.py`:
 
 ```python
 import re
@@ -1667,13 +1669,13 @@ def test_every_english_cue_of_an_episode_keeps_two_lines_of_42_and_at_most_seven
     assert " ".join(unwrap(c.text) for c in out) == " ".join(t for _, t in groups)
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_translate_split.py -q`.
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_translate_split.py -q`.
   Expected: `E       AttributeError: module 'vid2sub.subs.translate_shape' has no attribute
   'split_items'` (11 times), `… has no attribute 'SPLIT_GAP_MS'` (twice), `E
   AttributeError: module 'vid2sub.subs.text' has no attribute 'fill'`, and the episode's track
   through `translate_cues` keeping its merged items: `E         At index 0 diff: ('s0', 's1',
   's2') != ('s0',)`. `15 failed`.
-- [ ] **Step 3: Write the code.** In `src/vid2sub/subs/text.py`, replace the end of the module
+- [x] **Step 3: Write the code.** In `src/vid2sub/subs/text.py`, replace the end of the module
   docstring
 
 ```python
@@ -1950,7 +1952,7 @@ is split back over its own cues (`split_items`, spec §13.4).
                              target_track)
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_translate_split.py
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_translate_split.py
   tests/test_translate_shape.py tests/test_translate.py -q` first (`33 passed`: M1's translation
   tests unchanged, since their fakes answer one item per cue), then the guard checks, then `make
   check`. **Guard checks:** first `git add src/vid2sub/subs/text.py
@@ -1971,7 +1973,7 @@ is split back over its own cues (`split_items`, spec §13.4).
 
   `make check`. Expected: `495 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
   `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(translate): 🤖 an item too long for two lines or the screen, or spread across a silence, is split back over its own cues, each part timed to its cue
@@ -2019,7 +2021,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/subs/text.py src/vid2sub/subs/translate_shape.py
   src/vid2sub/translate/run.py tests/test_translate_split.py`, `git commit -F .git/COMMIT_MSG`,
   then `git log -1 --format='%(trailers)'` shows `Plan:`.
-- [ ] **Step 6: Review, look forward, close.** Run the Tier 2 review: Matt Pocock's `code-review`
+- [x] **Step 6: Review, look forward, close.** Run the Tier 2 review: Matt Pocock's `code-review`
   from `$(cat .git/TASK_BASE)`, Standards and Spec in two subagents. Give the Spec reviewer this
   task's Why, S68 and §12.2–§13.4. Worth checking:
   - every translation cue `translate_cues` returns fits two lines and 7 s, apart from the two
@@ -2088,12 +2090,14 @@ Co-Authored-By: <the model's own line>
   In this plan's Decision 39, replace
 
 ```text
-39. **An English item over its limit, or spread over cues more than about a second apart, is
-    split back over its source cues** (Task 26; Dan, Q&A item 36): at sentence and clause breaks,
-    in proportion to each cue's share of the source text, each part timed to its own cue, and
-    every translation cue keeps §12.2's line width, lines and longest duration. M1's exit test
-    found 218-character English cues and one shown for 31 s across a 27-second silence. §13.4
-    says so.
+39. **An English item longer than two lines, spread over cues more than a second apart, or on
+    screen over 7 s is split back over its source cues** (Task 26; Dan, Q&A items 36 and 39–41):
+    at sentence and clause breaks, in proportion to each cue's share of the source text, each
+    part timed to its own cue, and every translation cue keeps §12.2's line width, lines and
+    longest duration. Reading speed never triggers it. Text with nowhere to break stays one cue
+    over its span, and a one-cue part too long for two lines wraps into more lines, never cut.
+    M1's exit test found 218-character English cues and one shown for 31 s across a 27-second
+    silence. §13.4 says so.
 ```
 
   with

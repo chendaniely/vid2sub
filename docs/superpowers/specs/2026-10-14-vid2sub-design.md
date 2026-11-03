@@ -94,7 +94,7 @@ test names.
 | S53 | the `subs/` tests run inside Pyodide 0.27.7 | they pass | Phase 4 | CI's `pyodide` job | planned |
 | S63 | **Make preview copy** on a video the browser can't play | an H.264 480p MP4 with AAC stereo, from a hardware encoder when there is one, else `libx264 -preset veryfast`, plays in the editor | Phase 3 | `tests/test_preview.py`; Playwright | planned |
 | S66 | `vid2sub run` on an episode, in a terminal | a bar per file, redrawn in place: stage, chunk or batch n/N, elapsed, speed (× real time), time left; plain lines when not a terminal; `--json` unchanged | Phase 2, Task 25 | `tests/test_cli_progress.py` | built |
-| S68 | an English item over its limit, or spread over source cues more than about a second apart | split back over its source cues at sentence and clause breaks, each part timed to its own cue, every cue within §12.2's rules | Phase 2 | `tests/test_translate_split.py` | planned |
+| S68 | an English item longer than two lines, spread over source cues more than a second apart, or over 7 s | split back over its source cues at sentence and clause breaks, each part timed to its own cue, every cue within §12.2's rules, except text with nowhere to break (one cue over its span, flagged `duration`) and a one-cue part too long for two lines (wrapped into more lines, never cut) | Phase 2, Task 26 | `tests/test_translate_split.py` | built |
 | S69 | dialogue under music in a drama | found by the detector's measured default threshold; `vid2sub.toml`'s `vad_threshold` and `--vad-threshold` change it | Phase 2 | `tests/test_vad_threshold.py`; the measurement on E01 | planned |
 
 ### Later
@@ -961,11 +961,16 @@ translations (§16). No file names or titles.
 ### 13.4 Timing and pairing
 
 - A translation cue's time is the span of its `src` cues, unless the user detaches it. An item
-  over its `max_chars`, or whose `src` cues are more than about a second apart, is split back over
-  its `src` cues: at sentence and clause breaks, in proportion to each cue's share of the source
-  text, each part timed to its own cue. Every translation cue keeps §12.2's line width, lines and
-  longest duration (Dan, 2026-11-02, after M1's exit test showed 218-character cues spanning
-  silences).
+  longer than two lines, whose `src` cues are more than a second apart, or that would last longer
+  than §12.2's 7 s is split back over its `src` cues: at sentence and clause breaks, in proportion
+  to each cue's share of the source text, each part timed to its own cue. With fewer places to
+  break than cues, the parts go to runs of cues between the widest gaps. Reading speed never
+  triggers the split: `max_chars` (§13.2) is asked of the model, not enforced (§12.2). Every
+  translation cue keeps §12.2's line width, lines and longest duration, with two exceptions: text
+  with nowhere to break stays one cue over its span, flagged by the editor's `duration` lint, and
+  a one-cue part too long for two lines is wrapped into more lines of the width, never cut (Dan,
+  2026-11-02, after M1's exit test showed 218-character cues spanning silences; Q&A items 36 and
+  39–41).
 - Translation cues have their own ids. Each records `src` and `src_sha`, a hash of its source cues'
   text when translated.
 - **Stale:** any `src` id is gone from the source head, or `src_sha` no longer matches, or the
