@@ -568,6 +568,24 @@ def test_glossary_terms_are_added_beside_the_video_at_save_keeping_what_was_ther
     assert saved.glossary_adds == {} and not saved.dirty
 
 
+def every_translation_stale(ep) -> bool:
+    flags = [c["flags"] for row in views.episode_view(ep, video_url=None, audio_url=None)["rows"]
+             for c in row["tr"]["en"]["cues"]]
+    return bool(flags) and all("stale" in f for f in flags)
+
+
+def test_a_term_added_at_save_makes_every_translation_stale_as_intended(backend, video):
+    """Spec §13.4: the glossary's hash is part of what a translation was made with, so once a
+    term is added every translation made without it is stale, as M1 decides it too."""
+    ep = backend.open(str(video))
+    assert not every_translation_stale(ep)
+    ep = edit(backend, ep, op="glossary_add", term="工藤新一", translation="Shinichi Kudo")
+    assert every_translation_stale(ep)  # already, while the term waits for Save
+    saved, _ = backend.save(ep, formats=["srt"])
+    assert saved.glossary == parse_glossary(video.with_name(GLOSSARY).read_text(encoding="utf-8"))
+    assert every_translation_stale(saved) and every_translation_stale(backend.open(str(video)))
+
+
 def test_a_new_glossary_is_made_when_there_is_none(backend, video):
     ep = edit(backend, backend.open(str(video)), op="glossary_add", term="工藤新一",
               translation="Shinichi Kudo")

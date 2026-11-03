@@ -39,9 +39,11 @@ sidecar's write lock (`store.write_lock`, keyed by its real path), which every o
 projection in this engine takes too, so two picks at once can't replace each other in a cycle and
 a job's write never lands inside a Save (Decision 30).
 Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
-so its comments survive. A Save, like a pick, starts the undo history again, because the tracks
-are read back from the sidecar. While a translation is in conflict, no source cue can be split,
-merged or deleted: the unloaded version's cues would keep pointing at ids that are gone.
+so its comments survive, and the file is read back: a term just added makes every translation
+made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
+starts the undo history again, because the tracks are read back from the sidecar. While a
+translation is in conflict, no source cue can be split, merged or deleted: the unloaded version's
+cues would keep pointing at ids that are gone.
 """
 
 from __future__ import annotations
@@ -272,10 +274,14 @@ class LocalBackend:
                                                                side.tracks(), fmts)
             notes += more
             adds, glossary_notes = _write_glossary(ep.video, ep.glossary_adds)
+            try:  # read back, so a term just added makes translations stale (§13.4), as at open
+                glossary: Glossary | None = read_glossary(ep.video)
+            except (GlossaryError, OSError):
+                glossary = None
         source_key, tracks, heads, in_conflict = load_tracks(side)
         saved = replace(ep, sidecar=side, source_key=source_key, tracks=tracks, base=tracks,
                         heads=heads, conflicts=in_conflict, undo=[], redo=[],
-                        taken=ep.taken | cue_ids(side), glossary_adds=adds)
+                        taken=ep.taken | cue_ids(side), glossary_adds=adds, glossary=glossary)
         return saved, SaveResult(tuple(written), tuple(foreign), tuple(conflicts),
                                  tuple(notes + glossary_notes))
 
