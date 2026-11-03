@@ -467,3 +467,34 @@ def test_a_failed_write_leaves_the_file_counted_as_the_version_it_still_holds(vi
     path.write_bytes(path.read_bytes().replace(b"World", b"Earth"))
     side, _ = store.check_external(video, header(video), side)
     assert isinstance(side.head("en"), Conflict) and newer in side.head("en").leaves
+
+
+def test_outside_edits_to_files_written_from_different_versions_diverge_from_each_other(video):
+    side = with_track(video)
+    side, srt, _ = store.project(video, header(video), side, "en", "srt",
+                                 overwrite_foreign=False)
+    side, ass, _ = store.project(video, header(video), side, "en", "ass",
+                                 overwrite_foreign=False)  # both from the first version
+    side, newer = newer_head(video, side)
+    side, srt, _ = store.project(video, header(video), side, "en", "srt",
+                                 overwrite_foreign=False)  # the SRT now from the newer head
+    srt.write_bytes(srt.read_bytes().replace(b"Planet", b"Earth"))
+    ass.write_bytes(ass.read_bytes().replace(b"World", b"Mars"))
+    side, changed = store.check_external(video, header(video), side)
+    assert changed == ["en", "en"]
+    head = side.head("en")
+    assert isinstance(head, Conflict)
+    texts = sorted(side.renditions()[r].body["meta"]["file"] for r in head.leaves)
+    assert texts == ["Show - S01E02.en.ass", "Show - S01E02.en.srt"] and newer not in head.leaves
+
+
+def test_two_edited_files_of_one_version_still_chain(video):
+    side = with_track(video)
+    side, srt, _ = store.project(video, header(video), side, "en", "srt",
+                                 overwrite_foreign=False)
+    side, ass, _ = store.project(video, header(video), side, "en", "ass",
+                                 overwrite_foreign=False)
+    srt.write_bytes(srt.read_bytes().replace(b"World", b"Earth"))
+    ass.write_bytes(ass.read_bytes().replace(b"World", b"Mars"))
+    side, _ = store.check_external(video, header(video), side)
+    assert isinstance(side.head("en"), HeadRecord)

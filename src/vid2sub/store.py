@@ -310,8 +310,9 @@ def check_external(video: Path, header: Header, sidecar: Sidecar, *,
 
     An unreadable or emptied file is neither adopted nor touched, so `project` later refuses it
     as `EditedOnDisk`. The new version's head replaces the version the file was written from, so
-    if the head has moved on since, the two diverge (spec §14.4); two edited files of one track
-    chain their heads rather than diverge. Like `project`, it holds the sidecar's write lock and
+    if the head has moved on since, the two diverge (spec §14.4); so do edits to files written
+    from different versions of one track (Decision 10); two edited files of one version chain
+    their heads rather than diverge. Like `project`, it holds the sidecar's write lock and
     reads the sidecar again inside it, so another writer's Save is never taken for an outside edit.
     """
     with write_lock(video):
@@ -323,7 +324,7 @@ def _check_external(video: Path, header: Header, sidecar: Sidecar, *,
                     on_unreadable: Callable[[str], None] | None,
                     ) -> tuple[Sidecar, list[str]]:
     renditions = sidecar.renditions()
-    latest: dict[str, str] = {}
+    latest: dict[tuple[str, str], str] = {}  # (track, version a file was written from) -> newest
     records: list = []
     changed: list[str] = []
     for name, proj in sidecar.projections().items():
@@ -355,13 +356,14 @@ def _check_external(video: Path, header: Header, sidecar: Sidecar, *,
                          meta={"file": name, "role": projected_body.get("meta", {}).get("role")},
                          glossary_sha=projected_body.get("payload", {}).get("glossary_sha"))
         rec = make_rendition([proj.rendition], proj.track, body)
-        latest.setdefault(proj.track, proj.rendition)
+        key = (proj.track, proj.rendition)
+        latest.setdefault(key, proj.rendition)
         records += [rec,
                     HeadRecord(track=proj.track, rendition=rec.id,
-                               replaces=latest.get(proj.track), by="external", at=now()),
+                               replaces=latest[key], by="external", at=now()),
                     ProjectionRecord(path=name, format=proj.format, track=proj.track,
                                      rendition=rec.id, sha256=digest, at=now())]
-        latest[proj.track] = rec.id
+        latest[key] = rec.id
         changed.append(proj.track)
     if records:
         sidecar = append(video, header, records)
