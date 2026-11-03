@@ -32,7 +32,7 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** waiting on Dan: Task 1, Step 2
+**Now:** Task 25: A progress bar with stats in the terminal, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Task 25's tests raise every later task's `make check` count by their own number: the
@@ -257,12 +257,12 @@ servers and his machine. Each [Dan] step is asked one at a time, by *Asking Dan*
 
 **Interfaces:** none (no code).
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
-- [ ] **Step 1: List the [Dan] steps** (2 to 8 below) for Dan, one line each, with the count,
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 1: List the [Dan] steps** (2 to 8 below) for Dan, one line each, with the count,
   then present Step 2. Set **Now** to `waiting on Dan: Task 1, Step 2` and commit it as a wip
   (`chore(plan): 🤖 wip Task 1: waiting on Dan for the M1 exit test`, its body `Done so far:`
   the list, `Stopped at:` Step 2, `Tests:` not run, no code).
-- [ ] **Step 2: [Dan] Install and check,** on the Mac, in this repo's folder:
+- [x] **Step 2: [Dan] Install and check,** on the Mac, in this repo's folder:
 
 ```bash
 brew install deno                       # yt-dlp needs it for YouTube (spec §4.2)
@@ -274,7 +274,7 @@ vid2sub doctor                          # every line green; keys by presence onl
 
   In local-ai's folder, `make tunnel` running. Expected: `doctor` reports ffmpeg, ffprobe and
   deno with versions, the Spark reachable, and `SPARK_API_KEY` present.
-- [ ] **Step 3: [Dan] A Cantonese episode (S01):**
+- [x] **Step 3: [Dan] A Cantonese episode (S01):**
 
 ```bash
 time vid2sub run "<a Cantonese episode>" --from yue --to none
@@ -315,9 +315,9 @@ vid2sub run "<the same folder>" --from ja --to en --skip-existing; echo "exit $?
 ```
 
   Expected: every episode done unattended; the second command does nothing and prints `exit 0`.
-- [ ] **Step 8: [Dan] Hand back the notes** from Steps 2–7: what worked, what didn't, the times,
+- [x] **Step 8: [Dan] Hand back the notes** from Steps 2–7: what worked, what didn't, the times,
   what Plex and Jellyfin showed for each code, and the `spark-turbo` copy's path.
-- [ ] **Step 9: Record the results in the spec.** In §29's "M1 results so far", replace each
+- [x] **Step 9: Record the results in the spec.** In §29's "M1 results so far", replace each
   *pending* with the result, dated 2026-MM-DD (the day Dan ran it): the Plex and Jellyfin codes,
   Qwen3-ASR's time on an idle Mac, the real YouTube download, the season run. Set S01–S05 to
   `verified` where they passed. In Open items, update the Japanese reading-speed and routing
@@ -326,7 +326,7 @@ vid2sub run "<the same folder>" --from ja --to en --skip-existing; echo "exit $?
   §29). If a result contradicts a default (a file code Plex or Jellyfin shows wrongly), changing
   it would change the spec: that is the fifth stop (`AGENTS.md`, *Stops*), asked as a scenario
   before anything else changes. A step that failed for a bug is a new task, proposed to Dan.
-- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 docs(spec): 🤖 M1's exit test results: <what passed, in one line>
@@ -340,7 +340,7 @@ Co-Authored-By: <the model's own line>
 
   `git add docs/superpowers/specs/2026-10-14-vid2sub-design.md`, `git commit -F .git/COMMIT_MSG`,
   then `git log -1 --format='%(trailers)'` shows `Plan:`.
-- [ ] **Step 11: Review, look forward, close.** The Tier 3 self-review from
+- [x] **Step 11: Review, look forward, close.** The Tier 3 self-review from
   `$(cat .git/TASK_BASE)` under the two headings (*Standards*, *Spec*), plus `make check`; the
   forward review over Tasks 2–23 (a changed default, such as a file code, rewrites every later
   listing that names it); the docs this task made untrue (the README's naming table, if a code
@@ -39932,3 +39932,4 @@ fi
 | Task 16 (planning) | Minor | `tests/e2e/` | The e2e helpers `seek`, `texts` and `open_demo` are copied into `test_editor_view.py`, `test_editing.py`, `test_saving.py` and `test_retranslate.py`, and `client_for` into the Task 18 and 19 test modules, which also import from each other's test files; move them to `tests/e2e/conftest.py` and `tests/helpers.py` (the pre-flight scan) | open |
 | Task 25 (planning) | Minor | `src/vid2sub/commands/_progress.py` | Windows' legacy console may not honour `ESC [2K`, so the bar could leave its old text behind there; Windows Terminal and the newer console do (Task 25's build) | open |
 | Task 25 (planning) | Minor | `src/vid2sub/commands/_progress.py` | A title's bidi control characters reach the bar as they already reach M1's result line, so a crafted name could reorder what the terminal shows; strip them for display (Task 25's build) | open |
+| Task 1 (planning) | Important | `docs/superpowers/specs/2026-10-14-vid2sub-design.md` | M1's exit test steps still owed (Dan had no Japanese episode or YouTube link, and Cantonese waits for the Spark): a Cantonese episode (S01, on the Spark once local-ai issue #35 serves Qwen3-ASR), a Japanese episode (S02, with Open items' reading-speed and routing notes), a real YouTube download (S03), a season run twice, the second with `--skip-existing` (S04), and Plex's codes and Jellyfin's `zh-CN` (S05); each passing step sets its row to `verified` in §29 (Q&A item 44) | open |
