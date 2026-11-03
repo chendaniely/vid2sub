@@ -389,6 +389,9 @@ def _versions(ep: Episode, side: Sidecar) -> list:
                 source_rid = same
             continue
         parent = ep.heads[track]
+        if parent not in renditions:  # the sidecar was replaced; nothing here can build on it
+            raise SaveError("the subtitles' history was replaced since this episode was opened: "
+                            "reopen it")
         body = _editor_body(renditions[parent].body, cues, is_source=is_source, created_at=now,
                             inputs={} if is_source or not source_rid else {"source": source_rid})
         rec = make_rendition([parent], track, body)

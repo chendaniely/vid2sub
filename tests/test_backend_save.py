@@ -585,6 +585,17 @@ def test_a_sidecar_deleted_since_the_episode_opened_stops_the_save(backend, vide
     assert not store.sidecar_path(video).exists()
 
 
+def test_a_sidecar_replaced_since_the_episode_opened_refuses_the_save(backend, video):
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="こんばんは")
+    store.sidecar_path(video).unlink()
+    store.append(video, ep.header, [make_rendition([], None, transcript_for(
+        source_cues(3), audio_track=0, quick="q"))])  # a fresh sidecar with none of the history
+    fresh = store.sidecar_path(video).read_bytes()
+    with pytest.raises(SaveError, match="history was replaced since this episode was opened"):
+        backend.save(ep, formats=["srt"])
+    assert store.sidecar_path(video).read_bytes() == fresh
+
+
 def test_a_closed_episode_cant_be_saved(backend, video):
     ep = backend.open(str(video))
     backend.close(ep.id)
