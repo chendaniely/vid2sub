@@ -4,7 +4,16 @@ import time
 from pathlib import Path
 
 import pytest
-from episodes import ENGLISH, LINES, make_episode, sid, source_cues, tid, translation_cues
+from episodes import (
+    ENGLISH,
+    LINES,
+    make_episode,
+    sid,
+    source_cues,
+    tid,
+    track_body,
+    translation_cues,
+)
 
 from vid2sub.cache import Cache
 from vid2sub.config import Config
@@ -189,7 +198,7 @@ def en_flags(v: dict) -> list[list[str]]:
 
 
 def test_a_translation_made_with_another_glossary_is_stale_in_every_cue():
-    v = view(episode(glossary=GLOSSARY))
+    v = view(episode(en_model="gemma", glossary=GLOSSARY))
     assert en_flags(v) == [["stale"]] * 3
     assert [t["all_stale"] for t in v["tracks"]] == [False, True]
 
@@ -199,7 +208,7 @@ def test_a_translation_made_with_the_glossary_beside_the_video_is_not():
 
 
 def test_a_glossary_term_waiting_for_save_makes_every_translation_stale():
-    ep = episode()
+    ep = episode(en_model="gemma")
     assert en_flags(view(ep)) == [[]] * 3
     waiting = dataclasses.replace(ep, glossary_adds={"工藤新一": "Shinichi Kudo"})
     assert en_flags(view(waiting)) == [["stale"]] * 3
@@ -214,12 +223,26 @@ def test_an_edited_translation_is_stale_too_and_keeps_its_edited_flag():
     source = source_cues(3)
     en = translation_cues(source)
     en[1] = en[1].model_copy(update={"flags": ("edited",)})
-    assert en_flags(view(episode(source, en, glossary=GLOSSARY)))[1] == ["edited", "stale"]
+    assert en_flags(view(episode(source, en, en_model="gemma", glossary=GLOSSARY)))[1] == ["edited", "stale"]
 
 
 def test_an_unreadable_glossary_or_no_usable_model_leaves_that_leg_out():
     ep = episode(en_model="old", en_glossary_sha="abcd1234", glossary=None, translate_model=None)
     assert en_flags(view(ep)) == [[]] * 3
+
+
+def test_a_track_no_translator_made_has_neither_staleness_leg():
+    source = source_cues(3)
+    ep = episode(source, glossary=GLOSSARY, translate_model="gemma-2")
+    imported = make_rendition([], "en", track_body(translation_cues(source), "en",
+                                                   role="translation", engine="import"))
+    ep = dataclasses.replace(
+        ep, heads={**ep.heads, "en": imported.id},
+        sidecar=Sidecar(HEADER, ep.sidecar.records + (
+            imported, HeadRecord(track="en", rendition=imported.id, by="import", at=AT))))
+    v = view(ep)
+    assert [t["all_stale"] for t in v["tracks"]] == [False, False]
+    assert en_flags(v) == [[]] * 3
 
 
 @pytest.mark.media

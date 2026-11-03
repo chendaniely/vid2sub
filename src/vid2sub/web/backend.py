@@ -295,8 +295,12 @@ def track_setup(ep: Episode, track: str) -> tuple[str, str | None]:
 def setup_changed(setup: tuple[str, str | None], glossary_sha: str | None,
                   model: str | None) -> bool:
     """Spec §13.4's other two legs, as M1 decides them: the glossary's hash, or the model, isn't
-    the one the cues were made with. A leg whose current value is unknown (None) is left out."""
+    the one the cues were made with. A leg whose current value is unknown (None) is left out, and
+    both are when the version has no model: no translator made it (an import, or an editor's or
+    an outside version of one), and M1 never retranslates what it didn't make."""
     made_sha, made_model = setup
+    if made_model is None:
+        return False
     return ((glossary_sha is not None and made_sha != glossary_sha)
             or (model is not None and made_model != model))
 
