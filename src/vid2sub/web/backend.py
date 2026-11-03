@@ -42,8 +42,10 @@ Glossary terms are written at Save (the plan's Decision 5), appended to the file
 so its comments survive, and the file is read back: a term just added makes every translation
 made without it stale (§13.4), as M1 decides it too, and that is intended. A Save, like a pick,
 starts the undo history again, because the tracks are read back from the sidecar. While a
-translation is in conflict, no source cue can be split, merged or deleted: the unloaded version's
-cues would keep pointing at ids that are gone.
+translation is in conflict, no source cue can be split, merged, deleted or retimed: the unloaded
+version's cues would keep pointing at ids that are gone or at old times. A pick first records
+outside edits as a version, and supersedes only the versions the person was shown: one that
+arrived since keeps the track in conflict, so the person picks again.
 """
 
 from __future__ import annotations
@@ -287,26 +289,36 @@ class LocalBackend:
 
     def resolve(self, ep: Episode, track: str, rendition: str) -> tuple[Episode, SaveResult]:
         """A person's pick of one of a conflicted track's versions (spec §14.4): it replaces
-        every other version, by "user", and the track is loaded and written. Unsaved edits on
-        other tracks are kept."""
+        every version it was shown, by "user", and the track is loaded and written; a version
+        that arrived since (an outside edit, another Save) stays, and the track stays in
+        conflict. Unsaved edits on other tracks are kept."""
         self._check_open(ep)
         if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
             raise SaveError("there's no such track")
         if track not in ep.conflicts:  # a stale request must never reload a track being edited
             raise SaveError(f"the {track} track has only one version: there's nothing to pick")
+        shown = ep.conflicts[track]
+        if rendition not in shown:  # only a version the person was shown can be picked
+            raise SaveError(f"that isn't one of the {track} track's versions")
         notes: list[str] = []
         with store.write_lock(ep.video):
             try:
-                side = _reload(ep.video)
+                side, changed = store.check_external(ep.video, ep.header, _reload(ep.video),
+                                                     on_unreadable=_unreadable(notes))
+                notes += [f"kept your outside edit to {t}" for t in changed]
                 head = side.head(track)
                 if isinstance(head, Conflict):
-                    if rendition not in head.leaves:
-                        raise SaveError(f"that isn't one of the {track} track's versions")
-                    now = store.now()
-                    side = store.append(ep.video, ep.header, [
-                        HeadRecord(track=track, rendition=rendition, replaces=other, by="user",
-                                   at=now)
-                        for other in head.leaves if other != rendition])
+                    if rendition in head.leaves:  # supersede only what the person was shown
+                        now = store.now()
+                        records = [HeadRecord(track=track, rendition=rendition, replaces=other,
+                                              by="user", at=now)
+                                   for other in shown if other != rendition and other in head.leaves]
+                        if records:
+                            side = store.append(ep.video, ep.header, records)
+                    if isinstance(side.head(track), Conflict):  # a version the person never saw
+                        notes.append(f"another version of the {track} track arrived: pick again")
+                        return (_with_track(ep, side, track),
+                                SaveResult((), (), (track,), tuple(notes)))
                 else:
                     notes.append(f"the {track} track's version was already picked elsewhere: "
                                  "showing it")

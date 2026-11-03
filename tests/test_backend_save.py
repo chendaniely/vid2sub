@@ -355,6 +355,38 @@ def test_picking_a_version_of_the_source_brings_the_words_it_was_built_from(back
     assert picked.words[-1].text == "気ですね" and picked.tracks.source[0].text == "おはようね"
 
 
+def test_a_pick_supersedes_only_the_versions_the_person_was_shown(backend, video):
+    original = store.load(video)[0].head("en").rendition
+    conflicted(video)
+    ep = backend.open(str(video))
+    shown = ep.conflicts["en"]
+    en_file = video.with_name(EN).read_bytes()
+    third = write_track(video, "en", [Cue(id=tid(0), start_ms=0, end_ms=3000, text="Third",
+                                          src=(sid(0),))], role="translation", replaces=original)
+    picked, result = backend.resolve(ep, "en", shown[0])  # a version the tab never saw arrived
+    leaves = store.load(video)[0].head("en").leaves
+    assert set(leaves) == {shown[0], third.id}
+    assert result.written == () and result.conflicts == ("en",)
+    assert result.notes == ("another version of the en track arrived: pick again",)
+    assert picked.conflicts == {"en": leaves} and "en" not in picked.heads
+    assert video.with_name(EN).read_bytes() == en_file
+
+
+def test_an_outside_edit_made_while_a_track_was_in_conflict_comes_back_as_a_version(backend,
+                                                                                   video):
+    conflicted(video)
+    ep = backend.open(str(video))
+    srt = video.with_name(EN)
+    outside = srt.read_bytes().replace(b"How are you?", b"How do you do?")
+    srt.write_bytes(outside)
+    picked, result = backend.resolve(ep, "en", ep.conflicts["en"][0])
+    assert result.foreign == () and result.written == () and result.conflicts == ("en",)
+    assert result.notes == ("kept your outside edit to en",
+                            "another version of the en track arrived: pick again")
+    assert srt.read_bytes() == outside and len(picked.conflicts["en"]) == 2
+    assert ep.conflicts["en"][0] in picked.conflicts["en"]
+
+
 def test_a_version_picked_in_another_tab_is_shown_rather_than_picked_again(backend, video):
     conflicted(video)
     a, b = backend.open(str(video)), backend.open(str(video))
