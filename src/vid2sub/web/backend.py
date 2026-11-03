@@ -116,10 +116,15 @@ class LocalBackend:
             side, warnings = store.load(video)
         except SidecarError as err:
             raise OpenError(str(err)) from None
+        except OSError as err:
+            raise _files_error(err) from None
         if side is None:
             raise OpenError(NO_SUBTITLES)
         p = self._probe(video)
-        header = store.header_for(video, identify(video), p.duration_ms)
+        try:
+            header = store.header_for(video, identify(video), p.duration_ms)
+        except OSError as err:
+            raise _files_error(err) from None
         notes = list(warnings)
         change = video_change(side.header.video, header.video)
         if change:
@@ -133,9 +138,8 @@ class LocalBackend:
             side, changed = store.check_external(video, header, side, on_unreadable=unreadable)
         except (SidecarError, store.StoreError, WriteRefused) as err:
             raise OpenError(str(err)) from None
-        except OSError as err:  # never err.filename: a full path
-            raise OpenError("couldn't read or write the files next to the video"
-                            + (f" ({err.strerror})" if err.strerror else "")) from None
+        except OSError as err:
+            raise _files_error(err) from None
         notes += [f"kept your outside edit to {t}" for t in changed]
         source_key, tracks, heads, conflicts = load_tracks(side)
         transcript = _transcript(side, heads.get(source_key))
@@ -145,6 +149,10 @@ class LocalBackend:
         except GlossaryError as err:
             glossary = None
             notes.append(f"couldn't read {naming.GLOSSARY_NAME}: {err}")
+        except OSError as err:  # never err.filename: a full path
+            glossary = None
+            notes.append(f"couldn't read {naming.GLOSSARY_NAME}"
+                         + (f" ({err.strerror})" if err.strerror else ""))
         ep = Episode(
             id="e" + secrets.token_hex(8), video=video, header=header, source_key=source_key,
             tracks=tracks, heads=heads, conflicts=conflicts,
@@ -183,6 +191,12 @@ class LocalBackend:
                             "player") from None
 
 
+def _files_error(err: OSError) -> OpenError:
+    """The files next to the video couldn't be read or written; never err.filename: a full path."""
+    return OpenError("couldn't read or write the files next to the video"
+                     + (f" ({err.strerror})" if err.strerror else ""))
+
+
 def _video(path: str) -> Path:
     """A typed path must be fully qualified (spec §6.5): the server's folder means nothing to
     the person typing."""
@@ -194,8 +208,12 @@ def _video(path: str) -> Path:
         raise OpenError(str(err)) from None
     if not video.is_file():
         raise OpenError("there's no video at that path")
-    twins = [p for p in video.parent.iterdir() if p != video
-             and p.stem.casefold() == video.stem.casefold() and p.suffix.lower() in MEDIA_SUFFIXES]
+    try:
+        twins = [p for p in video.parent.iterdir() if p != video
+                 and p.stem.casefold() == video.stem.casefold()
+                 and p.suffix.lower() in MEDIA_SUFFIXES]
+    except OSError as err:
+        raise _files_error(err) from None
     if twins:
         raise OpenError("another video in this folder has the same name, so their subtitles "
                         "would collide: rename one of them")

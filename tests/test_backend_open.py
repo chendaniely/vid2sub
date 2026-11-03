@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from episodes import (
     ENGLISH,
@@ -238,3 +240,36 @@ def test_a_cloud_model_is_never_the_one_retranslate_would_use_unasked(tmp_path, 
     ep = LocalBackend(config, Tools.find(), KeyRing(environ={}),
                       Cache(tmp_path / "cache", max_bytes=10**9)).open(str(video))
     assert ep.translate_model is None
+
+
+def _denied(path) -> PermissionError:
+    return PermissionError(13, "Permission denied", str(path))
+
+
+def test_an_unreadable_glossary_opens_without_it_and_the_note_names_no_folder(
+        backend, video, monkeypatch):
+    glossary = video.with_name("vid2sub.glossary.toml")
+    glossary.write_text("[terms]\n", encoding="utf-8")
+    real = Path.read_text
+
+    def read_text(self, *args, **kwargs):
+        if self.name == glossary.name:
+            raise _denied(self)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    ep = backend.open(str(video))
+    assert ep.glossary is None
+    assert ep.notes == ["couldn't read vid2sub.glossary.toml (Permission denied)"]
+    assert str(video.parent) not in " ".join(ep.notes)
+
+
+def test_an_unreadable_sidecar_is_refused_without_naming_its_folder(backend, video, monkeypatch):
+    def load(_video):
+        raise _denied(store.sidecar_path(video))
+
+    monkeypatch.setattr(store, "load", load)
+    with pytest.raises(OpenError) as refused:
+        backend.open(str(video))
+    assert "Permission denied" in str(refused.value)
+    assert str(video.parent) not in str(refused.value)
