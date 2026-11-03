@@ -32,10 +32,10 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 27: The speech detector's threshold, measured on a real episode, open.
+**Now:** Task 2: Edit operations, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
-36 and 37), then Task 2 onward. Tasks 25 and 26's tests raise every later task's `make check` count by 30: the
+36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
 later listings were built without it.
 
 ## Decisions made while planning (review these)
@@ -2268,8 +2268,8 @@ adds `[defaults] vad_threshold` in `vid2sub.toml` and `vid2sub run --vad-thresho
   - Phase 3's Review samples speech for detection; it should call
     `speech_regions(…, threshold=pipeline.speech_threshold(ctx))`.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
-- [ ] **Step 1: Write the failing test,** `tests/test_vad_threshold.py`:
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 1: Write the failing test,** `tests/test_vad_threshold.py`:
 
 ```python
 import inspect
@@ -2414,7 +2414,7 @@ def test_the_transcript_records_the_threshold_it_used_and_its_version_changes_wi
     assert versions[0].endswith(f"+p{pipeline.pipeline8(0.3)}")
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_vad_threshold.py -q`. Expected:
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_vad_threshold.py -q`. Expected:
   - `E       AttributeError: module 'vid2sub.media.vad' has no attribute 'THRESHOLD'`.
   - `vid2sub.config.ConfigError: defaults.vad_threshold: Extra inputs are not permitted`, where
     the key is read. The same text is the `Actual message` of the six refused-at-load cases.
@@ -2426,7 +2426,7 @@ def test_the_transcript_records_the_threshold_it_used_and_its_version_changes_wi
   - `unrecognized arguments: --vad-threshold 0` and its three siblings.
 
   The summary is `18 failed`.
-- [ ] **Step 3: Write the code.** In `src/vid2sub/media/vad.py`, with the file tools (Read, then
+- [x] **Step 3: Write the code.** In `src/vid2sub/media/vad.py`, with the file tools (Read, then
   Edit: a hook blocks shell commands that name the folder), replace
 
 ```python
@@ -2664,7 +2664,7 @@ def _threshold(value: str) -> float:
         vad_threshold=args.vad_threshold)
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_vad_threshold.py
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_vad_threshold.py
   tests/test_vad.py tests/test_config.py tests/test_pipeline.py -q` first (`97 passed`), then
   the guard checks, then `make check`. **Guard checks:** first `git add src/vid2sub/config.py
   src/vid2sub/pipeline.py src/vid2sub/commands/run.py tests/test_vad_threshold.py`; then for each
@@ -2683,7 +2683,7 @@ def _threshold(value: str) -> float:
 | the flag (`run.py`) | `replace_edited=args.replace_edited,` and the next line `vad_threshold=args.vad_threshold)` | `replace_edited=args.replace_edited)` | `test_vad_threshold_on_the_command_line_overrides_vid2sub_toml` |
 
   `make check`. Expected: `513 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(pipeline): 🤖 the speech detector's threshold defaults to 0.25, measured on a drama episode, and vid2sub.toml and --vad-threshold set it
@@ -2740,7 +2740,7 @@ Co-Authored-By: <the model's own line>
   tests/test_vad_threshold.py` (when this listing was built the hook let `git add` name the path;
   if it blocks it, say so and stop rather than rephrasing the command), `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
-- [ ] **Step 6: Review, look forward, close.** Run the Tier 2 review: Matt Pocock's `code-review`
+- [x] **Step 6: Review, look forward, close.** Run the Tier 2 review: Matt Pocock's `code-review`
   from `$(cat .git/TASK_BASE)`, Standards and Spec in two subagents. Give the Spec reviewer this
   task's Why, S69 and §5.1, §5.2, §8.6, §8.9 and §18.1. Worth checking:
   - the setting reaches every call to `speech_regions` in the pipeline;
@@ -39937,3 +39937,4 @@ fi
 | Task 25 (planning) | Minor | `src/vid2sub/commands/_progress.py` | Windows' legacy console may not honour `ESC [2K`, so the bar could leave its old text behind there; Windows Terminal and the newer console do (Task 25's build) | open |
 | Task 25 (planning) | Minor | `src/vid2sub/commands/_progress.py` | A title's bidi control characters reach the bar as they already reach M1's result line, so a crafted name could reorder what the terminal shows; strip them for display (Task 25's build) | open |
 | Task 1 (planning) | Important | `docs/superpowers/specs/2026-10-14-vid2sub-design.md` | M1's exit test steps still owed (Dan had no Japanese episode or YouTube link, and Cantonese waits for the Spark): a Cantonese episode (S01, on the Spark once local-ai issue #35 serves Qwen3-ASR), a Japanese episode (S02, with Open items' reading-speed and routing notes), a real YouTube download (S03), a season run twice, the second with `--skip-existing` (S04), and Plex's codes and Jellyfin's `zh-CN` (S05); each passing step sets its row to `verified` in §29 (Q&A item 44) | open |
+| Task 27 (review) | Minor | `src/vid2sub/pipeline.py` | When an episode's sidecar already has a source track, run reuses it, so --vad-threshold or a changed vad_threshold is silently ignored; say so in run's output (and on the Review screen in Phase 3), naming how to re-transcribe | open |

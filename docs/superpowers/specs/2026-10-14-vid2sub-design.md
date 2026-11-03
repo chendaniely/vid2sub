@@ -95,7 +95,7 @@ test names.
 | S63 | **Make preview copy** on a video the browser can't play | an H.264 480p MP4 with AAC stereo, from a hardware encoder when there is one, else `libx264 -preset veryfast`, plays in the editor | Phase 3 | `tests/test_preview.py`; Playwright | planned |
 | S66 | `vid2sub run` on an episode, in a terminal | a bar per file, redrawn in place: stage, chunk or batch n/N, elapsed, speed (× real time), time left; plain lines when not a terminal; `--json` unchanged | Phase 2, Task 25 | `tests/test_cli_progress.py` | built |
 | S68 | an English item longer than two lines, spread over source cues more than a second apart, or over 7 s | split back over its source cues at sentence and clause breaks, each part timed to its own cue, every cue within §12.2's rules, except text with nowhere to break (one cue over its span, flagged `duration`) and a one-cue part too long for two lines (wrapped into more lines, never cut) | Phase 2, Task 26 | `tests/test_translate_split.py` | built |
-| S69 | dialogue under music in a drama | found by the detector's measured default threshold; `vid2sub.toml`'s `vad_threshold` and `--vad-threshold` change it | Phase 2 | `tests/test_vad_threshold.py`; the measurement on E01 | planned |
+| S69 | dialogue under music in a drama | found by the detector's measured default threshold; `vid2sub.toml`'s `vad_threshold` and `--vad-threshold` change it | Phase 2, Task 27 | `tests/test_vad_threshold.py`; the measurement on E01 (Task 27's Why) | built |
 
 ### Later
 
@@ -433,7 +433,7 @@ targets = ["en"]
 formats = ["srt"]
 youtube_dir = "~/Movies/vid2sub"
 cache_max_gb = 20
-# vad_threshold = 0.5   # lower finds more speech under music (§8.6)
+# vad_threshold = 0.25  # lower finds more speech under music, and more noise (§8.6)
 ```
 
 ### 5.2 Validation
@@ -689,10 +689,14 @@ Silero VAD v6 (ONNX) on onnxruntime with numpy, using the model file and the tor
 `get_speech_timestamps` vendored from `faster-whisper` (MIT). ffmpeg's `silencedetect` is
 energy-only and fails under music; the `silero-vad` PyPI package needs torch (council). Speech
 regions are kept in the transcript's `meta` so the cue builder can drop words that fall in
-non-speech (§12.5). The speech threshold defaults lower than Silero's 0.5, to catch dialogue
-under music; its value is measured on a real episode (Phase 2 Task 27), and it is settable as
-`[defaults] vad_threshold` in `vid2sub.toml` and per run with `--vad-threshold` (Dan,
-2026-11-02).
+non-speech (§12.5). The speech threshold is 0.25, lower than Silero's 0.5, to catch dialogue
+under music. It was measured on M1's exit-test episode, a 45.6-minute Mandarin drama (Phase 2
+Task 27). 0.5 found 16.5 minutes of speech and 0.25 found 19.7. Of the spans 0.25 added, 4 of
+72 transcribed as invented lines; the rest were dialogue, fragments too short to make out alone,
+and the closing song. Transcribed end to end, 0.25 brought back 92 dialogue cues that 0.5 had
+missed. It is settable as `[defaults] vad_threshold` in `vid2sub.toml` and per run with
+`--vad-threshold` (Dan, 2026-11-02). The transcript's `meta` and its version (§9.6) record the
+threshold used, and finished chunks are cached per threshold (§8.9).
 
 ### 8.7 Chunking
 
