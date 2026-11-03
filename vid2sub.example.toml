@@ -57,3 +57,6 @@ task = "translate"
 targets = ["en"]
 formats = ["srt"]
 # youtube_dir = "~/Movies/vid2sub"
+# How sure the speech detector must be (0 to 1). Lower finds more speech under music, and more
+# noise; --vad-threshold sets it for one run.
+# vad_threshold = 0.25

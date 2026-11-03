@@ -112,6 +112,7 @@ class RunOptions:
     on_uncertain: Literal["proceed", "skip", "stop"] = "skip"
     wait_on_connection_s: float = 600.0
     replace_edited: bool = False
+    vad_threshold: float | None = None  # None: vid2sub.toml's [defaults] vad_threshold
 
 
 @dataclass
@@ -514,6 +515,19 @@ def _with_retries(engine: Engine, chunk: Chunk, *, language: str, prompt: str,
     return _retrying(lambda: engine.transcribe(chunk, language=language, prompt=prompt), ctx)
 
 
+def pipeline8(threshold: float) -> str:
+    """§9.6's pipeline8 for a run: PIPELINE (the VAD model, chunker and prompt policy) with the
+    speech threshold, so transcripts made at different thresholds have different versions."""
+    return hashlib.sha256(f"{PIPELINE}|vad_threshold={threshold}".encode()).hexdigest()[:8]
+
+
+def speech_threshold(ctx: RunContext) -> float:
+    """The speech detector's threshold for this run: --vad-threshold, else vid2sub.toml's,
+    whose default is the one measured on a drama episode (spec §8.6, §5.4)."""
+    given = ctx.options.vad_threshold
+    return ctx.config.defaults.vad_threshold if given is None else given
+
+
 def _transcribe(video: Path, p: Probe, header, sidecar: Sidecar | None, glossary: Glossary,
                 ctx: RunContext, scratch: Path, result: InputResult, *,
                 is_url: bool = False) -> tuple[Sidecar | None, str | None]:
@@ -525,7 +539,8 @@ def _transcribe(video: Path, p: Probe, header, sidecar: Sidecar | None, glossary
     decode_to_wav(video, track, wav, ctx.tools, scratch=scratch, duration_ms=p.duration_ms)
     samples = read_wav(wav)
     ctx.events("stage", {"stage": "speech"})
-    speech = speech_regions(to_float(samples))
+    threshold = speech_threshold(ctx)
+    speech = speech_regions(to_float(samples), threshold=threshold)
 
     def encode(s):
         return encode_flac(s, ctx.tools, scratch=scratch)
@@ -546,8 +561,9 @@ def _transcribe(video: Path, p: Probe, header, sidecar: Sidecar | None, glossary
         # until_ms: where this chunk's share of the audio ends; the last chunk's is its length.
         ctx.events("chunk", {"index": plan.index + 1, "of": len(plans),
                              "until_ms": plan.core_end_ms})
+        # The threshold too: the same plan at another threshold silences other stretches.
         key = (header.video.quick_sha256, track.stream_index, model_name, lang, plan.plan_hash(),
-               vocab)
+               vocab, threshold)
         if key not in ctx.chunk_cache:
             chunk = Chunk(plan.index, chunk_samples(samples, plan, speech), encode)
             prompt = chunk_prompt(glossary, tail, cjk=cjk) if engine.supports_prompt else ""
@@ -565,10 +581,11 @@ def _transcribe(video: Path, p: Probe, header, sidecar: Sidecar | None, glossary
     now = store.now()
     t_body = transcript_body(
         transcript, engine=stamp.engine, model=stamp.model,
-        version=f"{stamp.label}+v{vocab or '0'}+p{PIPELINE}", created_at=now,
+        version=f"{stamp.label}+v{vocab or '0'}+p{pipeline8(threshold)}", created_at=now,
         inputs={"audio_sha256": full_sha256(wav), "video_quick_sha256": header.video.quick_sha256,
                 "audio_track": track.index, "timeline_offset_ms": offset},
-        meta={"vad": VAD_ID, "chunker": CHUNKER_VERSION, "prompt_policy": PROMPT_POLICY,
+        meta={"vad": {"id": VAD_ID, "threshold": threshold}, "chunker": CHUNKER_VERSION,
+              "prompt_policy": PROMPT_POLICY,
               "speech": [list(r) for r in speech], "chunks": len(plans),
               "answered_model": answered, "detection": detection})
     t_rec = make_rendition([], None, t_body)
@@ -749,7 +766,8 @@ def detect_one(source: str, ctx: RunContext) -> DetectReport:
                                      "check `vid2sub models`")
                 report.detection = detecting.detect(
                     _PatientDetector(ctx.engine(detector), ctx), samples,
-                    speech_regions(to_float(samples)), len(samples) // SAMPLES_PER_MS,
+                    speech_regions(to_float(samples), threshold=speech_threshold(ctx)),
+                    len(samples) // SAMPLES_PER_MS,
                     encode=lambda s: encode_flac(s, ctx.tools, scratch=scratch))
                 lang = report.detection.language
             if lang:

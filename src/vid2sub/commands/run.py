@@ -18,10 +18,23 @@ from vid2sub.commands import _common
 from vid2sub.commands._common import CommandError, Output, add_common, audio_track, duration
 from vid2sub.config import Config
 from vid2sub.engines.clients import quiet_libraries
+from vid2sub.media.vad import THRESHOLD
 from vid2sub.pipeline import InputResult, Paused, RunOptions, StopRun, run_one
 from vid2sub.subs import langs, naming
 
 SYMBOL = {"done": "✓", "skipped": "–", "failed": "✗", "uncertain": "?", "planned": "·"}
+
+
+def _threshold(value: str) -> float:
+    """--vad-threshold: above 0 and below 1, as in vid2sub.toml (spec §8.6)."""
+    message = f"a number above 0 and below 1, like {THRESHOLD}"
+    try:
+        number = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(message) from None
+    if not 0 < number < 1:  # nan fails too
+        raise argparse.ArgumentTypeError(message)
+    return number
 
 
 def add_parser(sub) -> None:
@@ -59,6 +72,10 @@ def add_parser(sub) -> None:
                         "stop")
     p.add_argument("--wait-on-connection", type=duration, default=600.0, metavar="DURATION",
                    help="how long to wait for a dropped connection (default 10m)")
+    p.add_argument("--vad-threshold", type=_threshold, metavar="N",
+                   help="how sure the speech detector must be when a video is transcribed, "
+                        f"above 0 and below 1 (default from vid2sub.toml, else {THRESHOLD}); "
+                        "lower finds more speech under music")
     add_common(p)
     p.set_defaults(handler=run)
 
@@ -83,7 +100,8 @@ def options_from(args: argparse.Namespace, config: Config) -> RunOptions:
         glossary=args.glossary, audio_track=args.audio_track, keep_video=args.keep_video,
         skip_existing=args.skip_existing, overwrite_foreign=args.overwrite_foreign,
         allow_cloud=args.allow_cloud, dry_run=args.dry_run, on_uncertain=args.on_uncertain,
-        wait_on_connection_s=args.wait_on_connection, replace_edited=args.replace_edited)
+        wait_on_connection_s=args.wait_on_connection, replace_edited=args.replace_edited,
+        vad_threshold=args.vad_threshold)
 
 
 def report(out: Output, n: int, total: int, r: InputResult) -> None:

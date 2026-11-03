@@ -2,7 +2,11 @@
 
 Silero VAD v6 on onnxruntime, vendored from faster-whisper (torch-free). ffmpeg's silencedetect
 is energy-only and fails under music; the silero-vad package needs torch (council, 2026-10-14).
-Regions are in milliseconds on the decoded audio's timeline.
+Regions are in milliseconds on the decoded audio's timeline. The threshold, the speech
+probability a window needs, defaults to THRESHOLD, lower than Silero's 0.5, which skipped
+dialogue under music in M1's exit-test episode; it was measured on that episode (Dan, Q&A item
+37; the Phase 2 plan's Task 27), and `[defaults] vad_threshold` and `--vad-threshold` change it
+(spec §8.6).
 """
 
 from __future__ import annotations
@@ -12,10 +16,12 @@ import numpy as np
 from vid2sub.media._vendor.silero import VadOptions, get_speech_timestamps
 
 VAD_ID = "silero-v6@faster-whisper-1.2.1"
+THRESHOLD = 0.25  # config.Defaults.vad_threshold's default says the same
 
 
-def speech_regions(samples: np.ndarray, *, threshold: float = 0.5, min_speech_ms: int = 250,
-                   min_silence_ms: int = 500, pad_ms: int = 200) -> list[tuple[int, int]]:
+def speech_regions(samples: np.ndarray, *, threshold: float = THRESHOLD,
+                   min_speech_ms: int = 250, min_silence_ms: int = 500,
+                   pad_ms: int = 200) -> list[tuple[int, int]]:
     if len(samples) == 0:
         return []
     options = VadOptions(threshold=threshold, min_speech_duration_ms=min_speech_ms,

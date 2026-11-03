@@ -76,6 +76,9 @@ class Defaults(_M):
     formats: list[Literal["srt", "ass"]] = Field(default_factory=lambda: ["srt"])
     youtube_dir: str | None = None
     cache_max_gb: float = Field(20, gt=0)
+    # The speech detector's threshold (spec §8.6): media.vad.THRESHOLD, measured on a drama
+    # episode (the Phase 2 plan's Task 27), written here too so loading the config needs no numpy.
+    vad_threshold: float = Field(0.25, gt=0, lt=1)
 
 
 class Config(_M):
