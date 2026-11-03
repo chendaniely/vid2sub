@@ -1,3 +1,4 @@
+import functools
 import json
 import re
 from pathlib import Path
@@ -695,3 +696,47 @@ def test_vid2sub_debug_prints_the_traceback_of_an_unexpected_error(clip, capsys,
     assert pipeline.run_one(str(clip), make_ctx(engine)).status == "failed"
     err = capsys.readouterr().err
     assert "Traceback" in err and "boom /secret/path" in err
+
+
+# Phase 2, Task 4: Cancel stops between chunks and translation batches (plan Decision 7, S36)
+
+
+class ShortChunks(FakeEngine):
+    max_chunk_s = 5.0
+
+
+def test_a_run_is_never_cancelled_unless_asked():
+    assert make_ctx(FakeEngine()).cancelled() is False
+
+
+def test_a_cancel_stops_before_the_next_chunk_and_records_nothing(clip):
+    engine = ShortChunks()
+    ctx = make_ctx(engine)
+    ctx.cancelled = lambda: len(engine.calls) >= 1
+    with pytest.raises(pipeline.Cancelled):
+        pipeline.run_one(str(clip), ctx)
+    assert [c[0] for c in engine.calls] == ["transcribe"]
+    assert store.load(clip)[0] is None
+
+
+def test_a_cancel_stops_translation_before_its_next_batch(clip, monkeypatch):
+    asked: list[list[str]] = []
+    monkeypatch.setattr(pipeline, "make_ask", recording_make_ask(asked))
+    monkeypatch.setattr(pipeline, "translate_cues",
+                        functools.partial(pipeline.translate_cues, batch_size=1))
+    ctx = make_ctx(FakeEngine())
+    ctx.cancelled = lambda: bool(asked)
+    with pytest.raises(pipeline.Cancelled):
+        pipeline.run_one(str(clip), ctx)
+    assert len(asked) == 1
+    side, _ = store.load(clip)
+    assert isinstance(side.head("ja"), HeadRecord) and side.head("en") is None
+
+
+def test_a_cancel_stops_a_run_that_is_waiting_for_its_server(clip):
+    engine = FakeEngine(fail=[EngineError("connection", "down")] * 100)
+    ctx = make_ctx(engine)
+    ctx.cancelled = lambda: bool(ctx.sleeps)
+    with pytest.raises(pipeline.Cancelled):
+        pipeline.run_one(str(clip), ctx)
+    assert len(ctx.sleeps) == 1 and len(engine.calls) == 1

@@ -6,8 +6,11 @@ detected), decode, find speech, chunk, transcribe with retries, place words, add
 offset, build cues, convert the Chinese script → translate each target (only what's new or stale)
 → write the files → record the full hash. Connection errors and Spark refusals wait with backoff
 up to a limit, then raise Paused so the CLI exits 75 and a re-run resumes; finished chunks are
-cached for the life of the process. Any other error fails only this input, with the fix; an
-unexpected one is named only by its type, and VID2SUB_DEBUG=1 prints its traceback (spec §17.3).
+cached for the life of the process. A cancelled job (`RunContext.cancelled`, which the web
+app's queue sets) raises Cancelled before its next model call, so Cancel stops between chunks,
+translation batches and retries (Phase 2 plan, Decision 7). Any other error fails only this
+input, with the fix; an unexpected one is named only by its type, and VID2SUB_DEBUG=1 prints its
+traceback (spec §17.3).
 Events carry stages and counts, never titles or paths (spec §6.8). A dry run writes and downloads
 nothing: a link not downloaded yet is planned by its video id (final review).
 """
@@ -88,6 +91,10 @@ class StopRun(RuntimeError):
     pass
 
 
+class Cancelled(Exception):
+    """The job was cancelled; raised before a model call, never mid-call (plan Decision 7)."""
+
+
 class InputError(RuntimeError):
     def __init__(self, message: str, hint: str = ""):
         super().__init__(message)
@@ -134,6 +141,10 @@ def _no_event(kind: str, fields: dict[str, Any]) -> None:
     return None
 
 
+def _never() -> bool:
+    return False
+
+
 @dataclass
 class RunContext:
     config: Config
@@ -146,6 +157,7 @@ class RunContext:
     chunk_cache: dict[tuple, ChunkResult] = field(default_factory=dict)
     folder_votes: dict[Path, list[str]] = field(default_factory=dict)
     candidates: list | None = None
+    cancelled: Callable[[], bool] = _never
 
     @property
     def policy(self) -> RunPolicy:
@@ -171,7 +183,7 @@ def _guarded(result: InputResult, work: Callable[[Path], None]) -> InputResult:
     with tempfile.TemporaryDirectory(prefix="vid2sub-") as tmp:
         try:
             work(Path(tmp))
-        except (Paused, StopRun):
+        except (Paused, StopRun, Cancelled):
             raise
         except (EngineError, ToolMissing, youtube.YouTubeError, InputError) as err:
             _fail(result, str(err), getattr(err, "hint", ""),
@@ -488,10 +500,13 @@ def _retrying(fn: Callable[[], Any], ctx: RunContext) -> Any:
     A server error is retried twice with a short pause. A dropped connection or a refusal waits
     with backoff until `wait_on_connection_s` is spent, then raises Paused. Anything else is
     raised as it came. Transcription and translation both go through here, so a Spark drop in
-    either pauses the run rather than failing the input (controller ruling 1).
+    either pauses the run rather than failing the input (controller ruling 1), and a cancelled
+    job stops before each call: the next chunk, the next translation batch or the next retry.
     """
     waited, server_tries = 0.0, 0
     while True:
+        if ctx.cancelled():
+            raise Cancelled()
         try:
             return fn()
         except EngineError as err:
@@ -780,7 +795,7 @@ def detect_one(source: str, ctx: RunContext) -> DetectReport:
 
                 report.transcribe = routed("transcribe")
                 report.translate = routed("translate")
-        except (Paused, StopRun):
+        except (Paused, StopRun, Cancelled):
             raise
         except (EngineError, ToolMissing, InputError) as err:
             report.error, report.hint = str(err), getattr(err, "hint", "")
