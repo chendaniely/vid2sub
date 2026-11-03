@@ -1,4 +1,4 @@
-"""The editor's backend: opening an episode M1 made, from its sidecar (spec §19.1, §20, §15.3).
+"""The editor's backend: opening an episode M1 made, and editing it (spec §19.1, §20, §15.3).
 
 The web app's server calls this, never the store directly, so the CLI and the editor share one
 core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
@@ -16,7 +16,11 @@ is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when
 changed, and every cue of it is when the glossary's hash or the translation model differs from
 the ones its head was made with; so the episode holds the glossary beside the video and the model
 Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
-taking every configured local server to answer (no request is made at open).
+taking every configured local server to answer (no request is made at open). Edits run
+through the pure `subs.edit` rules, so they exist once (§20); each one that changes something
+pushes the tracks and the pending glossary adds onto the undo stack (the last 200 steps) and
+clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
+source is, until a person picks a version.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ import os
 import secrets
 import tempfile
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
@@ -40,8 +44,8 @@ from vid2sub.media.probe import Probe, ProbeError, pick_track, probe
 from vid2sub.media.tools import ToolFailed, ToolMissing, Tools
 from vid2sub.pipeline import MEDIA_SUFFIXES, video_change
 from vid2sub.security import InputRefused, WriteRefused, resolve_input
-from vid2sub.subs import naming
-from vid2sub.subs.edit import Tracks
+from vid2sub.subs import edit, naming
+from vid2sub.subs.edit import SOURCE, EditError, Tracks
 from vid2sub.subs.glossary import EMPTY_GLOSSARY, Glossary, GlossaryError, parse_glossary
 from vid2sub.subs.model import Word
 from vid2sub.subs.rendition import cues_from_body, transcript_from_body
@@ -53,9 +57,11 @@ from vid2sub.subs.sidecar import (
     Sidecar,
     SidecarError,
 )
+from vid2sub.web import ops
 
 UNPLAYABLE_AUDIO = frozenset({"ac3", "eac3", "dts", "truehd"})  # ffprobe's codec names (§8.2)
 NO_SUBTITLES = "no subtitles yet: make them with vid2sub run or the Jobs page first"
+UNDO_STEPS = 200
 
 
 class OpenError(Exception):
@@ -173,6 +179,37 @@ class LocalBackend:
         with self._lock:
             self._open.pop(episode_id, None)
 
+    def apply(self, ep: Episode, op: ops.EditOp) -> Episode:
+        """One edit; EditError (fit to show) if the rules refuse it. An edit that changes
+        nothing returns `ep` itself, with no undo step."""
+        self._check_open(ep)
+        taken = set(ep.taken)
+        tracks, adds = _edit(ep, op, taken)
+        if tracks == ep.tracks and adds == ep.glossary_adds:
+            return ep
+        return replace(ep, tracks=tracks, glossary_adds=adds, taken=taken, redo=[],
+                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+
+    def undo(self, ep: Episode) -> Episode:
+        self._check_open(ep)
+        if not ep.undo:
+            return ep
+        tracks, adds = ep.undo[-1]
+        return replace(ep, tracks=tracks, glossary_adds=adds, undo=ep.undo[:-1],
+                       redo=[*ep.redo, (ep.tracks, ep.glossary_adds)])
+
+    def redo(self, ep: Episode) -> Episode:
+        self._check_open(ep)
+        if not ep.redo:
+            return ep
+        tracks, adds = ep.redo[-1]
+        return replace(ep, tracks=tracks, glossary_adds=adds, redo=ep.redo[:-1],
+                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+
+    def _check_open(self, ep: Episode) -> None:
+        if not self.is_open(ep.id):
+            raise OpenError("this episode was closed: open it again")
+
     def _route_model(self, lang: str) -> str | None:
         """The model Retranslate would use with none named and no cloud: M1's catalog route over
         the configured models, each local server taken to answer (`probe_endpoints=False`)."""
@@ -195,6 +232,57 @@ def _files_error(err: OSError) -> OpenError:
     """The files next to the video couldn't be read or written; never err.filename: a full path."""
     return OpenError("couldn't read or write the files next to the video"
                      + (f" ({err.strerror})" if err.strerror else ""))
+
+
+def _edit(ep: Episode, op: ops.EditOp, taken: set[str]) -> tuple[Tracks, dict[str, str]]:
+    """The tracks and glossary adds after `op`; new cue ids are added to `taken`."""
+    if isinstance(op, ops.GlossaryAdd):
+        return ep.tracks, {**ep.glossary_adds, op.term.strip(): op.translation.strip()}
+    t = ep.tracks
+    match op:
+        case ops.SetText():
+            _editable(ep, ep.source_key)
+            return edit.set_text(t, op.cue, op.text), ep.glossary_adds
+        case ops.SetTranslationText():
+            _editable(ep, op.track)
+            return edit.set_translation_text(t, op.track, op.cue, op.text), ep.glossary_adds
+        case ops.SetTimes():
+            _editable(ep, ep.source_key)
+            return (edit.set_times(t, op.cue, start_ms=op.start_ms, end_ms=op.end_ms),
+                    ep.glossary_adds)
+        case ops.Nudge():
+            _editable(ep, ep.source_key)
+            return edit.nudge(t, op.cue, op.delta_ms, edge=op.edge), ep.glossary_adds
+        case ops.Split():
+            _editable(ep, ep.source_key)
+            return (edit.split(t, op.cue, at_char=op.at_char, at_ms=op.at_ms,
+                               ids=(op.ids[0], op.ids[1]), taken=taken)[0], ep.glossary_adds)
+        case ops.MergeNext():
+            _editable(ep, ep.source_key)
+            return (edit.merge_next(t, op.cue, new_id=op.id, joined_ids=op.joined,
+                                    taken=taken)[0], ep.glossary_adds)
+        case ops.Insert():
+            _editable(ep, ep.source_key)
+            return (edit.insert(t, start_ms=op.start_ms, end_ms=op.end_ms, text=op.text,
+                                new_id=op.id, taken=taken)[0], ep.glossary_adds)
+        case ops.Delete():
+            _editable(ep, ep.source_key)
+            return edit.delete(t, op.cue), ep.glossary_adds
+        case ops.Detach():
+            _editable(ep, op.track)
+            return edit.detach(t, op.track, op.cue, op.detached), ep.glossary_adds
+        case ops.ReplaceAll():
+            _editable(ep, *(ep.source_key if name == SOURCE else name for name in op.tracks))
+            return edit.replace_all(t, op.find, op.replace, tracks=op.tracks)[0], ep.glossary_adds
+    raise EditError("that isn't an edit the editor knows")
+
+
+def _editable(ep: Episode, *tracks: str) -> None:
+    """A track in conflict waits for a person to pick a version (spec §14.4); while the source
+    is, so does every track, since translations hang off source cues."""
+    for name in (ep.source_key, *tracks):
+        if name in ep.conflicts:
+            raise EditError(f"the {name} track has two versions: pick one before editing")
 
 
 def _video(path: str) -> Path:
