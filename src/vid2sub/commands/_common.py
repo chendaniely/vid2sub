@@ -2,8 +2,11 @@
 
 Output is for people in a terminal, or JSON Lines for scripts (`--json`). Titles and paths reach
 only an interactive terminal: piped plain output names inputs by number, and JSON carries
-stages, counts and error kinds, never names (spec §6.8, §18.2). Folders expand to their videos in
-episode order (`S01E02` before `S01E10`), others by natural name order after them.
+stages, counts and error kinds, never names (spec §6.8, §18.2). In a terminal each input gets a
+progress bar (`_progress.Bar`; Decision 38 of the Phase 2 plan), erased before any other output;
+other plain output gets a line per finished stage.
+Folders expand to their videos in episode order (`S01E02` before `S01E10`), others by natural name
+order after them.
 """
 
 from __future__ import annotations
@@ -12,11 +15,12 @@ import argparse
 import json
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
 from vid2sub import exitcodes
+from vid2sub.commands._progress import Bar
 from vid2sub.config import Config, ConfigError, config_path, load_config
 from vid2sub.engines.clients import KeyRing
 from vid2sub.media.tools import Tools
@@ -129,11 +133,17 @@ def audio_track(value: str) -> int | str:
 
 
 class Output:
-    def __init__(self, json_mode: bool, stream: TextIO | None = None, err: TextIO | None = None):
+    def __init__(self, json_mode: bool, stream: TextIO | None = None, err: TextIO | None = None,
+                 *, clock: Callable[[], float] | None = None,
+                 columns: Callable[[], int] | None = None):
         self.json = json_mode
         self.stream = stream or sys.stdout
         self.err = err or sys.stderr
         self.tty = not json_mode and self.stream.isatty()
+        # Only a terminal gets the live bar, and with it a title; other plain output gets its
+        # lines alone, and --json the events themselves (spec §6.8, §18.2).
+        self._bar = None if json_mode else Bar(self.stream, clock=clock, columns=columns,
+                                                live=self.tty)
 
     def event(self, kind: str, /, **fields: Any) -> None:
         if self.json:
@@ -142,25 +152,33 @@ class Output:
 
     def say(self, text: str) -> None:
         if not self.json:
+            self._clear()
             print(text, file=self.stream, flush=True)
 
     def warn(self, text: str) -> None:
+        self._clear()
         print(text, file=self.err, flush=True)
 
     def progress(self, kind: str, fields: dict[str, Any]) -> None:
         if self.json:
             self.event(kind, **fields)
-            return
-        if not self.tty:
-            return
-        lines = {
-            "stage": lambda f: f"  {f['stage']}…",
-            "chunk": lambda f: f"  transcribing {f['index']}/{f['of']}",
-            "batch": lambda f: f"  translating {f['index']}/{f['of']}",
-            "waiting": lambda f: f"  waiting {f['seconds']} s ({f['kind']})…",
-        }
-        if kind in lines:
-            self.say(lines[kind](fields))
+        elif self._bar is not None:
+            self._bar.event(kind, fields)
+
+    def begin(self, item: str, n: int) -> None:
+        """A new input: in a terminal, its bar shows the file's name; a link's title comes only
+        with its download, so a link is `input N` there."""
+        if self._bar is not None:
+            self._bar.start(self.name("" if is_url(item) else Path(item).name, n))
+
+    def end(self, ok: bool) -> None:
+        """The input is over: a last stage that finished (`ok`) leaves its line; the bar goes."""
+        if self._bar is not None:
+            self._bar.finish(ok)
+
+    def _clear(self) -> None:
+        if self._bar is not None:
+            self._bar.clear()
 
     def name(self, title: str, n: int) -> str:
         return title if self.tty and title else f"input {n}"
