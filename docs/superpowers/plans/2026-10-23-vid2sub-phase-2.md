@@ -32,10 +32,10 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 25: A progress bar with stats in the terminal, open.
+**Now:** Task 26: English cues split back over their source cues, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
-36 and 37), then Task 2 onward. Task 25's tests raise every later task's `make check` count by their own number: the
+36 and 37), then Task 2 onward. Task 25's tests raise every later task's `make check` count by 15: the
 later listings were built without it.
 
 ## Decisions made while planning (review these)
@@ -461,8 +461,8 @@ one number on the chunk event.
     `<name> · transcribing chunk n/N [###-------] · m:ss · X.X× · m:ss left`.
   - Nothing a later task consumes.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
-- [ ] **Step 1: Write the failing test,** `tests/test_cli_progress.py`:
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 1: Write the failing test,** `tests/test_cli_progress.py`:
 
 ```python
 import io
@@ -651,10 +651,10 @@ def test_output_that_isnt_a_terminal_gets_each_finished_stages_line_but_no_bar_o
                                "✓ input 1 (1/1): done, wrote 1 file\n")
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_cli_progress.py -q`.
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_cli_progress.py -q`.
   Expected: `E       TypeError: Output.__init__() got an unexpected keyword argument 'clock'`
   (11 times) and `11 failed`.
-- [ ] **Step 3: Write the code.** `src/vid2sub/commands/_progress.py`:
+- [x] **Step 3: Write the code.** `src/vid2sub/commands/_progress.py`:
 
 ```python
 """The progress a run shows: in a terminal a bar per input, elsewhere its plain lines (§18.2, S66).
@@ -948,7 +948,7 @@ order after them.
 
   (`is_url` and `Path` are imported already; Phase 3's Task 1 anchors on the
   `from vid2sub.security import …` line and `_EPISODE`, which stay as they are.)
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_cli_progress.py -q` first
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_cli_progress.py -q` first
   (`11 passed`), then the guard checks, then `make check`. **Guard checks:** do each, run
   `uv run pytest tests/test_cli_progress.py -q`, and restore it before the next:
   - In `_progress.py`, `ERASE = "\r"` gives `8 failed, 3 passed`, because the old text shows
@@ -963,7 +963,7 @@ order after them.
 
   `make check`. Expected: `476 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
   `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(cli): 🤖 in a terminal each input's progress is one bar redrawn in place, and every finished stage leaves a line
@@ -1007,7 +1007,7 @@ Co-Authored-By: <the model's own line>
   tests/test_cli_progress.py`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 6: Write the failing test.** In `tests/test_cli_progress.py`, replace the imports
+- [x] **Step 6: Write the failing test.** In `tests/test_cli_progress.py`, replace the imports
   (from `import io` down to `from vid2sub.commands._common import Output`) with:
 
 ```python
@@ -1113,13 +1113,13 @@ def test_json_in_a_terminal_is_unchanged_and_its_chunk_events_carry_only_numbers
     assert abs(chunk["until_ms"] - 14_000) < 500  # one chunk: the whole 14 s of audio
 ```
 
-- [ ] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_cli_progress.py -q`. Expected:
+- [x] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_cli_progress.py -q`. Expected:
   the bar drawn with no title, `E       AssertionError: assert ('\r\x1b[2K' + 'Show - S01E01.mkv
   · transcribing chunk 1/1 [----------] · 0:00') in '\r\x1b[2Kprobing · 0:00…` and
   `… ('\r\x1b[2K' + 'Show - S01E01.mkv · translating · 0:00') in '\r\x1b[2Ktranslating · 0:00…`.
   The piped run is missing `E         -   hashed the video in 0:00`, and the chunk event
   `E         {'until_ms': <class 'int'>}`. The summary is `4 failed, 11 passed`.
-- [ ] **Step 8: Write the code.** In `src/vid2sub/commands/run.py`, replace
+- [x] **Step 8: Write the code.** In `src/vid2sub/commands/run.py`, replace
 
 ```python
                 out.event("input", index=n, of=len(inputs))
@@ -1169,7 +1169,7 @@ def test_json_in_a_terminal_is_unchanged_and_its_chunk_events_carry_only_numbers
                              "until_ms": plan.core_end_ms})
 ```
 
-- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_cli_progress.py
+- [x] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_cli_progress.py
   tests/test_cli_run.py tests/test_cli_more.py tests/test_pipeline.py -q` first (`100 passed`:
   M1's CLI tests with the new lines in their piped output), then the guard checks, then
   `make check`. **Guard checks:**
@@ -1185,7 +1185,7 @@ def test_json_in_a_terminal_is_unchanged_and_its_chunk_events_carry_only_numbers
 
   `make check`. Expected: `480 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and
   `no leaks found`.
-- [ ] **Step 10: See it for real,** in a pseudo-terminal at 80 columns, then piped. Write
+- [x] **Step 10: See it for real,** in a pseudo-terminal at 80 columns, then piped. Write
   `.git/t25-show.py` (inside `.git/`, so it is never committed):
 
 ```python
@@ -1285,7 +1285,7 @@ cat .git/t25-piped.txt
   and no title: the same six stage lines (`  transcribed 5 chunks in 0:03, 3.8× real time`,
   `  translated 3 batches in 0:02` among them), then `✓ input 1 (1/1): done, wrote 2 files` and
   `1 done`. Then `rm .git/t25-*`.
-- [ ] **Step 11: Commit.** Write the message to `.git/COMMIT_MSG`, with Step 10's own frames,
+- [x] **Step 11: Commit.** Write the message to `.git/COMMIT_MSG`, with Step 10's own frames,
   screen and speeds where this one has its builder's:
 
 ```text
@@ -1344,7 +1344,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/commands/run.py src/vid2sub/commands/translate.py src/vid2sub/pipeline.py
   tests/test_cli_progress.py`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
-- [ ] **Step 12: Review, look forward, close.** Run the Tier 3 self-review from
+- [x] **Step 12: Review, look forward, close.** Run the Tier 3 self-review from
   `$(cat .git/TASK_BASE)` under the two headings (*Standards*, *Spec*), plus `make check`.
   Worth checking:
   - No title or path reaches a pipe or `--json`: `Output.name` off a terminal, and lines that
