@@ -145,6 +145,10 @@ def load(video: Path) -> tuple[Sidecar | None, list[str]]:
 
 
 def append(video: Path, header: Header, records: Sequence) -> Sidecar:
+    """Adds `records` to the sidecar, merging with any other writer's; returns what was written.
+
+    It always writes with `overwrite=True`: that is safe because every write is a union merge,
+    re-checked just before the rename, and a sidecar made meanwhile is merged, not replaced."""
     path = sidecar_path(video)
     with write_lock(video):
         for _ in range(5):

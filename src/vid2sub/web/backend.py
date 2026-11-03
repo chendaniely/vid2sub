@@ -35,7 +35,7 @@ someone else's file is left alone and reported (§6.6, §15.3), and a track in c
 written until a person picks a version with `resolve`, the only thing that moves a head on a
 conflicted track. Once the versions are in the sidecar nothing raises: a file that can't be
 written is a note, and the episode moves to the new heads either way. Saves and picks hold the
-sidecar's write lock (`store.write_lock`, keyed by its real path), which every other append and
+sidecar's write lock (`store.write_lock`, keyed by the folder's device and inode and the name, NFC and casefolded), which every other append and
 projection in this engine takes too, so two picks at once can't replace each other in a cycle and
 a job's write never lands inside a Save (Decision 30).
 Glossary terms are written at Save (the plan's Decision 5), appended to the file beside the video
