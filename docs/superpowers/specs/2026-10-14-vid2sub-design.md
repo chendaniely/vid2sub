@@ -1682,9 +1682,11 @@ Each is checked in the milestone that first depends on it; the result goes into 
   stability; the real cue-timing quality of whisper.cpp tokens without DTW, against a
   hand-corrected episode; whether ffmpeg ≥6.0 is the right floor.
 
-  **M1 results so far (2026-10-15, during the build).** The items marked *pending* need Dan's
-  episodes, Plex and Jellyfin (the M1 plan's Task 36 exit test, run as Phase 2's first task:
-  Dan, 2026-10-23, [Q&A item 7](2026-10-14-vid2sub-qa.md)).
+  **M1 results so far (2026-10-15, during the build; and Phase 2's Task 1, 2026-10-30 to
+  2026-11-02).** The items marked *pending* need Dan's episodes, Plex and Jellyfin (the M1 plan's
+  Task 36 exit test, run as Phase 2's first task: Dan, 2026-10-23, [Q&A item
+  7](2026-10-14-vid2sub-qa.md)); those still owed are on Phase 2's Phase-end list ([Q&A item
+  44](2026-10-14-vid2sub-qa.md)).
 
   - *ffmpeg.* Built and tested against ffmpeg 9.0.2 (Homebrew). An MKV made with
     `-itsoffset 2.0` reports the audio stream's `start_time` as 2.000 and the video's as 0.000,
@@ -1698,7 +1700,7 @@ Each is checked in the milestone that first depends on it; the result goes into 
     Requests without `language` return `language_probabilities`, so detection works through the
     Spark. An end-to-end `vid2sub run` on the 14 s public-domain fixture (detect → transcribe
     → translate to Japanese with Gemma 4 → SRT and ASS) took 22 s. Cue timing without DTW
-    against a hand-corrected episode: *pending*.
+    against a hand-corrected episode: *pending* (Phase 2's Task 23, which needs the editor).
   - *Gemma 4 structured output.* The live test passes: with thinking off through
     `chat_template_kwargs`, Gemma answers the per-batch JSON schema with the batch's own ids.
     Japanese targets at 4 characters per second (§12) condense heavily: a 2 s cue allows about
@@ -1709,11 +1711,22 @@ Each is checked in the milestone that first depends on it; the result goes into 
     the text's punctuation to the units either way, so whether the units carry punctuation
     doesn't change the output. Speed: *pending*; timings taken while the machine was heavily
     loaded (load average 15–37) ranged from 76 to 330 s per call, so re-time on an idle Mac.
-    `mlx-qwen3-asr serve` isn't used in M1 (vid2sub runs it in-process).
-  - *Plex and Jellyfin file codes* (`zh-CN`, `zh-TW`, `zh-HK`, `ja`, `en`): *pending*.
-  - *YouTube*: deno isn't installed on Dan's Mac, so downloads were tested only with a fake
-    `yt-dlp`. vid2sub passes `--js-runtimes deno:<path>`, documented in yt-dlp 2026.08.19:
+    `mlx-qwen3-asr serve` isn't used in M1 (vid2sub runs it in-process). On 2026-11-02 a
+    45.6-minute episode took 3 h 35 min on Dan's 16 GiB Mac with its swap nearly full, almost all
+    of it paging (2,538 s system, 53 s user): no measure of Qwen3-ASR's speed. Dan's Mac is busy
+    with agents around the clock, so long runs belong on the Spark (local-ai issue #35).
+  - *Plex and Jellyfin file codes* (`zh-CN`, `zh-TW`, `zh-HK`, `ja`, `en`): Jellyfin shows `en`
+    as English (2026-11-02); the rest, and Plex: *pending*.
+  - *YouTube*: deno 2.9.8 is now installed (`vid2sub doctor`, 2026-10-30), with yt-dlp
+    2026.10.26; vid2sub passes `--js-runtimes deno:<path>`, documented in yt-dlp 2026.08.19:
     *pending* a real download.
+  - *A real episode, end to end* (2026-11-02): a 45.6-minute Mandarin drama episode, in place of
+    a Cantonese one, through `mac-qwen` and the Spark's Qwen3.6 (Gemma wasn't loaded), checked on
+    Dan's TV: "not bad", but some English cues were "giant blocks" (19 over 84 characters, up to
+    218), some were held across silences (up to 31 s), and lines were missing (the detector found
+    16.5 of 45.6 minutes as speech). These became Phase 2's Tasks 26 and 27 (Q&A items 36–41).
+    A model the Spark couldn't fit beside another answered `no_fit`, which vid2sub waited on for
+    about ten minutes.
 - **M2:** the CSP that Shiny and shinyreact need (inline styles, `eval`); the 2026 browser codec
   matrix (Chrome HEVC depends on hardware; Firefox MKV arrived in late 2025).
 - **M3:** CUDA cuBLAS setup for faster-whisper on Windows.
