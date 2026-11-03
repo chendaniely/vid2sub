@@ -1,4 +1,4 @@
-"""The editor's backend: opening an episode M1 made, editing it and saving it (spec §19.1, §20).
+"""The editor's backend: opening, editing, retranslating and saving an episode (spec §19.1, §20).
 
 The web app's server calls this, never the store directly, so the CLI and the editor share one
 core (spec §18.3); `capabilities()` tells the frontend which controls exist (`BrowserBackend`, in
@@ -46,6 +46,16 @@ translation is in conflict, no source cue can be split, merged, deleted or retim
 version's cues would keep pointing at ids that are gone or at old times. A pick first records
 outside edits as a version, and supersedes only the versions the person was shown: one that
 arrived since keeps the track in conflict, so the person picks again.
+
+Retranslate (spec §13.4, §20) redoes the stale and untranslated cues, or the cues a person names,
+as one undoable edit. The model is the one named, else the one M1's catalog route picks; a cloud
+model only when this call allows it (§7.2), checked before anything is sent, and a route whose
+model's server is down is never passed over for the next one or the cloud (§17.4). Retranslating
+stale never replaces a translation a person edited (§13.4); naming a cue does, since that is the
+person asking. Translations are replaced in whole groups: every source cue a replaced translation
+covers is translated with it, and a translation whose time overlaps the cues being translated is
+replaced too (a cue inserted inside a translation that spans two cues), so the track never
+overlaps; where that would replace an edited translation, those cues are left as they are.
 """
 
 from __future__ import annotations
@@ -65,7 +75,8 @@ from vid2sub import detect as detecting
 from vid2sub.cache import Cache
 from vid2sub.catalog import suggest
 from vid2sub.config import Config
-from vid2sub.engines.clients import KeyRing
+from vid2sub.engines.base import EngineError
+from vid2sub.engines.clients import KeyRing, RunPolicy, check_allowed
 from vid2sub.media.identity import identify
 from vid2sub.media.probe import Probe, ProbeError, pick_track, probe
 from vid2sub.media.tools import ToolFailed, ToolMissing, Tools
@@ -80,7 +91,7 @@ from vid2sub.subs.glossary import (
     add_terms,
     parse_glossary,
 )
-from vid2sub.subs.model import Cue, Word
+from vid2sub.subs.model import Cue, TrackError, Word, check_track
 from vid2sub.subs.rendition import cues_body, cues_from_body, transcript_from_body
 from vid2sub.subs.sidecar import (
     Conflict,
@@ -91,6 +102,8 @@ from vid2sub.subs.sidecar import (
     SidecarError,
     make_rendition,
 )
+from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.translate.run import make_ask, translate_cues
 from vid2sub.web import ops
 
 UNPLAYABLE_AUDIO = frozenset({"ac3", "eac3", "dts", "truehd"})  # ffprobe's codec names (§8.2)
@@ -333,6 +346,72 @@ class LocalBackend:
         return _with_track(ep, side, track), SaveResult(tuple(written), tuple(foreign),
                                                         tuple(conflicts), tuple(notes + more))
 
+    def retranslate(self, ep: Episode, track: str, *, ids: Sequence[str] | None,
+                    model: str | None = None, allow_cloud: bool = False,
+                    on_batch: Callable[[int, int], None] | None = None) -> Episode:
+        """`ids=None`: every stale or untranslated source cue, never replacing an edited
+        translation; else those source cues, whatever their translation. One undo step; `ep`
+        itself when there's nothing to translate. Blocks on the model's server. Raises EditError
+        (a track in conflict, an unknown track or cue), EngineError (no usable model, a cloud
+        model this call doesn't allow, the server down or refusing: `.hint` names the fix),
+        TranslationFailed, or GlossaryError (a glossary beside the video vid2sub can't read);
+        nothing changes then."""
+        self._check_open(ep)
+        if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
+            raise EditError("there's no such track")
+        _editable(ep, track)
+        if track not in ep.tracks.translations:
+            raise EditError(f"there is no {track} track")
+        source, cues = ep.tracks.source, ep.tracks.translations[track]
+        wanted, replaced = retranslation(source, cues, ids)
+        if not wanted:
+            return ep
+        lang = _lang(ep.source_key)
+        name = self._translator(lang, model, allow_cloud)
+        entry = self.config.models[name]
+        policy = RunPolicy(allow_cloud)
+        check_allowed(name, entry, self.config, policy)
+        ask = make_ask(name, entry, self.config, policy, self.keys)
+        taken = set(ep.taken)
+        new = translate_cues(source, source_lang=lang, target_track=track,
+                             glossary=glossary_with(read_glossary(ep.video), ep.glossary_adds),
+                             ask=ask, only=wanted, taken=taken, on_batch=on_batch)
+        result = tuple(sorted([c for c in cues if c.id not in replaced] + new,
+                              key=lambda c: (c.start_ms, c.end_ms)))
+        try:
+            check_track(result)
+        except TrackError as err:
+            raise EditError(f"the {track} track would break: {err}") from None
+        tracks = Tracks(source, {**ep.tracks.translations, track: result})
+        return replace(ep, tracks=tracks, taken=taken, redo=[],
+                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+
+    def _translator(self, lang: str, model: str | None, allow_cloud: bool) -> str:
+        """The named model, else the catalog route's pick, as M1's pipeline picks (§11.2). A route
+        whose model's server isn't answering stops here rather than taking the next model."""
+        if model is not None:
+            entry = self.config.models.get(model)
+            if entry is None or entry.task != "translate":
+                raise EngineError("unavailable", "that isn't a translation model in vid2sub.toml",
+                                  hint="`vid2sub models` lists them")
+            return model
+        cands = detecting.candidates(self.config, self.keys)
+
+        def pick(c: list) -> str | None:
+            return suggest(lang, c, "translate", allow_cloud=allow_cloud).model
+
+        hoped = pick([replace(c, available=True, reason="") if c.unreachable else c
+                      for c in cands])
+        if any(c.name == hoped and c.unreachable for c in cands):
+            raise EngineError("connection", "the translation model's server isn't reachable",
+                              hint="is it running? For the Spark: is `make tunnel` running?")
+        s = suggest(lang, cands, "translate", allow_cloud=allow_cloud)
+        if s.model is None:
+            raise EngineError("unavailable", "no usable translation model",
+                              hint="; ".join(f"{n}: {r}" for n, r in s.considered)
+                              or "add one to vid2sub.toml (`vid2sub config init`)")
+        return s.model
+
     def _check_open(self, ep: Episode) -> None:
         if not self.is_open(ep.id):
             raise OpenError("this episode was closed: open it again")
@@ -359,6 +438,67 @@ def _files_error(err: OSError) -> OpenError:
     """The files next to the video couldn't be read or written; never err.filename: a full path."""
     return OpenError("couldn't read or write the files next to the video"
                      + (f" ({err.strerror})" if err.strerror else ""))
+
+
+def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str] | None
+                  ) -> tuple[list[str], set[str]]:
+    """The source cue ids to translate, in order, and the translation cue ids they replace.
+
+    Whole groups, so the new cues never overlap the kept ones: a replaced translation brings
+    every source cue it covers, and a translation that covers a cue being translated, or whose
+    time overlaps a run of them, is replaced too. With `ids=None` an edited translation is never
+    replaced; the cues it would have brought in are left out instead."""
+    order = {c.id: k for k, c in enumerate(source)}
+    by_id = {c.id: c for c in source}
+    if ids is None:
+        stale = stale_ids(cues, by_id)
+        wanted = {i for c in cues if c.id in stale and "edited" not in c.flags
+                  for i in c.src or () if i in by_id}
+        wanted |= set(untranslated(list(order), cues))
+    else:
+        if any(i not in by_id for i in ids):
+            raise EditError("one of those cues isn't in the source track")
+        wanted = set(ids)
+    blocked: set[str] = set()
+    while True:
+        chosen = sorted(wanted - blocked, key=order.__getitem__)
+        runs = _runs(chosen, order, by_id)
+        replaced: set[str] = set()
+        grow: set[str] = set()
+        block: set[str] = set()
+        for c in cues:
+            covers = {i for i in c.src or () if i in by_id}
+            hits = [ids_ for start, end, ids_ in runs
+                    if covers & ids_ or (c.start_ms < end and start < c.end_ms)]
+            if not hits:
+                continue
+            if (ids is not None or "edited" not in c.flags) and not covers & blocked:
+                replaced.add(c.id)
+                grow |= covers
+            else:
+                block |= covers.union(*hits)
+        if block - blocked:
+            blocked |= block
+        elif grow - wanted:
+            wanted |= grow
+        else:
+            return chosen, replaced
+
+
+def _runs(chosen: Sequence[str], order: dict[str, int], by_id: dict[str, Cue]
+          ) -> list[tuple[int, int, set[str]]]:
+    """Each run of adjacent source cues: its start, its end and its ids."""
+    runs: list[tuple[int, int, set[str]]] = []
+    last = -2
+    for cid in chosen:
+        c = by_id[cid]
+        if order[cid] == last + 1:
+            start, _, members = runs[-1]
+            runs[-1] = (start, c.end_ms, members | {cid})
+        else:
+            runs.append((c.start_ms, c.end_ms, {cid}))
+        last = order[cid]
+    return runs
 
 
 def _formats(formats: Sequence[str]) -> list[str]:
