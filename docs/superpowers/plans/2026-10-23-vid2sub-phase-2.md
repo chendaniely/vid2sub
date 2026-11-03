@@ -32,7 +32,7 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 2: Edit operations, open.
+**Now:** Task 3: The cache and the playback audio, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
@@ -2900,8 +2900,8 @@ Co-Authored-By: <the model's own line>
   - Every result passes `check_track` for every track; an edit that would break one (a
     translation track overlapping a detached cue, say) raises `EditError` naming the track.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
-- [ ] **Step 1: Write the failing test,** `tests/test_edit.py`:
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 1: Write the failing test,** `tests/test_edit.py`:
 
 ```python
 import time
@@ -3280,9 +3280,9 @@ def test_any_sequence_of_edits_keeps_every_track_valid_and_never_mutates_its_inp
         t = out
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_edit.py -q`. Expected:
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_edit.py -q`. Expected:
   `E   ImportError: cannot import name 'edit' from 'vid2sub.subs'` and `1 error`.
-- [ ] **Step 3: Write the code,** `src/vid2sub/subs/edit.py`:
+- [x] **Step 3: Write the code,** `src/vid2sub/subs/edit.py`:
 
 ```python
 """Edit operations on an episode's source track and its translations (spec §13.5, §20).
@@ -3618,11 +3618,11 @@ def _with(flags: tuple[str, ...], flag: str) -> tuple[str, ...]:
     return flags if flag in flags else (*flags, flag)
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_edit.py
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_edit.py
   tests/test_purity.py -q` first (`42 passed`), then `make check`. Expected: `506 passed, 2
   skipped, 4 deselected` twice (the local zone, then UTC), `All checks passed!` and `no leaks
   found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(subs): 🤖 subs.edit splits, merges, nudges, inserts and deletes cues and re-points their translations
@@ -3665,7 +3665,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/subs/edit.py tests/test_edit.py`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 6: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 6: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*); the forward review over Tasks 5, 6, 7, 14 and 15 (the `Episode`
   holds `Tracks`; `ops.EditOp` maps one op to each function here, a split, merge or insert op
   carrying the new ids the page drew; retranslate builds on `stale_ids` reading re-pointed and
