@@ -32,7 +32,7 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 4: The job queue, open.
+**Now:** Task 5: The editor backend: opening an episode, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
@@ -4595,8 +4595,8 @@ Co-Authored-By: <the model's own line>
     logged to `vid2sub.jobs`. Listeners run on the thread that made the change (the worker, or
     the caller of `submit`, `cancel` or `close`); one that raises is logged by kind and ignored.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
-- [ ] **Step 1: Write the failing test.** In `tests/test_pipeline.py`, add `import functools`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 1: Write the failing test.** In `tests/test_pipeline.py`, add `import functools`
   above `import json`, then append at the end of the file, after two blank lines:
 
 ```python
@@ -4644,11 +4644,11 @@ def test_a_cancel_stops_a_run_that_is_waiting_for_its_server(clip):
     assert len(ctx.sleeps) == 1 and len(engine.calls) == 1
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_pipeline.py -q -k cancel`.
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_pipeline.py -q -k cancel`.
   Expected: `E       AttributeError: 'RunContext' object has no attribute 'cancelled'`, then
   `E       AttributeError: module 'vid2sub.pipeline' has no attribute 'Cancelled'` three times,
   and `4 failed, 51 deselected`.
-- [ ] **Step 3: Write the code,** in `src/vid2sub/pipeline.py`. In the module docstring, replace
+- [x] **Step 3: Write the code,** in `src/vid2sub/pipeline.py`. In the module docstring, replace
 
 ```python
 cached for the life of the process. Any other error fails only this input, with the fix; an
@@ -4715,13 +4715,13 @@ def _never() -> bool:
         try:
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_pipeline.py -q` first
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_pipeline.py -q` first
   (`55 passed`), then the propagation check, then `make check`. **Propagation check:** take
   `Cancelled` out of `_guarded`'s `except (Paused, StopRun, Cancelled):`; `uv run pytest
   tests/test_pipeline.py -q -k cancel` gives `3 failed, 1 passed, 51 deselected` (the cancel
   became a failed result); restore it. `make check`. Expected: `533 passed, 2 skipped, 4
   deselected` twice, `All checks passed!` and `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(pipeline): 🤖 a cancelled run stops before its next chunk, translation batch or retry
@@ -4751,7 +4751,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/pipeline.py tests/test_pipeline.py`, `git commit -F .git/COMMIT_MSG`,
   then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 6: Write the failing test,** `tests/test_jobs.py`:
+- [x] **Step 6: Write the failing test,** `tests/test_jobs.py`:
 
 ```python
 import dataclasses
@@ -4969,9 +4969,9 @@ def test_close_cancels_the_running_and_waiting_jobs_and_stops_the_worker(runner)
         q.submit(["c.mkv"])
 ```
 
-- [ ] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_jobs.py -q`. Expected:
+- [x] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_jobs.py -q`. Expected:
   `E   ImportError: cannot import name 'jobs' from 'vid2sub'` and `1 error`.
-- [ ] **Step 8: Write the code,** `src/vid2sub/jobs.py`:
+- [x] **Step 8: Write the code,** `src/vid2sub/jobs.py`:
 
 ```python
 """The job queue: one worker thread runs submitted inputs one at a time (spec §17.1, S36).
@@ -5145,7 +5145,7 @@ class Queue:
         return {"state": state, "result": result, "hint": result.hint or None}
 ```
 
-- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_jobs.py -q` first
+- [x] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_jobs.py -q` first
   (`11 passed`; run it ten times, `for i in 1 2 3 4 5 6 7 8 9 10; do uv run pytest
   tests/test_jobs.py -q | tail -1; done`, and each says `11 passed`: these tests use threads),
   then the log check, then `make check`. **Log check** (spec §6.8): in `Queue._run`, change
@@ -5154,7 +5154,7 @@ class Queue:
   tests/test_jobs.py::test_a_runner_that_raises_fails_only_its_job_and_logs_only_the_error_kind`;
   restore it. `make check`. Expected: `544 passed, 2 skipped, 4 deselected` twice, `All checks
   passed!` and `no leaks found`.
-- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(jobs): 🤖 the job queue runs inputs one at a time on a worker thread, with progress and cancel
@@ -5188,7 +5188,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/jobs.py tests/test_jobs.py`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 11: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*); the forward review over Tasks 11 and 19 (Task 11's `Runtime` holds
   the `Queue` and closes it on shutdown; Task 19 wraps `run_one` as the `Runner`, turns
   `on_change` into the `jobs` output, and must hop to the Shiny session's loop itself, since
@@ -39941,3 +39941,4 @@ fi
 | Task 1 (planning) | Important | `docs/superpowers/specs/2026-10-14-vid2sub-design.md` | M1's exit test steps still owed (Dan had no Japanese episode or YouTube link, and Cantonese waits for the Spark): a Cantonese episode (S01, on the Spark once local-ai issue #35 serves Qwen3-ASR), a Japanese episode (S02, with Open items' reading-speed and routing notes), a real YouTube download (S03), a season run twice, the second with `--skip-existing` (S04), and Plex's codes and Jellyfin's `zh-CN` (S05); each passing step sets its row to `verified` in §29 (Q&A item 44) | open |
 | Task 27 (review) | Minor | `src/vid2sub/pipeline.py` | When an episode's sidecar already has a source track, run reuses it, so --vad-threshold or a changed vad_threshold is silently ignored; say so in run's output (and on the Review screen in Phase 3), naming how to re-transcribe | open |
 | Task 3 (review) | Minor | `src/vid2sub/media/preview.py` | Two playback_audio calls for different keys at once can evict each other's half-made entry, so one fails and is retried; keep every entry being made (a marker file, or the keys in flight) from eviction | open |
+| Task 4 (review) | Minor | `src/vid2sub/pipeline.py` | Decision 7 lets a running ffmpeg or yt-dlp finish its step on Cancel, where spec §17.3 says Cancel "kills child processes"; a YouTube download or a long decode isn't always short. Settle with Dan: kill the child on Cancel, or reword §17.3 | open |
