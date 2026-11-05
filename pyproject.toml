@@ -18,6 +18,12 @@ dependencies = [
     "openai>=1.100",
     "httpx>=0.27",
     "yt-dlp[default]>=2026.1.1",
+    # The local web app (spec §19.1). Pinned exactly, as recordings pins them, and upgraded
+    # together on purpose (spec §4.3): shinyreact 0.1.0 needs shiny>=1.8.0.
+    "fastapi==0.142.3",
+    "uvicorn==0.54.0",
+    "shiny==1.8.0",
+    "shinyreact==0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -30,7 +36,13 @@ vid2sub = "vid2sub.cli:main"
 # A dependency group, not an extra, so `uv sync` can never silently remove pytest
 # (an audio-router lesson).
 [dependency-groups]
-dev = ["pytest>=8.3", "hypothesis>=6.100", "jsonschema>=4.23", "ruff>=0.8"]
+dev = [
+    "pytest>=8.3",
+    "hypothesis>=6.100",
+    "jsonschema>=4.23",
+    "ruff>=0.8",
+    "pytest-playwright==0.10.0",  # the editor's browser tests (spec §22.7), as recordings pins it
+]
 
 [build-system]
 requires = ["hatchling>=1.27"]
