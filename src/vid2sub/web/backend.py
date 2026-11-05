@@ -364,6 +364,7 @@ class LocalBackend:
         the fix), TranslationFailed, or GlossaryError (a glossary beside the video vid2sub can't
         read); nothing changes then."""
         self._check_open(ep)
+        allow_cloud = allow_cloud is True  # anything but True fails closed (§7.2)
         if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
             raise EditError("there's no such track")
         _editable(ep, track)

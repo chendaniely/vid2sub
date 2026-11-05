@@ -457,6 +457,15 @@ def test_a_glossary_vid2sub_cant_read_is_a_glossary_error_that_names_no_folder(
     assert str(video.parent) not in str(err.value) and asked == []
 
 
+def test_allow_cloud_must_be_exactly_true_to_reach_a_cloud_model(tmp_path, video):
+    with FakeServer(responder=chat_responder) as srv:
+        backend = make_backend(tmp_path, config(cloud=srv.url))
+        with pytest.raises(EngineError) as err:
+            backend.retranslate(backend.open(str(video)), "en", ids=[sid(0)], model="cloud",
+                                allow_cloud="false")  # type: ignore[arg-type]
+        assert err.value.kind == "cloud_not_allowed" and srv.requests == []
+
+
 # The plan itself, on any track: whole groups, so the result never overlaps
 
 
