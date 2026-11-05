@@ -164,6 +164,8 @@ def test_the_auth_script_posts_exactly_json_and_shows_text_only():
     assert 'headers: { "Content-Type": "application/json" },' in js
     assert 'credentials: "same-origin"' in js
     assert 'location.replace("/")' in js and "location.hash" in js
+    # The token leaves the address bar and the history before anything else happens.
+    assert 'history.replaceState(null, "", location.pathname);' in js
     assert "This link is out of date: open the URL vid2sub printed when it started." in js
     assert "textContent" in js and "innerHTML" not in js and "eval" not in js
 
@@ -360,6 +362,16 @@ def test_a_websocket_without_the_cookie_is_closed_before_accept(client):
     assert exc.value.code == 1008
 
 
+@pytest.mark.parametrize("path", ["/auth", "/healthz"])
+def test_a_websocket_to_an_open_path_still_needs_the_cookie(client, path):
+    # The open paths are HTTP only: a websocket there is closed before accept.
+    with pytest.raises(WebSocketDisconnect) as exc, client.websocket_connect(
+        f"ws://127.0.0.1:{PORT}{path}"
+    ):
+        pass
+    assert exc.value.code == 1008
+
+
 def test_a_websocket_with_the_cookie_is_accepted(client):
     _sign_in(client)
     with client.websocket_connect(WS) as ws:
@@ -440,3 +452,13 @@ def test_the_whole_stack_signs_a_browser_in():
         assert c.get("/").text == "home"
         with c.websocket_connect(WS, headers={"Origin": BASE}) as ws:
             assert ws.receive_text() == "hello"
+        # Browsers share cookies across ports (Decision 34), so a page on another local port
+        # carries this cookie too: HostGuard's and WriteGuard's Origin checks are what refuse it.
+        foreign = {"Origin": "http://127.0.0.1:9999", "Sec-Fetch-Site": "same-site"}
+        write = c.post("/api/write", content=b"{}", headers={**JSON, **foreign})
+        assert write.status_code == 403
+        with pytest.raises(WebSocketDisconnect) as exc, c.websocket_connect(
+            WS, headers={"Origin": "http://127.0.0.1:9999"}
+        ):
+            pass
+        assert exc.value.code == 1008
