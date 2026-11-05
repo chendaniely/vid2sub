@@ -32,7 +32,7 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 7 stopped: waiting on Dan (Q&A, item 45): Retranslate stale replaces an imported translation's lines, which have no `src`, though Decision 9 exempts imports and S30 says only stale cues change?
+**Now:** Task 7: The editor backend: retranslate, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
