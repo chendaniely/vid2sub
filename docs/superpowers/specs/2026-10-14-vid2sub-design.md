@@ -162,6 +162,8 @@ test names.
 - 2026-11-03: §14.5 says a Save's parent is the head its edits started from, not the current head
   (a clarification S32 needs: a head that moved meanwhile leaves a conflict, not a silent
   replacement) (Phase 2, Task 6).
+- 2026-11-04: §13.4 says an imported line (no `src`) is never stale and Retranslate stale never
+  replaces it ([Q&A item 45](2026-10-14-vid2sub-qa.md)) (Phase 2, Task 7).
 
 ## Contents
 
@@ -982,7 +984,9 @@ translations (§16). No file names or titles.
   text when translated.
 - **Stale:** any `src` id is gone from the source head, or `src_sha` no longer matches, or the
   glossary hash or translation model changed. Stale cues are flagged; **Retranslate stale**
-  re-runs them.
+  re-runs them. A line with no `src` (one imported from a subtitle file, which no translator
+  made) is never stale and Retranslate stale never replaces it; source cues no imported line
+  overlaps in time still get a translation (Dan, 2026-11-04, [Q&A item 45](2026-10-14-vid2sub-qa.md)).
 - **A translation the user edited is never replaced automatically** (`edited` flag, derived from
   the rendition lineage).
 

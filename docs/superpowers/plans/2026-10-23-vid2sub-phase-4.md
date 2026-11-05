@@ -294,7 +294,11 @@ plus:
 
 The counts below come from a replay on Phase 3's end (its Task 11's close: `make check` `1312
 passed, 9 skipped, 46 deselected`, Vitest 24 files and 115 tests, `make e2e` `40 passed`), with
-this task's earlier rounds in. What matters is no failure, ruff's `All checks passed!` and
+this task's earlier rounds in. Phase 2's Task 7 then gained 17 tests (round 7a and the close's
+direct fixes: 15 in `tests/test_backend_retranslate.py`, 1 in `tests/test_views.py`, 1 in
+`tests/test_translate_shape.py`) and its Task 17 one more, which the replay didn't have: the
+totals below, and the guard run's `246 passed` (15 and 1 more of them are in its files), are that
+many higher. What matters is no failure, ruff's `All checks passed!` and
 gitleaks' `no leaks found`; the new tests' own counts are exact. Each `diff` block applies with
 `git apply` from the repository's root (save it to a file first).
 
@@ -631,8 +635,8 @@ source, every edit waits for the pick, since translations hang off source cues. 
 come from the transcript the source was built from, following rendition parents, so word
 highlighting matches the cues' `w` ranges. An `Episode` is never changed in place: every call
 returns a new one, so a reactive value that holds it sees each change. Edits run through the pure
-`subs.edit` rules (§20); each one that changes something pushes the tracks and the pending
-glossary adds onto the undo stack (the last 200 steps) and clears redo. A track in conflict can't
+`subs.edit` rules (§20); each one that changes something pushes the tracks, the pending glossary
+adds and `made_with` onto the undo stack (the last 200 steps) and clears redo. A track in conflict can't
 be edited, and nothing but a glossary add can while the source is, until a person picks a version.
 
 Save (spec §14.5, §14.6) first records any outside edit to a subtitle file as M1 does, so an edit
@@ -691,7 +695,7 @@ from vid2sub.subs.sidecar import (
     video_change,
 )
 from vid2sub.web import ops
-from vid2sub.web.episode import Episode, OpenError, SaveError, SaveResult, track_setup
+from vid2sub.web.episode import Episode, OpenError, SaveError, SaveResult, Snapshot, track_setup
 
 NO_SUBTITLES = "no subtitles yet: make them with vid2sub run or the Jobs page first"
 UNDO_STEPS = 200
@@ -730,7 +734,9 @@ def opened(video: Path, header: Header, side: Sidecar, notes: list[str], *,
         glossary: Glossary | None = read_glossary(video)
     except GlossaryError as err:
         glossary = None
-        notes.append(f"couldn't read {naming.GLOSSARY_NAME}: {err}")
+        text = str(err)
+        notes.append(text if text.startswith("couldn't read ")
+                     else f"couldn't read {naming.GLOSSARY_NAME}: {text}")
     return Episode(
         id="e" + secrets.token_hex(8), video=video, header=header, source_key=source_key,
         tracks=tracks, heads=heads, conflicts=conflicts, words=words, notes=notes,
@@ -746,23 +752,28 @@ def apply(ep: Episode, op: ops.EditOp) -> Episode:
     if tracks == ep.tracks and adds == ep.glossary_adds:
         return ep
     return replace(ep, tracks=tracks, glossary_adds=adds, taken=taken, redo=[],
-                   undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+                   undo=[*ep.undo, snapshot(ep)][-UNDO_STEPS:])
 
 
 def undo(ep: Episode) -> Episode:
     if not ep.undo:
         return ep
-    tracks, adds = ep.undo[-1]
-    return replace(ep, tracks=tracks, glossary_adds=adds, undo=ep.undo[:-1],
-                   redo=[*ep.redo, (ep.tracks, ep.glossary_adds)])
+    tracks, adds, made_with = ep.undo[-1]
+    return replace(ep, tracks=tracks, glossary_adds=adds, made_with=made_with,
+                   undo=ep.undo[:-1], redo=[*ep.redo, snapshot(ep)])
 
 
 def redo(ep: Episode) -> Episode:
     if not ep.redo:
         return ep
-    tracks, adds = ep.redo[-1]
-    return replace(ep, tracks=tracks, glossary_adds=adds, redo=ep.redo[:-1],
-                   undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+    tracks, adds, made_with = ep.redo[-1]
+    return replace(ep, tracks=tracks, glossary_adds=adds, made_with=made_with,
+                   redo=ep.redo[:-1], undo=[*ep.undo, snapshot(ep)][-UNDO_STEPS:])
+
+
+def snapshot(ep: Episode) -> Snapshot:
+    """One undo or redo step: the tracks, the glossary adds and `made_with` as they are."""
+    return ep.tracks, ep.glossary_adds, ep.made_with
 
 
 def save(ep: Episode, *, formats: Sequence[Literal["srt", "ass"]]
@@ -789,7 +800,7 @@ def save(ep: Episode, *, formats: Sequence[Literal["srt", "ass"]]
     adds, glossary_notes = _write_glossary(ep.video, ep.glossary_adds)
     try:  # read back, so a term just added makes translations stale (§13.4), as at open
         glossary: Glossary | None = read_glossary(ep.video)
-    except (GlossaryError, OSError):
+    except GlossaryError:
         glossary = None
     source_key, tracks, heads, in_conflict = load_tracks(side)
     saved = replace(ep, sidecar=side, source_key=source_key, tracks=tracks, base=tracks,
@@ -902,12 +913,15 @@ def words_of(transcript: RenditionRecord | None) -> tuple[Word, ...]:
 def read_glossary(video: Path) -> Glossary:
     """The glossary beside the video, read as M1 reads it; EMPTY_GLOSSARY when there's none."""
     path = video.with_name(naming.GLOSSARY_NAME)
-    if not path.is_file():
-        return EMPTY_GLOSSARY
     try:
+        if not path.is_file():
+            return EMPTY_GLOSSARY
         return parse_glossary(path.read_text(encoding="utf-8-sig"))
     except UnicodeDecodeError:
         raise GlossaryError("the glossary isn't UTF-8; save it as UTF-8") from None
+    except OSError as err:  # never err.filename: a full path (§6.8)
+        raise GlossaryError(f"couldn't read {naming.GLOSSARY_NAME}"
+                            + (f" ({err.strerror})" if err.strerror else "")) from None
 
 
 def _formats(formats: Sequence[str]) -> list[str]:
@@ -1126,15 +1140,16 @@ def _edit(ep: Episode, op: ops.EditOp, taken: set[str]) -> tuple[Tracks, dict[st
             return edit.nudge(t, op.cue, op.delta_ms, edge=op.edge), ep.glossary_adds
         case ops.Split():
             editable(ep, ep.source_key, *ep.conflicts)
-            return (edit.split(t, op.cue, at_char=op.at_char, at_ms=op.at_ms, taken=taken)[0],
-                    ep.glossary_adds)
+            return (edit.split(t, op.cue, at_char=op.at_char, at_ms=op.at_ms,
+                               ids=(op.ids[0], op.ids[1]), taken=taken)[0], ep.glossary_adds)
         case ops.MergeNext():
             editable(ep, ep.source_key, *ep.conflicts)
-            return edit.merge_next(t, op.cue, taken=taken)[0], ep.glossary_adds
+            return (edit.merge_next(t, op.cue, new_id=op.id, joined_ids=op.joined,
+                                    taken=taken)[0], ep.glossary_adds)
         case ops.Insert():
             editable(ep, ep.source_key)
             return (edit.insert(t, start_ms=op.start_ms, end_ms=op.end_ms, text=op.text,
-                                taken=taken)[0], ep.glossary_adds)
+                                new_id=op.id, taken=taken)[0], ep.glossary_adds)
         case ops.Delete():
             editable(ep, ep.source_key, *ep.conflicts)
             return edit.delete(t, op.cue), ep.glossary_adds
@@ -1186,9 +1201,10 @@ so two picks at once can't replace each other in a cycle.
 Retranslate (spec §13.4, §20) redoes the stale and untranslated cues, or the cues a person names,
 as one undoable edit. The model is the one named, else the one M1's catalog route picks; a cloud
 model only when this call allows it (§7.2), checked before anything is sent, and a route whose
-model's server is down is never passed over for the next one or the cloud (§17.4). Retranslating
-stale never replaces a translation a person edited (§13.4); naming a cue does, since that is the
-person asking. Translations are replaced in whole groups: every source cue a replaced translation
+model's server is down, errors or doesn't list it is never passed over for the next one or the
+cloud (§17.4). Retranslating stale never replaces a translation a person edited, nor an imported
+line, one with no `src` (§13.4, Q&A item 45); naming a cue does, since that is the person asking.
+Translations are replaced in whole groups: every source cue a replaced translation
 covers is translated with it, and a translation whose time overlaps the cues being translated is
 replaced too (a cue inserted inside a translation that spans two cues), so the track never
 overlaps; where that would replace an edited translation, those cues are left as they are. When
@@ -1223,7 +1239,7 @@ from vid2sub.subs import naming
 from vid2sub.subs.edit import EditError, Tracks
 from vid2sub.subs.model import Cue, TrackError, check_track
 from vid2sub.subs.sidecar import RenditionRecord, SidecarError
-from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
 from vid2sub.translate.run import AskFn, make_ask, translate_cues
 from vid2sub.web import folder, ops
 from vid2sub.web.episode import (  # re-exported: the backend's callers import them from here
@@ -1329,14 +1345,17 @@ class LocalBackend:
                     model: str | None = None, allow_cloud: bool = False,
                     on_batch: Callable[[int, int], None] | None = None) -> Episode:
         """`ids=None`: every stale or untranslated source cue, never replacing an edited
-        translation; else those source cues, whatever their translation. One undo step; `ep`
-        itself when there's nothing to translate (no model is asked to translate; with none
-        named, the route's servers are asked which models they serve). Blocks on the network.
-        Raises EditError (a track in conflict, an unknown track or cue), EngineError (no usable
-        model, a cloud model this call doesn't allow, the server down or refusing: `.hint` names
-        the fix), TranslationFailed, or GlossaryError (a glossary beside the video vid2sub can't
-        read); nothing changes then."""
+        translation or an imported line (no `src`), and dropping an unedited translation whose
+        source cues are all gone; else those source cues, whatever their translation. One undo
+        step; `ep` itself when there's nothing to translate or drop (no model is asked to
+        translate; with none named, the route's servers are asked which models they serve).
+        Blocks on the network. Raises EditError (a track in conflict, an unknown track or cue),
+        EngineError (no usable model, a cloud model this call doesn't allow, the route's model
+        not serving it, the server down or refusing: `.hint` names the fix), TranslationFailed,
+        or GlossaryError (a glossary beside the video vid2sub can't read); nothing changes
+        then."""
         self._check_open(ep)
+        allow_cloud = allow_cloud is True  # anything but True fails closed (§7.2)
         if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
             raise EditError("there's no such track")
         folder.editable(ep, track)
@@ -1351,13 +1370,15 @@ class LocalBackend:
         everything = ids is None and setup_changed(track_setup(ep, track), glossary.sha(),
                                                    entry.model)
         wanted, replaced = retranslation(source, cues, ids, everything=everything)
-        if not wanted:
+        if not wanted and not replaced:
             return ep
-        ask = self._ask(name, entry, RunPolicy(allow_cloud))
         taken = set(ep.taken)
-        new = translate_cues(source, source_lang=lang, target_track=track,
-                             glossary=glossary, ask=ask, only=wanted, taken=taken,
-                             on_batch=on_batch)
+        new: list[Cue] = []
+        if wanted:  # else only translations of deleted cues are dropped: nothing to ask
+            ask = self._ask(name, entry, RunPolicy(allow_cloud))
+            new = translate_cues(source, source_lang=lang, target_track=track,
+                                 glossary=glossary, ask=ask, only=wanted, taken=taken,
+                                 on_batch=on_batch)
         result = tuple(sorted([c for c in cues if c.id not in replaced] + new,
                               key=lambda c: (c.start_ms, c.end_ms)))
         try:
@@ -1365,33 +1386,41 @@ class LocalBackend:
         except TrackError as err:
             raise EditError(f"the {track} track would break: {err}") from None
         tracks = Tracks(source, {**ep.tracks.translations, track: result})
-        made_with = ({**ep.made_with, track: (glossary.sha(), entry.model)} if everything
-                     else ep.made_with)
+        made_with = ({**ep.made_with, track: (glossary.sha(), entry.model)}
+                     if everything and wanted else ep.made_with)
         return replace(ep, tracks=tracks, taken=taken, made_with=made_with, redo=[],
-                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+                       undo=[*ep.undo, folder.snapshot(ep)][-UNDO_STEPS:])
 
     def _translator(self, lang: str, model: str | None, allow_cloud: bool
                     ) -> tuple[str, ModelEntry]:
         """The named model, else the catalog route's pick, as M1's pipeline picks (§11.2), with
-        its entry. A route whose model's server isn't answering stops here rather than taking
-        the next model. The demo's backend answers with its canned model instead."""
+        its entry. A route whose model's server isn't serving it (down, erroring, or not listing
+        it) stops here rather than taking the next model or the cloud (§17.4). The demo's
+        backend answers with its canned model instead."""
         if model is not None:
             entry = self.config.models.get(model)
             if entry is None or entry.task != "translate":
                 raise EngineError("unavailable", "that isn't a translation model in vid2sub.toml",
                                   hint="`vid2sub models` lists them")
             return model, entry
+        # The pick with every local server taken to answer: the model the route wants. If the
+        # probed route picks another, the wanted one errored or lacks the model, and §17.4 says
+        # never to fall back to another model or the cloud.
+        hoped = suggest(lang, detecting.candidates(self.config, self.keys, probe_endpoints=False),
+                        "translate", allow_cloud=allow_cloud).model
         cands = detecting.candidates(self.config, self.keys)
-
-        def pick(c: list) -> str | None:
-            return suggest(lang, c, "translate", allow_cloud=allow_cloud).model
-
-        hoped = pick([replace(c, available=True, reason="") if c.unreachable else c
-                      for c in cands])
-        if any(c.name == hoped and c.unreachable for c in cands):
-            raise EngineError("connection", "the translation model's server isn't reachable",
-                              hint="is it running? For the Spark: is `make tunnel` running?")
         s = suggest(lang, cands, "translate", allow_cloud=allow_cloud)
+        if hoped is not None and s.model != hoped:
+            why = next(c for c in cands if c.name == hoped)
+            if why.unreachable:
+                raise EngineError("connection", "the translation model's server isn't reachable",
+                                  hint="is it running? For the Spark: is `make tunnel` running?")
+            reason = (why.reason.replace("; vid2sub retries twice", "")
+                      .replace(" (vid2sub retries twice)", ""))  # the editor never retries
+            raise EngineError("unavailable", f"the translation model {hoped} isn't available: "
+                              f"{reason or 'its server did not list it'}",
+                              hint="vid2sub doesn't fall back to another model or the cloud; "
+                                   "`vid2sub doctor` shows why")
         if s.model is None:
             raise EngineError("unavailable", "no usable translation model",
                               hint="; ".join(f"{n}: {r}" for n, r in s.considered)
@@ -1432,17 +1461,24 @@ def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str]
 
     Whole groups, so the new cues never overlap the kept ones: a replaced translation brings
     every source cue it covers, and a translation that covers a cue being translated, or whose
-    time overlaps a run of them, is replaced too. With `ids=None` an edited translation is never
-    replaced; the cues it would have brought in are left out instead. `everything`: the track
-    was made with another glossary or model, so with `ids=None` every cue of it is stale."""
+    time overlaps a run of them, is replaced too. With `ids=None` an edited translation, and an
+    imported line (one with no `src`, Q&A item 45), is never replaced; the cues it would have
+    brought in are left out instead, and it covers the source cues it overlaps. With `ids=None`
+    an unedited translation whose source cues are all gone is dropped, as M1 drops it (so it
+    can be in the second list with nothing to translate). `everything`: the track was made
+    with another glossary or model, so with `ids=None` every cue of it is stale."""
     order = {c.id: k for k, c in enumerate(source)}
     by_id = {c.id: c for c in source}
     if ids is None:
-        stale = {c.id for c in cues} if everything else stale_ids(cues, by_id)
+        stale = ({c.id for c in cues if c.src} if everything
+                 else stale_linked_ids(cues, by_id))
         wanted = {i for c in cues if c.id in stale and "edited" not in c.flags
                   for i in c.src or () if i in by_id}
-        wanted |= set(untranslated(list(order), cues))
+        wanted |= set(uncovered_ids(source, cues))
+        orphans = {c.id for c in cues if c.src and "edited" not in c.flags
+                   and not any(i in by_id for i in c.src)}
     else:
+        orphans = set()
         if any(i not in by_id for i in ids):
             raise EditError("one of those cues isn't in the source track")
         wanted = set(ids)
@@ -1459,7 +1495,7 @@ def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str]
                     if covers & ids_ or (c.start_ms < end and start < c.end_ms)]
             if not hits:
                 continue
-            if (ids is not None or "edited" not in c.flags) and not covers & blocked:
+            if (ids is not None or ("edited" not in c.flags and c.src)) and not covers & blocked:
                 replaced.add(c.id)
                 grow |= covers
             else:
@@ -1469,7 +1505,7 @@ def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str]
         elif grow - wanted:
             wanted |= grow
         else:
-            return chosen, replaced
+            return chosen, replaced | orphans
 
 
 def _runs(chosen: Sequence[str], order: dict[str, int], by_id: dict[str, Cue]

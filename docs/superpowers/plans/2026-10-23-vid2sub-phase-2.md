@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 7: The editor backend: retranslate, open.
+**Now:** Task 8: The web dependencies, the guards and the CSP, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): from Task 6's close on, every later listed count is 57 lower than the real one.
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one.
 
 ## Decisions made while planning (review these)
 
@@ -65,7 +65,9 @@ later listings were built without it. Task 5's fix round added 3 tests (the buil
 9. **Stale follows spec §13.4 in full, as M1 does:** a cue is stale when its source changed, and
    every cue of a track is stale when the glossary or the translation model changed (an edited
    one keeps `edited` and is never replaced automatically), unless no translator made the track
-   (an import: no model, so neither leg). So a term added at Save makes the whole track stale on
+   (an import: no model, so neither leg). A line with no `src`, an imported one, is never stale,
+   and Retranslate stale never replaces it; source cues no imported line overlaps in time still
+   get a translation (Dan, Q&A item 45). So a term added at Save makes the whole track stale on
    the next open. An outside edit keeps the
    glossary hash and model of the version its file was written from, so fixing a typo in an SRT
    marks nothing stale (Task 5, Task 6 round 6f, Task 7).
@@ -11447,51 +11449,75 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 1 · **Scenarios:** S30
 
+**Built differently:** round 7a, after the Tier 1 review (Standards approved with 4 Minor; Spec: 6 Important and 5 Minor), a fifth stop (Q&A item 45) and a re-review (all six addressed; one new Important, a docstring, and six Minor), then two direct fixes under the cap. (1) An imported line, one with no `src` (what `store.import_subtitles` makes), is never stale and Retranslate stale never replaces it; source cues no imported line overlaps in time still get a translation. The view and Retranslate share two new pure helpers in `subs.translate_shape`, `stale_linked_ids(translation, source)` and `uncovered_ids(source, translation)`, beside M1's `stale_ids` and `untranslated`, which are unchanged (Dan's answer to Q&A item 45, A; commit 694fb4a). (2) Undo and redo entries carry `made_with`: `(tracks, glossary_adds, made_with)`, `backend.Snapshot` (I1; 08edc88). (3) With `ids=None`, an unedited translation whose source cues are all gone is dropped, as M1 drops it, and a plan with only drops is applied without asking a model (I2; d80ad5d). (4) With no model named, the hoped-for pick is made from the route with every local server taken to answer and this call's `allow_cloud`; if the probed route picks another model, `retranslate` raises `EngineError` and sends nothing (I5; e0c4922). (5) `read_glossary` raises only a path-free `GlossaryError`; `open`'s and Save's `except OSError` beside it are gone (I6; 2b98361, completed with `is_file` inside the `try` in ee4e6c0). (6) `allow_cloud` counts only when it is `True` (M5; 9feadaa). (7) Docstrings (df9099e). The steps below are as planned.
+
+**Ruling:** (1) I4: naming one cue inside an edited translation that spans two replaces that translation, as Decision 8 has it (the person asked); a note in Task 17's UI could show which cues a retranslation covers (Phase-end row). (2) I5's comparison: the hoped-for pick is made with `probe_endpoints=False` and this call's `allow_cloud`, so the editor's Allow-cloud box keeps working: a cloud model that is the route's own pick is still used (Decision 33). (3) I3 was Dan's, at the fifth stop (Q&A item 45).
+
 **Files:**
-- Modify: `src/vid2sub/web/backend.py`
-- Test: `tests/test_backend_retranslate.py`
+- Modify: `src/vid2sub/web/backend.py`, `src/vid2sub/web/views.py`, `src/vid2sub/subs/translate_shape.py`
+  (round 7a: the two helpers)
+- Test: `tests/test_backend_retranslate.py`, `tests/test_views.py`, `tests/test_translate_shape.py`,
+  `tests/test_backend_edit.py` (round 7a: three-part undo entries)
 
 **Interfaces:**
 - Consumes: `translate.run.translate_cues`, `make_ask`; `detect.candidates`; `catalog.suggest`
   (M1's translate route); `engines.clients.RunPolicy`, `check_allowed`; `engines.base.EngineError`;
-  `subs.translate_shape.stale_ids`, `untranslated`; `subs.model.check_track`; Task 5's
+  `subs.translate_shape.stale_ids`, `untranslated` (round 7a: `stale_linked_ids`, `uncovered_ids`
+  beside them); `subs.model.check_track`; Task 5's
   `read_glossary`, `glossary_with`, `track_setup`, `setup_changed`, `_lang`; Task 6's undo stack,
   `_editable` and `_editor_body`; `tests/fakes.FakeServer`, `chat_responder`, `closed_port_url`.
-- Produces:
+- Produces (as built, round 7a):
   - `LocalBackend.retranslate(self, ep: Episode, track: str, *, ids: Sequence[str] | None,
     model: str | None = None, allow_cloud: bool = False,
     on_batch: Callable[[int, int], None] | None = None) -> Episode`: `ids=None` is every stale
-    or untranslated source cue, never replacing a translation flagged `edited` (spec §13.4);
-    named `ids` are source cue ids, translated whatever their translation (the person asked).
-    One undo step; `ep` itself when there's nothing to translate (no model is asked). The model
-    is `model` (a translation model in `vid2sub.toml`), else the catalog route's pick, as M1
-    picks; a route whose model's server isn't answering raises rather than taking the next
-    model or the cloud. Cloud only when this call's `allow_cloud` is set, checked before
-    anything is sent. It blocks on the model's server, for minutes on a whole episode: the
-    server runs it off Shiny's event loop, holds edits to that episode until it returns, and
-    shows progress from `on_batch(n, of)`, which runs on the calling thread. Raises
-    `EditError` (a track in conflict; an unknown track or cue, named without echoing it),
-    `EngineError` (`.kind`, `.hint`: no usable model, a cloud model not allowed, the server down
-    or refusing), `TranslationFailed` or `GlossaryError`; the episode is unchanged then. With
-    `ids=None`, spec §13.4's other two legs apply as M1 applies them: when the track's glossary
-    hash or model (`track_setup`) isn't the one this call uses (the glossary beside the video with
-    the terms waiting for Save; `model`, else the route's pick), every unedited cue is stale. The
-    model is chosen before the plan, so with none named the route's servers are asked which
-    models they serve even when nothing turns out stale.
+    or untranslated source cue, never replacing a translation flagged `edited` or an imported
+    line (one with no `src`: it is never stale, and covers the source cues it overlaps in time;
+    spec §13.4, Dan, Q&A item 45), and dropping an unedited translation whose source cues are
+    all gone, as M1 does; named `ids` are source cue ids, translated whatever their translation
+    (the person asked, Decision 8). One undo step; `ep` itself when there's nothing to translate
+    or drop (no model is asked). The model is `model` (a translation model in `vid2sub.toml`),
+    else the catalog route's pick, as M1 picks. With none named, the hoped-for pick is made from
+    the route with every local server taken to answer and this call's `allow_cloud`; if the
+    probed route picks another model, `EngineError` is raised and nothing is sent (spec §17.4:
+    never another model, never the cloud): `connection` for a server that isn't reachable, else
+    `unavailable` naming the model and the candidate's reason, with a hint that vid2sub doesn't
+    fall back and `vid2sub doctor` shows why. Cloud only when this call's `allow_cloud` is
+    exactly `True` (anything else is False), checked before anything is sent. It blocks on the
+    model's server, for minutes on a whole episode: the server runs it off Shiny's event loop,
+    holds edits to that episode until it returns, and shows progress from `on_batch(n, of)`,
+    which runs on the calling thread. Raises `EditError` (a track in conflict; an unknown track
+    or cue, named without echoing it), `EngineError` (`.kind`, `.hint`: no usable model, a cloud
+    model not allowed, the route's model not serving it, the server down or refusing),
+    `TranslationFailed` or `GlossaryError` (never with a path); the episode is unchanged then.
+    With `ids=None`, spec §13.4's other two legs apply as M1 applies them: when the track's
+    glossary hash or model (`track_setup`) isn't the one this call uses (the glossary beside the
+    video with the terms waiting for Save; `model`, else the route's pick), every unedited cue
+    that has a `src` is stale. The model is chosen before the plan, so with none named the
+    route's servers are asked which models they serve even when nothing turns out stale.
   - `Episode.made_with: dict[str, tuple[str, str | None]] = {}`: the glossary hash and model of
     a retranslation that redid every unedited cue of a track; `track_setup` returns it while none
     of the cues it replaced is back (an undo), so the view stops flagging the track and Save
     records that pair in the editor version (`_editor_body` takes `setup=track_setup(ep,
-    track)`). Save and a pick clear it.
+    track)`). Save and a pick clear it. Undo and redo entries are `(tracks, glossary_adds,
+    made_with)` (`backend.Snapshot`), so an undo gives back the `made_with` it had.
   - `backend.retranslation(source: Sequence[Cue], cues: Sequence[Cue],
     ids: Sequence[str] | None, *, everything: bool = False) -> tuple[list[str], set[str]]`
-    (pure; `everything`: every cue stale, for the two legs above; returns the source ids to
-    translate, in order, and the translation ids they replace, in whole groups so the result
-    never overlaps; with `ids=None`, cues an edited translation would have to give up are left
-    out)
+    (pure; `everything`: every cue that has a `src` stale, for the two legs above; returns the
+    source ids to translate, in order, and the translation ids they replace, in whole groups so
+    the result never overlaps, with the unedited translations whose source cues are all gone
+    added when `ids=None`; with `ids=None`, cues an edited translation or an imported line would
+    have to give up are left out)
+  - `subs.translate_shape.stale_linked_ids(translation: Sequence[Cue], source: Mapping[str, Cue])
+    -> set[str]` (`stale_ids`, except that a line with no `src` is never stale) and
+    `uncovered_ids(source: Sequence[Cue], translation: Sequence[Cue]) -> list[str]`
+    (`untranslated`, except that a line with no `src` covers the source cues it overlaps in
+    time); `stale_ids` and `untranslated` are M1's and unchanged. The view and Retranslate both
+    use the new two.
+  - `backend.read_glossary(video)` raises only `GlossaryError`, never an `OSError` or a path: an
+    unreadable file is `couldn't read vid2sub.glossary.toml (<strerror>)`.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
-- [ ] **Step 1: Write the failing test,** `tests/test_backend_retranslate.py`:
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 1: Write the failing test,** `tests/test_backend_retranslate.py`:
 
 ```python
 import re
@@ -11800,13 +11826,13 @@ def test_a_retranslation_never_overlaps_never_covers_a_cue_twice_and_keeps_edits
         assert set(ids) <= set(wanted)  # a named cue is always translated
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_backend_retranslate.py -q`.
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_backend_retranslate.py -q`.
   Expected: `E       AttributeError: <module 'vid2sub.web.backend' from
   '…/src/vid2sub/web/backend.py'> has no attribute 'make_ask'` (twelve times, from the `asked`
   fixture), `E           AttributeError: 'LocalBackend' object has no attribute 'retranslate'`,
   `E       AttributeError: module 'vid2sub.web.backend' has no attribute 'retranslation'`, and
   `4 failed, 12 errors`.
-- [ ] **Step 3: Write the code.**
+- [x] **Step 3: Write the code.**
   In `src/vid2sub/web/backend.py`, replace the module docstring
 
 ```python
@@ -12160,7 +12186,7 @@ def _runs(chosen: Sequence[str], order: dict[str, int], by_id: dict[str, Cue]
     return runs
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_backend_retranslate.py -q`
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_backend_retranslate.py -q`
   first (`16 passed`), then the group check, then `make check`. **Group check** (Task 2's author
   found the hazard: a cue inserted inside a translation that spans two cues): in
   `retranslation`, change `if covers & ids_ or (c.start_ms < end and start < c.end_ms)]` to
@@ -12170,7 +12196,7 @@ def _runs(chosen: Sequence[str], order: dict[str, int], by_id: dict[str, Cue]
   test (`cue n0 overlaps t3`, or another), `3 failed, 13 passed`; restore it. `make check`.
   Expected: `735 passed, 2 skipped, 4 deselected` twice (the local zone, then UTC),
   `All checks passed!` and `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 the editor retranslates stale cues, or the cues a person names, in whole groups, as one undoable edit
@@ -12219,7 +12245,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/web/backend.py tests/test_backend_retranslate.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 6: Write the failing tests:** retranslating stale takes spec §13.4's other two legs,
+- [x] **Step 6: Write the failing tests:** retranslating stale takes spec §13.4's other two legs,
   the glossary and the model, as M1 does. In `tests/test_backend_retranslate.py`:
   replace
 
@@ -12307,12 +12333,12 @@ def test_after_retranslating_everything_and_saving_nothing_is_stale_any_more(bac
     assert backend.retranslate(reopened, "en", ids=None) is reopened and len(asked) == 1
 ```
 
-- [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_backend_retranslate.py
+- [x] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_backend_retranslate.py
   -q`. Expected: `E       AssertionError: assert [] == [['ca0000000'], ['ca0000002']]` (the
   glossary), `E       AssertionError: assert [] == [['ca0000000'... 'ca0000002']]` (twice: the
   model, and the named model), `E       assert [True, True, True] == [False, False, False]` (after
   redoing everything), and `4 failed, 16 passed`.
-- [ ] **Step 8: Write the code.**
+- [x] **Step 8: Write the code.**
   In `src/vid2sub/web/backend.py`, replace the module docstring
 
 ```python
@@ -12680,14 +12706,14 @@ def track_setup(ep: Episode, track: str) -> tuple[str, str | None]:
     body = ep.sidecar.renditions()[ep.heads[track]].body
 ```
 
-- [ ] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_backend_retranslate.py -q`
+- [x] **Step 9: Run the checks; they pass.** `uv run pytest tests/test_backend_retranslate.py -q`
   first (`20 passed`), then the leg checks, then `make check`. **Leg checks:** in
   `retranslate`, pass `None` for `glossary.sha()` in the `setup_changed(...)` call: the
   glossary test and the save test fail, `2 failed, 18 passed`; restore it; then pass `None` for
   `entry.model`: the two model tests fail, `2 failed, 18 passed`; restore it. `make check`.
   Expected: `739 passed, 2 skipped, 4 deselected` twice, `All checks passed!` and `no leaks
   found`.
-- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 Retranslate stale redoes every unedited cue when the glossary or the model changed, as spec §13.4 says
@@ -12723,7 +12749,7 @@ Co-Authored-By: <the model's own line>
   `git add src/vid2sub/web/backend.py tests/test_backend_retranslate.py`, `git commit -F
   .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 11: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 11: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
   kickoff council, because it is retranslation's cloud opt-in gate (§7.2)); the forward review over
   Tasks 17 and 23 (Task 17's `retranslate` input runs `LocalBackend.retranslate` off the event loop
@@ -20898,6 +20924,10 @@ class Capabilities:
     path_input: bool
 
 
+# One undo or redo step: the tracks, the glossary adds and `made_with` as they were.
+Snapshot = tuple[Tracks, dict[str, str], dict[str, tuple[str, str | None]]]
+
+
 @dataclass(frozen=True)
 class Episode:
     id: str
@@ -20915,8 +20945,8 @@ class Episode:
     base: Tracks  # the tracks as of the open or the last Save
     glossary: Glossary | None  # beside the video at open; None if it couldn't be read
     translate_model: str | None  # the model Retranslate would use with none named (offline)
-    undo: list[tuple[Tracks, dict[str, str]]] = field(default_factory=list)
-    redo: list[tuple[Tracks, dict[str, str]]] = field(default_factory=list)
+    undo: list[Snapshot] = field(default_factory=list)
+    redo: list[Snapshot] = field(default_factory=list)
     taken: set[str] = field(default_factory=set)
     glossary_adds: dict[str, str] = field(default_factory=dict)
     made_with: dict[str, tuple[str, str | None]] = field(default_factory=dict)  # since a redo-all
@@ -20991,13 +21021,15 @@ from vid2sub.web.episode import (
     OpenError,
     SaveError,
     SaveResult,
+    Snapshot,
     glossary_with,
     setup_changed,
     track_setup,
 )
 ```
 
-  then delete everything from `class OpenError(Exception):` down to the blank lines before
+  then delete the `Snapshot = …` line and the comment above it (round 7a: it is now in
+  `web.episode`), then delete everything from `class OpenError(Exception):` down to the blank lines before
   `class LocalBackend:` (the five classes, now in `web.episode`), and the four functions
   `glossary_with`, `track_setup`, `setup_changed` and `all_stale` between `read_glossary` and
   `_lang` (now in `web.episode`).
@@ -21030,7 +21062,7 @@ from vid2sub.subs.lint import lint
 from vid2sub.subs.model import Cue
 from vid2sub.subs.rules import rules_for
 from vid2sub.subs.sidecar import HeadRecord
-from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
 from vid2sub.web.episode import Capabilities, Episode, all_stale
 
 if TYPE_CHECKING:  # local only: the Pages bundle has neither (spec §21)
@@ -28097,7 +28129,8 @@ Co-Authored-By: <the model's own line>
     only while that retranslation runs), else `null`; `_publish` and `_set_busy` clear it.
   - Message `retranslate_result`: `{"episode": str, "n": int | null, "ok": bool, "changed": int}`
     (`ok` only once the retranslation ran, round 17c; `changed`: the translation cues the request
-    replaced or added, 0 when nothing was stale or it failed), sent after every `retranslate` that
+    replaced, added or dropped (a translation whose source cues are all gone is dropped, Task 7
+    round 7a), 0 when nothing was stale or it failed), sent after every `retranslate` that
     names the open episode, after the episode is published. Round 17c: Task 16's `applied`
     message gains `"changed": bool` (the step moved the server's undo history).
   - `types.ts`: `Busy` gains `"retranslating"`; `Progress`; `RetranslateResultMessage`.
@@ -28310,6 +28343,28 @@ def test_named_cues_are_retranslated_even_where_a_translation_was_edited(tr_clie
 
 
 @pytest.mark.media
+def test_a_retranslation_that_only_drops_a_translation_counts_it_as_changed(tr_client, tr_rt,
+                                                                           tmp_path):
+    # Task 7 round 7a (I2): a source line deleted in another program leaves its translation
+    # nothing to translate from; Retranslate stale drops it, asks no model, and says it changed.
+    from episodes import source_cues, write_track
+
+    from vid2sub import store
+
+    video = make_episode(tmp_path / "ep")
+    head = store.load(video)[0].head("ja").rendition
+    write_track(video, "ja", source_cues(3)[:2], role="source", replaces=head)
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        t.set(retranslate={"episode": ep["id"], "n": 1, "track": "en", "ids": None,
+                           "allow_cloud": False})
+        assert t.until(lambda t: retranslated(t)) == [
+            {"episode": ep["id"], "n": 1, "changed": 1}]
+        assert tr_rt.backend.batches == [] and tr_rt.backend.policies == []
+        assert en_texts(t.value("episode")) == list(ENGLISH[:2])
+
+
+@pytest.mark.media
 def test_an_edit_sent_while_retranslating_waits_its_turn_and_lands_on_the_new_episode(
         tr_client, tr_rt, tmp_path):
     video = make_episode(tmp_path / "ep")
@@ -28395,10 +28450,16 @@ def test_a_retranslation_that_cant_run_is_a_notice_with_the_fix_and_changes_noth
                                                "the required shape")
         t.set(retranslate={**ask, "n": 3})
         t.until(lambda t: len(retranslated(t)) == 3)
-        video.with_name("vid2sub.glossary.toml").write_bytes(b"\xff\xfe not utf-8")
-        tr_rt.backend.fail = None
+        tr_rt.backend.fail = EngineError(
+            "unavailable", "no usable translation model",
+            hint="cloud: a cloud model: needs --allow-cloud; gemma: not in the translate route "
+                 "for ja; choose it with --model")
         t.set(retranslate={**ask, "n": 4})
         t.until(lambda t: len(retranslated(t)) == 4)
+        video.with_name("vid2sub.glossary.toml").write_bytes(b"\xff\xfe not utf-8")
+        tr_rt.backend.fail = None
+        t.set(retranslate={**ask, "n": 5})
+        t.until(lambda t: len(retranslated(t)) == 5)
         assert [n["text"] for n in t.notices()] == [
             ("couldn't retranslate: the translation model's server isn't reachable → is it "
              "running? For the Spark: is `make tunnel` running?"),
@@ -28406,8 +28467,10 @@ def test_a_retranslation_that_cant_run_is_a_notice_with_the_fix_and_changes_noth
              "models → tick Allow cloud models, then retranslate again"),
             ("couldn't retranslate: the model couldn't translate cue ca0000000 in the required "
              "shape → retranslate again, or pick fewer cues"),
+            ("couldn't retranslate: no usable translation model → cloud: a cloud model: needs "
+             "Allow cloud models ticked; gemma: not in the translate route for ja"),
             "the glossary isn't UTF-8; save it as UTF-8"]
-        assert [r["changed"] for r in retranslated(t)] == [0] * 4
+        assert [r["changed"] for r in retranslated(t)] == [0] * 5
         assert not t.value("episode")["dirty"] and t.value("busy") is None
 ```
 
@@ -28565,6 +28628,14 @@ ALLOW_CLOUD = "tick Allow cloud models, then retranslate again"
 PLAYBACK_TIMEOUT = 3600.0  # seconds: a two-hour episode's audio, read from a slow network share
 INLINE = sys.platform == "emscripten"  # Pyodide: no threads, so a blocking call runs inline
 
+
+def _editor_words(hint: str) -> str:
+    """The catalog's reasons in a "no usable translation model" hint name the CLI's flags
+    (`catalog.suggest`); the editor has no `--model` and no `--allow-cloud`, but a box (Task 7
+    re-review, M2)."""
+    return (hint.replace("; choose it with --model", "")
+            .replace("needs --allow-cloud", "needs Allow cloud models ticked"))
+
 ```
 
   Replace
@@ -28601,7 +28672,7 @@ INLINE = sys.platform == "emscripten"  # Pyodide: no threads, so a blocking call
             return self.backend.retranslate(ep, track, ids=ids, allow_cloud=allow_cloud,
                                             on_batch=on_batch)
         except EngineError as err:  # the CLI's hint names a flag; the editor has a box
-            hint = ALLOW_CLOUD if err.kind == "cloud_not_allowed" else err.hint
+            hint = ALLOW_CLOUD if err.kind == "cloud_not_allowed" else _editor_words(err.hint)
             raise RetranslateError(str(err), hint) from None
         except TranslationFailed as err:
             raise RetranslateError(str(err), "retranslate again, or pick fewer cues") from None
@@ -28642,7 +28713,7 @@ from vid2sub.media.identity import identify
 ```python
     make_rendition,
 )
-from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
 from vid2sub.translate.run import make_ask, translate_cues
 from vid2sub.web import ops
 from vid2sub.web.episode import (
@@ -28654,7 +28725,7 @@ from vid2sub.web.episode import (
 ```python
     make_rendition,
 )
-from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
 from vid2sub.translate.run import AskFn, make_ask, translate_cues
 from vid2sub.web import ops
 from vid2sub.web.episode import (
@@ -28664,107 +28735,92 @@ from vid2sub.web.episode import (
   Replace
 
 ```python
-            return ep
-        source, cues = ep.tracks.source, ep.tracks.translations[track]
-        lang = _lang(ep.source_key)
         name = self._translator(lang, model, allow_cloud)
         entry = self.config.models[name]
         glossary = glossary_with(read_glossary(ep.video), ep.glossary_adds)
         everything = ids is None and setup_changed(track_setup(ep, track), glossary.sha(),
                                                    entry.model)
         wanted, replaced = retranslation(source, cues, ids, everything=everything)
-        if not wanted:
+        if not wanted and not replaced:
             return ep
-        policy = RunPolicy(allow_cloud)
-        check_allowed(name, entry, self.config, policy)
-        ask = make_ask(name, entry, self.config, policy, self.keys)
         taken = set(ep.taken)
-        new = translate_cues(source, source_lang=lang, target_track=track,
-                             glossary=glossary, ask=ask, only=wanted, taken=taken,
+        new: list[Cue] = []
+        if wanted:  # else only translations of deleted cues are dropped: nothing to ask
+            policy = RunPolicy(allow_cloud)
+            check_allowed(name, entry, self.config, policy)
+            ask = make_ask(name, entry, self.config, policy, self.keys)
+            new = translate_cues(source, source_lang=lang, target_track=track,
+                                 glossary=glossary, ask=ask, only=wanted, taken=taken,
+                                 on_batch=on_batch)
 ```
 
   with
 
 ```python
-            return ep
-        source, cues = ep.tracks.source, ep.tracks.translations[track]
-        lang = _lang(ep.source_key)
         name, entry = self._translator(lang, model, allow_cloud)
         glossary = glossary_with(read_glossary(ep.video), ep.glossary_adds)
         everything = ids is None and setup_changed(track_setup(ep, track), glossary.sha(),
                                                    entry.model)
         wanted, replaced = retranslation(source, cues, ids, everything=everything)
-        if not wanted:
+        if not wanted and not replaced:
             return ep
-        ask = self._ask(name, entry, RunPolicy(allow_cloud))
         taken = set(ep.taken)
-        new = translate_cues(source, source_lang=lang, target_track=track,
-                             glossary=glossary, ask=ask, only=wanted, taken=taken,
+        new: list[Cue] = []
+        if wanted:  # else only translations of deleted cues are dropped: nothing to ask
+            ask = self._ask(name, entry, RunPolicy(allow_cloud))
+            new = translate_cues(source, source_lang=lang, target_track=track,
+                                 glossary=glossary, ask=ask, only=wanted, taken=taken,
+                                 on_batch=on_batch)
 ```
 
   Replace
 
 ```python
-        return replace(ep, tracks=tracks, taken=taken, made_with=made_with, redo=[],
-                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
-
     def _translator(self, lang: str, model: str | None, allow_cloud: bool) -> str:
         """The named model, else the catalog route's pick, as M1's pipeline picks (§11.2). A route
-        whose model's server isn't answering stops here rather than taking the next model."""
+        whose model's server isn't serving it (down, erroring, or not listing it) stops here
+        rather than taking the next model or the cloud (§17.4)."""
         if model is not None:
             entry = self.config.models.get(model)
             if entry is None or entry.task != "translate":
                 raise EngineError("unavailable", "that isn't a translation model in vid2sub.toml",
                                   hint="`vid2sub models` lists them")
             return model
-        cands = detecting.candidates(self.config, self.keys)
-
-        def pick(c: list) -> str | None:
 ```
 
   with
 
 ```python
-        return replace(ep, tracks=tracks, taken=taken, made_with=made_with, redo=[],
-                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
-
     def _translator(self, lang: str, model: str | None, allow_cloud: bool
                     ) -> tuple[str, ModelEntry]:
         """The named model, else the catalog route's pick, as M1's pipeline picks (§11.2), with
-        its entry. A route whose model's server isn't answering stops here rather than taking
-        the next model. The demo's backend answers with its canned model instead."""
+        its entry. A route whose model's server isn't serving it (down, erroring, or not listing
+        it) stops here rather than taking the next model or the cloud (§17.4). The demo's
+        backend answers with its canned model instead."""
         if model is not None:
             entry = self.config.models.get(model)
             if entry is None or entry.task != "translate":
                 raise EngineError("unavailable", "that isn't a translation model in vid2sub.toml",
                                   hint="`vid2sub models` lists them")
             return model, entry
-        cands = detecting.candidates(self.config, self.keys)
-
-        def pick(c: list) -> str | None:
 ```
 
   Replace
 
 ```python
-            raise EngineError("unavailable", "no usable translation model",
-                              hint="; ".join(f"{n}: {r}" for n, r in s.considered)
                               or "add one to vid2sub.toml (`vid2sub config init`)")
         return s.model
 
     def _check_open(self, ep: Episode) -> None:
         if not self.is_open(ep.id):
             raise OpenError("this episode was closed: open it again")
+
     def _route_model(self, lang: str) -> str | None:
-        """The model Retranslate would use with none named and no cloud: M1's catalog route over
-        the configured models, each local server taken to answer (`probe_endpoints=False`)."""
 ```
 
   with
 
 ```python
-            raise EngineError("unavailable", "no usable translation model",
-                              hint="; ".join(f"{n}: {r}" for n, r in s.considered)
                               or "add one to vid2sub.toml (`vid2sub config init`)")
         return s.model, self.config.models[s.model]
 
@@ -28779,8 +28835,6 @@ from vid2sub.web.episode import (
             raise OpenError("this episode was closed: open it again")
 
     def _route_model(self, lang: str) -> str | None:
-        """The model Retranslate would use with none named and no cloud: M1's catalog route over
-        the configured models, each local server taken to answer (`probe_endpoints=False`)."""
 ```
 
   `src/vid2sub/web/demo.py`:
@@ -29098,7 +29152,8 @@ PICK_CUES = "pick the cues to retranslate"
             finally:
                 self._retranslating = None
             before = {c.id for c in ep.tracks.translations.get(track, ())}
-            changed = sum(1 for c in new.tracks.translations.get(track, ()) if c.id not in before)
+            after = {c.id for c in new.tracks.translations.get(track, ())}
+            changed = max(len(after - before), len(before - after))  # a drop alone counts (7a, I2)
             self.ep = new
             await self._publish(busy=None)
         finally:
@@ -31338,8 +31393,8 @@ def test_a_step_that_changed_nothing_never_makes_restore_take_back_the_wrong_one
 ```python
         queue and land on the retranslated episode. `allow_cloud` is the request's own, true or
         false, never a setting (§7.2). Whatever happens, `retranslate_result` says whether it ran
-        and how many translation cues changed, so the tab's draft keeps only what changed the
-        episode and a failed "Retranslate stale" is never taken for one with nothing stale."""
+        and how many translation cues changed (added, replaced or dropped), so the tab's draft
+        keeps only what changed the episode and a failed "Retranslate stale" is never taken for one with nothing stale."""
         ep = self._named(request)
 ```
   then replace
@@ -35701,7 +35756,7 @@ from vid2sub.subs import langs, naming
   Replace
 
 ```python
-from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
 from vid2sub.web.episode import Capabilities, Episode, all_stale
 
 if TYPE_CHECKING:  # local only: the Pages bundle has neither (spec §21)
@@ -35715,7 +35770,7 @@ DIFFERENCES_SHOWN = 50  # cues where a conflicted track's versions differ, befor
   with
 
 ```python
-from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
 from vid2sub.web.episode import Capabilities, Episode, all_stale
 
 if TYPE_CHECKING:  # local only: the Pages bundle has none of them (spec §21)
@@ -39963,6 +40018,17 @@ fi
 
 | Source task | Severity | File | Finding | Status |
 |---|---|---|---|---|
+| Task 7 (review) | Minor | `src/vid2sub/web/backend.py` | Standards 2: `retranslation`'s fixpoint loop (blocked, grow, block) is hard to read; split it or name its steps | open |
+| Task 7 (review) | Minor | `src/vid2sub/web/backend.py` | Standards 4: `made_with` is cleared by hand in two places (`save` and `_with_track`); one helper | open |
+| Task 7 (review) | Minor | `src/vid2sub/web/backend.py` | Standards 1: `_translator` still repeats M1's pipeline's route logic (two `suggest` calls, the hoped-for and the probed); round 7a removed the untyped `pick` and comments why the first assumes the servers answer; extract one shared function | open |
+| Task 7 (review) | Minor | `src/vid2sub/web/backend.py` | Spec M1: the editor's Retranslate has no retries for 5xx, timeouts or "loading", against §17.3 and §17.4, so a 5xx on batch 19 of 20 throws away 18 batches; use the jobs' retrying client or say so in the hint | open |
+| Task 7 (review) | Minor | `src/vid2sub/web/backend.py` | Spec M3: the view reads `ep.glossary` (as of open or Save) while Retranslate reads the file again, so a changed file redoes every unedited cue with no `all_stale` shown first; return the episode with `glossary=` the base glossary just read | open |
+| Task 7 (review) | Minor | `src/vid2sub/web/backend.py` | Spec M4: naming the source track gives "there is no ja track", which is wrong; say "the source track isn't a translation" | open |
+| Task 7 (review) | Minor | `frontend/src/components/Retranslate.tsx` | I4's note: naming one cue inside an edited translation that spans two replaces it (Decision 8); Task 17's UI could show which cues a retranslation covers before it runs | open |
+| Task 7 (re-review) | Minor | `src/vid2sub/web/backend.py` | N2, for Dan: an imported line in the time gap between two adjacent untranslated source cues blocks both (the run spans the gap); the view flags them untranslated but Retranslate plans nothing, against Q&A 45's "source lines that no imported line overlaps still get a translation" in that edge | open |
+| Task 7 (re-review) | Minor | `src/vid2sub/web/episode.py` | N3: `track_setup` counts unedited no-`src` lines when it decides whether a `made_with` still holds; latent, since no writer makes a translation of that shape alongside a retranslation | open |
+| Task 7 (re-review) | Minor | `src/vid2sub/subs/translate_shape.py` | N4: `uncovered_ids` is O(n·m): 0.23 to 0.38 s per view of a two-hour imported track, inside the 1 s budget; sort the imported lines and bisect if it grows | open |
+| Task 7 (review) | Minor | `src/vid2sub/pipeline.py` | M1's own move-on to the next model when a server answers 5xx, 401 or a list without the model (`pipeline._waits_for`), against §17.4; the editor no longer falls back, `vid2sub run` still does | open |
 | Task 7 (planning) | Minor | `src/vid2sub/web/backend.py` | With no model named, `retranslate` asks the route's servers which models they serve before it knows anything is stale, so a server that's down gives an error where "nothing is stale" would do | open |
 | Task 6 (planning) | Minor | `src/vid2sub/store.py` | A crash (not an exception) between a projection record and its file write leaves the record naming the new head while the file holds the old one; an outside edit to that file before the next Save would then replace the new head without a conflict | open |
 | Task 12 (planning) | Minor | `frontend/package.json` | `npm install` reports 8 audit findings in the pinned dev dependencies (the same pins as `recordings`); none is triaged yet, so Task 21 or the phase end checks whether any reaches the built `ui.js` | open |
