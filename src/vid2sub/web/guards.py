@@ -130,8 +130,10 @@ class HostGuard:
         self.allowed = frozenset(h.lower() for h in allowed)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] not in ("http", "websocket"):  # lifespan
+        if scope["type"] == "lifespan":
             await self.app(scope, receive, send)
+            return
+        if scope["type"] not in ("http", "websocket"):  # a type no guard knows: fail closed
             return
         host_ok = host_name(_header(scope, b"host") or "") in self.allowed
         if scope["type"] == "http":
@@ -175,8 +177,10 @@ class WriteGuard:
         self.allowed = frozenset(h.lower() for h in allowed)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        if scope["type"] in ("lifespan", "websocket"):  # websockets are HostGuard's to check
             await self.app(scope, receive, send)
+            return
+        if scope["type"] != "http":  # a type no guard knows: fail closed
             return
         send = _with_policy(scope, send)
         if scope["method"] in SAFE_METHODS:

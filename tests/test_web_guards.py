@@ -352,3 +352,35 @@ def test_on_media_the_sandbox_replaces_any_csp_the_route_set(client):
     r = client.get("/media/abc")
     assert r.headers.get_list("content-security-policy") == ["sandbox"]
     assert r.headers.get_list("x-content-type-options") == ["nosniff"]
+
+
+# ---- a scope type no guard knows ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("guard", [HostGuard, WriteGuard], ids=["HostGuard", "WriteGuard"])
+def test_only_lifespan_besides_http_and_websocket_reaches_the_app(guard):
+    # Fail closed (spec §6): uvicorn sends only http, websocket and lifespan, so any other scope
+    # type is not something the guards checked, and it never reaches the app.
+    import asyncio
+
+    seen = []
+
+    async def inner(scope, receive, send):
+        seen.append(scope["type"])
+
+    async def never(*_):
+        raise AssertionError("the guard answered a scope it should only drop")
+
+    wrapped = guard(inner, LOCAL_HOSTS)
+    for kind in ("custom", "lifespan"):
+        asyncio.run(wrapped({"type": kind, "headers": []}, never, never))
+    assert seen == ["lifespan"]
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
+def test_every_write_method_is_refused_cross_site(client, method):
+    # Only GET, HEAD and OPTIONS are safe: PUT or PATCH added to SAFE_METHODS must fail here.
+    response = client.request(
+        method, "/api/thing", content=b"{}", headers={**JSON, "Sec-Fetch-Site": "cross-site"}
+    )
+    assert response.status_code == 403
