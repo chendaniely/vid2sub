@@ -396,6 +396,47 @@ def test_a_down_server_never_falls_back_to_another_model_or_the_cloud(tmp_path, 
         assert err.value.kind == "connection" and srv.requests == []
 
 
+def models_answering(status: int, body: dict):
+    def responder(req):
+        if req.path.endswith("/models"):
+            return status, body, {}
+        return chat_responder(req)
+    return responder
+
+
+@pytest.mark.parametrize("status, body, why", [
+    (503, {"error": {"message": "overloaded"}}, "server"),
+    (401, {"error": {"message": "unauthorised"}}, "auth"),
+    (200, {"object": "list", "data": [{"id": "something-else", "object": "model"}]},
+     "doesn't list gemma"),
+])
+def test_a_local_model_that_isnt_serving_is_never_replaced_by_the_cloud_or_another_model(
+        tmp_path, video, status, body, why):
+    with FakeServer(responder=chat_responder) as cloud, \
+            FakeServer(responder=models_answering(status, body)) as spark:
+        backend = make_backend(tmp_path, config(spark=spark.url, cloud=cloud.url))
+        ep = backend.open(str(video))
+        with pytest.raises(EngineError) as err:
+            backend.retranslate(ep, "en", ids=[sid(0)], allow_cloud=True)
+        chats = [r for r in spark.requests if r.path.endswith("/chat/completions")]
+    assert err.value.kind == "unavailable" and "gemma" in str(err.value)
+    assert "doesn't fall back" in err.value.hint and "doctor" in err.value.hint
+    assert cloud.requests == [] and chats == []
+    assert str(video.parent) not in str(err.value) + err.value.hint
+
+
+def test_the_cloud_model_is_used_when_it_is_the_routes_own_pick_and_the_call_allows_it(
+        tmp_path, video):
+    with FakeServer(responder=chat_responder) as cloud:
+        cfg = Config(endpoints={"openai": Endpoint(base_url=cloud.url)}, models={
+            "cloud": ModelEntry(catalog="openai-gpt", endpoint="openai", model="gpt",
+                                task="translate", api="completions")})
+        backend = make_backend(tmp_path, cfg)
+        out = backend.retranslate(backend.open(str(video)), "en", ids=[sid(0)], allow_cloud=True)
+        assert len(cloud.requests) == 1
+    assert out.tracks.translations["en"][0].text == f"EN {sid(0)}"
+
+
 # The plan itself, on any track: whole groups, so the result never overlaps
 
 

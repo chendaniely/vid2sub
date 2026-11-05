@@ -50,7 +50,8 @@ arrived since keeps the track in conflict, so the person picks again.
 Retranslate (spec §13.4, §20) redoes the stale and untranslated cues, or the cues a person names,
 as one undoable edit. The model is the one named, else the one M1's catalog route picks; a cloud
 model only when this call allows it (§7.2), checked before anything is sent, and a route whose
-model's server is down is never passed over for the next one or the cloud (§17.4). Retranslating
+model's server is down, errors or doesn't list it is never passed over for the next one or
+the cloud (§17.4). Retranslating
 stale never replaces a translation a person edited (§13.4); naming a cue does, since that is the
 person asking. Translations are replaced in whole groups: every source cue a replaced translation
 covers is translated with it, and a translation whose time overlaps the cues being translated is
@@ -406,24 +407,30 @@ class LocalBackend:
 
     def _translator(self, lang: str, model: str | None, allow_cloud: bool) -> str:
         """The named model, else the catalog route's pick, as M1's pipeline picks (§11.2). A route
-        whose model's server isn't answering stops here rather than taking the next model."""
+        whose model's server isn't serving it (down, erroring, or not listing it) stops here
+        rather than taking the next model or the cloud (§17.4)."""
         if model is not None:
             entry = self.config.models.get(model)
             if entry is None or entry.task != "translate":
                 raise EngineError("unavailable", "that isn't a translation model in vid2sub.toml",
                                   hint="`vid2sub models` lists them")
             return model
+        # The pick with every local server taken to answer: the model the route wants. If the
+        # probed route picks another, the wanted one errored or lacks the model, and §17.4 says
+        # never to fall back to another model or the cloud.
+        hoped = suggest(lang, detecting.candidates(self.config, self.keys, probe_endpoints=False),
+                        "translate", allow_cloud=allow_cloud).model
         cands = detecting.candidates(self.config, self.keys)
-
-        def pick(c: list) -> str | None:
-            return suggest(lang, c, "translate", allow_cloud=allow_cloud).model
-
-        hoped = pick([replace(c, available=True, reason="") if c.unreachable else c
-                      for c in cands])
-        if any(c.name == hoped and c.unreachable for c in cands):
-            raise EngineError("connection", "the translation model's server isn't reachable",
-                              hint="is it running? For the Spark: is `make tunnel` running?")
         s = suggest(lang, cands, "translate", allow_cloud=allow_cloud)
+        if hoped is not None and s.model != hoped:
+            why = next(c for c in cands if c.name == hoped)
+            if why.unreachable:
+                raise EngineError("connection", "the translation model's server isn't reachable",
+                                  hint="is it running? For the Spark: is `make tunnel` running?")
+            raise EngineError("unavailable", f"the translation model {hoped} isn't available: "
+                              f"{why.reason or 'its server did not list it'}",
+                              hint="vid2sub doesn't fall back to another model or the cloud; "
+                                   "`vid2sub doctor` shows why")
         if s.model is None:
             raise EngineError("unavailable", "no usable translation model",
                               hint="; ".join(f"{n}: {r}" for n, r in s.considered)
