@@ -8,7 +8,8 @@ ones (`est`, `halluc`, `edited`) with the lint flags recomputed each time, never
 (§12.5): reading speed, width and duration by each track's own language rules; `stale` from the
 source text a translation was made from, and on every cue of a track made with another glossary
 or model (§13.4, `backend.all_stale`); `untranslated` for a source cue no translation in a track
-covers. The view never holds a path, only the video's bare file name (§6.8).
+covers; an imported line (no `src`) is never stale and covers the source cues it overlaps in time
+(Q&A item 45). The view never holds a path, only the video's bare file name (§6.8).
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from vid2sub.subs.lint import lint
 from vid2sub.subs.model import Cue
 from vid2sub.subs.rules import rules_for
 from vid2sub.subs.sidecar import HeadRecord
-from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
 from vid2sub.web.backend import Episode, all_stale
 
 _SCRIPTS = {"Hant": " (Traditional)", "Hans": " (Simplified)"}
@@ -59,7 +60,8 @@ def _rows(ep: Episode) -> list[dict[str, Any]]:
     starts = [c.start_ms for c in source]
     for track, cues in ep.tracks.translations.items():
         linted = lint(cues, rules_for(_lang(track)))
-        stale = {c.id for c in cues} if all_stale(ep, track) else stale_ids(cues, by_id)
+        stale = ({c.id for c in cues if c.src} if all_stale(ep, track)
+                 else stale_linked_ids(cues, by_id))
         cells: list[dict[str, list]] = [{"cues": [], "flags": []} for _ in rows]
         for c in cues:
             extra = ("stale",) if c.id in stale else ()
@@ -67,7 +69,7 @@ def _rows(ep: Episode) -> list[dict[str, Any]]:
                 "id": c.id, "start_ms": c.start_ms, "end_ms": c.end_ms, "text": c.text,
                 "src": list(c.src or ()), "detached": c.detached,
                 "flags": _flags(c.flags, linted.get(c.id, ()) + extra)})
-        for cid in untranslated(list(index), cues):
+        for cid in uncovered_ids(source, cues):
             cells[index[cid]]["flags"] = ["untranslated"]
         for row, cell in zip(rows, cells, strict=True):
             row["tr"][track] = cell

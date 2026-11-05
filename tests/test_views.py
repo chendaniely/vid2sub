@@ -245,6 +245,19 @@ def test_a_track_no_translator_made_has_neither_staleness_leg():
     assert en_flags(v) == [[]] * 3
 
 
+def imported(*spans) -> list[Cue]:
+    """Lines as `store.import_subtitles` makes them: no src, no src_sha (Q&A item 45)."""
+    return [Cue(id=tid(i), start_ms=a, end_ms=b, text=f"Imported {i}")
+            for i, (a, b) in enumerate(spans)]
+
+
+def test_an_imported_line_is_never_stale_and_covers_the_source_cues_it_overlaps():
+    en = imported((0, 3200), (7200, 10_200))  # over the first and third cues; the second is a gap
+    v = view(episode(en=en, en_model="gemma", glossary=GLOSSARY, translate_model="gemma-2"))
+    assert en_flags(v) == [[], []]
+    assert [r["tr"]["en"]["flags"] for r in v["rows"]] == [[], ["untranslated"], []]
+
+
 @pytest.mark.media
 def test_a_two_hour_episode_opens_and_becomes_a_view_in_under_a_second(tmp_path):
     video = make_episode(tmp_path / "long", n=2000)

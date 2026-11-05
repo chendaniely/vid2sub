@@ -69,3 +69,16 @@ def test_a_translation_goes_stale_when_its_source_changes_or_disappears():
     assert ts.stale_ids(trans, changed) == {trans[0].id, trans[1].id}
     assert ts.stale_ids(trans, SOURCE) == set()
     assert ts.untranslated(IDS[:3], trans) == ["s2"]
+
+
+def test_an_imported_line_is_never_stale_and_covers_the_cues_it_overlaps():
+    source = [Cue(id=f"s{i}", start_ms=i * 1000, end_ms=i * 1000 + 800, text=f"w{i}")
+              for i in range(3)]
+    by_id = {c.id: c for c in source}
+    imported = Cue(id="t0", start_ms=0, end_ms=900, text="Imported")
+    linked = Cue(id="t1", start_ms=1000, end_ms=1800, text="Linked", src=("s1",),
+                 src_sha="old")
+    assert ts.stale_ids([imported, linked], by_id) == {"t0", "t1"}  # M1's rule, unchanged
+    assert ts.stale_linked_ids([imported, linked], by_id) == {"t1"}
+    assert ts.untranslated([c.id for c in source], [imported, linked]) == ["s0", "s2"]
+    assert ts.uncovered_ids(source, [imported, linked]) == ["s2"]

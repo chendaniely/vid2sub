@@ -105,7 +105,7 @@ from vid2sub.subs.sidecar import (
     SidecarError,
     make_rendition,
 )
-from vid2sub.subs.translate_shape import stale_ids, untranslated
+from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
 from vid2sub.translate.run import make_ask, translate_cues
 from vid2sub.web import ops
 
@@ -459,16 +459,18 @@ def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str]
 
     Whole groups, so the new cues never overlap the kept ones: a replaced translation brings
     every source cue it covers, and a translation that covers a cue being translated, or whose
-    time overlaps a run of them, is replaced too. With `ids=None` an edited translation is never
-    replaced; the cues it would have brought in are left out instead. `everything`: the track
+    time overlaps a run of them, is replaced too. With `ids=None` an edited translation, and an
+    imported line (one with no `src`, Q&A item 45), is never replaced; the cues it would have
+    brought in are left out instead, and it covers the source cues it overlaps. `everything`: the track
     was made with another glossary or model, so with `ids=None` every cue of it is stale."""
     order = {c.id: k for k, c in enumerate(source)}
     by_id = {c.id: c for c in source}
     if ids is None:
-        stale = {c.id for c in cues} if everything else stale_ids(cues, by_id)
+        stale = ({c.id for c in cues if c.src} if everything
+                 else stale_linked_ids(cues, by_id))
         wanted = {i for c in cues if c.id in stale and "edited" not in c.flags
                   for i in c.src or () if i in by_id}
-        wanted |= set(untranslated(list(order), cues))
+        wanted |= set(uncovered_ids(source, cues))
     else:
         if any(i not in by_id for i in ids):
             raise EditError("one of those cues isn't in the source track")
@@ -486,7 +488,7 @@ def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str]
                     if covers & ids_ or (c.start_ms < end and start < c.end_ms)]
             if not hits:
                 continue
-            if (ids is not None or "edited" not in c.flags) and not covers & blocked:
+            if (ids is not None or ("edited" not in c.flags and c.src)) and not covers & blocked:
                 replaced.add(c.id)
                 grow |= covers
             else:

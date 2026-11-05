@@ -254,3 +254,18 @@ def stale_ids(translation: Sequence[Cue], source: Mapping[str, Cue]) -> set[str]
 def untranslated(source_ids: Sequence[str], translation: Sequence[Cue]) -> list[str]:
     covered = {cid for c in translation for cid in (c.src or ())}
     return [cid for cid in source_ids if cid not in covered]
+
+
+def stale_linked_ids(translation: Sequence[Cue], source: Mapping[str, Cue]) -> set[str]:
+    """`stale_ids`, except that a line with no `src` (one imported from a subtitle file, which no
+    translator made) is never stale: nothing says what it was made from (Dan, Q&A item 45)."""
+    return stale_ids([c for c in translation if c.src], source)
+
+
+def uncovered_ids(source: Sequence[Cue], translation: Sequence[Cue]) -> list[str]:
+    """`untranslated`, with an imported line (no `src`) covering the source cues it overlaps in
+    time: the ids of the source cues no line covers, in order (Dan, Q&A item 45)."""
+    covered = {cid for c in translation for cid in (c.src or ())}
+    imported = [c for c in translation if not c.src]
+    return [s.id for s in source if s.id not in covered
+            and not any(c.start_ms < s.end_ms and s.start_ms < c.end_ms for c in imported)]

@@ -255,6 +255,54 @@ def test_after_retranslating_everything_and_saving_nothing_is_stale_any_more(bac
     assert backend.retranslate(reopened, "en", ids=None) is reopened and len(asked) == 1
 
 
+# Q&A item 45: an imported line (no src) is never stale and never replaced unless named
+
+
+def write_imported(video, *spans, mixed: bool = False) -> None:
+    """The en track as `store.import_subtitles` makes it (lines with no src); `mixed` keeps the
+    translator's own line for the first source cue and imports the rest."""
+    head = store.load(video)[0].head("en").rendition
+    lines = [Cue(id=tid(i + (5 if mixed else 0)), start_ms=a, end_ms=b, text=f"Imported {i}")
+             for i, (a, b) in enumerate(spans)]
+    if mixed:
+        lines = [translation_cues(_source(video))[0], *lines]
+    write_track(video, "en", lines, role="translation", replaces=head)
+
+
+def test_retranslating_stale_leaves_imported_lines_alone_and_translates_only_the_gap(
+        backend, video, asked):
+    write_imported(video, (0, 3200), (7200, 10_200))
+    ep = backend.open(str(video))
+    out = backend.retranslate(ep, "en", ids=None)
+    assert asked == [[sid(1)]]
+    assert en(out)[0] == (tid(0), "Imported 0") and en(out)[2] == (tid(1), "Imported 1")
+    assert [t for _, t in en(out)][1] == f"EN {sid(1)}"
+
+
+def test_retranslating_stale_after_a_glossary_change_still_leaves_imported_lines_alone(
+        backend, video, asked):
+    write_imported(video, (0, 3200), (7200, 10_200))
+    video.with_name("vid2sub.glossary.toml").write_text(TERMS, encoding="utf-8")
+    out = backend.retranslate(backend.open(str(video)), "en", ids=None)
+    assert asked == [[sid(1)]]
+    assert [t for _, t in en(out)][0::2] == ["Imported 0", "Imported 1"]
+
+
+def test_a_named_cue_replaces_the_imported_line_it_overlaps(backend, video, asked):
+    write_imported(video, (0, 3200), (7200, 10_200))
+    out = backend.retranslate(backend.open(str(video)), "en", ids=[sid(0)])
+    assert asked == [[sid(0)]]
+    assert [t for _, t in en(out)] == [f"EN {sid(0)}", "Imported 1"]
+
+
+def test_on_a_mixed_track_only_the_stale_linked_lines_change(backend, video, asked):
+    write_imported(video, (3600, 6600), mixed=True)
+    ep = edit(backend, backend.open(str(video)), op="set_text", cue=sid(0), text="おはようー")
+    out = backend.retranslate(ep, "en", ids=None)
+    assert asked == [[sid(0)], [sid(2)]]  # the stale linked line and the uncovered cue
+    assert [t for _, t in en(out)] == [f"EN {sid(0)}", "Imported 0", f"EN {sid(2)}"]
+
+
 # The model: chosen as M1 chooses it, cloud only when this call allows it (spec §7.2, §11.2)
 
 
