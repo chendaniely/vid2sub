@@ -51,8 +51,7 @@ Retranslate (spec §13.4, §20) redoes the stale and untranslated cues, or the c
 as one undoable edit. The model is the one named, else the one M1's catalog route picks; a cloud
 model only when this call allows it (§7.2), checked before anything is sent, and a route whose
 model's server is down, errors or doesn't list it is never passed over for the next one or
-the cloud (§17.4). Retranslating
-stale never replaces a translation a person edited (§13.4); naming a cue does, since that is the
+the cloud (§17.4). Retranslating stale never replaces a translation a person edited (§13.4); naming a cue does, since that is the
 person asking. Translations are replaced in whole groups: every source cue a replaced translation
 covers is translated with it, and a translation whose time overlaps the cues being translated is
 replaced too (a cue inserted inside a translation that spans two cues), so the track never
@@ -222,11 +221,9 @@ class LocalBackend:
             glossary: Glossary | None = read_glossary(video)
         except GlossaryError as err:
             glossary = None
-            notes.append(f"couldn't read {naming.GLOSSARY_NAME}: {err}")
-        except OSError as err:  # never err.filename: a full path
-            glossary = None
-            notes.append(f"couldn't read {naming.GLOSSARY_NAME}"
-                         + (f" ({err.strerror})" if err.strerror else ""))
+            text = str(err)
+            notes.append(text if text.startswith("couldn't read ")
+                         else f"couldn't read {naming.GLOSSARY_NAME}: {text}")
         ep = Episode(
             id="e" + secrets.token_hex(8), video=video, header=header, source_key=source_key,
             tracks=tracks, heads=heads, conflicts=conflicts, words=_words(transcript), notes=notes,
@@ -299,7 +296,7 @@ class LocalBackend:
             adds, glossary_notes = _write_glossary(ep.video, ep.glossary_adds)
             try:  # read back, so a term just added makes translations stale (§13.4), as at open
                 glossary: Glossary | None = read_glossary(ep.video)
-            except (GlossaryError, OSError):
+            except GlossaryError:
                 glossary = None
         source_key, tracks, heads, in_conflict = load_tracks(side)
         saved = replace(ep, sidecar=side, source_key=source_key, tracks=tracks, base=tracks,
@@ -886,6 +883,9 @@ def read_glossary(video: Path) -> Glossary:
         return parse_glossary(path.read_text(encoding="utf-8-sig"))
     except UnicodeDecodeError:
         raise GlossaryError("the glossary isn't UTF-8; save it as UTF-8") from None
+    except OSError as err:  # never err.filename: a full path (§6.8)
+        raise GlossaryError(f"couldn't read {naming.GLOSSARY_NAME}"
+                            + (f" ({err.strerror})" if err.strerror else "")) from None
 
 
 def glossary_with(glossary: Glossary, adds: dict[str, str]) -> Glossary:

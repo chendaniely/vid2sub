@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 import pytest
 from episodes import ENGLISH, LINES, make_episode, sid, tid, translation_cues, write_track
@@ -14,7 +15,7 @@ from vid2sub.engines.base import EngineError
 from vid2sub.engines.clients import KeyRing
 from vid2sub.media.tools import Tools
 from vid2sub.subs.edit import EditError
-from vid2sub.subs.glossary import parse_glossary
+from vid2sub.subs.glossary import GlossaryError, parse_glossary
 from vid2sub.subs.model import Cue, check_track
 from vid2sub.subs.translate_shape import src_sha
 from vid2sub.web import backend as web_backend
@@ -435,6 +436,25 @@ def test_the_cloud_model_is_used_when_it_is_the_routes_own_pick_and_the_call_all
         out = backend.retranslate(backend.open(str(video)), "en", ids=[sid(0)], allow_cloud=True)
         assert len(cloud.requests) == 1
     assert out.tracks.translations["en"][0].text == f"EN {sid(0)}"
+
+
+def test_a_glossary_vid2sub_cant_read_is_a_glossary_error_that_names_no_folder(
+        backend, video, asked, monkeypatch):
+    glossary = video.with_name("vid2sub.glossary.toml")
+    glossary.write_text("[terms]\n", encoding="utf-8")
+    ep = backend.open(str(video))
+    real = Path.read_text
+
+    def read_text(self, *args, **kwargs):
+        if self.name == glossary.name:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    with pytest.raises(GlossaryError) as err:
+        backend.retranslate(ep, "en", ids=[sid(0)])
+    assert str(err.value) == "couldn't read vid2sub.glossary.toml (Permission denied)"
+    assert str(video.parent) not in str(err.value) and asked == []
 
 
 # The plan itself, on any track: whole groups, so the result never overlaps
