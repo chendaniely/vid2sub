@@ -23,8 +23,10 @@ which has the same threat model:
 Every response, refusals included, carries the CSP below, `X-Frame-Options: DENY`,
 `Cross-Origin-Resource-Policy`, `Cross-Origin-Opener-Policy` and `Referrer-Policy`. A response
 under `/media/` carries `MEDIA_HEADERS` instead of the page CSP. These replace any header of the
-same name the app set, so no route can weaken them. The engine binds 127.0.0.1 only (§6.1), behind
-no proxy.
+same name the app set, so no route can weaken them. "Every response" means every one the app or a
+guard answers, with both guards wrapped: uvicorn's own answers carry none (its 403 to a refused
+websocket handshake, h11's 400s, a 500 from outside the app), and they are fixed text. The engine
+binds 127.0.0.1 only (§6.1), behind no proxy.
 """
 
 from __future__ import annotations
@@ -161,7 +163,8 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 class WriteGuard:
     """Every request that could change data comes from this engine's own page, or from no browser
-    at all, and is exactly JSON (spec §6.2). Every response carries the security headers (above).
+    at all, and is exactly JSON (spec §6.2). Every response it or the app
+    answers carries the security headers (above).
 
     - **Who sent it.** A browser names the sending page in `Origin`, and marks a request another
       site sent with `Sec-Fetch-Site: cross-site` or `same-site`. Either refuses it, and so does
