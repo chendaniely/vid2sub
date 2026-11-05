@@ -33,8 +33,15 @@ from starlette.routing import BaseRoute, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 STATIC = Path(__file__).parent / "static"
-# Matched exactly, never as prefixes: /auth/x or /healthz/../ needs the cookie like any path.
-OPEN_PATHS = frozenset({"/auth", "/auth.js", "/healthz"})
+# Method and path pairs, matched exactly, never as prefixes: /auth/x or /healthz/../ needs the
+# cookie like any path, and so does a method these routes don't answer, which would fall through
+# to whatever is mounted at / (spec §6.1). HEAD rides on GET for Starlette's routes; /healthz is
+# the app's own, which answers GET only.
+OPEN_ROUTES = frozenset({
+    ("GET", "/auth"), ("HEAD", "/auth"), ("POST", "/auth"),
+    ("GET", "/auth.js"), ("HEAD", "/auth.js"),
+    ("GET", "/healthz"),
+})
 POLICY_VIOLATION = 1008  # RFC 6455 close code
 SIGN_IN_AGAIN = "open the link vid2sub printed when it started"
 MAX_BODY = 1024  # bytes; {"token": "<43 characters>"} is 56
@@ -130,7 +137,9 @@ class TokenGuard:
             return
         if scope["type"] not in ("http", "websocket"):  # a type no guard knows: fail closed
             return
-        if (scope["type"] == "http" and scope["path"] in OPEN_PATHS) or self._signed_in(scope):
+        if (
+            scope["type"] == "http" and (scope["method"], scope["path"]) in OPEN_ROUTES
+        ) or self._signed_in(scope):
             await self.app(scope, receive, send)
             return
         if scope["type"] == "http":

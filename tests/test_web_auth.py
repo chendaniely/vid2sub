@@ -242,13 +242,13 @@ def test_after_signing_in_every_route_answers(client):
     assert client.post("/api/write", content=b"{}", headers=JSON).json() == {"written": True}
 
 
-def _status(app, path: str, cookie: str | None = None) -> int:
+def _status(app, path: str, cookie: str | None = None, method: str = "GET") -> int:
     """Call `app` with exactly this `scope["path"]`, as uvicorn passes it (an HTTP client would
     normalise `..` away first), and return the status it answers."""
     headers = [(b"host", f"127.0.0.1:{PORT}".encode())]
     if cookie is not None:
         headers.append((b"cookie", cookie.encode("latin-1")))
-    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET",
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": method,
              "scheme": "http", "path": path, "raw_path": path.encode("latin-1"),
              "query_string": b"", "root_path": "", "headers": headers,
              "server": ("127.0.0.1", PORT), "client": ("127.0.0.1", 50000)}
@@ -287,10 +287,26 @@ def test_a_path_that_only_looks_open_needs_the_cookie(recorded, path):
     assert _status(guard, path) == 401 and reached == []
 
 
-def test_the_open_paths_are_matched_exactly_and_reach_the_app(recorded):
+OPEN_PAIRS = [("GET", "/auth"), ("HEAD", "/auth"), ("POST", "/auth"),
+              ("GET", "/auth.js"), ("HEAD", "/auth.js"), ("GET", "/healthz")]
+
+
+def test_the_open_routes_are_matched_exactly_and_reach_the_app(recorded):
     guard, reached = recorded
-    assert [_status(guard, p) for p in ("/auth", "/auth.js", "/healthz")] == [200, 200, 200]
-    assert reached == ["/auth", "/auth.js", "/healthz"]
+    assert [_status(guard, p, method=m) for m, p in OPEN_PAIRS] == [200] * len(OPEN_PAIRS)
+    assert reached == [p for _, p in OPEN_PAIRS]
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("PUT", "/auth"), ("DELETE", "/auth"), ("PATCH", "/auth"), ("OPTIONS", "/auth"),
+     ("POST", "/auth.js"), ("PUT", "/auth.js"), ("POST", "/healthz"), ("OPTIONS", "/healthz"),
+     ("HEAD", "/healthz")],
+)
+def test_a_method_an_open_route_doesnt_answer_needs_the_cookie(recorded, method, path):
+    # Else it would fall through to whatever is mounted at / (spec §6.1 opens only these routes).
+    guard, reached = recorded
+    assert _status(guard, path, method=method) == 401 and reached == []
 
 
 @pytest.mark.parametrize(
@@ -337,7 +353,7 @@ def test_a_restarted_engine_refuses_the_old_cookie():
 
 
 def test_a_websocket_without_the_cookie_is_closed_before_accept(client):
-    # S24: a page on another local port opening the websocket gets nothing.
+    # S24: a websocket opened without this launch's cookie gets nothing.
     with pytest.raises(WebSocketDisconnect) as exc, client.websocket_connect(WS):
         pass
     assert exc.value.code == 1008
