@@ -193,9 +193,10 @@ def test_the_right_token_sets_an_httponly_strict_cookie_for_the_whole_site(clien
         {"token": TOKEN + "x"},
         {"token": TOKEN[:-1]},
         {"token": "é" * 43},  # not ASCII: compared as bytes, never a TypeError
+        {"token": "\ud800"},  # a lone surrogate: json.loads accepts it, UTF-8 can't encode it
         {},
     ],
-    ids=["wrong", "empty", "longer", "shorter", "non-ascii", "missing"],
+    ids=["wrong", "empty", "longer", "shorter", "non-ascii", "surrogate", "missing"],
 )
 def test_a_wrong_or_missing_token_is_403_and_sets_no_cookie(client, body):
     r = client.post("/auth", content=json.dumps(body), headers=JSON)

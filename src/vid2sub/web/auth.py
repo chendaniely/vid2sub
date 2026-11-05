@@ -109,7 +109,9 @@ def routes(token: str, port: int) -> list[BaseRoute]:
         given = data.get("token", "") if isinstance(data, dict) else None  # missing: no match
         if not isinstance(given, str):
             return PlainTextResponse(_MALFORMED, status_code=400)
-        if not secrets.compare_digest(given.encode(), expected):  # bytes: any text compares
+        if not secrets.compare_digest(
+            given.encode("utf-8", "surrogatepass"), expected  # bytes: any text compares
+        ):
             return PlainTextResponse("this link is out of date", status_code=403)
         response = Response(status_code=204)
         response.set_cookie(name, value, path="/", httponly=True, samesite="strict")
