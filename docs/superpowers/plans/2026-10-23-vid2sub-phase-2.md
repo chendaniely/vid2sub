@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 8: The web dependencies, the guards and the CSP, open.
+**Now:** Task 9: The launch token, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one.
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 11's round 11d adds 5 more: from Task 11's close on, 85 lower.
 
 ## Decisions made while planning (review these)
 
@@ -12795,6 +12795,17 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 1 · **Scenarios:** S24, S25, S26
 
+**Built differently** (the listing stays as planned): (1) Starlette resolved to 1.10.0, not 1.9.0
+(transitive, unpinned; commit 0acf485): its 1.7 to 1.10 release notes leave alone the guards,
+`set_cookie` and `FileResponse`'s GET and HEAD Range handling. (2) The Tier 1 review's fix: both
+guards pass `lifespan` (WriteGuard also `websocket`) and drop every other scope type, so an
+unknown one fails closed, which departs from `recordings` on purpose; the write-refusal test runs
+over POST, PUT, PATCH and DELETE; the docstrings say that uvicorn's own answers carry no headers
+(commits 3ef6f20 and eeb3f6a). (3) S25 stays `planned`: the guard tests
+prove its write half, and "a GET never writes anything or starts a process" needs a route-level
+test, which Task 11's round 11d now holds.
+
+
 **Files:**
 - Modify: `pyproject.toml`, `uv.lock` (fastapi, uvicorn, shiny, shinyreact; dev:
   pytest-playwright)
@@ -12819,12 +12830,12 @@ Co-Authored-By: <the model's own line>
   it would be a one-line change to `CSP` and to `SPEC_CSP` in the test, recorded in §29, not a
   spec change. Any change to `script-src`, or `'unsafe-eval'`, would be Dan's (the fifth stop).
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`, and check Task 5's
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`, and check Task 5's
   package marker is there: `test -f src/vid2sub/web/__init__.py && echo ok` prints `ok`.
 
 #### Round 8a: the packages
 
-- [ ] **Step 1: Add the packages to `pyproject.toml`.** Replace the end of `dependencies`:
+- [x] **Step 1: Add the packages to `pyproject.toml`.** Replace the end of `dependencies`:
 
 ```toml
     "yt-dlp[default]>=2026.1.1",
@@ -12874,11 +12885,11 @@ dev = [
   on PyPI, and `uv.lock` resolves both of its markers (`< 3.13` and `>= 3.13`), so Python 3.12
   is covered.
 
-- [ ] **Step 2: Run the checks; they pass.** `make check`. Expected: the suite's line, twice,
+- [x] **Step 2: Run the checks; they pass.** `make check`. Expected: the suite's line, twice,
   `739 passed, 2 skipped, 4 deselected`, as at Task 7's close (no test is new yet), then
   `All checks passed!` and `no leaks found`.
 
-- [ ] **Step 3: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 3: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 build(deps): 🤖 the web app's packages are pinned exactly, as recordings pins them, and resolve on Python 3.12
@@ -12898,7 +12909,7 @@ Co-Authored-By: <the model's own line>
 
 #### Round 8b: the guards
 
-- [ ] **Step 4: Write the failing test,** `tests/test_web_guards.py`:
+- [x] **Step 4: Write the failing test,** `tests/test_web_guards.py`:
 
 ```python
 """The engine answers only to its own names, refuses websockets and writes from other sites, and
@@ -13257,10 +13268,10 @@ def test_on_media_the_sandbox_replaces_any_csp_the_route_set(client):
     assert r.headers.get_list("x-content-type-options") == ["nosniff"]
 ```
 
-- [ ] **Step 5: Run it; watch it fail.** `uv run pytest tests/test_web_guards.py -q`. Expected:
+- [x] **Step 5: Run it; watch it fail.** `uv run pytest tests/test_web_guards.py -q`. Expected:
   `E   ModuleNotFoundError: No module named 'vid2sub.web.guards'`, then `1 error in 0.23s`.
 
-- [ ] **Step 6: Write the code,** `src/vid2sub/web/guards.py`:
+- [x] **Step 6: Write the code,** `src/vid2sub/web/guards.py`:
 
 ```python
 # Copied from recordings, packages/ui/src/recordings_ui/hosts.py at 8deb039, and relicensed under
@@ -13464,14 +13475,14 @@ class WriteGuard:
         await self.app(scope, receive, send)
 ```
 
-- [ ] **Step 7: Run the checks; they pass.** `uv run pytest tests/test_web_guards.py -q`.
+- [x] **Step 7: Run the checks; they pass.** `uv run pytest tests/test_web_guards.py -q`.
   Expected: `55 passed`. Then `make check`. Expected: `794 passed, 2 skipped, 4 deselected`
   twice, `All checks passed!`, `no leaks found`. Ruff's default rules leave out line length, so also
   check it: `uv run python -c "import sys; [print(f, i) for f in sys.argv[1:] for i, l in
   enumerate(open(f, encoding='utf-8'), 1) if len(l.rstrip()) > 100]"
   src/vid2sub/web/guards.py tests/test_web_guards.py` prints nothing.
 
-- [ ] **Step 8: Each guard fails its tests without its fix.** `git add src/vid2sub/web/guards.py
+- [x] **Step 8: Each guard fails its tests without its fix.** `git add src/vid2sub/web/guards.py
   tests/test_web_guards.py`. Then, for each row, make the change in `guards.py`, run
   `uv run pytest tests/test_web_guards.py -q`, see it fail, and restore the file with
   `git checkout -- src/vid2sub/web/guards.py`. The last column is what this listing's build saw.
@@ -13491,7 +13502,7 @@ class WriteGuard:
 | replace, not append | `if bytes(k).lower() not in names]` | `if True]` | 3 |
 | the 400 too | `scope, receive, _with_policy(scope, send)` | `scope, receive, send` | 1 |
 
-- [ ] **Step 9: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 9: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 the engine answers only to its own names, takes writes only from its own pages, and sends the spec's CSP on every response
@@ -13519,7 +13530,7 @@ Co-Authored-By: <the model's own line>
   `git commit -F .git/COMMIT_MSG` (both files are staged from Step 8), then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 10: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 10: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist). Worth the reviewers' time: that every
   refusal (400, 403, 415) carries the headers; that nothing an inner app sets can remove or
   duplicate them; that the copied checks match recordings' line for line (`git show
@@ -14330,7 +14341,8 @@ Co-Authored-By: <the model's own line>
   1006), never 1008; Task 12's `page` fixture signs in through `/auth#t=<token>`). The docs this
   task made untrue: none expected. Then the close, its own commit, holding this plan with this
   task's boxes ticked and **Now** set to `Task 10: Media tokens and \`/media/{token}\`, open.`, and
-  the spec's scenario row S24 set to `built`, its Proof reading `tests/test_web_guards.py`,
+  one clause added to spec §6.2 (a request with no `Origin` passes as "not a browser", which
+  Decision 34 already accepted), and the spec's scenario row S24 set to `built`, its Proof reading `tests/test_web_guards.py`,
   `tests/test_web_auth.py` (S23 waits for Task 11, which binds and opens the browser), with the
   message in `.git/CLOSE_MSG`:
 
@@ -14381,7 +14393,8 @@ Co-Authored-By: <the model's own line>
   and HEAD: Range, `Content-Disposition: inline`, 404 for a token that isn't live). Thread-safe;
   `owner` is the episode's id (plan Decision 1).
 - Built differently from the design note: `FileResponse(…, content_disposition_type="inline")`
-  writes no header unless a `filename` is passed (Starlette 1.9.0's source), and a filename would
+  writes no header unless a `filename` is passed (Starlette 1.10.0's source, 1.9.0 when this was
+  listed; `FileResponse` ignores Range only on methods other than GET and HEAD), and a filename would
   put the video's title in a header, so the route passes `headers={"Content-Disposition":
   "inline"}` instead.
 
@@ -16627,6 +16640,163 @@ Co-Authored-By: <the model's own line>
   `git commit -F .git/COMMIT_MSG` (the five files are staged from the step before), then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
+#### Round 11d: a GET never writes or starts anything (S25)
+
+Added at Task 8's close (its Spec review: the guard tests prove S25's write half only). This round
+holds the other half, so S25 is `built` at Task 11's close. Shiny's bookmark store is checked in
+Task 12, where the Shiny app is built.
+
+- [ ] **Step 18a: Write the failing tests.** Append to `tests/test_web_app.py` (add `builtins`,
+  `io`, `os`, `re`, `socket` and `subprocess` to its imports, and `HostGuard`, `WriteGuard`,
+  `LOCAL_HOSTS` to its `vid2sub.web.guards` import):
+
+```python
+# ---- S25: a GET never writes anything or starts a process -----------------------------------
+
+
+def _api(app):
+    """The FastAPI app inside the guards: each guard keeps the app it wraps in `.app`."""
+    while not hasattr(app, "routes"):
+        app = app.app
+    return app
+
+
+def get_paths(app) -> list[str]:
+    """Every path the built app answers to GET or HEAD, read from its routes at run time, so a
+    route a later task adds is covered too. A mount has no methods and answers everything."""
+    paths = {
+        re.sub(r"\{[^}]+\}", "x", route.path or "/")
+        for route in _api(app).routes
+        if getattr(route, "methods", None) is None or {"GET", "HEAD"} & route.methods
+    }
+    return sorted(paths | {"/no/such/page"})
+
+
+def read_only_violations(client, monkeypatch, tmp_path, extra=()) -> list[str]:
+    """What a GET or HEAD to each of the app's paths did that a read must not: opened a file for
+    writing, made, moved or removed one, started a process, or opened a connection."""
+    seen: list[str] = []
+    real_open = builtins.open
+
+    def trip(what):
+        def tripped(*args, **kwargs):
+            seen.append(what)
+            raise OSError(f"{what} during a GET")
+
+        return tripped
+
+    def guarded_open(file, mode="r", *args, **kwargs):
+        if set(mode) & set("wax+"):
+            return trip(f"open(..., {mode!r})")()
+        return real_open(file, mode, *args, **kwargs)
+
+    for owner, name in [
+        (subprocess, "Popen"), (os, "system"), (os, "mkdir"), (os, "makedirs"), (os, "remove"),
+        (os, "unlink"), (os, "rename"), (os, "replace"), (os, "rmdir"),
+        (socket.socket, "connect"), (socket, "create_connection"),
+    ]:
+        monkeypatch.setattr(owner, name, trip(f"{owner.__name__}.{name}"))
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(io, "open", guarded_open)
+    before = sorted(str(p) for p in tmp_path.rglob("*"))
+    for method in ("get", "head"):
+        for path in [*get_paths(client.app), *extra]:
+            try:
+                getattr(client, method)(path)
+            except Exception as error:  # a route that fails on the trip is still a violation
+                seen.append(f"{method.upper()} {path}: {error}")
+    after = sorted(str(p) for p in tmp_path.rglob("*"))
+    return [*seen, *(["files changed"] if before != after else [])]
+
+
+def test_no_get_or_head_route_writes_a_file_or_starts_a_process(client, rt, tmp_path, monkeypatch):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"0123456789")
+    live = rt.media.issue(clip, owner="e1")
+    _sign_in(client)
+    assert read_only_violations(client, monkeypatch, tmp_path, extra=[f"/media/{live}"]) == []
+
+
+def test_the_enumeration_finds_the_shells_own_routes_and_the_mount(client):
+    paths = get_paths(client.app)
+    assert "/healthz" in paths and "/media/x" in paths and "/" in paths
+
+
+def _wrapped(route) -> TestClient:
+    """A guarded app with one GET route that does something a read must not."""
+    inner = Starlette(routes=[Route("/boom", route)])
+    return TestClient(HostGuard(WriteGuard(inner, LOCAL_HOSTS), LOCAL_HOSTS), base_url=BASE)
+
+
+async def _writes(request):
+    with open(request.app.state.target, "w") as f:  # noqa: ASYNC230 - the point of the test
+        f.write("x")
+    return PlainTextResponse("ok")
+
+
+async def _launches(request):
+    subprocess.Popen(["true"])
+    return PlainTextResponse("ok")
+
+
+async def _connects(request):
+    socket.create_connection(("127.0.0.1", 9))
+    return PlainTextResponse("ok")
+
+
+@pytest.mark.parametrize("route", [_writes, _launches, _connects],
+                         ids=["writes a file", "starts a process", "opens a connection"])
+def test_the_check_notices_a_get_route_that_does_one_of_them(route, tmp_path, monkeypatch):
+    client = _wrapped(route)
+    _api(client.app).state.target = str(tmp_path / "out.txt")
+    found = read_only_violations(client, monkeypatch, tmp_path, extra=["/boom"])
+    assert any("/boom" in line for line in found)
+```
+
+- [ ] **Step 18b: Run them; watch them fail.** Write the block above without the two helper
+  functions `get_paths` and `read_only_violations` first (the tests only), and run
+  `uv run pytest tests/test_web_app.py -q`. Expected: `5 failed` with
+  `NameError: name 'read_only_violations' is not defined` (and `get_paths`). Then add the two
+  functions. No production code changes in this round: the app already reads only.
+
+- [ ] **Step 18c: Run the checks; they pass, and each part of the check is needed.**
+  `uv run pytest tests/test_web_app.py -q`: the file's earlier count plus 5, nothing failed. Then `make check`. Expected: the suite's
+  line, twice, `943 passed, 2 skipped, 4 deselected` (938 before this round), `All checks passed!`,
+  `no leaks found`; the line-length check on the file prints nothing. `git add
+  tests/test_web_app.py`. Then, for each row, change `tests/test_web_app.py` (the last: `app.py`),
+  run `uv run pytest tests/test_web_app.py -q`, see it fail, and restore with `git checkout --`.
+
+| Guard | Change | To | Failed |
+|---|---|---|---|
+| a write is seen | `monkeypatch.setattr(builtins, "open", guarded_open)` | `pass` | 1 |
+| a process is seen | `(subprocess, "Popen"), ` | removed | 1 |
+| a connection is seen | `(socket, "create_connection"),` | removed | 1 |
+| the routes are enumerated | `if getattr(route, "methods", None) is None or {"GET", "HEAD"} & route.methods` | `if False` | 1 |
+| a route that writes | in `app.py`, `/healthz`'s handler | also writes a file in the working folder | 1 |
+
+- [ ] **Step 18d: Commit.** Write the message to `.git/COMMIT_MSG`:
+
+```text
+test(web): 🤖 no GET or HEAD route of the built app writes a file, starts a process or connects out
+
+S25's second half ("a GET never writes anything or starts a process", spec §6.2). The test reads
+every GET and HEAD route of the built app at run time, so routes later tasks add are covered
+too, and requests each with a signed-in cookie while opening a file for writing, making, moving
+or removing one, starting a process and opening a connection all fail loudly; it also checks
+that the folder holds the same files after. Three more tests check the check: it finds /healthz,
+/media/ and the mount, and notices a route that writes, starts a process or connects.
+
+The new tests failed first with: 5 failed (NameError: name 'read_only_violations' is not
+defined). Each part was then removed in turn and its test failed: <the rows of Step 18c, with
+your counts>.
+
+Plan: docs/superpowers/plans/2026-10-23-vid2sub-phase-2.md Task 11
+Co-Authored-By: <the model's own line>
+```
+
+  `git commit -F .git/COMMIT_MSG` (the file is staged from Step 18c), then
+  `git log -1 --format='%(trailers)'` shows `Plan:`.
+
 - [ ] **Step 19: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist). Worth the reviewers' time: that the token
   reaches no log, response, URL path or query, file name or command line (`ps`), and is printed
@@ -16646,7 +16816,9 @@ Co-Authored-By: <the model's own line>
   doesn't list `vid2sub serve` yet: a missing doc, for Task 22). Then the close, its own commit,
   holding this plan with this task's boxes ticked and **Now** set to `Task 12: The frontend
   scaffold and the shinyreact server, open.`, and the spec's scenario row S23 set to `built`, its
-  Proof reading `tests/test_cli_serve.py`, `tests/test_web_app.py`, `tests/test_web_auth.py`,
+  Proof reading `tests/test_cli_serve.py`, `tests/test_web_app.py`, `tests/test_web_auth.py`, and
+  S25 set to `built`, its Proof reading `tests/test_web_guards.py`, `tests/test_web_app.py`
+  (round 11d's read-only test; Task 12 adds the bookmark assertion to `tests/test_web_server.py`),
   with the message in `.git/CLOSE_MSG`:
 
 ```text
@@ -16697,6 +16869,10 @@ Co-Authored-By: <the model's own line>
 - Test: `tests/test_web_server.py`, `tests/test_brand.py`, `tests/e2e/test_csp.py`
 
 **Interfaces:**
+- Adds (moved from Task 11's round 11d, since the Shiny app is built here): a test in
+  `tests/test_web_server.py` that Shiny's bookmark store is disabled (`server.app`'s bookmark
+  store is `"disable"`, so no session state is written to disk), with its own failing-first step,
+  guard check and commit, in this task's form; S25's proof names it with Task 11's tests.
 - Consumes: Task 11's `runtime.current()`, `app.create_app`, `vid2sub.web.WWW`, and `serve`
   (which imports `server.app`); Task 5's `Capabilities`; `engines.clients.list_models`,
   `KeyRing`; `config.is_local`.
