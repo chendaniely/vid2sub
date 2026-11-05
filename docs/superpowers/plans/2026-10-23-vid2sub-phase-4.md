@@ -13904,7 +13904,7 @@ three operating systems. There is no PyPI (Dan, 2026-10-14).
   ordinary push. A release with no wheel at all still runs it, and it fails at once, saying the
   index lists no wheel (round 9c), since nothing it could install is listed.
 - **The smoke job installs as a person does:** `uv tool install "vid2sub$EXTRA" --index "$INDEX"`
-  (`[mac]` on macos-14, none on Ubuntu and Windows), from the deploy's own `page_url`, after the
+  (`[mac]` on macos-15, none on Ubuntu and Windows), from the deploy's own `page_url`, after the
   deploy; then `vid2sub --version` must be the newest release's, and the tool's own Python must find
   `www/ui.js` and `ui.css`. It runs no repository code (no checkout, `permissions: {}`), and waits
   up to three minutes for the live index to list the wheel. Its three steps were run on macOS
@@ -13938,7 +13938,7 @@ three operating systems. There is no PyPI (Dan, 2026-10-14).
     `write(out, found)`, `main(argv)`; `Wheel(version, name, url, sha256, published)`.
   - `pages.yml`: the build job's step `the install index` (id `index`), its outputs `wheels`,
     `newest` and `releases`; the deploy job's output `page_url`; job `smoke` (needs build and
-    deploy; only on `workflow_dispatch` with a published release; ubuntu-24.04, macos-14,
+    deploy; only on `workflow_dispatch` with a published release; ubuntu-24.04, macos-15,
     windows-2022; 20 minutes; no permissions).
   - For Task 12's step 9c and 9d: the build log's `build_index: 1 wheel from 1 release into
     _site/simple`; `curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c
@@ -14545,7 +14545,7 @@ def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_
     assert smoke["if"] == (
         "github.event_name == 'workflow_dispatch' && needs.build.outputs.releases != '0'")
     assert smoke["strategy"] == {"fail-fast": False, "matrix": {
-        "os": ["ubuntu-24.04", "macos-14", "windows-2022"]}}
+        "os": ["ubuntu-24.04", "macos-15", "windows-2022"]}}
     assert smoke["runs-on"] == "${{ matrix.os }}"
     assert smoke["permissions"] == {}
     assert smoke["defaults"] == {"run": {"shell": "bash"}}
@@ -14553,7 +14553,7 @@ def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_
     assert smoke["env"] == {
         "INDEX": "${{ needs.deploy.outputs.page_url }}simple/",
         "NEWEST": "${{ needs.build.outputs.newest }}",
-        "EXTRA": "${{ matrix.os == 'macos-14' && '[mac]' || '' }}"}  # [mac] on the Mac alone
+        "EXTRA": "${{ matrix.os == 'macos-15' && '[mac]' || '' }}"}  # [mac] on the Mac alone
     scripts = "\n".join(runs(workflow, "smoke"))
     assert 'uv tool install "vid2sub$EXTRA" --index "$INDEX"' in scripts
     assert 'test "$(vid2sub --version | tr -d \'\\r\')" = "vid2sub $NEWEST"' in scripts
@@ -14624,7 +14624,7 @@ def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14, windows-2022]
+        os: [ubuntu-24.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     permissions: {}
@@ -14635,7 +14635,7 @@ def test_the_smoke_job_installs_the_newest_release_from_the_live_index_on_every_
       INDEX: ${{ needs.deploy.outputs.page_url }}simple/
       NEWEST: ${{ needs.build.outputs.newest }}
       # The Mac's extra, as the README installs it there; the others take none.
-      EXTRA: ${{ matrix.os == 'macos-14' && '[mac]' || '' }}
+      EXTRA: ${{ matrix.os == 'macos-15' && '[mac]' || '' }}
     steps:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with: { version: "0.13.1", enable-cache: false }
@@ -14691,11 +14691,11 @@ simplicity finding 12): only after the deploy a release starts.
   become the build job's outputs, and the deploy job's `page_url` its output.
 - Job `smoke` (needs build and deploy; only on a workflow_dispatch run, the one release.yml
   starts or Dan's own, whose listing has a published release, so never after an ordinary push
-  and never before the first release; ubuntu-24.04, macos-14 and windows-2022, fail-fast off;
+  and never before the first release; ubuntu-24.04, macos-15 and windows-2022, fail-fast off;
   20 minutes; no
   permissions at all; bash; no checkout, so no repository code runs): setup-uv 0.13.1 with its
   cache off; waits up to three minutes for the live index to list the newest wheel; `uv tool
-  install "vid2sub$EXTRA" --index "$INDEX"` (`[mac]` on macos-14, as the README installs it
+  install "vid2sub$EXTRA" --index "$INDEX"` (`[mac]` on macos-15, as the README installs it
   there), adding uv's tool folder to GITHUB_PATH; then `vid2sub --version` must be the newest
   release's, and the tool's own Python must find www/ui.js and ui.css.
 - tests/test_pages_workflow.py: the index step's place, env and commands, the outputs, and the
@@ -15553,7 +15553,7 @@ curl -fsS https://chendaniely.github.io/vid2sub/simple/vid2sub/ | grep -c '#sha2
     release, rather than deploy an index without it: Decision 27.) Then
     `rm -r .git/release-check`.
   - [ ] **9d. The install from the index (S51):** in that same `pages.yml` run, the smoke job
-    (Task 9) is green on ubuntu-24.04, macos-14 (which installs the `[mac]` extra) and
+    (Task 9) is green on ubuntu-24.04, macos-15 (which installs the `[mac]` extra) and
     windows-2022. **[Dan]** On a clean machine (or a fresh user account) with uv:
     `uv tool install 'vid2sub[mac]' --index https://chendaniely.github.io/vid2sub/simple/`
     (`'vid2sub[whisper]'` on Windows or Linux), then `vid2sub --version` and `vid2sub serve`.
