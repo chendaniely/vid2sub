@@ -62,7 +62,7 @@ test names.
 | S21 | the real Spark's whisper.cpp and Gemma 4 | whisper.cpp's words parse with times; Gemma answers the batch schema with the batch's ids | Phase 1, Task 36 | `tests/test_live_spark.py`, passed 2026-10-15 (§29) | verified |
 | S22 | a Cantonese episode through the Spark's Qwen3-ASR and forced aligner, once local-ai serves them | timed words with the text's punctuation attached; when the Spark is down, no fallback | Phase 2 | a fixture recorded from the Spark; `VID2SUB_LIVE_SPARK=1` | planned |
 | S23 | `vid2sub serve` | binds `127.0.0.1` only and opens the browser through the token redirect; the token never reaches a log or `ps` | Phase 2 | `tests/test_web_auth.py` | planned |
-| S24 | a page on another local port calls the app or opens its websocket | refused: no cookie, no access; a wrong Host gets 400; a wrong Origin closes the websocket with 1008 | Phase 2 | `tests/test_web_guards.py` | planned |
+| S24 | a page on another local port calls the app or opens its websocket | refused: no cookie, no access; a wrong Host gets 400; a wrong Origin closes the websocket with 1008 | Phase 2 | `tests/test_web_guards.py`, `tests/test_web_auth.py` (S23 waits for Task 11, which binds and opens the browser) | built |
 | S25 | a GET request, or a write that isn't same-origin JSON | a GET never writes anything or starts a process; the write is refused | Phase 2 | `tests/test_web_guards.py` | planned |
 | S26 | a subtitle with `<script>` or ASS overrides, or a hostile file name or YouTube title | shown as plain text; the CSP blocks any script; the caption overlay renders `<i>` only | Phase 2 | Playwright with hostile fixtures | planned |
 | S27 | an M1 episode opened in the editor | the video plays with captions; the cue list follows playback; the spoken word is highlighted | Phase 2 | Playwright against `vid2sub serve --demo`; the exit test | planned |
@@ -488,6 +488,9 @@ council's red team (§27) found three blockers in the first draft; the rules bel
   (served as a file, no inline script) posts the token to `/auth` and receives an `HttpOnly`,
   `SameSite=Strict` cookie whose name includes the port (`vid2sub-8765`), then replaces the URL.
   The CLI also prints that URL for opening by hand.
+  Cookies ignore ports, so a server the browser visits on another port of 127.0.0.1 receives the
+  cookie and could replay it; the token's protection assumes no hostile local server (Phase 2
+  Decision 34).
 - **Every route and the websocket handshake require the cookie**, except `/auth` and its script,
   and `/healthz`, which returns only `{"ok": true}`.
 
@@ -501,6 +504,7 @@ Copied from `recordings` (`hosts.py`), and kept because other localhost ports co
   `Cross-Origin-Opener-Policy: same-origin`, `X-Frame-Options: DENY`,
   `Referrer-Policy: same-origin`. Any method other than GET/HEAD/OPTIONS needs a same-origin
   request with `Content-Type: application/json`.
+  A request with no `Origin` passes as "not a browser", which Decision 34 already accepted.
 - **No GET request writes anything or starts a process.** Shiny bookmarking stays off.
 
 ### 6.3 Content-Security-Policy and untrusted text

@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 9: The launch token, open.
+**Now:** Task 10: Media tokens and `/media/{token}`, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 11's round 11d adds 5 more: from Task 11's close on, 85 lower.
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 11's round 11d adds 5 more: from Task 11's close on, 99 lower.
 
 ## Decisions made while planning (review these)
 
@@ -13575,6 +13575,22 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 1 · **Scenarios:** S23, S24
 
+**Built differently** (the listing stays as planned; its `OPEN_PATHS` and `given.encode()` are as
+planned, and the note says what replaced them): (1) `TokenGuard` passes `lifespan` only besides
+`http` and `websocket` and drops any other scope type, as HostGuard and WriteGuard have since
+Task 8's fix, with its own guard test (commit 72dfd90). (2) Fix round 9a, after the Tier 1 review
+(Standards: 1 Important, a commit body, ruled, and 4 Minor; Spec: 2 Important and 6 Minor) and one
+re-review (S1 to S5 addressed; 4 Minor): `OPEN_PATHS` became `OPEN_ROUTES`, six method and path
+pairs, exactly what the routes answer (Starlette's GET routes answer HEAD; the FastAPI
+`/healthz` doesn't), so PUT, DELETE, OPTIONS or a POST to `/auth.js` or `/healthz` need the
+cookie (S1, with the reworded S24 test comment; b0e5cae). `POST /auth` encodes the given token
+with `surrogatepass`, so a lone surrogate gets 403, not 500 (S2; a129b69). Tests for a websocket
+to an open path, `auth.js`'s `history.replaceState`, and a foreign Origin refused with the cookie
+(S3 to S5; 49876e0). (3) A direct fix under the cap (32117ce): `TokenGuard`'s docstring names the
+six pairs, a test pins `OPEN_ROUTES` to exactly them, the script test asserts `replaceState`
+comes before `fetch`, `auth.js`'s comment says "this tab's history entry", and the module
+docstring gains Decision 34 (Spec S6, S7).
+
 **Files:**
 - Create: `src/vid2sub/web/auth.py`, `src/vid2sub/web/static/auth.html`,
   `src/vid2sub/web/static/auth.js`
@@ -13589,20 +13605,22 @@ Co-Authored-By: <the model's own line>
   str) -> Path` (`open.html`, mode 0600, in a new `tempfile.mkdtemp(prefix="vid2sub-")` folder,
   0700; no script; the caller removes `path.parent` when the engine exits); `class TokenGuard:
   __init__(self, app: ASGIApp, *, token: str, port: int)` (every HTTP route and websocket needs
-  the cookie except HTTP `/auth`, `/auth.js` and `/healthz`, matched exactly; 401 `text/plain`
-  `auth.SIGN_IN_AGAIN` for HTTP, close 1008 before accept for a websocket; lifespan passes);
+  the cookie except the six HTTP method and path pairs of `auth.OPEN_ROUTES`, matched exactly; 401
+  `text/plain` `auth.SIGN_IN_AGAIN` for HTTP, close 1008 before accept for a websocket; lifespan
+  passes and any other scope type is dropped; the wrapped app stays in `.app`);
   `auth.routes(token: str, port: int) -> list[BaseRoute]` (`GET /auth`, `POST /auth`,
-  `GET /auth.js`); constants `auth.STATIC`, `auth.OPEN_PATHS`, `auth.SIGN_IN_AGAIN`
+  `GET /auth.js`); constants `auth.STATIC`, `auth.OPEN_ROUTES` (`GET`, `HEAD`, `POST` on `/auth`; `GET`, `HEAD` on
+  `/auth.js`; `GET` on `/healthz`; in place of the planned `OPEN_PATHS`), `auth.SIGN_IN_AGAIN`
   (`"open the link vid2sub printed when it started"`), `auth.MAX_BODY` (1024).
 - `POST /auth`: `{"token": "<token>"}` with `Content-Type: application/json` exactly; 204 and the
   cookie (`HttpOnly`, `SameSite=Strict`, `Path=/`, no `Secure`, a session cookie) on a match
-  (`secrets.compare_digest` on bytes); 403 and no cookie for a wrong or missing token; 400 for a
+  (`secrets.compare_digest` on bytes, the token encoded with `surrogatepass`, so a lone surrogate is a 403); 403 and no cookie for a wrong or missing token; 400 for a
   malformed body; 413 over `MAX_BODY`. The cookie's value is an HMAC-SHA256 of the token, not the
   token, so the token appears in no response.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
-- [ ] **Step 1: Write the failing test,** `tests/test_web_auth.py`. Its `TOKEN` is deliberately
+- [x] **Step 1: Write the failing test,** `tests/test_web_auth.py`. Its `TOKEN` is deliberately
   low-entropy: a realistic-looking fake token beside the word "token" is a gitleaks
   `generic-api-key` hit, and a leak-scan hit is a stop (`AGENTS.md`, *Stops*).
 
@@ -14017,11 +14035,11 @@ def test_the_whole_stack_signs_a_browser_in():
             assert ws.receive_text() == "hello"
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_web_auth.py -q`. Expected:
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_web_auth.py -q`. Expected:
   `E   ImportError: cannot import name 'auth' from 'vid2sub.web' (…/src/vid2sub/web/__init__.py)`,
   then `1 error in 0.21s`.
 
-- [ ] **Step 3: Write the code,** `src/vid2sub/web/auth.py`:
+- [x] **Step 3: Write the code,** `src/vid2sub/web/auth.py`:
 
 ```python
 """The launch token: only the browser vid2sub opened, holding the cookie it got for the token,
@@ -14238,7 +14256,7 @@ class TokenGuard:
 })();
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_auth.py -q`.
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_auth.py -q`.
   Expected: `62 passed`. Then `make check`. Expected: `856 passed, 2 skipped, 4 deselected`
   twice, `All checks passed!`, `no leaks found`. Line length, which ruff's default rules leave out:
   `uv run python -c "import sys; [print(f, i) for f in sys.argv[1:] for i, l in
@@ -14248,7 +14266,7 @@ class TokenGuard:
   `vid2sub/web/static/auth.html` and `auth.js` (hatchling packs every file under
   `src/vid2sub`).
 
-- [ ] **Step 5: Each guard fails its tests without its fix.** `git add src/vid2sub/web/auth.py
+- [x] **Step 5: Each guard fails its tests without its fix.** `git add src/vid2sub/web/auth.py
   src/vid2sub/web/static/auth.html src/vid2sub/web/static/auth.js tests/test_web_auth.py`. Then,
   for each row, make the change in `auth.py`, run `uv run pytest tests/test_web_auth.py -q`, see
   it fail, and restore with `git checkout -- src/vid2sub/web/auth.py`. The last column is what
@@ -14274,7 +14292,7 @@ class TokenGuard:
 | redirect escaping | `href = html.escape(url, quote=True)` | `href = url` | 1 |
 | token in the fragment | `/auth#t={token}` | `/auth?t={token}` | 1 |
 
-- [ ] **Step 6: See it in a real browser** (optional before Task 13's harness exists, but cheap;
+- [x] **Step 6: See it in a real browser** (optional before Task 13's harness exists, but cheap;
   it is how this listing was checked). Only if Chromium is already installed for Playwright;
   otherwise skip it (Task 13 sets that up). Serve
   `HostGuard(WriteGuard(TokenGuard(Starlette(routes=[*auth.routes(token, port), <a "/" route>]),
@@ -14287,7 +14305,7 @@ class TokenGuard:
   started." and `/` without the cookie answered `open the link vid2sub printed when it started`.
   Nothing from this step is committed.
 
-- [ ] **Step 7: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 7: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 only the browser vid2sub opened reaches the engine: the launch token, sent in a link's fragment, buys an HttpOnly cookie that every other route and the websocket need
@@ -14322,7 +14340,7 @@ Co-Authored-By: <the model's own line>
   `git commit -F .git/COMMIT_MSG` (the four files are staged from Step 5), then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 8: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 8: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist). Worth the reviewers' time: that the open
   paths are matched exactly, on `scope["path"]`, and only for HTTP; that the token reaches no
   response, log record, URL path or query, or file name (the redirect file's contents are its
@@ -14961,7 +14979,8 @@ Co-Authored-By: <the model's own line>
     running anything: Task 19 gives the queue the pipeline.
   - `app.create_app(rt: Runtime, *, token: str, port: int, shiny_app: ASGIApp) -> ASGIApp`: a
     FastAPI app with `/docs`, `/redoc` and `/openapi.json` off; `GET /healthz` answers
-    `{"ok": true}` and nothing more; Task 9's `/auth` routes and Task 10's `/media/{token}` come
+    `{"ok": true}` and nothing more, and stays GET only (if it ever answers HEAD or another method,
+    Task 9's `auth.OPEN_ROUTES` must change with it); Task 9's `/auth` routes and Task 10's `/media/{token}` come
     before `shiny_app`, mounted at "/" last; wrapped as `HostGuard(WriteGuard(TokenGuard(api),
     HOSTS), HOSTS)` with `app.HOSTS = frozenset({"127.0.0.1"})`; its lifespan closes the job
     queue at shutdown, off the event loop. A Starlette mount passes no lifespan events on, so
@@ -15300,7 +15319,7 @@ def create_app(rt: Runtime, *, token: str, port: int, shiny_app: ASGIApp) -> ASG
     api = FastAPI(title="vid2sub", docs_url=None, redoc_url=None, openapi_url=None,
                   lifespan=lifespan)
 
-    @api.get("/healthz")
+    @api.get("/healthz")  # GET only: auth.OPEN_ROUTES opens exactly GET /healthz
     def healthz() -> dict:
         return {"ok": True}
 
@@ -16377,7 +16396,7 @@ def create_app(rt: Runtime, *, token: str, port: int, shiny_app: ASGIApp) -> ASG
     api = FastAPI(title="vid2sub", docs_url=None, redoc_url=None, openapi_url=None,
                   lifespan=lifespan)
 
-    @api.get("/healthz")
+    @api.get("/healthz")  # GET only: auth.OPEN_ROUTES opens exactly GET /healthz
     def healthz() -> dict:
         return {"ok": True}
 
@@ -40247,3 +40266,7 @@ fi
 | Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | A pick on a sidecar replaced since the open finds no heads for the track and says "already picked elsewhere" (re-review, out of scope) | open |
 | Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | A source retimed before a conflict arose (the tab's nudge saved while a CLI translate diverged the translation) leaves a picked translation at its old times (the I3 ruling's residual) | open |
 | Task 6 (review) | Minor | `src/vid2sub/web/backend.py` | "kept your outside edit to <track>" repeats once per edited file of a track in Save and pick, because `changed` lists the track once per file (re-review, out of scope) | open |
+| Task 9 (review) | Minor | `src/vid2sub/web/auth.py` | Spec S8: `SIGN_IN_AGAIN` ("open the link vid2sub printed when it started") doesn't fit Decision 12, where output that isn't a terminal prints a file path instead; several later listings pin this text | open |
+| Task 9 (review) | Minor | `src/vid2sub/web/auth.py` | Standards: `POLICY_VIOLATION` is defined in both `auth.py` and `guards.py`; `sign_in`'s type check is awkward | open |
+| Task 9 (review) | Minor | `tests/test_web_auth.py` | Standards: the `auth.js` test's `"eval"` substring match is brittle; the file is densely formatted | open |
+| Task 9 (review) | Minor | `src/vid2sub/web/auth.py` | Couldn't verify: non-Chromium browsers following the redirect file's meta refresh; Snap-packaged Linux browsers, whose private `/tmp` can't see the redirect file (also for Task 11's forward review) | open |
