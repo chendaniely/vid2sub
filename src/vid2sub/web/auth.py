@@ -14,6 +14,9 @@ makes a new token, so a tab left open is refused and told to open the new link (
 No `Secure` flag: the engine is plain http on 127.0.0.1. Cookies ignore ports, so the cookie
 alone doesn't keep out a page on another port of this machine; HostGuard and WriteGuard do
 (spec §6.2).
+
+Decision 34 (Phase 2): cookies ignore ports, so a server the browser visits on another port of
+127.0.0.1 receives the cookie and could replay it; the token assumes no hostile local server.
 """
 
 from __future__ import annotations
@@ -126,7 +129,8 @@ def routes(token: str, port: int) -> list[BaseRoute]:
 
 class TokenGuard:
     """Pure ASGI middleware: every HTTP request and websocket handshake needs this launch's
-    cookie, except HTTP requests for the open paths, matched exactly. Lifespan passes through."""
+    cookie, except HTTP requests for the six method and path pairs in `OPEN_ROUTES`, matched
+    exactly. Lifespan passes through."""
 
     def __init__(self, app: ASGIApp, *, token: str, port: int) -> None:
         self.app = app

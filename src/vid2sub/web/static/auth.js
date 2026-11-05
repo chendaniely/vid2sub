@@ -7,7 +7,8 @@
   const status = document.getElementById("status");
   const stale = "This link is out of date: open the URL vid2sub printed when it started.";
   const token = new URLSearchParams(location.hash.slice(1)).get("t");
-  // The token leaves the address bar and the history before anything else happens.
+  // The token leaves the address bar and this tab's history entry before anything else happens
+  // (the browser's own history may keep the URL it first loaded).
   history.replaceState(null, "", location.pathname);
   if (!token) {
     status.textContent = stale;

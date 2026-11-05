@@ -166,6 +166,7 @@ def test_the_auth_script_posts_exactly_json_and_shows_text_only():
     assert 'location.replace("/")' in js and "location.hash" in js
     # The token leaves the address bar and the history before anything else happens.
     assert 'history.replaceState(null, "", location.pathname);' in js
+    assert js.index("history.replaceState(") < js.index("fetch(")
     assert "This link is out of date: open the URL vid2sub printed when it started." in js
     assert "textContent" in js and "innerHTML" not in js and "eval" not in js
 
@@ -288,6 +289,14 @@ def recorded():
 def test_a_path_that_only_looks_open_needs_the_cookie(recorded, path):
     guard, reached = recorded
     assert _status(guard, path) == 401 and reached == []
+
+
+def test_the_open_set_is_exactly_the_six_method_and_path_pairs():
+    assert auth.OPEN_ROUTES == {
+        ("GET", "/auth"), ("HEAD", "/auth"), ("POST", "/auth"),
+        ("GET", "/auth.js"), ("HEAD", "/auth.js"),
+        ("GET", "/healthz"),
+    }
 
 
 OPEN_PAIRS = [("GET", "/auth"), ("HEAD", "/auth"), ("POST", "/auth"),
