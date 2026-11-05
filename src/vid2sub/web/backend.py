@@ -381,15 +381,17 @@ class LocalBackend:
         everything = ids is None and setup_changed(track_setup(ep, track), glossary.sha(),
                                                    entry.model)
         wanted, replaced = retranslation(source, cues, ids, everything=everything)
-        if not wanted:
+        if not wanted and not replaced:
             return ep
-        policy = RunPolicy(allow_cloud)
-        check_allowed(name, entry, self.config, policy)
-        ask = make_ask(name, entry, self.config, policy, self.keys)
         taken = set(ep.taken)
-        new = translate_cues(source, source_lang=lang, target_track=track,
-                             glossary=glossary, ask=ask, only=wanted, taken=taken,
-                             on_batch=on_batch)
+        new: list[Cue] = []
+        if wanted:  # else only translations of deleted cues are dropped: nothing to ask
+            policy = RunPolicy(allow_cloud)
+            check_allowed(name, entry, self.config, policy)
+            ask = make_ask(name, entry, self.config, policy, self.keys)
+            new = translate_cues(source, source_lang=lang, target_track=track,
+                                 glossary=glossary, ask=ask, only=wanted, taken=taken,
+                                 on_batch=on_batch)
         result = tuple(sorted([c for c in cues if c.id not in replaced] + new,
                               key=lambda c: (c.start_ms, c.end_ms)))
         try:
@@ -397,8 +399,8 @@ class LocalBackend:
         except TrackError as err:
             raise EditError(f"the {track} track would break: {err}") from None
         tracks = Tracks(source, {**ep.tracks.translations, track: result})
-        made_with = ({**ep.made_with, track: (glossary.sha(), entry.model)} if everything
-                     else ep.made_with)
+        made_with = ({**ep.made_with, track: (glossary.sha(), entry.model)}
+                     if everything and wanted else ep.made_with)
         return replace(ep, tracks=tracks, taken=taken, made_with=made_with, redo=[],
                        undo=[*ep.undo, _snapshot(ep)][-UNDO_STEPS:])
 
@@ -464,8 +466,10 @@ def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str]
     every source cue it covers, and a translation that covers a cue being translated, or whose
     time overlaps a run of them, is replaced too. With `ids=None` an edited translation, and an
     imported line (one with no `src`, Q&A item 45), is never replaced; the cues it would have
-    brought in are left out instead, and it covers the source cues it overlaps. `everything`: the track
-    was made with another glossary or model, so with `ids=None` every cue of it is stale."""
+    brought in are left out instead, and it covers the source cues it overlaps. With `ids=None`
+    an unedited translation whose source cues are all gone is dropped, as M1 drops it (so it
+    can be in the second list with nothing to translate). `everything`: the track was made
+    with another glossary or model, so with `ids=None` every cue of it is stale."""
     order = {c.id: k for k, c in enumerate(source)}
     by_id = {c.id: c for c in source}
     if ids is None:
@@ -474,7 +478,10 @@ def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str]
         wanted = {i for c in cues if c.id in stale and "edited" not in c.flags
                   for i in c.src or () if i in by_id}
         wanted |= set(uncovered_ids(source, cues))
+        orphans = {c.id for c in cues if c.src and "edited" not in c.flags
+                   and not any(i in by_id for i in c.src)}
     else:
+        orphans = set()
         if any(i not in by_id for i in ids):
             raise EditError("one of those cues isn't in the source track")
         wanted = set(ids)
@@ -501,7 +508,7 @@ def retranslation(source: Sequence[Cue], cues: Sequence[Cue], ids: Sequence[str]
         elif grow - wanted:
             wanted |= grow
         else:
-            return chosen, replaced
+            return chosen, replaced | orphans
 
 
 def _runs(chosen: Sequence[str], order: dict[str, int], by_id: dict[str, Cue]

@@ -318,6 +318,39 @@ def test_an_undo_between_two_redo_alls_gives_back_the_first_ones_glossary_and_mo
     assert backend.redo(undone).made_with == second.made_with
 
 
+def gone_last(backend, video):
+    """The last source line deleted in another program: its translation has no source left."""
+    head = store.load(video)[0].head("ja").rendition
+    write_track(video, "ja", _source(video)[:2], role="source", replaces=head)
+    return backend.open(str(video))
+
+
+def test_a_translation_whose_source_cues_are_all_gone_is_dropped_by_retranslating_stale(
+        backend, video, asked):
+    ep = gone_last(backend, video)
+    assert [c.id for c in ep.tracks.translations["en"]][-1] == tid(2)
+    out = backend.retranslate(ep, "en", ids=None)
+    assert asked == [] and [c.id for c in out.tracks.translations["en"]] == [tid(0), tid(1)]
+    check_track(out.tracks.translations["en"])
+    assert len(out.undo) == len(ep.undo) + 1
+
+
+def test_an_edited_translation_whose_source_cues_are_gone_is_kept(backend, video, asked):
+    ep = gone_last(backend, video)
+    ep = edit(backend, ep, op="set_translation_text", track="en", cue=tid(2), text="Mine")
+    assert backend.retranslate(ep, "en", ids=None) is ep
+
+
+def test_a_dropped_translation_does_not_keep_a_glossary_change_redoing_the_track(
+        backend, video, asked):
+    video.with_name("vid2sub.glossary.toml").write_text(TERMS, encoding="utf-8")
+    ep = gone_last(backend, video)
+    out = backend.retranslate(ep, "en", ids=None)
+    assert asked == [[sid(0), sid(1)]] and tid(2) not in {c.id for c in
+                                                         out.tracks.translations["en"]}
+    assert backend.retranslate(out, "en", ids=None) is out and len(asked) == 1
+
+
 # The model: chosen as M1 chooses it, cloud only when this call allows it (spec §7.2, §11.2)
 
 
