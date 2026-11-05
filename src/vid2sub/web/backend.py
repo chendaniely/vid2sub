@@ -112,6 +112,8 @@ from vid2sub.web import ops
 UNPLAYABLE_AUDIO = frozenset({"ac3", "eac3", "dts", "truehd"})  # ffprobe's codec names (§8.2)
 NO_SUBTITLES = "no subtitles yet: make them with vid2sub run or the Jobs page first"
 UNDO_STEPS = 200
+# One undo or redo step: the tracks, the glossary adds and `made_with` as they were.
+Snapshot = tuple[Tracks, dict[str, str], dict[str, tuple[str, str | None]]]
 FORMATS = ("srt", "ass")
 GONE = "the sidecar next to the video is gone, so nothing was saved: open the episode again"
 
@@ -157,8 +159,8 @@ class Episode:
     base: Tracks  # the tracks as of the open or the last Save
     glossary: Glossary | None  # beside the video at open; None if it couldn't be read
     translate_model: str | None  # the model Retranslate would use with none named (offline)
-    undo: list[tuple[Tracks, dict[str, str]]] = field(default_factory=list)
-    redo: list[tuple[Tracks, dict[str, str]]] = field(default_factory=list)
+    undo: list[Snapshot] = field(default_factory=list)
+    redo: list[Snapshot] = field(default_factory=list)
     taken: set[str] = field(default_factory=set)
     glossary_adds: dict[str, str] = field(default_factory=dict)
     made_with: dict[str, tuple[str, str | None]] = field(default_factory=dict)  # since a redo-all
@@ -252,23 +254,24 @@ class LocalBackend:
         if tracks == ep.tracks and adds == ep.glossary_adds:
             return ep
         return replace(ep, tracks=tracks, glossary_adds=adds, taken=taken, redo=[],
-                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+                       undo=[*ep.undo, _snapshot(ep)][-UNDO_STEPS:])
 
     def undo(self, ep: Episode) -> Episode:
         self._check_open(ep)
         if not ep.undo:
             return ep
-        tracks, adds = ep.undo[-1]
-        return replace(ep, tracks=tracks, glossary_adds=adds, undo=ep.undo[:-1],
-                       redo=[*ep.redo, (ep.tracks, ep.glossary_adds)])
+        tracks, adds, made_with = ep.undo[-1]
+        return replace(ep, tracks=tracks, glossary_adds=adds, made_with=made_with,
+                       undo=ep.undo[:-1], redo=[*ep.redo, _snapshot(ep)])
 
     def redo(self, ep: Episode) -> Episode:
         self._check_open(ep)
         if not ep.redo:
             return ep
-        tracks, adds = ep.redo[-1]
-        return replace(ep, tracks=tracks, glossary_adds=adds, redo=ep.redo[:-1],
-                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+        tracks, adds, made_with = ep.redo[-1]
+        return replace(ep, tracks=tracks, glossary_adds=adds, made_with=made_with,
+                       redo=ep.redo[:-1],
+                       undo=[*ep.undo, _snapshot(ep)][-UNDO_STEPS:])
 
     def save(self, ep: Episode, *, formats: Sequence[Literal["srt", "ass"]]
              ) -> tuple[Episode, SaveResult]:
@@ -397,7 +400,7 @@ class LocalBackend:
         made_with = ({**ep.made_with, track: (glossary.sha(), entry.model)} if everything
                      else ep.made_with)
         return replace(ep, tracks=tracks, taken=taken, made_with=made_with, redo=[],
-                       undo=[*ep.undo, (ep.tracks, ep.glossary_adds)][-UNDO_STEPS:])
+                       undo=[*ep.undo, _snapshot(ep)][-UNDO_STEPS:])
 
     def _translator(self, lang: str, model: str | None, allow_cloud: bool) -> str:
         """The named model, else the catalog route's pick, as M1's pipeline picks (§11.2). A route
@@ -809,6 +812,10 @@ def load_tracks(side: Sidecar) -> tuple[str, Tracks, dict[str, str], dict[str, t
             loaded[track] = tuple(cues_from_body(renditions[head.rendition].body))
     source = loaded.pop(source_key, ())
     return source_key, Tracks(source, loaded), heads, conflicts
+
+
+def _snapshot(ep: Episode) -> Snapshot:
+    return ep.tracks, ep.glossary_adds, ep.made_with
 
 
 def cue_ids(side: Sidecar) -> set[str]:

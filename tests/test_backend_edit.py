@@ -43,7 +43,7 @@ def test_an_edit_returns_a_new_episode_and_leaves_the_old_one_as_it_was(backend,
     out = backend.apply(ep, op(op="set_text", cue=sid(0), text="こんばんは"))
     assert texts(out.tracks.source) == ["こんばんは", *LINES[1:]]
     assert texts(ep.tracks.source) == list(LINES) and ep.undo == []
-    assert out.undo == [(ep.tracks, {})] and out.redo == [] and out.dirty
+    assert out.undo == [(ep.tracks, {}, {})] and out.redo == [] and out.dirty
     assert out.base == ep.base and out.id == ep.id
 
 
@@ -89,7 +89,7 @@ def test_undo_and_redo_step_back_and_forward(backend, video):
     one = backend.apply(ep, op(op="set_text", cue=sid(0), text="一"))
     two = backend.apply(one, op(op="delete", cue=sid(2)))
     back = backend.undo(two)
-    assert back.tracks == one.tracks and back.redo == [(two.tracks, {})]
+    assert back.tracks == one.tracks and back.redo == [(two.tracks, {}, {})]
     back = backend.undo(back)
     assert back.tracks == ep.tracks and not back.dirty and back.undo == []
     forward = backend.redo(backend.redo(back))

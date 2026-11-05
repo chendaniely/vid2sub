@@ -161,7 +161,7 @@ def test_dirty_undo_and_redo_follow_the_episode():
     ep = episode()
     assert (view(ep)["dirty"], view(ep)["can_undo"], view(ep)["can_redo"]) == (False, False, False)
     changed = Tracks(ep.tracks.source[:2], ep.tracks.translations)
-    v = view(dataclasses.replace(ep, tracks=changed, undo=[(ep.tracks, {})]))
+    v = view(dataclasses.replace(ep, tracks=changed, undo=[(ep.tracks, {}, {})]))
     assert (v["dirty"], v["can_undo"], v["can_redo"]) == (True, True, False)
     v = view(dataclasses.replace(ep, glossary_adds={"工藤": "Kudo"}))
     assert v["dirty"] is True and v["glossary_adds"] == {"工藤": "Kudo"}

@@ -303,6 +303,21 @@ def test_on_a_mixed_track_only_the_stale_linked_lines_change(backend, video, ask
     assert [t for _, t in en(out)] == [f"EN {sid(0)}", "Imported 0", f"EN {sid(2)}"]
 
 
+def test_an_undo_between_two_redo_alls_gives_back_the_first_ones_glossary_and_model(
+        backend, video, asked):
+    first = edit(backend, backend.open(str(video)), op="glossary_add", term="工藤新一",
+                 translation="Shinichi Kudo")
+    first = backend.retranslate(first, "en", ids=None)
+    second = edit(backend, first, op="glossary_add", term="毛利蘭", translation="Ran Mouri")
+    second = backend.retranslate(second, "en", ids=None)
+    assert web_backend.track_setup(second, "en") != web_backend.track_setup(first, "en")
+    undone = backend.undo(second)
+    assert undone.tracks == first.tracks
+    assert web_backend.track_setup(undone, "en") == web_backend.track_setup(first, "en")
+    assert web_backend.all_stale(undone, "en")  # its cues lack the second term
+    assert backend.redo(undone).made_with == second.made_with
+
+
 # The model: chosen as M1 chooses it, cloud only when this call allows it (spec §7.2, §11.2)
 
 
