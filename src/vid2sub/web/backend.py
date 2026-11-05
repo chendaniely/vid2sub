@@ -18,8 +18,8 @@ the ones its head was made with; so the episode holds the glossary beside the vi
 Retranslate would use with none named, picked offline from the catalog route as M1 picks it but
 taking every configured local server to answer (no request is made at open). Edits run
 through the pure `subs.edit` rules, so they exist once (§20); each one that changes something
-pushes the tracks and the pending glossary adds onto the undo stack (the last 200 steps) and
-clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
+pushes the tracks, the pending glossary adds and `made_with` onto the undo stack (the last
+200 steps) and clears redo. A track in conflict can't be edited, and nothing but a glossary add can while the
 source is, until a person picks a version.
 
 Save (spec §14.5, §14.6) first records any outside edit to a subtitle file as M1 does, so an
@@ -51,7 +51,8 @@ Retranslate (spec §13.4, §20) redoes the stale and untranslated cues, or the c
 as one undoable edit. The model is the one named, else the one M1's catalog route picks; a cloud
 model only when this call allows it (§7.2), checked before anything is sent, and a route whose
 model's server is down, errors or doesn't list it is never passed over for the next one or
-the cloud (§17.4). Retranslating stale never replaces a translation a person edited (§13.4); naming a cue does, since that is the
+the cloud (§17.4). Retranslating stale never replaces a translation a person edited, nor an
+imported line, one with no `src` (§13.4, Q&A item 45); naming a cue does, since that is the
 person asking. Translations are replaced in whole groups: every source cue a replaced translation
 covers is translated with it, and a translation whose time overlaps the cues being translated is
 replaced too (a cue inserted inside a translation that spans two cues), so the track never
@@ -356,13 +357,15 @@ class LocalBackend:
                     model: str | None = None, allow_cloud: bool = False,
                     on_batch: Callable[[int, int], None] | None = None) -> Episode:
         """`ids=None`: every stale or untranslated source cue, never replacing an edited
-        translation; else those source cues, whatever their translation. One undo step; `ep`
-        itself when there's nothing to translate (no model is asked to translate; with none
-        named, the route's servers are asked which models they serve). Blocks on the network.
-        Raises EditError (a track in conflict, an unknown track or cue), EngineError (no usable
-        model, a cloud model this call doesn't allow, the server down or refusing: `.hint` names
-        the fix), TranslationFailed, or GlossaryError (a glossary beside the video vid2sub can't
-        read); nothing changes then."""
+        translation or an imported line (no `src`), and dropping an unedited translation whose
+        source cues are all gone; else those source cues, whatever their translation. One undo
+        step; `ep` itself when there's nothing to translate or drop (no model is asked to
+        translate; with none named, the route's servers are asked which models they serve).
+        Blocks on the network. Raises EditError (a track in conflict, an unknown track or cue),
+        EngineError (no usable model, a cloud model this call doesn't allow, the route's model
+        not serving it, the server down or refusing: `.hint` names the fix), TranslationFailed,
+        or GlossaryError (a glossary beside the video vid2sub can't read); nothing changes
+        then."""
         self._check_open(ep)
         allow_cloud = allow_cloud is True  # anything but True fails closed (§7.2)
         if track not in naming.TRACKS:  # it comes from the browser: never echoed unchecked
