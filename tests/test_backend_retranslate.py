@@ -421,6 +421,7 @@ def test_a_local_model_that_isnt_serving_is_never_replaced_by_the_cloud_or_anoth
             backend.retranslate(ep, "en", ids=[sid(0)], allow_cloud=True)
         chats = [r for r in spark.requests if r.path.endswith("/chat/completions")]
     assert err.value.kind == "unavailable" and "gemma" in str(err.value)
+    assert "retries" not in str(err.value)  # the editor never retries
     assert "doesn't fall back" in err.value.hint and "doctor" in err.value.hint
     assert cloud.requests == [] and chats == []
     assert str(video.parent) not in str(err.value) + err.value.hint
@@ -451,6 +452,23 @@ def test_a_glossary_vid2sub_cant_read_is_a_glossary_error_that_names_no_folder(
         return real(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", read_text)
+    with pytest.raises(GlossaryError) as err:
+        backend.retranslate(ep, "en", ids=[sid(0)])
+    assert str(err.value) == "couldn't read vid2sub.glossary.toml (Permission denied)"
+    assert str(video.parent) not in str(err.value) and asked == []
+
+
+def test_a_glossary_whose_existence_check_is_refused_is_a_path_free_glossary_error(
+        backend, video, asked, monkeypatch):
+    ep = backend.open(str(video))
+    real = Path.is_file
+
+    def is_file(self, *args, **kwargs):
+        if self.name == "vid2sub.glossary.toml":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_file", is_file)
     with pytest.raises(GlossaryError) as err:
         backend.retranslate(ep, "en", ids=[sid(0)])
     assert str(err.value) == "couldn't read vid2sub.glossary.toml (Permission denied)"

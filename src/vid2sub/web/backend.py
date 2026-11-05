@@ -425,8 +425,10 @@ class LocalBackend:
             if why.unreachable:
                 raise EngineError("connection", "the translation model's server isn't reachable",
                                   hint="is it running? For the Spark: is `make tunnel` running?")
+            reason = (why.reason.replace("; vid2sub retries twice", "")
+                      .replace(" (vid2sub retries twice)", ""))  # the editor never retries
             raise EngineError("unavailable", f"the translation model {hoped} isn't available: "
-                              f"{why.reason or 'its server did not list it'}",
+                              f"{reason or 'its server did not list it'}",
                               hint="vid2sub doesn't fall back to another model or the cloud; "
                                    "`vid2sub doctor` shows why")
         if s.model is None:
@@ -878,9 +880,9 @@ def _audio_track(p: Probe, transcript: RenditionRecord | None, info: naming.Trac
 def read_glossary(video: Path) -> Glossary:
     """The glossary beside the video, read as M1 reads it; EMPTY_GLOSSARY when there's none."""
     path = video.with_name(naming.GLOSSARY_NAME)
-    if not path.is_file():
-        return EMPTY_GLOSSARY
     try:
+        if not path.is_file():
+            return EMPTY_GLOSSARY
         return parse_glossary(path.read_text(encoding="utf-8-sig"))
     except UnicodeDecodeError:
         raise GlossaryError("the glossary isn't UTF-8; save it as UTF-8") from None
