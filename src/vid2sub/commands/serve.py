@@ -4,16 +4,20 @@ token's redirect file (spec §18.1, §6.1, §19.1).
 The engine binds 127.0.0.1 only (§6.1), on `--port`, else `[server] port` (8765); 0 takes any free
 port. The socket is bound and listening before anything is printed or opened, so the link names
 the real port and a browser that loads it early waits instead of being refused. Each launch makes
-a new token. Its link (`/auth#t=<token>`) is printed to the terminal for opening by hand, and the
-browser, unless `--no-browser` or `[server] open_browser = false`, is opened on a redirect file
-holding it (mode 0600 in a private folder), so `ps` shows only that file's path. A browser that
-doesn't come back doesn't hold up the engine: it is opened from a thread, as Jupyter does. The
-folder goes when the engine stops, on Ctrl-C and SIGTERM too: uvicorn re-raises the signal after
-its own shutdown, and SIGTERM's default action would skip `finally`, so it becomes a normal exit
-with status 143 (recordings' __main__ does the same). uvicorn's access log is off and it trusts
-no proxy headers, since none is in front of it (§6.8, §6.2); the token goes to no log. Without
-the built frontend (`www/ui.js`), serve refuses before it reads or binds anything (§18, §23.5).
-The Shiny app is imported only once `runtime.configure()` has run, as recordings imports it.
+a new token. Its link (`/auth#t=<token>`) is printed only to a terminal, for opening by hand: when
+the output goes to a file or a pipe, which may be a log other people can read, the redirect
+file's path is printed instead. The browser, unless `--no-browser` or `[server] open_browser =
+false`, is opened on that redirect file (mode 0600 in a private folder), so `ps` shows only its
+path. A browser that doesn't come back doesn't hold up the engine: it is opened from a thread, as
+Jupyter does. The folder goes when the engine stops, on Ctrl-C and SIGTERM too: uvicorn re-raises
+the signal after its own shutdown, and SIGTERM's default action would skip `finally`, so it
+becomes a normal exit with status 143 (recordings' __main__ does the same; Windows' Ctrl-Break
+likewise). Shutdown waits at most 3 seconds for open responses, since a paused video holds its
+stream open. uvicorn's access log is off and it trusts no proxy headers, since none is in front of
+it; the openai, httpx and chatlas loggers stay at WARNING, as for every command (§6.8, §6.2).
+Without the built frontend (`www/ui.js`), serve refuses before it reads or binds anything (§18,
+§23.5). The web modules are imported only when serve runs, so other commands don't load them, and
+the Shiny app only once `runtime.configure()` has run, as recordings imports it.
 """
 
 from __future__ import annotations
@@ -28,16 +32,18 @@ import sys
 import threading
 import webbrowser
 from pathlib import Path
-
-import uvicorn
-from starlette.types import ASGIApp
+from typing import TYPE_CHECKING
 
 from vid2sub import exitcodes
 from vid2sub.commands._common import CommandError, Output, fail, load
-from vid2sub.web import auth, runtime
-from vid2sub.web.app import WWW, create_app
+from vid2sub.web import WWW
+
+if TYPE_CHECKING:
+    import uvicorn
+    from starlette.types import ASGIApp
 
 HOST = "127.0.0.1"
+GRACE = 3  # seconds a shutdown waits for open responses before it cancels them
 
 
 def add_parser(sub) -> None:
@@ -52,7 +58,7 @@ def add_parser(sub) -> None:
 
 
 def _port(value: str) -> int:
-    if not value.isdigit() or int(value) > 65535:
+    if not (value.isascii() and value.isdigit()) or int(value) > 65535:
         raise argparse.ArgumentTypeError("a port is a number from 0 to 65535")
     return int(value)
 
@@ -85,6 +91,11 @@ def bind(port: int) -> socket.socket:
 
 
 def run(args: argparse.Namespace) -> int:
+    from vid2sub.engines.clients import quiet_libraries
+    from vid2sub.web import auth, runtime
+    from vid2sub.web.app import create_app
+
+    quiet_libraries()  # OPENAI_LOG and CHATLAS_LOG are ignored (§6.8)
     out = Output(False)
     try:
         if not (WWW / "ui.js").is_file():
@@ -94,11 +105,17 @@ def run(args: argparse.Namespace) -> int:
         sock = bind(config.server.port if args.port is None else args.port)
     except CommandError as err:
         return fail(out, err)
-    rt = runtime.build(config)
-    runtime.configure(rt)
-    port = sock.getsockname()[1]
-    token = auth.new_token()
-    app = create_app(rt, token=token, port=port, shiny_app=shiny_app())
+    rt = None
+    try:
+        rt = runtime.build(config)
+        runtime.configure(rt)
+        token = auth.new_token()
+        app = create_app(rt, token=token, port=sock.getsockname()[1], shiny_app=shiny_app())
+    except BaseException:  # a bug: leave nothing running behind the traceback
+        sock.close()
+        if rt is not None:
+            rt.queue.close()
+        raise
     browser = config.server.open_browser and not args.no_browser
     return serve(app, sock, token=token, open_browser=browser, out=out)
 
@@ -107,15 +124,25 @@ def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
           out: Output) -> int:
     """Run `app` on the listening `sock` until Ctrl-C or SIGTERM, with the link printed and, if
     asked, the browser opened on the redirect file. Blocks; call it from the main thread."""
+    import uvicorn
+
+    from vid2sub.web import auth
+
     port = sock.getsockname()[1]
-    link = auth.auth_url(port, token)
-    page = auth.write_redirect(link)
-    atexit.register(shutil.rmtree, page.parent, ignore_errors=True)  # if `finally` never runs
-    previous = signal.signal(signal.SIGTERM, _exit_on_sigterm)
+    previous = {sig: signal.signal(sig, _exit_on_signal) for sig in _EXIT_SIGNALS}
+    page: Path | None = None
     try:
-        out.say(f"vid2sub is running on {HOST}, port {port}. Open the editor with this link "
-                "(it works until vid2sub stops):")
-        out.say(f"  {link}")
+        link = auth.auth_url(port, token)
+        page = auth.write_redirect(link)
+        atexit.register(shutil.rmtree, page.parent, ignore_errors=True)  # if `finally` never runs
+        out.say(f"vid2sub is running on {HOST}, port {port}.")
+        if out.tty:
+            out.say("Open the editor with this link (it works until vid2sub stops):")
+            out.say(f"  {link}")
+        else:  # a file or a pipe: the link would put the token where others may read it
+            out.say("Open the editor by opening this file in a browser (it works until vid2sub "
+                    "stops):")
+            out.say(f"  {page}")
         out.say("Ctrl-C stops vid2sub.")
         if open_browser:
             threading.Thread(target=_open, args=(page, out), name="vid2sub-browser",
@@ -124,22 +151,31 @@ def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
     except KeyboardInterrupt:
         pass
     finally:
-        signal.signal(signal.SIGTERM, previous)
-        shutil.rmtree(page.parent, ignore_errors=True)
+        if page is not None:
+            shutil.rmtree(page.parent, ignore_errors=True)
         sock.close()
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
     return exitcodes.OK
 
 
 def uvicorn_config(app: ASGIApp) -> uvicorn.Config:
     """No access log (§6.8), no proxy headers believed (no proxy is in front of the engine, and
     X-Forwarded-Proto would change the scheme the guards compare Origin with), no Server header,
-    and only warnings from uvicorn itself: the terminal shows vid2sub's lines."""
+    only uvicorn's warnings, and a shutdown that waits GRACE seconds for open responses."""
+    import uvicorn
+
     return uvicorn.Config(app, access_log=False, proxy_headers=False, server_header=False,
-                          log_level="warning", lifespan="on")
+                          log_level="warning", lifespan="on", timeout_graceful_shutdown=GRACE)
 
 
-def _exit_on_sigterm(signum: int, frame: object) -> None:
-    sys.exit(128 + signal.SIGTERM)
+# The signals uvicorn re-raises after its shutdown whose default action skips `finally` and
+# atexit: SIGTERM everywhere, Ctrl-Break on Windows. SIGINT raises KeyboardInterrupt already.
+_EXIT_SIGNALS = [signal.SIGTERM] + ([signal.SIGBREAK] if hasattr(signal, "SIGBREAK") else [])
+
+
+def _exit_on_signal(signum: int, frame: object) -> None:
+    sys.exit(128 + signum)
 
 
 def _open(page: Path, out: Output) -> None:
@@ -148,4 +184,4 @@ def _open(page: Path, out: Output) -> None:
     except webbrowser.Error:
         opened = False
     if not opened:
-        out.warn("vid2sub couldn't open a browser: open the link above by hand")
+        out.warn("vid2sub couldn't open a browser: open what it printed above by hand")

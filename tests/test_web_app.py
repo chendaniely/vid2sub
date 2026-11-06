@@ -121,8 +121,10 @@ def test_the_shells_routes_come_before_the_shiny_app(client, rt, tmp_path):
 
 
 def test_the_guards_wrap_the_whole_engine(client):
-    # HostGuard: a name the engine isn't called by, as DNS rebinding sends it.
+    # HostGuard: a name the engine isn't called by, as DNS rebinding sends it. Only 127.0.0.1,
+    # which the engine binds and its link names, is allowed.
     assert client.get("/healthz", headers={"Host": "evil.example"}).status_code == 400
+    assert client.get("/healthz", headers={"Host": f"localhost:{PORT}"}).status_code == 400
     # WriteGuard: a sign-in sent from a page on another local port, and one that isn't JSON.
     other = client.post("/auth", content=json.dumps({"token": TOKEN}),
                         headers={**JSON, "Origin": "http://127.0.0.1:9999",
