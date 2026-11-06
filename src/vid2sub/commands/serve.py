@@ -9,10 +9,11 @@ the output goes to a file or a pipe, which may be a log other people can read, t
 file's path is printed instead. The browser, unless `--no-browser` or `[server] open_browser =
 false`, is opened on that redirect file (mode 0600 in a private folder), so `ps` shows only its
 path. A browser that doesn't come back doesn't hold up the engine: it is opened from a thread, as
-Jupyter does. The folder goes when the engine stops, on Ctrl-C and SIGTERM too: uvicorn re-raises
-the signal after its own shutdown, and SIGTERM's default action would skip `finally`, so it
-becomes a normal exit with status 143 (recordings' __main__ does the same; Windows' Ctrl-Break
-likewise). Shutdown waits at most 3 seconds for open responses, since a paused video holds its
+Jupyter does, and by a helper process with the §6.7 environment, so the opener never
+inherits the engine's keys. The folder goes when the engine stops, on Ctrl-C and SIGTERM too:
+uvicorn re-raises the signal after its own shutdown, and SIGTERM's default action would skip
+`finally`, so it becomes a normal exit with status 143 (recordings' __main__ does the same;
+Windows' Ctrl-Break likewise). Shutdown waits at most 3 seconds for open responses, since a paused video holds its
 stream open. uvicorn's access log is off and it trusts no proxy headers, since none is in front of
 it; the openai, httpx and chatlas loggers stay at WARNING, as for every command (§6.8, §6.2).
 Without the built frontend (`www/ui.js`), serve refuses before it reads or binds anything (§18,
@@ -28,9 +29,9 @@ import os
 import shutil
 import signal
 import socket
+import subprocess
 import sys
 import threading
-import webbrowser
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -49,6 +50,18 @@ GRACE = 3  # seconds a shutdown waits for open responses before it cancels them
 _EXIT_SIGNALS = [signal.SIGTERM] + ([signal.SIGBREAK] if hasattr(signal, "SIGBREAK") else [])
 # SIGHUP (the terminal window closing) has no handler in uvicorn; it is sent down SIGTERM's path.
 _HANGUP = getattr(signal, "SIGHUP", None)  # Windows has none
+# What the browser opener needs from a desktop session on top of security.child_env(): a minimal
+# environment (spec §6.7) so it never inherits keys, but not so minimal that it can't find a
+# display. The names webbrowser.py reads: XDG_CURRENT_DESKTOP, GNOME_DESKTOP_SESSION_ID,
+# KDE_FULL_SESSION, DISPLAY, WAYLAND_DISPLAY, TERM, BROWSER, and PROGRAMFILES(x86), PROGRAMFILES on
+# Windows; the rest are what xdg-open and the browsers it starts use to reach the session.
+_BROWSER_ENV = (
+    "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR", "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE", "XDG_DATA_DIRS", "XDG_CONFIG_DIRS", "DBUS_SESSION_BUS_ADDRESS",
+    "DESKTOP_SESSION", "GNOME_DESKTOP_SESSION_ID", "KDE_FULL_SESSION", "BROWSER", "TERM",
+    "PROGRAMFILES", "PROGRAMFILES(x86)",
+)
+_OPEN_BROWSER = "import sys, webbrowser; sys.exit(not webbrowser.open(sys.argv[1]))"
 
 
 def add_parser(sub) -> None:
@@ -185,9 +198,17 @@ def _hangup_as_sigterm(signum: int, frame: object) -> None:
 
 
 def _open(page: Path, out: Output) -> None:
+    """Open `page` in the browser from a helper process with the §6.7 environment, since
+    `webbrowser` would start the opener with every variable the engine holds, keys included."""
+    from vid2sub.security import child_env
+
+    env = {**child_env(), **{k: os.environ[k] for k in _BROWSER_ENV if k in os.environ}}
     try:
-        opened = webbrowser.open(page.as_uri())
-    except webbrowser.Error:
+        opened = subprocess.run(
+            [sys.executable, "-I", "-c", _OPEN_BROWSER, page.as_uri()], check=False, env=env,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        ).returncode == 0
+    except OSError:
         opened = False
     if not opened:
         out.warn("vid2sub couldn't open a browser: open what it printed above by hand")

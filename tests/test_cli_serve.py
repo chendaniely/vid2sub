@@ -32,6 +32,7 @@ from vid2sub.commands import serve
 from vid2sub.web import auth, runtime
 
 POSIX = pytest.mark.skipif(os.name == "nt", reason="POSIX signals, terminals and scripts")
+STANDIN = "VID2SUB_STANDIN_API_KEY"  # a stand-in for a key_env variable; its value is not a key
 LINK = re.compile(r"http://127\.0\.0\.1:(\d+)/auth#t=([A-Za-z0-9_-]{43})")
 PAGE_LINE = re.compile(r"^  (.+open\.html)$", re.MULTILINE)  # the redirect file, when not a tty
 # The child: the real `vid2sub serve`, with `www/` pointing at a folder holding a ui.js, and a
@@ -171,12 +172,14 @@ def start(tmp_path):
 
 
 def _browser(tmp_path: Path) -> tuple[Path, Path]:
-    """An executable BROWSER that records the command line it was run with, as `ps` shows it.
-    It writes the record whole (a rename), so it is never seen half-written."""
+    """An executable BROWSER that records the command line it was run with, as `ps` shows it, and
+    the names (never the values) of the environment variables it received. It writes the record
+    whole (a rename), so it is never seen half-written."""
     script = tmp_path / "browser"
     record = tmp_path / "browser.json"
     script.write_text(f"#!{sys.executable}\nimport json, os, sys\n"
-                      f"open({str(record)!r} + '.part', 'w').write(json.dumps(sys.argv))\n"
+                      f"open({str(record)!r} + '.part', 'w').write(\n"
+                      "    json.dumps({'argv': sys.argv, 'env': sorted(os.environ)}))\n"
                       f"os.replace({str(record)!r} + '.part', {str(record)!r})\n",
                       encoding="utf-8")
     script.chmod(0o755)
@@ -322,13 +325,20 @@ def test_a_terminal_gets_the_link_itself(tmp_path):
 def test_the_browser_opens_the_redirect_file_and_ctrl_c_removes_its_folder(start, tmp_path):
     script, record = _browser(tmp_path)
     (port,) = _free_ports(1)
-    serving = start(toml=f"[server]\nport = {port}\n", env={"BROWSER": str(script)})
+    serving = start(toml=f"[server]\nport = {port}\n",
+                    env={"BROWSER": str(script), STANDIN: "not-a-key"})
     assert serving.port == port  # [server] port from vid2sub.toml
     deadline = time.monotonic() + 30
     while not record.exists():
         assert time.monotonic() < deadline, "the browser was never opened"
         time.sleep(0.1)
-    argv = json.loads(record.read_text(encoding="utf-8"))
+    got = json.loads(record.read_text(encoding="utf-8"))
+    argv = got["argv"]
+    # Spec §6.7: children never inherit keys, and the browser is a child of the engine.
+    inherited = STANDIN in got["env"]
+    assert not inherited, f"{STANDIN} was found in the browser's environment"
+    assert "BROWSER" in got["env"] and "PATH" in got["env"]  # the allowlist still gets through
+    assert argv[1].startswith("file:")  # the redirect file's URI, still
     leaked = serving.token in " ".join(argv)
     assert not leaked, "the token reached the browser's command line"  # it names a file
     page = Path(urllib.request.url2pathname(urlsplit(argv[1]).path))
