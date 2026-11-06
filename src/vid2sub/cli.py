@@ -17,6 +17,7 @@ from vid2sub import __version__, exitcodes
 
 COMMAND_MODULES: list[str] = [
     "run", "detect", "translate", "import_", "write", "models", "doctor", "config", "cache",
+    "serve",
 ]
 
 
