@@ -11,6 +11,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 
 import pytest
 from shiny import App, ui
@@ -267,8 +268,13 @@ def read_only_violations(client, monkeypatch, tmp_path, extra=()) -> list[str]:
     process (Popen, system, posix_spawn, fork, exec, multiprocessing), opened a connection, or
     left a file under `tmp_path` with another size or modification time. Still not covered: a
     write that needs neither (`os.truncate`, `os.utime`, `os.link`, `os.symlink`, `os.chmod`)
-    outside `tmp_path`, other libraries' native I/O, and an event loop's own connect calls."""
+    outside `tmp_path`, other libraries' native I/O (`_posixsubprocess.fork_exec`, `os.forkpty`,
+    Windows' native `os.spawn*`), and an event loop's own connect calls. `client` must already be
+    entered (`with ... as client`), so that no request makes an event loop under the trips."""
     seen: list[str] = []
+    # A lazy import during a request (anyio's, say) is rewritten by pytest's import hook, which
+    # makes a __pycache__ folder; with this set it neither writes bytecode nor makes the folder.
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
     real_open = builtins.open
     real_os_open = os.open
 
@@ -398,16 +404,24 @@ _POSIX = pytest.mark.skipif(os.name == "nt", reason="os.fork, exec and posix_spa
     [_writes, _launches, _connects, _os_open_writes,
      pytest.param(_spawns, marks=_POSIX), pytest.param(_spawns_on_path, marks=_POSIX),
      pytest.param(_forks, marks=_POSIX), pytest.param(_execs, marks=_POSIX),
-     pytest.param(_execs_with_env, marks=_POSIX), _multiprocesses],
+     pytest.param(_execs_with_env, marks=_POSIX)],
     ids=["writes a file", "starts a process", "opens a connection", "os.open for writing",
-         "posix_spawn", "posix_spawnp", "fork", "execv", "execve", "multiprocessing"])
+         "posix_spawn", "posix_spawnp", "fork", "execv", "execve"])
 def test_the_check_notices_a_get_route_that_does_one_of_them(route, tmp_path, monkeypatch):
-    client = _wrapped(route)
-    _api(client.app).state.target = str(tmp_path / "out.txt")
-    found = read_only_violations(client, monkeypatch, tmp_path, extra=["/boom"])
+    with _wrapped(route) as client:  # entered first: no request makes an event loop under trips
+        _api(client.app).state.target = str(tmp_path / "out.txt")
+        found = read_only_violations(client, monkeypatch, tmp_path, extra=["/boom"])
     # Tripped by the check itself, not merely failed: port 9 refusing the connection would also
     # end the request in an error.
     assert any("/boom" in line and "during a GET" in line for line in found)
+
+
+def test_the_check_stops_a_multiprocessing_start_before_a_process_exists(tmp_path, monkeypatch):
+    # Only BaseProcess.start's trip does: on `spawn`, the child is made by _posixsubprocess's
+    # fork_exec, which no other trip covers, and the failure comes after the process is running.
+    with _wrapped(_multiprocesses) as client:
+        found = read_only_violations(client, monkeypatch, tmp_path, extra=["/boom"])
+    assert any("/boom" in line and "BaseProcess.start during a GET" in line for line in found)
 
 
 def _truncates(request):
@@ -426,9 +440,9 @@ def test_the_check_notices_a_file_changed_in_place_that_names_alone_miss(route, 
                                                                         monkeypatch):
     target = tmp_path / "out.txt"
     target.write_bytes(b"abc")  # already there: the names before and after are the same
-    client = _wrapped(route)
-    _api(client.app).state.target = str(target)
-    found = read_only_violations(client, monkeypatch, tmp_path, extra=["/boom"])
+    with _wrapped(route) as client:
+        _api(client.app).state.target = str(target)
+        found = read_only_violations(client, monkeypatch, tmp_path, extra=["/boom"])
     assert "files changed" in found
 
 
