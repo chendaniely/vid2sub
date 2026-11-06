@@ -7,6 +7,7 @@ at 8deb039).
 """
 
 import logging
+import mimetypes
 import os
 import re
 import secrets
@@ -18,6 +19,7 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from vid2sub import pipeline
 from vid2sub.web import media
 from vid2sub.web.guards import LOCAL_HOSTS, HostGuard, WriteGuard
 
@@ -319,3 +321,41 @@ def test_a_file_truncated_after_the_check_raises_an_error_that_names_no_path(
         client.get(f"/media/{token}", headers={"Range": "bytes=0-9,100-199"})
     assert _names_nothing(exc.value, caplog, "Secret", "Another", str(tmp_path))
     assert isinstance(exc.value, media.MediaUnreadable)
+
+
+# ---- one fixed table of media types, never the OS's ------------------------------------------
+
+
+@pytest.fixture
+def knows_no_types(monkeypatch):
+    """Python's mimetypes knowing nothing, as on a host with no mime.types and a bare registry."""
+    monkeypatch.setattr(mimetypes, "guess_type", lambda *a, **k: (None, None))
+
+
+@pytest.mark.parametrize("suffix", sorted(pipeline.MEDIA_SUFFIXES))
+def test_every_suffix_the_pipeline_accepts_gets_an_audio_or_video_type_whatever_the_os_holds(
+    suffix, knows_no_types
+):
+    assert (media.media_type(Path(f"a{suffix}")) or "").startswith(("audio/", "video/"))
+
+
+@pytest.mark.parametrize("suffix", [".ts", ".m2ts"])
+def test_mpeg_transport_streams_are_video_mp2t_as_the_iana_registry_has_it(suffix, knows_no_types):
+    assert media.media_type(Path(f"a{suffix}")) == "video/MP2T"
+
+
+def test_the_table_covers_exactly_the_suffixes_the_pipeline_accepts():
+    assert set(media._TYPES) == set(pipeline.MEDIA_SUFFIXES)
+
+
+@pytest.mark.parametrize("name", ["list.m3u", "list.asx", "list.wax", "list.ram", "a.mkv.gz"])
+def test_a_playlist_or_a_compressed_name_gets_no_type_whatever_the_os_holds(name):
+    # This Mac's /etc/apache2/mime.types types .m3u and .asx as audio and video.
+    assert media.media_type(Path(name)) is None
+
+
+def test_a_name_with_url_characters_is_judged_by_its_plain_suffix():
+    # mimetypes.guess_type parses a name as a URL, which would call this video/mp4. The plain
+    # suffix is .html, so it is None.
+    assert media.media_type(Path("ab:x.mp4#.html")) is None
+    assert media.media_type(Path("ab:x.mp4?.svg")) is None

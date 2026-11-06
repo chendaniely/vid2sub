@@ -17,7 +17,6 @@ can already write the user's files. WriteGuard adds /media/'s headers (spec §6.
 
 from __future__ import annotations
 
-import mimetypes
 import os
 import secrets
 import stat
@@ -30,20 +29,36 @@ from starlette.responses import FileResponse, PlainTextResponse, Response
 from starlette.routing import BaseRoute, Route
 from starlette.types import Receive, Scope, Send
 
-# Python's mimetypes table differs by OS and version (it reads the system's own files too), so
-# the types the editor plays and Python may not know are fixed here.
-_TYPES = {".mkv": "video/x-matroska", ".m4a": "audio/mp4"}
+# One fixed table, never the OS's: Python's mimetypes reads the host's own files (and, on Windows,
+# the registry), so a type came and went with the machine. The keys are exactly the suffixes the
+# pipeline accepts (pipeline.MEDIA_SUFFIXES; a test pins it). Each type is the IANA registry's
+# (https://www.iana.org/assignments/media-types/) where it has one, else CPython 3.14's built-in
+# `mimetypes` defaults; `.mkv` and `.m4a` are fixed by the plan.
+_TYPES = {
+    ".mkv": "video/x-matroska",  # plan (the registry has video/matroska, CPython the same)
+    ".mp4": "video/mp4",  # IANA
+    ".m4v": "video/x-m4v",  # CPython's built-in table; not in IANA
+    ".mov": "video/quicktime",  # IANA
+    ".webm": "video/webm",  # CPython's built-in table; not in IANA
+    ".avi": "video/vnd.avi",  # CPython's built-in table; not in IANA
+    ".ts": "video/MP2T",  # IANA (CPython's built-in table has none)
+    ".m2ts": "video/MP2T",  # IANA (CPython's built-in table has none)
+    ".wmv": "video/x-ms-wmv",  # CPython's built-in table; not in IANA
+    ".mp3": "audio/mpeg",  # IANA
+    ".m4a": "audio/mp4",  # plan (IANA: audio/mp4)
+    ".aac": "audio/aac",  # IANA
+    ".flac": "audio/flac",  # IANA
+    ".wav": "audio/vnd.wave",  # CPython's built-in table; not in IANA's audio list
+    ".ogg": "audio/ogg",  # IANA
+    ".opus": "audio/opus",  # IANA
+}
 
 
 def media_type(path: Path) -> str | None:
-    """The type `/media/` serves `path` as, from its name: audio/* or video/*, else None. A
-    compressed name (`.mp4.gz`) is None: the browser would get the archive's bytes."""
-    kind = _TYPES.get(path.suffix.lower())
-    if kind is None:
-        kind, encoding = mimetypes.guess_type(path.name)
-        if encoding is not None:
-            return None
-    return kind if kind and kind.startswith(("audio/", "video/")) else None
+    """The type `/media/` serves `path` as, from its plain suffix: audio/* or video/*, else None.
+    A name is never parsed as a URL, and a compressed name (`.mp4.gz`) is None: the browser would
+    get the archive's bytes."""
+    return _TYPES.get(path.suffix.lower())
 
 
 def _identity(st: os.stat_result) -> tuple[int, int, int]:
