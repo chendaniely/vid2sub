@@ -13,9 +13,12 @@ its hash reveals nothing usable about 256 random bits, so no constant-time compa
 No path reaches a URL, header, error message or log (spec §6.8): errors raised here name none, and
 a failure while the body is sent is re-raised without one (`MediaUnreadable`).
 
-The plan accepts one small window. Starlette's FileResponse opens the file by path just after the
-check, so a swap between the two isn't caught. Only someone who can already write the episode's
-folder can use it, and the next request is refused. WriteGuard adds /media/'s headers (spec §6.3).
+The plan accepts one window. Starlette's FileResponse opens the file by path just after the check
+and reads that open file for the whole response, which can last minutes, so a change between the
+check and the end of the response isn't caught. Only someone who can already write the file or its
+folder can use it, and the next request is refused. "Never served" also holds only to the file
+system's timestamp precision (FAT32 2 s, HFS+ 1 s): a same-size rewrite within that tick of the
+issue keeps its modification time. WriteGuard adds /media/'s headers (spec §6.3).
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from starlette.types import Receive, Scope, Send
 # the registry), so a type came and went with the machine. The keys are exactly the suffixes the
 # pipeline accepts (pipeline.MEDIA_SUFFIXES; a test pins it). Each type is the IANA registry's
 # (https://www.iana.org/assignments/media-types/) where it has one, else CPython 3.14's built-in
-# `mimetypes` defaults; `.mkv` and `.m4a` are fixed by the plan.
+# `mimetypes` defaults; `.mkv`, `.m4a`, `.wav` and `.opus` are the exceptions noted below.
 _TYPES = {
     ".mkv": "video/x-matroska",  # plan (the registry has video/matroska, CPython the same)
     ".mp4": "video/mp4",  # IANA
@@ -51,9 +54,9 @@ _TYPES = {
     ".m4a": "audio/mp4",  # plan (IANA: audio/mp4)
     ".aac": "audio/aac",  # IANA
     ".flac": "audio/flac",  # IANA
-    ".wav": "audio/vnd.wave",  # CPython's built-in table; not in IANA's audio list
+    ".wav": "audio/wav",  # the type browsers recognise (Chrome: "" for CPython's audio/vnd.wave)
     ".ogg": "audio/ogg",  # IANA
-    ".opus": "audio/opus",  # IANA
+    ".opus": "audio/ogg",  # RFC 7845 §9: Ogg Opus files are audio/ogg (IANA also has audio/opus)
 }
 
 

@@ -124,6 +124,8 @@ def test_a_relative_path_gets_no_token_even_when_the_file_exists(tokens, tmp_pat
         ("a.mp4", "video/mp4"),
         ("a.mp3", "audio/mpeg"),
         ("a.webm", "video/webm"),
+        ("a.wav", "audio/wav"),
+        ("a.opus", "audio/ogg"),
         ("a.html", None),
         ("a.svg", None),
         ("a", None),
@@ -131,8 +133,8 @@ def test_a_relative_path_gets_no_token_even_when_the_file_exists(tokens, tmp_pat
     ],
 )
 def test_the_media_type_is_audio_or_video_and_fixed_for_the_editors_formats(name, expected):
-    # Python's mimetypes table differs by OS (it reads the system's files): .mkv and .m4a are
-    # fixed here, since the editor plays both.
+    # Every type comes from one fixed table, never the OS's (which differs by host). .wav and
+    # .opus are the types browsers recognise: Chrome's canPlayType says "" for audio/vnd.wave.
     assert media.media_type(Path(name)) == expected
 
 
