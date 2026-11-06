@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 10: Media tokens and `/media/{token}`, open.
+**Now:** Task 11: The app shell and `vid2sub serve`, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 11's round 11d adds 5 more: from Task 11's close on, 99 lower.
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d adds 5 more: from Task 11's close on, 129 lower.
 
 ## Decisions made while planning (review these)
 
@@ -14394,6 +14394,8 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 1 · **Scenarios:** S27, S43
 
+**Built differently** (the listing's own steps stay as planned): after the Tier 1 review (Standards: 1 Important and 5 Minor; Spec: 3 Important and 3 Minor), round 10a and its re-review (all addressed; 4 Minor, three fixed directly under the cap). (1) No path leaves `/media/` in an exception: a private `FileResponse` subclass turns an `OSError` or `RuntimeError` raised while the body is sent into the path-free `MediaUnreadable`, raised outside the `except` so nothing chains (F1 and the Standards Important; commit a85949e). (2) `media_type` reads one fixed table keyed on `path.suffix.lower()`, equal to `pipeline.MEDIA_SUFFIXES` (a test pins it) and with no `mimetypes`: types from the IANA registry where it has one, else CPython 3.14's built-in table; a name is judged by its plain suffix, never parsed as a URL (F2; 44db48e). (3) `st_mtime_ns` joins the recorded identity, so a same-size rewrite in place is refused; the module docstring says what is refused and the accepted window (F4 and F3; a628df9). (4) `ruff format` on the test file (e900163). (5) Direct fixes under the cap: `.wav` is `audio/wav` and `.opus` is `audio/ogg` (the types browsers recognise; RFC 7845 §9), the docstring's window runs to the end of the response and holds to the file system's timestamp precision, and a stale test comment (e2c0ab9).
+
 **Files:**
 - Create: `src/vid2sub/web/media.py`
 - Test: `tests/test_web_media.py`
@@ -14402,23 +14404,25 @@ Co-Authored-By: <the model's own line>
 - Consumes: Task 8's `guards.HostGuard`, `guards.WriteGuard`, `guards.LOCAL_HOSTS` (the tests
   check `/media/`'s headers through them).
 - Produces: `class MediaTokens: issue(self, path: Path, *, owner: str) -> str` (records
-  `(st_dev, st_ino, st_size)`; `path` must be an absolute path to a regular file whose type is
+  `(st_dev, st_ino, st_size, st_mtime_ns)`; `path` must be an absolute path to a regular file whose type is
   audio/* or video/*, else `ValueError` with a message that names no path); `resolve(self, token:
-  str) -> Path | None` (None when unknown, revoked, or the file was replaced, resized or removed);
+  str) -> Path | None` (None when unknown, revoked, or the file was replaced, resized, rewritten
+  or removed);
   `revoke_owner(self, owner: str) -> None`; `media.media_type(path: Path) -> str | None`
-  (`.mkv` → `video/x-matroska` and `.m4a` → `audio/mp4` fixed, the rest from `mimetypes`, a
-  compressed name refused); `media.route(tokens: MediaTokens) -> BaseRoute` (`GET /media/{token}`
+  (from one fixed table of the `pipeline.MEDIA_SUFFIXES`, never the OS's `mimetypes`; anything
+  else, a compressed name included, is None); `media.route(tokens: MediaTokens) -> BaseRoute` (`GET /media/{token}`
   and HEAD: Range, `Content-Disposition: inline`, 404 for a token that isn't live). Thread-safe;
-  `owner` is the episode's id (plan Decision 1).
+  `owner` is the episode's id (plan Decision 1). `/media/` never raises with a path in it
+  (`media.MediaUnreadable`).
 - Built differently from the design note: `FileResponse(…, content_disposition_type="inline")`
   writes no header unless a `filename` is passed (Starlette 1.10.0's source, 1.9.0 when this was
   listed; `FileResponse` ignores Range only on methods other than GET and HEAD), and a filename would
   put the video's title in a header, so the route passes `headers={"Content-Disposition":
   "inline"}` instead.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
-- [ ] **Step 1: Write the failing test,** `tests/test_web_media.py`. Ruff refuses a literal bidi
+- [x] **Step 1: Write the failing test,** `tests/test_web_media.py`. Ruff refuses a literal bidi
   character in source (PLE2502), so the right-to-left override is written as `‮`.
 
 ```python
@@ -14694,11 +14698,11 @@ def test_every_media_answer_carries_the_media_headers_through_the_guard(tokens, 
         assert r.headers.get_list("content-security-policy") == ["sandbox"]
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_web_media.py -q`. Expected:
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_web_media.py -q`. Expected:
   `E   ImportError: cannot import name 'media' from 'vid2sub.web' (…/src/vid2sub/web/__init__.py)`,
   then `1 error in 0.20s`.
 
-- [ ] **Step 3: Write the code,** `src/vid2sub/web/media.py`:
+- [x] **Step 3: Write the code,** `src/vid2sub/web/media.py`:
 
 ```python
 """Media tokens and `/media/{token}`: the browser plays a video, or its playback audio, by an
@@ -14835,13 +14839,13 @@ def route(tokens: MediaTokens) -> BaseRoute:
     return Route("/media/{token}", serve, methods=["GET"])
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_media.py -q`.
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_media.py -q`.
   Expected: `41 passed`. Then `make check`. Expected: `897 passed, 2 skipped, 4 deselected`
   twice, `All checks passed!`, `no leaks found`. Line length: `uv run python -c "import sys;
   [print(f, i) for f in sys.argv[1:] for i, l in enumerate(open(f, encoding='utf-8'), 1) if
   len(l.rstrip()) > 100]" src/vid2sub/web/media.py tests/test_web_media.py` prints nothing.
 
-- [ ] **Step 5: Each guard fails its tests without its fix.** `git add src/vid2sub/web/media.py
+- [x] **Step 5: Each guard fails its tests without its fix.** `git add src/vid2sub/web/media.py
   tests/test_web_media.py`. Then, for each row, make the change in `media.py`, run
   `uv run pytest tests/test_web_media.py -q`, see it fail, and restore with
   `git checkout -- src/vid2sub/web/media.py`. The last column is what this listing's build saw.
@@ -14865,7 +14869,7 @@ def route(tokens: MediaTokens) -> BaseRoute:
 | no title in headers | `headers={"Content-Disposition": "inline"},` | `filename=issued.path.name, content_disposition_type="inline",` | 1 |
 | inline really sent | the same | `content_disposition_type="inline",` | 1 |
 
-- [ ] **Step 6: See it in a real browser** (optional, and only if Chromium is already installed
+- [x] **Step 6: See it in a real browser** (optional, and only if Chromium is already installed
   for Playwright, as in Task 9 Step 6; how this listing was checked). Make a WebM in a folder whose name has an accent, `‮` and an emoji
   (`ffmpeg -nostdin -i tests/fixtures/speech/jfk-14s.wav -c:a libopus -b:a 48k <that folder>/clip.webm`),
   issue a token for it, serve `HostGuard(WriteGuard(Starlette(routes=[media.route(tokens), <a
@@ -14875,7 +14879,7 @@ def route(tokens: MediaTokens) -> BaseRoute:
   seeked to 10 s with no media error, the request a 206 for `bytes=0-`, no console message, and
   404 once the owner was revoked. Nothing from this step is committed.
 
-- [ ] **Step 7: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 7: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 the browser plays a video or its playback audio by an unguessable token bound to the launch, and a file swapped since is never served
@@ -14911,7 +14915,7 @@ Co-Authored-By: <the model's own line>
   `git commit -F .git/COMMIT_MSG` (both files are staged from Step 5), then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 8: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 8: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist). Worth the reviewers' time: that no
   client-supplied text ever becomes a path (the token only selects a recorded entry); that a
   page, an SVG or anything but audio or video can't be issued a token, whatever the OS's
@@ -40270,3 +40274,8 @@ fi
 | Task 9 (review) | Minor | `src/vid2sub/web/auth.py` | Standards: `POLICY_VIOLATION` is defined in both `auth.py` and `guards.py`; `sign_in`'s type check is awkward | open |
 | Task 9 (review) | Minor | `tests/test_web_auth.py` | Standards: the `auth.js` test's `"eval"` substring match is brittle; the file is densely formatted | open |
 | Task 9 (review) | Minor | `src/vid2sub/web/auth.py` | Couldn't verify: non-Chromium browsers following the redirect file's meta refresh; Snap-packaged Linux browsers, whose private `/tmp` can't see the redirect file (also for Task 11's forward review) | open |
+| Task 10 (review) | Minor | `tests/test_web_media.py` | Spec F6: no test pins GET and HEAD only, the `stat_result` passed in, the stat running off the event loop, or several and suffix ranges; they work in the reviewer's probe | open |
+| Task 10 (review) | Minor | `src/vid2sub/web/media.py` | Standards: `route()` calls the private `tokens._live`; issued tokens are unbounded; `media_type` names a function, a field and a keyword | open |
+| Task 10 (review) | Minor | `tests/test_web_media.py` | Standards: a test loops over three cases instead of parametrizing | open |
+| Task 10 (re-review) | Minor | `src/vid2sub/web/media.py` | Out of scope: `MediaUnreadable` doesn't keep the failing error's type name, so a log can't tell a missing file from a permission change | open |
+| Task 10 (review) | Minor | `src/vid2sub/web/media.py` | Couldn't verify: inode and device numbers on SMB shares; Firefox, for the served types | open |

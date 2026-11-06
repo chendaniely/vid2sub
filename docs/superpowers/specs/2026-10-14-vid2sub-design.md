@@ -62,7 +62,7 @@ test names.
 | S21 | the real Spark's whisper.cpp and Gemma 4 | whisper.cpp's words parse with times; Gemma answers the batch schema with the batch's ids | Phase 1, Task 36 | `tests/test_live_spark.py`, passed 2026-10-15 (§29) | verified |
 | S22 | a Cantonese episode through the Spark's Qwen3-ASR and forced aligner, once local-ai serves them | timed words with the text's punctuation attached; when the Spark is down, no fallback | Phase 2 | a fixture recorded from the Spark; `VID2SUB_LIVE_SPARK=1` | planned |
 | S23 | `vid2sub serve` | binds `127.0.0.1` only and opens the browser through the token redirect; the token never reaches a log or `ps` | Phase 2 | `tests/test_web_auth.py` | planned |
-| S24 | a page on another local port calls the app or opens its websocket | refused: no cookie, no access; a wrong Host gets 400; a wrong Origin closes the websocket with 1008 | Phase 2 | `tests/test_web_guards.py`, `tests/test_web_auth.py` (S23 waits for Task 11, which binds and opens the browser) | built |
+| S24 | a page on another local port calls the app or opens its websocket | refused: no cookie, no access; a wrong Host gets 400; a wrong Origin closes the websocket with 1008 | Phase 2 | `tests/test_web_guards.py`, `tests/test_web_auth.py` | built |
 | S25 | a GET request, or a write that isn't same-origin JSON | a GET never writes anything or starts a process; the write is refused | Phase 2 | `tests/test_web_guards.py` | planned |
 | S26 | a subtitle with `<script>` or ASS overrides, or a hostile file name or YouTube title | shown as plain text; the CSP blocks any script; the caption overlay renders `<i>` only | Phase 2 | Playwright with hostile fixtures | planned |
 | S27 | an M1 episode opened in the editor | the video plays with captions; the cue list follows playback; the spoken word is highlighted | Phase 2 | Playwright against `vid2sub serve --demo`; the exit test | planned |
@@ -550,8 +550,9 @@ Any script on the app's origin controls everything, so nothing hostile may run t
   characters stripped, `:` and other reserved characters replaced, Windows reserved names
   (`CON`, `NUL`, `COM1`… even with an extension) refused, trailing dots and spaces stripped,
   ≤255 bytes. YouTube titles go through it.
-- **Media tokens:** `secrets.token_urlsafe(32)`, bound to the session, recording the file's
-  (dev, inode) so a swapped file isn't served.
+- **Media tokens:** `secrets.token_urlsafe(32)`, bound to the episode (its owner) and the engine's
+  run, recording the file's device, inode, size and modification time so a swapped or rewritten
+  file isn't served.
 
 ### 6.6 Writes
 
