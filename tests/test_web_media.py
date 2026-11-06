@@ -359,3 +359,19 @@ def test_a_name_with_url_characters_is_judged_by_its_plain_suffix():
     # suffix is .html, so it is None.
     assert media.media_type(Path("ab:x.mp4#.html")) is None
     assert media.media_type(Path("ab:x.mp4?.svg")) is None
+
+
+# ---- a file rewritten in place, even at the same size ----------------------------------------
+
+
+def test_a_file_rewritten_in_place_at_the_same_size_is_never_served(tokens, client, tmp_path):
+    # Same device, inode and size: only the modification time shows the bytes changed.
+    video = _file(tmp_path, "clip.mp4")
+    token = tokens.issue(video, owner="ep1")
+    before = video.stat()
+    video.write_bytes(b"\xff" * len(BODY))
+    os.utime(video, ns=(before.st_atime_ns, before.st_mtime_ns + 5_000_000_000))
+    after = video.stat()
+    assert (after.st_ino, after.st_size) == (before.st_ino, before.st_size)
+    assert tokens.resolve(token) is None
+    assert client.get(f"/media/{token}").status_code == 404

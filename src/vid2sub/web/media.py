@@ -6,13 +6,16 @@ because a `/media/` request carries only the launch cookie (plan Decision 1). To
 memory, so they die with the engine, and closing an episode revokes its own (`revoke_owner`).
 Only an absolute path to a regular audio or video file is issued one, as recordings' media route
 allowed only audio and video: never a page or an SVG served from the engine's origin. Each token
-records the file's (device, inode, size), so a file replaced or rewritten since is never served.
-Paths reach no URL, header, error message or log (spec §6.8). A token is looked up in a dict:
+records the file's (device, inode, size, modification time), and a file replaced, resized,
+rewritten or removed since the token was issued is never served. A token is looked up in a dict:
 its hash reveals nothing usable about 256 random bits, so no constant-time compare is needed.
 
-Starlette's FileResponse answers Range with 206 and a range past the end with 416. It opens the
-file by path just after the check, so a swap in that instant isn't caught; whoever can do that
-can already write the user's files. WriteGuard adds /media/'s headers (spec §6.3).
+No path reaches a URL, header, error message or log (spec §6.8): errors raised here name none, and
+a failure while the body is sent is re-raised without one (`MediaUnreadable`).
+
+The plan accepts one small window. Starlette's FileResponse opens the file by path just after the
+check, so a swap between the two isn't caught. Only someone who can already write the episode's
+folder can use it, and the next request is refused. WriteGuard adds /media/'s headers (spec §6.3).
 """
 
 from __future__ import annotations
@@ -61,8 +64,8 @@ def media_type(path: Path) -> str | None:
     return _TYPES.get(path.suffix.lower())
 
 
-def _identity(st: os.stat_result) -> tuple[int, int, int]:
-    return (st.st_dev, st.st_ino, st.st_size)
+def _identity(st: os.stat_result) -> tuple[int, int, int, int]:
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
 
 
 @dataclass(frozen=True)
@@ -70,7 +73,7 @@ class _Issued:
     path: Path
     owner: str
     media_type: str
-    identity: tuple[int, int, int]  # (st_dev, st_ino, st_size) when issued
+    identity: tuple[int, int, int, int]  # (dev, inode, size, mtime_ns) when issued
 
 
 class MediaTokens:
