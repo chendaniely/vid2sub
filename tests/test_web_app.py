@@ -6,15 +6,17 @@ import asyncio
 import builtins
 import io
 import json
+import multiprocessing
 import os
 import re
 import socket
 import subprocess
 
 import pytest
+from shiny import App, ui
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
-from starlette.routing import Route, WebSocketRoute
+from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -224,22 +226,51 @@ def _api(app):
     return app
 
 
+def _inner_routes(app) -> list:
+    """The routes of an ASGI app mounted somewhere: a Starlette app's own, or, for Shiny's `App`,
+    which keeps them on `.starlette_app`, those; an app with neither has none to list."""
+    routes = getattr(app, "routes", None)
+    if routes is None:
+        routes = getattr(getattr(app, "starlette_app", None), "routes", None)
+    return list(routes or [])
+
+
+def _walk(routes, prefix="") -> set[str]:
+    paths = set()
+    for route in routes:
+        path = prefix + route.path
+        methods = getattr(route, "methods", None)
+        if isinstance(route, Mount):  # answers everything under it, and has routes of its own
+            paths.add(path or "/")
+            paths |= _walk(_inner_routes(route.app), path)
+        elif methods is None or {"GET", "HEAD"} & methods:
+            paths.add(re.sub(r"\{[^}]+\}", "x", path or "/"))
+    return paths
+
+
 def get_paths(app) -> list[str]:
     """Every path the built app answers to GET or HEAD, read from its routes at run time, so a
-    route a later task adds is covered too. A mount has no methods and answers everything."""
-    paths = {
-        re.sub(r"\{[^}]+\}", "x", route.path or "/")
-        for route in _api(app).routes
-        if getattr(route, "methods", None) is None or {"GET", "HEAD"} & route.methods
-    }
-    return sorted(paths | {"/no/such/page"})
+    route a later task adds is covered too, mounts included: a mount's own path, and the routes
+    of the app inside it, prefixed by the mount's path (Shiny's session routes among them). A
+    path parameter becomes "x", so a route that needs a live id, such as Shiny's session routes
+    or `/media/{token}`, is reached only as far as its 404 unless the caller passes the real
+    path in `extra`."""
+    return sorted(_walk(_api(app).routes) | {"/no/such/page"})
+
+
+_WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
 
 
 def read_only_violations(client, monkeypatch, tmp_path, extra=()) -> list[str]:
     """What a GET or HEAD to each of the app's paths did that a read must not: opened a file for
-    writing, made, moved or removed one, started a process, or opened a connection."""
+    writing (`open`, or `os.open` with a write flag), made, moved or removed one, started a
+    process (Popen, system, posix_spawn, fork, exec, multiprocessing), opened a connection, or
+    left a file under `tmp_path` with another size or modification time. Still not covered: a
+    write that needs neither (`os.truncate`, `os.utime`, `os.link`, `os.symlink`, `os.chmod`)
+    outside `tmp_path`, other libraries' native I/O, and an event loop's own connect calls."""
     seen: list[str] = []
     real_open = builtins.open
+    real_os_open = os.open
 
     def trip(what):
         def tripped(*args, **kwargs):
@@ -253,23 +284,36 @@ def read_only_violations(client, monkeypatch, tmp_path, extra=()) -> list[str]:
             return trip(f"open(..., {mode!r})")()
         return real_open(file, mode, *args, **kwargs)
 
+    def guarded_os_open(path, flags, *args, **kwargs):
+        if flags & _WRITE_FLAGS:
+            return trip(f"os.open(..., {flags:#x})")()
+        return real_os_open(path, flags, *args, **kwargs)
+
     for owner, name in [
         (subprocess, "Popen"), (os, "system"), (os, "mkdir"), (os, "makedirs"), (os, "remove"),
         (os, "unlink"), (os, "rename"), (os, "replace"), (os, "rmdir"),
+        (os, "posix_spawn"), (os, "posix_spawnp"), (os, "fork"), (os, "execv"), (os, "execve"),
+        (multiprocessing.process.BaseProcess, "start"),
         (socket.socket, "connect"), (socket, "create_connection"),
     ]:
-        monkeypatch.setattr(owner, name, trip(f"{owner.__name__}.{name}"))
+        if hasattr(owner, name):  # the POSIX-only ones are missing on Windows
+            monkeypatch.setattr(owner, name, trip(f"{owner.__name__}.{name}"))
     monkeypatch.setattr(builtins, "open", guarded_open)
     monkeypatch.setattr(io, "open", guarded_open)
-    before = sorted(str(p) for p in tmp_path.rglob("*"))
+    monkeypatch.setattr(os, "open", guarded_os_open)
+
+    def snapshot():
+        return sorted((str(p.relative_to(tmp_path)), (st := p.stat()).st_size, st.st_mtime_ns)
+                      for p in tmp_path.rglob("*"))
+
+    before = snapshot()
     for method in ("get", "head"):
         for path in [*get_paths(client.app), *extra]:
             try:
                 getattr(client, method)(path)
             except OSError as error:  # the trip raises it; a route that fails on it is a violation
                 seen.append(f"{method.upper()} {path}: {error}")
-    after = sorted(str(p) for p in tmp_path.rglob("*"))
-    return [*seen, *(["files changed"] if before != after else [])]
+    return [*seen, *(["files changed"] if before != snapshot() else [])]
 
 
 def test_no_get_or_head_route_writes_a_file_or_starts_a_process(client, rt, tmp_path, monkeypatch):
@@ -307,8 +351,56 @@ async def _connects(request):
     return PlainTextResponse("ok")
 
 
-@pytest.mark.parametrize("route", [_writes, _launches, _connects],
-                         ids=["writes a file", "starts a process", "opens a connection"])
+def _os_open_writes(request):
+    os.close(os.open(request.app.state.target, os.O_WRONLY | os.O_CREAT))
+    return PlainTextResponse("ok")
+
+
+def _spawns(request):
+    os.posix_spawn("/usr/bin/true", ["true"], {})
+    return PlainTextResponse("ok")
+
+
+def _spawns_on_path(request):
+    os.posix_spawnp("true", ["true"], {})
+    return PlainTextResponse("ok")
+
+
+def _forks(request):
+    if (pid := os.fork()) == 0:  # only if the trip is missing: the child must not run tests
+        os._exit(0)
+    os.waitpid(pid, 0)
+    return PlainTextResponse("ok")
+
+
+def _execs(request):
+    os.execv("/no/such/vid2sub/program", ["x"])  # a missing program: never replaces the process
+    return PlainTextResponse("ok")
+
+
+def _execs_with_env(request):
+    os.execve("/no/such/vid2sub/program", ["x"], {})
+    return PlainTextResponse("ok")
+
+
+def _multiprocesses(request):
+    process = multiprocessing.get_context("spawn").Process(target=int)
+    process.start()
+    process.join()
+    return PlainTextResponse("ok")
+
+
+_POSIX = pytest.mark.skipif(os.name == "nt", reason="os.fork, exec and posix_spawn are POSIX")
+
+
+@pytest.mark.parametrize(
+    "route",
+    [_writes, _launches, _connects, _os_open_writes,
+     pytest.param(_spawns, marks=_POSIX), pytest.param(_spawns_on_path, marks=_POSIX),
+     pytest.param(_forks, marks=_POSIX), pytest.param(_execs, marks=_POSIX),
+     pytest.param(_execs_with_env, marks=_POSIX), _multiprocesses],
+    ids=["writes a file", "starts a process", "opens a connection", "os.open for writing",
+         "posix_spawn", "posix_spawnp", "fork", "execv", "execve", "multiprocessing"])
 def test_the_check_notices_a_get_route_that_does_one_of_them(route, tmp_path, monkeypatch):
     client = _wrapped(route)
     _api(client.app).state.target = str(tmp_path / "out.txt")
@@ -316,3 +408,53 @@ def test_the_check_notices_a_get_route_that_does_one_of_them(route, tmp_path, mo
     # Tripped by the check itself, not merely failed: port 9 refusing the connection would also
     # end the request in an error.
     assert any("/boom" in line and "during a GET" in line for line in found)
+
+
+def _truncates(request):
+    os.truncate(request.app.state.target, 1)  # no open(): only the size tells
+    return PlainTextResponse("ok")
+
+
+def _touches(request):
+    os.utime(request.app.state.target, ns=(1, 1))  # no open(): only the mtime tells
+    return PlainTextResponse("ok")
+
+
+@pytest.mark.parametrize("route", [_truncates, _touches],
+                         ids=["changes the size", "changes the mtime"])
+def test_the_check_notices_a_file_changed_in_place_that_names_alone_miss(route, tmp_path,
+                                                                        monkeypatch):
+    target = tmp_path / "out.txt"
+    target.write_bytes(b"abc")  # already there: the names before and after are the same
+    client = _wrapped(route)
+    _api(client.app).state.target = str(target)
+    found = read_only_violations(client, monkeypatch, tmp_path, extra=["/boom"])
+    assert "files changed" in found
+
+
+def _writes_in_session(request):
+    with open(request.app.state.target, "w") as f:
+        f.write("x")
+    return PlainTextResponse("ok")
+
+
+def test_the_sweep_reaches_a_route_inside_the_mounted_app(rt, tmp_path, monkeypatch):
+    # Shiny's own app has GET /session/{id}/{action}/{subpath}, inside the mount.
+    inside = Starlette(routes=[Route("/session/{rest:path}", _writes_in_session),
+                               Route("/{rest:path}", _page)])
+    inside.state.target = str(tmp_path / "out.txt")
+    with TestClient(create_app(rt, token=TOKEN, port=PORT, shiny_app=inside),
+                    base_url=BASE) as c:
+        _sign_in(c)
+        assert "/session/x" in get_paths(c.app)
+        found = read_only_violations(c, monkeypatch, tmp_path)
+    assert any("/session/x" in line for line in found)
+
+
+def test_a_real_shiny_app_is_swept_through_its_session_route_and_reads_only(rt, tmp_path,
+                                                                           monkeypatch):
+    shiny = App(ui.page_fluid(), None)
+    with TestClient(create_app(rt, token=TOKEN, port=PORT, shiny_app=shiny), base_url=BASE) as c:
+        _sign_in(c)
+        assert "/session/x/x/x" in get_paths(c.app)
+        assert read_only_violations(c, monkeypatch, tmp_path) == []
