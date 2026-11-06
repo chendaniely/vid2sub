@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 11: The app shell and `vid2sub serve`, open.
+**Now:** Task 12: The frontend scaffold and the shinyreact server, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d adds 5 more: from Task 11's close on, 129 lower.
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one.
 
 ## Decisions made while planning (review these)
 
@@ -14960,7 +14960,9 @@ Co-Authored-By: <the model's own line>
 
 ### Task 11: The app shell and `vid2sub serve`
 
-**Tier:** 1 · **Scenarios:** S23
+**Tier:** 1 · **Scenarios:** S23, S25
+
+**Built differently** (the listing's own steps stay as planned): (1) Round 11d (2a94df5): the sweep's handler catches `OSError` and the launching route is a sync `def`, for ruff; the connection case needs the trip's own "during a GET" on the `/boom` line (port 9 refusing the connection also ended the request in an error); Step 18c's socket row doesn't hold, since either socket trip alone suffices and both removed fails 1. (2) Round 11e, after the Tier 1 review (Standards approved with 9 Minor; Spec: 3 Important and 4 Minor) and one re-review (all addressed; 3 new Important and 5 Minor, fixed directly under the cap or listed): the browser is opened by a `python -I` helper given `security.child_env()` plus `serve._BROWSER_ENV`, with spec §6.7's environment, not by `webbrowser` in the engine (Spec S1; 4c06331); SIGHUP is sent down SIGTERM's path, so the folder goes when the terminal window closes (S4; 8825a88); the read-only sweep reaches inside mounts, trips `os.open` for writing, `posix_spawn(p)`, `fork`, `execv(e)` and `BaseProcess.start`, and compares sizes and times (S2, S5; acdb707); a test shows the queue closed off the event loop (S6; e11b9cb); the serve tests keep the live token out of assertion text, reset the runtime in a `finally` and name what they assert (Standards S1 to S3; ad8cae8, a669304); docstring reflows (a4850a6, a827d25, 0497825). (3) Direct fixes under the cap: `nohup` keeps working, since the SIGHUP handler is installed only when SIGHUP wasn't ignored on entry; `_BROWSER_ENV` drops `TERM` and gains what xdg-open and the browsers read; the pty test's message and `Serving`'s repr no longer carry the token (N1, N4, N5, `:308`; ff609dd); the sweep sets `sys.dont_write_bytecode` so it passes when its test runs alone, its trip tests enter their client first so they hold on Windows, and the multiprocessing trip has its own case (N2, N3, N7; f6b7ac9).
 
 **Files:**
 - Create: `src/vid2sub/web/runtime.py`, `src/vid2sub/web/app.py`, `src/vid2sub/commands/serve.py`
@@ -15006,15 +15008,20 @@ Co-Authored-By: <the model's own line>
   redirect file whose path `serve` prints on the line after "Open the editor by opening this
   file in a browser" (Task 12's e2e conftest does).
 
+- Added by round 11e and the direct fixes (Built differently above):
+  - SIGHUP (POSIX) exits 143 and removes the folder, unless it was ignored on entry (`nohup`), which `serve` keeps;
+  - the browser is opened by a `python -I` helper given `security.child_env()` plus `serve._BROWSER_ENV`, waited on from the browser thread;
+  - `tests/test_web_app.py`'s `get_paths(app) -> list[str]` and `read_only_violations(client, monkeypatch, tmp_path, extra=()) -> list[str]` are the sweep later tasks import (`from test_web_app import ...`), on a client already entered with `with`.
+
 Round 11c is the independent Tier 1 review this listing's build had: its two Important findings
 and the reading for Dan, fixed with tests that failed first. Build it as a round, as written, so
 the commits match the listing.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
 #### Round 11a: the runtime and the app shell
 
-- [ ] **Step 1: Write the failing test,** `tests/test_web_app.py`:
+- [x] **Step 1: Write the failing test,** `tests/test_web_app.py`:
 
 ```python
 """The app shell: `/healthz`, `/auth` and `/media/` come before the Shiny app mounted at "/", the
@@ -15206,10 +15213,10 @@ def test_the_cache_follows_cache_max_gb_from_vid2sub_toml(tmp_path, monkeypatch)
         rt.queue.close()
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_web_app.py -q`. Expected:
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_web_app.py -q`. Expected:
   `E   ImportError: cannot import name 'runtime' from 'vid2sub.web' (…/src/vid2sub/web/__init__.py)`,
   then `1 error in 0.34s`.
-- [ ] **Step 3: Write the code,** `src/vid2sub/web/runtime.py`:
+- [x] **Step 3: Write the code,** `src/vid2sub/web/runtime.py`:
 
 ```python
 """The engine's running parts, made once per launch by `vid2sub serve` and read by the Shiny
@@ -15333,14 +15340,14 @@ def create_app(rt: Runtime, *, token: str, port: int, shiny_app: ASGIApp) -> ASG
                      LOCAL_HOSTS)
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_app.py -q`. Expected:
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_app.py -q`. Expected:
   `22 passed`. Then `make check`. Expected: the suite's line, twice,
   `919 passed, 2 skipped, 4 deselected` with nothing failed (873 before this task when this
   listing was built), `All checks passed!` and `no leaks found`. Line length, which ruff's
   default rules leave out: `uv run python -c "import sys; [print(f, i) for f in sys.argv[1:] for i, l in enumerate(open(f, encoding='utf-8'), 1) if len(l.rstrip()) > 100]" src/vid2sub/web/runtime.py src/vid2sub/web/app.py
   tests/test_web_app.py` prints nothing.
 
-- [ ] **Step 5: Each guard fails its tests without its fix.** `git add src/vid2sub/web/runtime.py src/vid2sub/web/app.py tests/test_web_app.py`. Then,
+- [x] **Step 5: Each guard fails its tests without its fix.** `git add src/vid2sub/web/runtime.py src/vid2sub/web/app.py tests/test_web_app.py`. Then,
   for each row, make the change in `src/vid2sub/web/app.py`, run `uv run pytest tests/test_web_app.py -q`, see it fail, and
   restore with `git checkout -- <the file>`. The last column is what this listing's build saw.
 
@@ -15354,7 +15361,7 @@ def create_app(rt: Runtime, *, token: str, port: int, shiny_app: ASGIApp) -> ASG
 | the queue closed | `await asyncio.to_thread(rt.queue.close)  # …` | `pass` | 1 |
 | /healthz says only ok | `return {"ok": True}` | `return {"ok": True, "port": port}` | 2 |
 
-- [ ] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 the app shell serves /auth, /healthz and /media/ ahead of the Shiny app, inside HostGuard, WriteGuard and TokenGuard
@@ -15389,7 +15396,7 @@ Co-Authored-By: <the model's own line>
 
 #### Round 11b: `vid2sub serve`
 
-- [ ] **Step 7: Write the failing test,** `tests/test_cli_serve.py`. It runs the real CLI in a
+- [x] **Step 7: Write the failing test,** `tests/test_cli_serve.py`. It runs the real CLI in a
   child process, with a stand-in Shiny app, since `vid2sub.web.server` is Task 12's:
 
 ```python
@@ -15669,10 +15676,10 @@ def test_open_browser_false_or_no_browser_opens_nothing(start, tmp_path, args, t
     serving.stop()
 ```
 
-- [ ] **Step 8: Run it; watch it fail.** `uv run pytest tests/test_cli_serve.py -q`. Expected:
+- [x] **Step 8: Run it; watch it fail.** `uv run pytest tests/test_cli_serve.py -q`. Expected:
   `E   ImportError: cannot import name 'serve' from 'vid2sub.commands'
   (…/src/vid2sub/commands/__init__.py)`, then `1 error`.
-- [ ] **Step 9: Write the code,** `src/vid2sub/commands/serve.py`:
+- [x] **Step 9: Write the code,** `src/vid2sub/commands/serve.py`:
 
 ```python
 """`vid2sub serve`: start the local web app on 127.0.0.1 and open the browser through the launch
@@ -15845,12 +15852,12 @@ COMMAND_MODULES: list[str] = [
 ]
 ```
 
-- [ ] **Step 10: Run the checks; they pass.** `uv run pytest tests/test_cli_serve.py -q`.
+- [x] **Step 10: Run the checks; they pass.** `uv run pytest tests/test_cli_serve.py -q`.
   Expected: `13 passed in 7.74s` or so (each child process starts the CLI). Then `make check`.
   Expected: `932 passed, 2 skipped, 4 deselected` twice, `All checks passed!`,
   `no leaks found`; the line-length check on the three files prints nothing.
 
-- [ ] **Step 11: Each guard fails its tests without its fix.** `git add src/vid2sub/commands/serve.py src/vid2sub/cli.py tests/test_cli_serve.py`. Then,
+- [x] **Step 11: Each guard fails its tests without its fix.** `git add src/vid2sub/commands/serve.py src/vid2sub/cli.py tests/test_cli_serve.py`. Then,
   for each row, make the change in `src/vid2sub/commands/serve.py`, run `uv run pytest tests/test_cli_serve.py -q`, see it fail, and
   restore with `git checkout -- <the file>`. The last column is what this listing's build saw.
 
@@ -15868,7 +15875,7 @@ COMMAND_MODULES: list[str] = [
 | [server] port | `the same` | `sock = bind(args.port or 0)` | 1 |
 | the frontend first | `the `if not (WWW / "ui.js").is_file():` check before `config = load(args)`` | `after it` | 1 |
 
-- [ ] **Step 12: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 12: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(cli): 🤖 vid2sub serve binds 127.0.0.1 only, prints the sign-in link and opens the browser on a redirect file, never the token
@@ -15923,7 +15930,7 @@ URL for opening by hand"; the brief said the terminal only, which this round doe
 ones (the guards allowed localhost and ::1; nothing was cleaned up after a failure past `bind`;
 the SIGTERM handler's window; `--port ٣`; every command imported FastAPI; two test flakes).
 
-- [ ] **Step 13: Write the failing tests.** Replace `tests/test_cli_serve.py` with:
+- [x] **Step 13: Write the failing tests.** Replace `tests/test_cli_serve.py` with:
 
 ```python
 """`vid2sub serve` binds 127.0.0.1 only, prints the sign-in link to a terminal and only there,
@@ -16330,7 +16337,7 @@ def test_open_browser_false_or_no_browser_opens_nothing(start, tmp_path, args, t
     assert client.get("/healthz", headers={"Host": f"localhost:{PORT}"}).status_code == 400
 ```
 
-- [ ] **Step 14: Run them; watch them fail.** `uv run pytest tests/test_cli_serve.py
+- [x] **Step 14: Run them; watch them fail.** `uv run pytest tests/test_cli_serve.py
   tests/test_web_app.py -q`. Expected, after about 7 minutes (each child-process test waits 60 s
   for the redirect file's path, which round 11b's `serve` doesn't print):
   `FAILED tests/test_cli_serve.py::test_serve_keeps_the_model_libraries_loggers_at_warning`,
@@ -16343,7 +16350,7 @@ def test_open_browser_false_or_no_browser_opens_nothing(start, tmp_path, args, t
   `::test_open_browser_false_or_no_browser_opens_nothing` (both),
   `FAILED tests/test_web_app.py::test_the_guards_wrap_the_whole_engine`, then
   `12 failed, 29 passed in 422.29s (0:07:02)`.
-- [ ] **Step 15: Write the code.** Replace `src/vid2sub/web/__init__.py` with:
+- [x] **Step 15: Write the code.** Replace `src/vid2sub/web/__init__.py` with:
 
 ```python
 """The local web app: the editor's backend, the app shell and its server (spec §19)."""
@@ -16601,12 +16608,12 @@ def _open(page: Path, out: Output) -> None:
         out.warn("vid2sub couldn't open a browser: open what it printed above by hand")
 ```
 
-- [ ] **Step 16: Run the checks; they pass.** `uv run pytest tests/test_cli_serve.py
+- [x] **Step 16: Run the checks; they pass.** `uv run pytest tests/test_cli_serve.py
   tests/test_web_app.py -q`. Expected: `41 passed in 21.02s` or so. Then `make check`. Expected:
   `938 passed, 2 skipped, 4 deselected` twice, `All checks passed!`, `no leaks found`; the
   line-length check on the changed files prints nothing.
 
-- [ ] **Step 17: Each guard fails its tests without its fix.** `git add src/vid2sub/commands/serve.py src/vid2sub/web/__init__.py src/vid2sub/web/app.py tests/test_cli_serve.py tests/test_web_app.py`. Then,
+- [x] **Step 17: Each guard fails its tests without its fix.** `git add src/vid2sub/commands/serve.py src/vid2sub/web/__init__.py src/vid2sub/web/app.py tests/test_cli_serve.py tests/test_web_app.py`. Then,
   for each row, make the change in `src/vid2sub/commands/serve.py` (the last row: `src/vid2sub/web/app.py`), run `uv run pytest tests/test_cli_serve.py tests/test_web_app.py -q`, see it fail, and
   restore with `git checkout -- <the file>`. The last column is what this listing's build saw.
 
@@ -16619,7 +16626,7 @@ def _open(page: Path, out: Output) -> None:
 | cleanup after a failure | `the three cleanup lines in `except BaseException:`` | ``raise` alone` | 1 |
 | 127.0.0.1 only (Host) | `HOSTS = frozenset({"127.0.0.1"})` | `HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})` | 1 |
 
-- [ ] **Step 18: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 18: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 fix(cli): 🤖 vid2sub serve stops within seconds of Ctrl-C even with a video streaming, prints the token only to a terminal, and answers only to 127.0.0.1
@@ -16669,7 +16676,7 @@ Added at Task 8's close (its Spec review: the guard tests prove S25's write half
 holds the other half, so S25 is `built` at Task 11's close. Shiny's bookmark store is checked in
 Task 12, where the Shiny app is built.
 
-- [ ] **Step 18a: Write the failing tests.** Append to `tests/test_web_app.py` (add `builtins`,
+- [x] **Step 18a: Write the failing tests.** Append to `tests/test_web_app.py` (add `builtins`,
   `io`, `os`, `re`, `socket` and `subprocess` to its imports, and `HostGuard`, `WriteGuard`,
   `LOCAL_HOSTS` to its `vid2sub.web.guards` import):
 
@@ -16776,13 +16783,13 @@ def test_the_check_notices_a_get_route_that_does_one_of_them(route, tmp_path, mo
     assert any("/boom" in line for line in found)
 ```
 
-- [ ] **Step 18b: Run them; watch them fail.** Write the block above without the two helper
+- [x] **Step 18b: Run them; watch them fail.** Write the block above without the two helper
   functions `get_paths` and `read_only_violations` first (the tests only), and run
   `uv run pytest tests/test_web_app.py -q`. Expected: `5 failed` with
   `NameError: name 'read_only_violations' is not defined` (and `get_paths`). Then add the two
   functions. No production code changes in this round: the app already reads only.
 
-- [ ] **Step 18c: Run the checks; they pass, and each part of the check is needed.**
+- [x] **Step 18c: Run the checks; they pass, and each part of the check is needed.**
   `uv run pytest tests/test_web_app.py -q`: the file's earlier count plus 5, nothing failed. Then `make check`. Expected: the suite's
   line, twice, `943 passed, 2 skipped, 4 deselected` (938 before this round), `All checks passed!`,
   `no leaks found`; the line-length check on the file prints nothing. `git add
@@ -16797,7 +16804,7 @@ def test_the_check_notices_a_get_route_that_does_one_of_them(route, tmp_path, mo
 | the routes are enumerated | `if getattr(route, "methods", None) is None or {"GET", "HEAD"} & route.methods` | `if False` | 1 |
 | a route that writes | in `app.py`, `/healthz`'s handler | also writes a file in the working folder | 1 |
 
-- [ ] **Step 18d: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 18d: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 test(web): 🤖 no GET or HEAD route of the built app writes a file, starts a process or connects out
@@ -16820,7 +16827,7 @@ Co-Authored-By: <the model's own line>
   `git commit -F .git/COMMIT_MSG` (the file is staged from Step 18c), then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 19: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 19: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist). Worth the reviewers' time: that the token
   reaches no log, response, URL path or query, file name or command line (`ps`), and is printed
   only to a terminal; that nothing binds or answers beyond 127.0.0.1 (the socket, `HOSTS`); that
@@ -16896,6 +16903,16 @@ Co-Authored-By: <the model's own line>
   `tests/test_web_server.py` that Shiny's bookmark store is disabled (`server.app`'s bookmark
   store is `"disable"`, so no session state is written to disk), with its own failing-first step,
   guard check and commit, in this task's form; S25's proof names it with Task 11's tests.
+- Adds (the other half of S25, moved here from Task 11's close since it needs `server.app`): a test
+  in `tests/test_web_server.py` with its own failing-first step, guard check and commit, in this
+  task's form; S25's proof names it. It does `from test_web_app import get_paths,
+  read_only_violations`, enters a client with `with` on `create_app(rt, token=..., port=...,
+  shiny_app=server.app)` signed in as Task 11's tests do, asserts that `get_paths` lists a path
+  under Shiny's session route (so a silent miss of the mount's routes fails), and then that
+  `read_only_violations(...) == []`. Shiny's session routes are reached with a made-up id, so only
+  as far as their 404; no Phase 2 task adds a download or dynamic route, and a task that does adds a
+  live-session case to `extra`. Its e2e harness stops the server with `terminate`/`kill`, never
+  SIGHUP.
 - Consumes: Task 11's `runtime.current()`, `app.create_app`, `vid2sub.web.WWW`, and `serve`
   (which imports `server.app`); Task 5's `Capabilities`; `engines.clients.list_models`,
   `KeyRing`; `config.is_local`.
@@ -37494,7 +37511,7 @@ Co-Authored-By: <the model's own line>
   Cancel of the running job never interrupts a chunk and stops before the next one, and every
   tab shows it stopping; that the demo runs only its own clip and writes only in its folder; that
   `jobs_submit` refuses anything but full paths, whole, echoing nothing; that a failed job shows
-  its reason and fix; that Pages has no jobs; that the live region announces one line, politely.
+  its reason and fix; that Pages has no jobs; that the live region announces one line, politely. Also: a second Ctrl-C (uvicorn's force exit) skips the lifespan, so the queue isn't closed, and with the pipeline as the runner a running job's child and scratch folder could outlive the engine (Task 11's Spec S7); decide whether `serve.run` also closes `rt.queue` after `serve()` returns or raises (`Queue.close` is safe to call twice).
   The forward review over Tasks 21, 22 and 23 and Phase 3's Tasks 3, 5 and 6 (Task 21's CI e2e
   job runs `tests/e2e/test_jobs.py`, which makes its clip with ffmpeg; Task 22's README says the
   Jobs page takes full paths and uses the session's targets and formats from Settings; Phase
@@ -40279,3 +40296,10 @@ fi
 | Task 10 (review) | Minor | `tests/test_web_media.py` | Standards: a test loops over three cases instead of parametrizing | open |
 | Task 10 (re-review) | Minor | `src/vid2sub/web/media.py` | Out of scope: `MediaUnreadable` doesn't keep the failing error's type name, so a log can't tell a missing file from a permission change | open |
 | Task 10 (review) | Minor | `src/vid2sub/web/media.py` | Couldn't verify: inode and device numbers on SMB shares; Firefox, for the served types | open |
+| Task 11 (review) | Minor | `src/vid2sub/commands/serve.py` | Standards S4: the host literal is written in three places (`serve.HOST`, `app.HOSTS`, `guards.LOCAL_HOSTS`) | open |
+| Task 11 (review) | Minor | `src/vid2sub/commands/serve.py` | Standards S6: module docstrings don't name who decided, and `serve.py`'s mixes how into why | open |
+| Task 11 (review) | Minor | `src/vid2sub/commands/serve.py` | Standards S9: the `atexit` hook is never unregistered; `Output` is used from the browser thread | open |
+| Task 11 (re-review) | Minor | `tests/test_web_app.py` | N6: `_inner_routes` doesn't unwrap middleware, so a mount wrapped in middleware is listed by its own path only | open |
+| Task 11 (re-review) | Minor | `src/vid2sub/security.py` | Out of scope: `_ENV_KEEP` passes proxy variables, which may carry credentials, to every child (not new); `get_paths` is re-read per method, so a route registered during the GET pass is swept by HEAD only | open |
+| Task 11 (review) | Minor | `src/vid2sub/commands/serve.py` | Couldn't verify: Windows (signals, SIGBREAK, `os.startfile`'s environment, `SO_EXCLUSIVEADDRUSE`); the environment macOS LaunchServices gives a browser not yet running; a Linux desktop for the helper's environment (xdg-open, KDE, snap and flatpak browsers); a `/media/` read stalled on a network share past `GRACE` (anyio's worker threads aren't daemons) | open |
+| Task 11 (review) | Minor | `src/vid2sub/commands/serve.py` | A failed browser open shows only as the warning, because the helper's stderr is discarded | open |

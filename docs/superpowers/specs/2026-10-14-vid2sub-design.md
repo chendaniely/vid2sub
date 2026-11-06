@@ -61,9 +61,9 @@ test names.
 | S20 | `vid2sub doctor` | tools, versions and endpoints, with keys by presence only | Phase 1, Task 34 | `tests/test_doctor_config.py::test_doctor_reports_keys_by_presence_only` | built |
 | S21 | the real Spark's whisper.cpp and Gemma 4 | whisper.cpp's words parse with times; Gemma answers the batch schema with the batch's ids | Phase 1, Task 36 | `tests/test_live_spark.py`, passed 2026-10-15 (§29) | verified |
 | S22 | a Cantonese episode through the Spark's Qwen3-ASR and forced aligner, once local-ai serves them | timed words with the text's punctuation attached; when the Spark is down, no fallback | Phase 2 | a fixture recorded from the Spark; `VID2SUB_LIVE_SPARK=1` | planned |
-| S23 | `vid2sub serve` | binds `127.0.0.1` only and opens the browser through the token redirect; the token never reaches a log or `ps` | Phase 2 | `tests/test_web_auth.py` | planned |
+| S23 | `vid2sub serve` | binds `127.0.0.1` only and opens the browser through the token redirect; the token never reaches a log or `ps` | Phase 2 | `tests/test_cli_serve.py`, `tests/test_web_app.py`, `tests/test_web_auth.py` | built |
 | S24 | a page on another local port calls the app or opens its websocket | refused: no cookie, no access; a wrong Host gets 400; a wrong Origin closes the websocket with 1008 | Phase 2 | `tests/test_web_guards.py`, `tests/test_web_auth.py` | built |
-| S25 | a GET request, or a write that isn't same-origin JSON | a GET never writes anything or starts a process; the write is refused | Phase 2 | `tests/test_web_guards.py` | planned |
+| S25 | a GET request, or a write that isn't same-origin JSON | a GET never writes anything or starts a process; the write is refused | Phase 2 | `tests/test_web_guards.py`, `tests/test_web_app.py` (the read-only sweep; Task 12 adds the bookmark assertion and the sweep against the real Shiny app to `tests/test_web_server.py`) | built |
 | S26 | a subtitle with `<script>` or ASS overrides, or a hostile file name or YouTube title | shown as plain text; the CSP blocks any script; the caption overlay renders `<i>` only | Phase 2 | Playwright with hostile fixtures | planned |
 | S27 | an M1 episode opened in the editor | the video plays with captions; the cue list follows playback; the spoken word is highlighted | Phase 2 | Playwright against `vid2sub serve --demo`; the exit test | planned |
 | S28 | a source cue edited, split, merged, nudged, inserted or deleted, then undone | the pure `subs.edit` rules apply; translations re-point and are flagged (§13.5) | Phase 2 | `tests/test_edit.py`; Playwright | planned |
@@ -487,7 +487,7 @@ council's red team (§27) found three blockers in the first draft; the rules bel
   so it never reaches the server's logs or the command line (`ps`). The `/auth` page's script
   (served as a file, no inline script) posts the token to `/auth` and receives an `HttpOnly`,
   `SameSite=Strict` cookie whose name includes the port (`vid2sub-8765`), then replaces the URL.
-  The CLI also prints that URL for opening by hand.
+  The CLI also prints that URL for opening by hand, only to a terminal; any other output gets the redirect file's path instead (Phase 2 Decision 12).
   Cookies ignore ports, so a server the browser visits on another port of 127.0.0.1 receives the
   cookie and could replay it; the token's protection assumes no hostile local server (Phase 2
   Decision 34).
@@ -570,7 +570,7 @@ Any script on the app's origin controls everything, so nothing hostile may run t
 
 ### 6.7 Subprocesses
 
-`media/tools.py` runs every child process:
+`media/tools.py` runs every child process (the one exception is the browser `vid2sub serve` opens: `serve` starts it through a `python -I` helper with the same allowlist, plus the desktop-session variables a browser opener needs (Phase 2 Task 11); the rule that children never inherit keys holds for it too):
 - **absolute executable paths**, resolved by `doctor`'s rules (`shutil.which`, then known install
   locations such as `/opt/homebrew/bin`), never the current directory;
 - **argument lists, no shell; `cwd` = the job's scratch directory**, created by `mkdtemp`
