@@ -69,8 +69,9 @@ def test_a_live_token_resolves_to_its_file(tokens, tmp_path):
     assert tokens.resolve(tokens.issue(video, owner="ep1")) == video
 
 
-@pytest.mark.parametrize("name", ["page.html", "image.svg", "notes.txt", "noextension",
-                                  "clip.mp4.gz", "clip.mkv.zip"])
+@pytest.mark.parametrize(
+    "name", ["page.html", "image.svg", "notes.txt", "noextension", "clip.mp4.gz", "clip.mkv.zip"]
+)
 def test_only_an_audio_or_video_file_gets_a_token(tokens, tmp_path, name):
     # Never a page or an SVG served from the engine's own origin (as in recordings' route).
     path = _file(tmp_path, name, b"<script>alert(1)</script>")
@@ -96,8 +97,11 @@ def test_a_fifo_gets_no_token(tokens, tmp_path):
 
 def test_a_missing_or_relative_path_gets_no_token_and_the_error_names_no_path(tokens, tmp_path):
     # Spec §6.5: accepted paths are fully qualified. Spec §6.8: an error may be logged.
-    for path in (tmp_path / "secret-title.mp4", Path("secret-title.mp4"),
-                 tmp_path / "secret\x00title.mp4"):
+    for path in (
+        tmp_path / "secret-title.mp4",
+        Path("secret-title.mp4"),
+        tmp_path / "secret\x00title.mp4",
+    ):
         with pytest.raises(ValueError) as exc:
             tokens.issue(path, owner="ep1")
         assert "secret" not in str(exc.value) and str(tmp_path) not in str(exc.value)
@@ -113,9 +117,18 @@ def test_a_relative_path_gets_no_token_even_when_the_file_exists(tokens, tmp_pat
 
 @pytest.mark.parametrize(
     "name, expected",
-    [("a.mkv", "video/x-matroska"), ("A.MKV", "video/x-matroska"), ("a.m4a", "audio/mp4"),
-     ("a.mp4", "video/mp4"), ("a.mp3", "audio/mpeg"), ("a.webm", "video/webm"),
-     ("a.html", None), ("a.svg", None), ("a", None), ("a.mp4.gz", None)],
+    [
+        ("a.mkv", "video/x-matroska"),
+        ("A.MKV", "video/x-matroska"),
+        ("a.m4a", "audio/mp4"),
+        ("a.mp4", "video/mp4"),
+        ("a.mp3", "audio/mpeg"),
+        ("a.webm", "video/webm"),
+        ("a.html", None),
+        ("a.svg", None),
+        ("a", None),
+        ("a.mp4.gz", None),
+    ],
 )
 def test_the_media_type_is_audio_or_video_and_fixed_for_the_editors_formats(name, expected):
     # Python's mimetypes table differs by OS (it reads the system's files): .mkv and .m4a are
@@ -242,8 +255,9 @@ def test_the_file_name_is_in_no_header_and_the_file_plays_inline(tokens, client,
     ],
     ids=["cjk", "accents-and-bidi", "emoji"],
 )
-def test_a_path_with_non_ascii_bidi_or_emoji_characters_plays(tokens, client, tmp_path, caplog,
-                                                              folder, name):
+def test_a_path_with_non_ascii_bidi_or_emoji_characters_plays(
+    tokens, client, tmp_path, caplog, folder, name
+):
     # Review Focus 1: it opens and plays through /media/, and the path goes nowhere else.
     caplog.set_level(logging.DEBUG)
     path = _file(tmp_path / folder, name)
