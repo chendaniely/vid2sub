@@ -20,7 +20,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -34,6 +34,8 @@ from vid2sub.web import auth, runtime
 POSIX = pytest.mark.skipif(os.name == "nt", reason="POSIX signals, terminals and scripts")
 STANDIN = "VID2SUB_STANDIN_API_KEY"  # a stand-in for a key_env variable; its value is not a key
 LINK = re.compile(r"http://127\.0\.0\.1:(\d+)/auth#t=([A-Za-z0-9_-]{43})")
+NOHUP = ("import os, signal, sys; signal.signal(signal.SIGHUP, signal.SIG_IGN); "
+         "os.execv(sys.argv[1], sys.argv[1:])")
 PAGE_LINE = re.compile(r"^  (.+open\.html)$", re.MULTILINE)  # the redirect file, when not a tty
 # The child: the real `vid2sub serve`, with `www/` pointing at a folder holding a ui.js, and a
 # stand-in for the Shiny app whose /stream never ends, as a paused video's stream doesn't.
@@ -88,7 +90,7 @@ class Serving:
     log: Path
     tmp: Path  # the child's TMPDIR
     port: int
-    token: str
+    token: str = field(repr=False)  # a failing assert prints reprs; never the token
 
     def get(self, path: str, data: bytes | None = None, headers: dict | None = None):
         request = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=data,
@@ -148,10 +150,13 @@ def start(tmp_path):
     printed, so it is read from the redirect file whose path is."""
     started: list[Serving] = []
 
-    def run(*args: str, toml: str = "", env: dict | None = None) -> Serving:
+    def run(*args: str, toml: str = "", env: dict | None = None,
+            ignore_hangup: bool = False) -> Serving:
         command, child_env, scratch = _child(tmp_path, len(started), args, toml, env)
         log = tmp_path / f"serve{len(started)}.log"
         with log.open("wb") as out:
+            if ignore_hangup:  # `nohup`'s doing: an ignored signal stays ignored across exec
+                command = [sys.executable, "-c", NOHUP, *command]
             proc = subprocess.Popen(command, env=child_env, stdout=out, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + 60
         while not (found := PAGE_LINE.search(log.read_text(encoding="utf-8", errors="replace"))):
@@ -305,7 +310,7 @@ def test_a_terminal_gets_the_link_itself(tmp_path):
     seen, deadline = b"", time.monotonic() + 60
     try:
         while not LINK.search(seen.decode(errors="replace")):
-            assert time.monotonic() < deadline, seen.decode(errors="replace")
+            assert time.monotonic() < deadline, "no link printed to the terminal in 60 s"
             seen += os.read(leader, 4096)
         port, token = LINK.search(seen.decode()).groups()
         assert len(list(scratch.glob("vid2sub-*"))) == 1
@@ -368,6 +373,17 @@ def test_the_token_reaches_no_log_or_command_line_and_sigterm_removes_the_folder
     assert serving.folders() == []
     leaked = serving.token in serving.text()  # output to a file names the redirect file
     assert not leaked, "the token reached the log"
+
+
+@POSIX
+def test_serve_started_under_nohup_keeps_serving_when_the_terminal_hangs_up(start):
+    serving = start("--port", "0", "--no-browser", ignore_hangup=True)
+    serving.proc.send_signal(signal.SIGHUP)
+    time.sleep(1)  # long enough for a handler to have acted
+    assert serving.proc.poll() is None, "SIGHUP stopped serve although it was ignored on entry"
+    assert serving.get("/healthz")[0] == 200
+    assert serving.stop(signal.SIGTERM) == 128 + signal.SIGTERM
+    assert serving.folders() == []
 
 
 @POSIX

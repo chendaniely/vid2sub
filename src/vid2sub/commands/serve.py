@@ -49,18 +49,23 @@ GRACE = 3  # seconds a shutdown waits for open responses before it cancels them
 # The signals uvicorn re-raises after its shutdown whose default action skips `finally` and
 # atexit: SIGTERM everywhere, Ctrl-Break on Windows. SIGINT raises KeyboardInterrupt already.
 _EXIT_SIGNALS = [signal.SIGTERM] + ([signal.SIGBREAK] if hasattr(signal, "SIGBREAK") else [])
-# SIGHUP (the terminal window closing) has no handler in uvicorn; it is sent down SIGTERM's path.
+# SIGHUP (the terminal window closing) has no handler in uvicorn; it is sent down SIGTERM's path,
+# unless it was ignored on entry: `nohup vid2sub serve &` asks to outlive its terminal.
 _HANGUP = getattr(signal, "SIGHUP", None)  # Windows has none
-# What the browser opener needs from a desktop session on top of security.child_env(): a minimal
-# environment (spec §6.7) so it never inherits keys, but not so minimal that it can't find a
-# display. The names webbrowser.py reads: XDG_CURRENT_DESKTOP, GNOME_DESKTOP_SESSION_ID,
-# KDE_FULL_SESSION, DISPLAY, WAYLAND_DISPLAY, TERM, BROWSER, and PROGRAMFILES(x86), PROGRAMFILES on
-# Windows; the rest are what xdg-open and the browsers it starts use to reach the session.
+# What the browser opener gets on top of security.child_env(): a minimal environment (spec §6.7),
+# so it never inherits keys, but enough to reach a desktop session. webbrowser.py reads
+# XDG_CURRENT_DESKTOP, GNOME_DESKTOP_SESSION_ID, KDE_FULL_SESSION, DISPLAY, WAYLAND_DISPLAY and
+# BROWSER, and on Windows PROGRAMFILES and PROGRAMFILES(x86). The others are for what xdg-open and
+# a browser it starts look up (the session bus, the XDG directories, KDE's version, input methods).
+# A browser this helper starts, as opposed to one already running, keeps this environment for its
+# whole life. No Linux desktop has been tried; TERM is left out on purpose (it makes webbrowser
+# register console browsers, which cannot work with DEVNULL stdio).
 _BROWSER_ENV = (
     "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR", "XDG_CURRENT_DESKTOP",
-    "XDG_SESSION_TYPE", "XDG_DATA_DIRS", "XDG_CONFIG_DIRS", "DBUS_SESSION_BUS_ADDRESS",
-    "DESKTOP_SESSION", "GNOME_DESKTOP_SESSION_ID", "KDE_FULL_SESSION", "BROWSER", "TERM",
-    "PROGRAMFILES", "PROGRAMFILES(x86)",
+    "XDG_SESSION_TYPE", "XDG_DATA_DIRS", "XDG_CONFIG_DIRS", "XDG_DATA_HOME", "XDG_CONFIG_HOME",
+    "DBUS_SESSION_BUS_ADDRESS", "DESKTOP_SESSION", "GNOME_DESKTOP_SESSION_ID",
+    "KDE_FULL_SESSION", "KDE_SESSION_VERSION", "GTK_IM_MODULE", "QT_IM_MODULE", "XMODIFIERS",
+    "BROWSER", "PROGRAMFILES", "PROGRAMFILES(x86)",
 )
 _OPEN_BROWSER = "import sys, webbrowser; sys.exit(not webbrowser.open(sys.argv[1]))"
 
@@ -149,7 +154,7 @@ def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
 
     port = sock.getsockname()[1]
     previous = {sig: signal.signal(sig, _exit_on_signal) for sig in _EXIT_SIGNALS}
-    if _HANGUP is not None:
+    if _HANGUP is not None and signal.getsignal(_HANGUP) is not signal.SIG_IGN:
         previous[_HANGUP] = signal.signal(_HANGUP, _hangup_as_sigterm)
     page: Path | None = None
     try:
