@@ -361,7 +361,7 @@ def test_the_token_reaches_no_log_or_command_line_and_sigterm_removes_the_folder
 
 
 @POSIX
-@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGHUP", 0)])
 def test_a_stalled_response_doesnt_keep_the_engine_from_stopping(start, sig):
     serving = start("--port", "0", "--no-browser")
     cookie = _cookie(serving)
@@ -372,6 +372,7 @@ def test_a_stalled_response_doesnt_keep_the_engine_from_stopping(start, sig):
         began = time.monotonic()
         code = serving.stop(sig)
     assert time.monotonic() - began < 15
+    # SIGHUP (the terminal window closing) takes SIGTERM's path, so it exits 143 too
     assert code == (exitcodes.OK if sig == signal.SIGINT else 128 + signal.SIGTERM)
     assert serving.folders() == []
 

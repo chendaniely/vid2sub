@@ -44,6 +44,11 @@ if TYPE_CHECKING:
 
 HOST = "127.0.0.1"
 GRACE = 3  # seconds a shutdown waits for open responses before it cancels them
+# The signals uvicorn re-raises after its shutdown whose default action skips `finally` and
+# atexit: SIGTERM everywhere, Ctrl-Break on Windows. SIGINT raises KeyboardInterrupt already.
+_EXIT_SIGNALS = [signal.SIGTERM] + ([signal.SIGBREAK] if hasattr(signal, "SIGBREAK") else [])
+# SIGHUP (the terminal window closing) has no handler in uvicorn; it is sent down SIGTERM's path.
+_HANGUP = getattr(signal, "SIGHUP", None)  # Windows has none
 
 
 def add_parser(sub) -> None:
@@ -130,6 +135,8 @@ def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
 
     port = sock.getsockname()[1]
     previous = {sig: signal.signal(sig, _exit_on_signal) for sig in _EXIT_SIGNALS}
+    if _HANGUP is not None:
+        previous[_HANGUP] = signal.signal(_HANGUP, _hangup_as_sigterm)
     page: Path | None = None
     try:
         link = auth.auth_url(port, token)
@@ -169,13 +176,12 @@ def uvicorn_config(app: ASGIApp) -> uvicorn.Config:
                           log_level="warning", lifespan="on", timeout_graceful_shutdown=GRACE)
 
 
-# The signals uvicorn re-raises after its shutdown whose default action skips `finally` and
-# atexit: SIGTERM everywhere, Ctrl-Break on Windows. SIGINT raises KeyboardInterrupt already.
-_EXIT_SIGNALS = [signal.SIGTERM] + ([signal.SIGBREAK] if hasattr(signal, "SIGBREAK") else [])
-
-
 def _exit_on_signal(signum: int, frame: object) -> None:
     sys.exit(128 + signum)
+
+
+def _hangup_as_sigterm(signum: int, frame: object) -> None:
+    signal.raise_signal(signal.SIGTERM)  # uvicorn shuts down gracefully, then SIGTERM exits 143
 
 
 def _open(page: Path, out: Output) -> None:
