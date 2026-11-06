@@ -2,6 +2,7 @@
 whole engine sits inside HostGuard, WriteGuard and TokenGuard, FastAPI's own pages are off, and
 stopping the engine closes the job queue (spec §19.1, §6.1, §6.2, §17.1; S23, S24, S25)."""
 
+import asyncio
 import builtins
 import io
 import json
@@ -152,6 +153,24 @@ def test_stopping_the_engine_closes_the_job_queue(rt):
         rt.queue.jobs()  # open while the engine runs
     with pytest.raises(RuntimeError, match="closed"):
         rt.queue.submit(["/videos/a.mkv"])
+
+
+def test_the_lifespan_closes_the_job_queue_off_the_event_loop(rt):
+    # Queue.close() runs the queue's listeners, so where one runs is where close() ran.
+    on_the_loop: list[bool] = []
+
+    def listener():
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            on_the_loop.append(False)
+        else:
+            on_the_loop.append(True)
+
+    rt.queue.on_change(listener)
+    with TestClient(create_app(rt, token=TOKEN, port=PORT, shiny_app=_shiny()), base_url=BASE):
+        assert on_the_loop == []
+    assert on_the_loop == [False]
 
 
 # ---- the runtime ------------------------------------------------------------------------------
