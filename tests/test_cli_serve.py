@@ -260,7 +260,7 @@ def test_bind_listens_on_127_0_0_1_only():
         sock.close()
 
 
-def test_uvicorn_keeps_no_access_log_believes_no_proxy_and_waits_3_seconds_at_most_for_open_responses():
+def test_uvicorn_keeps_no_access_log_believes_no_proxy_and_waits_at_most_3_s_to_stop():
     config = serve.uvicorn_config(lambda scope, receive, send: None)
     assert config.access_log is False
     assert config.proxy_headers is False
