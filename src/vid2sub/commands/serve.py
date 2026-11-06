@@ -15,7 +15,8 @@ uvicorn re-raises the signal after its own shutdown, and SIGTERM's default actio
 `finally`, so it becomes a normal exit with status 143 (recordings' __main__ does the same;
 Windows' Ctrl-Break likewise). Shutdown waits at most 3 seconds for open responses, since a
 paused video holds its stream open. uvicorn's access log is off and it trusts no proxy
-headers, since none is in front of it; the openai, httpx and chatlas loggers stay at WARNING, as for every command (§6.8, §6.2).
+headers, since none is in front of it; the openai, httpx and chatlas loggers stay at WARNING,
+as for every command (§6.8, §6.2).
 Without the built frontend (`www/ui.js`), serve refuses before it reads or binds anything (§18,
 §23.5). The web modules are imported only when serve runs, so other commands don't load them, and
 the Shiny app only once `runtime.configure()` has run, as recordings imports it.
