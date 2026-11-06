@@ -29,7 +29,7 @@ import pytest
 from vid2sub import exitcodes
 from vid2sub.cli import main
 from vid2sub.commands import serve
-from vid2sub.web import auth
+from vid2sub.web import auth, runtime
 
 POSIX = pytest.mark.skipif(os.name == "nt", reason="POSIX signals, terminals and scripts")
 LINK = re.compile(r"http://127\.0\.0\.1:(\d+)/auth#t=([A-Za-z0-9_-]{43})")
@@ -240,13 +240,13 @@ def test_a_failure_after_binding_leaves_nothing_running(tmp_path, monkeypatch):
     (port,) = _free_ports(1)
     with pytest.raises(RuntimeError, match="failed to load"):
         main(["serve", "--port", str(port), "--no-browser", "--config", str(tmp_path / "x.toml")])
-    with socket.socket() as again:
-        again.bind(("127.0.0.1", port))  # the engine's socket was closed
-    from vid2sub.web import runtime
-
-    with pytest.raises(RuntimeError, match="closed"):
-        runtime.current().queue.submit(["/videos/a.mkv"])  # and its job queue stopped
-    runtime.configure(None)
+    try:
+        with socket.socket() as again:
+            again.bind(("127.0.0.1", port))  # the engine's socket was closed
+        with pytest.raises(RuntimeError, match="closed"):
+            runtime.current().queue.submit(["/videos/a.mkv"])  # and its job queue stopped
+    finally:
+        runtime.configure(None)
 
 
 def test_bind_listens_on_127_0_0_1_only():
@@ -260,7 +260,7 @@ def test_bind_listens_on_127_0_0_1_only():
         sock.close()
 
 
-def test_uvicorn_keeps_no_access_log_believes_no_proxy_and_stops_within_seconds():
+def test_uvicorn_keeps_no_access_log_believes_no_proxy_and_waits_3_seconds_at_most_for_open_responses():
     config = serve.uvicorn_config(lambda scope, receive, send: None)
     assert config.access_log is False
     assert config.proxy_headers is False
@@ -329,13 +329,15 @@ def test_the_browser_opens_the_redirect_file_and_ctrl_c_removes_its_folder(start
         assert time.monotonic() < deadline, "the browser was never opened"
         time.sleep(0.1)
     argv = json.loads(record.read_text(encoding="utf-8"))
-    assert serving.token not in " ".join(argv)  # the browser's command line names a file
+    leaked = serving.token in " ".join(argv)
+    assert not leaked, "the token reached the browser's command line"  # it names a file
     page = Path(urllib.request.url2pathname(urlsplit(argv[1]).path))
     assert page.name == "open.html" and page.parent.name.startswith("vid2sub-")
     assert page.parent.parent.resolve() == serving.tmp.resolve()
     assert stat.S_IMODE(page.stat().st_mode) == 0o600
     assert stat.S_IMODE(page.parent.stat().st_mode) == 0o700
-    assert auth.auth_url(port, serving.token) in page.read_text(encoding="utf-8")
+    named = auth.auth_url(port, serving.token) in page.read_text(encoding="utf-8")
+    assert named, "the redirect file doesn't hold the sign-in link"
     assert serving.stop(signal.SIGINT) == exitcodes.OK
     assert serving.folders() == []
 
@@ -345,7 +347,8 @@ def test_the_token_reaches_no_log_or_command_line_and_sigterm_removes_the_folder
     serving = start("--port", "0", "--no-browser")
     ps = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(serving.proc.pid)],
                         capture_output=True, text=True, check=True).stdout
-    assert "serve" in ps and serving.token not in ps
+    leaked = serving.token in ps
+    assert "serve" in ps and not leaked, "the token reached the command line"
     _sign_in(serving, "t" * 43)
     cookie = _cookie(serving)
     serving.get("/", headers={"Cookie": cookie})
@@ -353,7 +356,8 @@ def test_the_token_reaches_no_log_or_command_line_and_sigterm_removes_the_folder
     assert len(serving.folders()) == 1
     assert serving.stop(signal.SIGTERM) == 128 + signal.SIGTERM
     assert serving.folders() == []
-    assert serving.token not in serving.text()  # output to a file names the redirect file
+    leaked = serving.token in serving.text()  # output to a file names the redirect file
+    assert not leaked, "the token reached the log"
 
 
 @POSIX
