@@ -2,7 +2,13 @@
 whole engine sits inside HostGuard, WriteGuard and TokenGuard, FastAPI's own pages are off, and
 stopping the engine closes the job queue (spec §19.1, §6.1, §6.2, §17.1; S23, S24, S25)."""
 
+import builtins
+import io
 import json
+import os
+import re
+import socket
+import subprocess
 
 import pytest
 from starlette.applications import Starlette
@@ -20,7 +26,7 @@ from vid2sub.media.tools import Tools
 from vid2sub.web import auth, runtime
 from vid2sub.web.app import create_app
 from vid2sub.web.backend import LocalBackend
-from vid2sub.web.guards import CSP
+from vid2sub.web.guards import CSP, LOCAL_HOSTS, HostGuard, WriteGuard
 from vid2sub.web.media import MediaTokens
 
 PORT = 8765
@@ -187,3 +193,107 @@ def test_the_cache_follows_cache_max_gb_from_vid2sub_toml(tmp_path, monkeypatch)
         assert rt.backend.cache.max_bytes == 3 * caching.GB
     finally:
         rt.queue.close()
+
+
+# ---- S25: a GET never writes anything or starts a process -----------------------------------
+
+
+def _api(app):
+    """The FastAPI app inside the guards: each guard keeps the app it wraps in `.app`."""
+    while not hasattr(app, "routes"):
+        app = app.app
+    return app
+
+
+def get_paths(app) -> list[str]:
+    """Every path the built app answers to GET or HEAD, read from its routes at run time, so a
+    route a later task adds is covered too. A mount has no methods and answers everything."""
+    paths = {
+        re.sub(r"\{[^}]+\}", "x", route.path or "/")
+        for route in _api(app).routes
+        if getattr(route, "methods", None) is None or {"GET", "HEAD"} & route.methods
+    }
+    return sorted(paths | {"/no/such/page"})
+
+
+def read_only_violations(client, monkeypatch, tmp_path, extra=()) -> list[str]:
+    """What a GET or HEAD to each of the app's paths did that a read must not: opened a file for
+    writing, made, moved or removed one, started a process, or opened a connection."""
+    seen: list[str] = []
+    real_open = builtins.open
+
+    def trip(what):
+        def tripped(*args, **kwargs):
+            seen.append(what)
+            raise OSError(f"{what} during a GET")
+
+        return tripped
+
+    def guarded_open(file, mode="r", *args, **kwargs):
+        if set(mode) & set("wax+"):
+            return trip(f"open(..., {mode!r})")()
+        return real_open(file, mode, *args, **kwargs)
+
+    for owner, name in [
+        (subprocess, "Popen"), (os, "system"), (os, "mkdir"), (os, "makedirs"), (os, "remove"),
+        (os, "unlink"), (os, "rename"), (os, "replace"), (os, "rmdir"),
+        (socket.socket, "connect"), (socket, "create_connection"),
+    ]:
+        monkeypatch.setattr(owner, name, trip(f"{owner.__name__}.{name}"))
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(io, "open", guarded_open)
+    before = sorted(str(p) for p in tmp_path.rglob("*"))
+    for method in ("get", "head"):
+        for path in [*get_paths(client.app), *extra]:
+            try:
+                getattr(client, method)(path)
+            except OSError as error:  # the trip raises it; a route that fails on it is a violation
+                seen.append(f"{method.upper()} {path}: {error}")
+    after = sorted(str(p) for p in tmp_path.rglob("*"))
+    return [*seen, *(["files changed"] if before != after else [])]
+
+
+def test_no_get_or_head_route_writes_a_file_or_starts_a_process(client, rt, tmp_path, monkeypatch):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"0123456789")
+    live = rt.media.issue(clip, owner="e1")
+    _sign_in(client)
+    assert read_only_violations(client, monkeypatch, tmp_path, extra=[f"/media/{live}"]) == []
+
+
+def test_the_enumeration_finds_the_shells_own_routes_and_the_mount(client):
+    paths = get_paths(client.app)
+    assert "/healthz" in paths and "/media/x" in paths and "/" in paths
+
+
+def _wrapped(route) -> TestClient:
+    """A guarded app with one GET route that does something a read must not."""
+    inner = Starlette(routes=[Route("/boom", route)])
+    return TestClient(HostGuard(WriteGuard(inner, LOCAL_HOSTS), LOCAL_HOSTS), base_url=BASE)
+
+
+async def _writes(request):
+    with open(request.app.state.target, "w") as f:  # noqa: ASYNC230 - the point of the test
+        f.write("x")
+    return PlainTextResponse("ok")
+
+
+def _launches(request):  # sync: Starlette runs it in a thread, and ruff bars Popen in async
+    subprocess.Popen(["true"])
+    return PlainTextResponse("ok")
+
+
+async def _connects(request):
+    socket.create_connection(("127.0.0.1", 9))
+    return PlainTextResponse("ok")
+
+
+@pytest.mark.parametrize("route", [_writes, _launches, _connects],
+                         ids=["writes a file", "starts a process", "opens a connection"])
+def test_the_check_notices_a_get_route_that_does_one_of_them(route, tmp_path, monkeypatch):
+    client = _wrapped(route)
+    _api(client.app).state.target = str(tmp_path / "out.txt")
+    found = read_only_violations(client, monkeypatch, tmp_path, extra=["/boom"])
+    # Tripped by the check itself, not merely failed: port 9 refusing the connection would also
+    # end the request in an error.
+    assert any("/boom" in line and "during a GET" in line for line in found)
