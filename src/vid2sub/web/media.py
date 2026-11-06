@@ -28,6 +28,7 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import FileResponse, PlainTextResponse, Response
 from starlette.routing import BaseRoute, Route
+from starlette.types import Receive, Scope, Send
 
 # Python's mimetypes table differs by OS and version (it reads the system's own files too), so
 # the types the editor plays and Python may not know are fixed here.
@@ -109,6 +110,25 @@ class MediaTokens:
         return issued, st
 
 
+class MediaUnreadable(Exception):
+    """The file couldn't be read once the response had started. Carries no path (spec §6.8)."""
+
+
+class _PathFreeFileResponse(FileResponse):
+    """A FileResponse whose failures name no file. Starlette opens the file by path after the
+    route's check, and its OSError or "shorter than expected" RuntimeError carries that path into
+    the server's error log. The headers are already sent by then, so the connection just ends."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        failed = False
+        try:
+            await super().__call__(scope, receive, send)
+        except (OSError, RuntimeError):
+            failed = True
+        if failed:  # raised outside the except block: no chained exception can carry the path
+            raise MediaUnreadable("the media file could not be read")
+
+
 def route(tokens: MediaTokens) -> BaseRoute:
     """`GET /media/{token}` (HEAD too): the file inline, with Range; 404 for a token that isn't
     live. A plain function, so Starlette runs it in a worker thread and the stat never blocks the
@@ -122,7 +142,7 @@ def route(tokens: MediaTokens) -> BaseRoute:
         # FileResponse writes Content-Disposition only with a filename, which would put the
         # video's title in a header; `inline` alone names nothing. The checked stat is passed
         # on, so Content-Length is the size that was checked.
-        return FileResponse(
+        return _PathFreeFileResponse(
             issued.path,
             media_type=issued.media_type,
             stat_result=st,

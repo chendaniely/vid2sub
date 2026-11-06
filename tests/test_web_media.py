@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import sys
+import traceback
 from pathlib import Path
 
 import pytest
@@ -268,3 +269,53 @@ def test_every_media_answer_carries_the_media_headers_through_the_guard(tokens, 
     for r in answers:
         assert {k: r.headers.get(k) for k in MEDIA} == MEDIA
         assert r.headers.get_list("content-security-policy") == ["sandbox"]
+
+
+# ---- no path leaves /media/ in an exception --------------------------------------------------
+
+
+def _vanish_after_the_check(monkeypatch, tokens, change):
+    """Make the gap between the route's check and FileResponse's open: `change()` runs once the
+    check has passed."""
+    live = tokens._live
+
+    def checked_then_changed(token):
+        answer = live(token)
+        change()
+        return answer
+
+    monkeypatch.setattr(tokens, "_live", checked_then_changed)
+
+
+def _names_nothing(exc: BaseException, caplog, *hidden: str) -> bool:
+    shown = "".join(traceback.format_exception(exc)) + "".join(
+        rec.getMessage() + (rec.exc_text or "") for rec in caplog.records
+    )
+    return not any(h in shown for h in hidden)
+
+
+def test_a_file_removed_after_the_check_raises_an_error_that_names_no_path(
+    tokens, client, tmp_path, monkeypatch, caplog
+):
+    # Spec §6.8: Starlette opens the file by path after the check, and its OSError names the path.
+    video = _file(tmp_path / "Secret Show", "Secret Title S01E01.mp4")
+    token = tokens.issue(video, owner="ep1")
+    _vanish_after_the_check(monkeypatch, tokens, video.unlink)
+    with pytest.raises(Exception) as exc:
+        client.get(f"/media/{token}")
+    assert _names_nothing(exc.value, caplog, "Secret", str(tmp_path))
+    assert isinstance(exc.value, media.MediaUnreadable)
+    assert exc.value.__cause__ is None and exc.value.__context__ is None
+
+
+def test_a_file_truncated_after_the_check_raises_an_error_that_names_no_path(
+    tokens, client, tmp_path, monkeypatch, caplog
+):
+    # Several ranges make Starlette raise "File at path <path> is shorter than expected".
+    video = _file(tmp_path / "Secret Show", "Another Title.mp4")
+    token = tokens.issue(video, owner="ep1")
+    _vanish_after_the_check(monkeypatch, tokens, lambda: video.write_bytes(BODY[:50]))
+    with pytest.raises(Exception) as exc:
+        client.get(f"/media/{token}", headers={"Range": "bytes=0-9,100-199"})
+    assert _names_nothing(exc.value, caplog, "Secret", "Another", str(tmp_path))
+    assert isinstance(exc.value, media.MediaUnreadable)
