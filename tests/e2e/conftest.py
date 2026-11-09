@@ -1,6 +1,7 @@
-"""Servers and pages for the browser tests (spec §22.7): the real `vid2sub serve`, on a free port,
-in a child process with its own TMPDIR and an empty vid2sub.toml, and a page signed in through
-the launch link as a person's browser is (Task 9's token flow, scripted).
+"""Servers and pages for the browser tests (spec §22.7): the real `vid2sub serve --demo` (a canned
+engine over a copy of demo/), on a free port, in a child process with its own TMPDIR, and a page
+signed in through the launch link as a person's browser is (Task 9's token flow, scripted).
+`start_server(..., toml=...)` serves a vid2sub.toml instead of the demo.
 
 As recordings' e2e conftest (packages/ui/tests/e2e/conftest.py at 8deb039): a server per test,
 polled on /healthz, stopped at the end. vid2sub prints the link only to a terminal, so the
@@ -63,20 +64,24 @@ class Server:
         return self.proc.returncode
 
 
-def start_server(tmp: Path, *args: str, port: int = 0) -> Server:
-    """`vid2sub serve --no-browser` on `port` (0: any free one), up and answering."""
+def start_server(tmp: Path, *args: str, port: int = 0, toml: str | None = None) -> Server:
+    """`vid2sub serve --no-browser --demo` on `port` (0: any free one), up and answering; with
+    `toml`, that vid2sub.toml instead of the demo."""
     if not (WWW / "ui.js").is_file():
         pytest.fail("the frontend isn't built: run make build (make e2e does)")
     tmp.mkdir(parents=True, exist_ok=True)
-    config = tmp / "vid2sub.toml"
-    config.write_text("", encoding="utf-8")
+    which = ["--demo"]
+    if toml is not None:
+        config = tmp / "vid2sub.toml"
+        config.write_text(toml, encoding="utf-8")
+        which = ["--config", str(config)]
     env = {k: v for k, v in os.environ.items() if not k.startswith("VID2SUB_")}
     env["TMPDIR"] = str(tmp)
     log = tmp / "server.log"
     with log.open("wb") as out:
         proc = subprocess.Popen(
             [sys.executable, "-m", "vid2sub", "serve", "--no-browser", "--port", str(port),
-             "--config", str(config), *args],
+             *which, *args],
             env=env, stdout=out, stderr=subprocess.STDOUT)
 
     def tail() -> str:
@@ -115,11 +120,11 @@ def server(tmp_path):
 
 @pytest.fixture
 def launch():
-    """Starts another server, `launch(tmp, *args, port=0)`, stopped at the end of the test."""
+    """Starts another server, `launch(tmp, *args, port=0, toml=None)`, stopped at the end."""
     started: list[Server] = []
 
-    def run(tmp: Path, *args: str, port: int = 0) -> Server:
-        started.append(start_server(tmp, *args, port=port))
+    def run(tmp: Path, *args: str, port: int = 0, toml: str | None = None) -> Server:
+        started.append(start_server(tmp, *args, port=port, toml=toml))
         return started[-1]
 
     yield run

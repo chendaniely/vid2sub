@@ -1,0 +1,11 @@
+{
+  "why": "Names and titles that must show as plain text wherever the app shows them (spec §6.3, S26): file names, YouTube titles, endpoint names from vid2sub.toml.",
+  "names": [
+    "<img src=x onerror=\"window.__pwned = 7\">",
+    "<script>window.__pwned = 8</script>",
+    "\u202ekcod.exe",
+    "\ud83c\udfac <b>Bold</b> & <i>it</i>",
+    "../../etc/passwd",
+    "CON"
+  ]
+}

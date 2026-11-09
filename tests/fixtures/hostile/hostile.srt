@@ -1,0 +1,19 @@
+1
+00:00:00,500 --> 00:00:02,000
+<script>window.__pwned = 1</script>after the script
+
+2
+00:00:02,500 --> 00:00:04,000
+<font color="#ff0000">red</font> <b>bold</b> <i>italic</i>
+
+3
+00:00:04,500 --> 00:00:06,000
+<img src=x onerror="window.__pwned = 2">an image
+
+4
+00:00:06,500 --> 00:00:08,000
+<a href="javascript:window.__pwned=3">a link</a> &lt;b&gt; &amp;
+
+5
+00:00:08,500 --> 00:00:10,000
+{\an8}{\b1}braces{\b0} <style>*{display:none}</style>gone?
