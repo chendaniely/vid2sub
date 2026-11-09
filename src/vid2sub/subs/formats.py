@@ -83,8 +83,11 @@ def _balance_italics(text: str) -> str:
 def ass_to_canonical(text: str) -> str:
     text = text.replace(r"\N", "\n").replace(r"\n", "\n").replace(r"\h", " ")
     text = _ASS_TAG.sub(_italic_effect, text)
-    text = _balance_italics(text)
-    text = _HTML_TAG.sub("", text)
+    while True:  # a tag written inside another one is joined into a new tag by the strip
+        stripped = _balance_italics(_HTML_TAG.sub("", _balance_italics(text)))
+        if stripped == text:
+            break
+        text = stripped
     return canonical(text)
 
 

@@ -18,6 +18,8 @@ def test_a_hostile_srt_keeps_its_text_and_only_italics():
         "an image",
         "a link &lt;b&gt; &amp;",
         "braces *gone?",
+        '<img src=x onerror="window.__pwned = 9"',  # not closed by ">": inert text, shown as text
+        "window.__pwned = 10after nesting",  # tags nested in tags: stripped until none is left
     ]
 
 
@@ -28,6 +30,8 @@ def test_a_hostile_ass_keeps_its_text_and_only_italics():
         "<i>italic</i> and bold\nsecond line",
         "m 0 0 l 100 0 100 100after a drawing",
         "window.__pwned = 5tags in ASS",
+        '<img src=x onerror="window.__pwned = 11"',
+        "window.__pwned = 12after nesting",
     ]
 
 

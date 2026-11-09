@@ -118,3 +118,28 @@ def test_only_default_style_events_are_read_when_asked():
     data = ass.encode("utf-8")
     assert [c.text for c in f.parse_subtitles(data, "ass")] == ["line", "STATION"]
     assert [c.text for c in f.parse_subtitles(data, "ass", default_style_only=True)] == ["line"]
+
+
+@pytest.mark.parametrize("fmt, source, expected", [
+    ("srt", "<<script>script>x<</script>/script>", "x"),
+    ("ass", "<<script>script>x<</script>/script>", "x"),
+    ("srt", "<<<script>script>script>x", "x"),
+    ("srt", "<<img src=x>img src=x onerror=alert(1)>y", "y"),
+    ("srt", "<<b>i>nested italics</i>", "<i>nested italics</i>"),
+    # Not closed by a ">", so not a tag: inert text, which the editor shows as text.
+    ("srt", "<img src=x onerror=alert(1)", "<img src=x onerror=alert(1)"),
+    ("ass", "<img src=x onerror=alert(1)", "<img src=x onerror=alert(1)"),
+])
+def test_the_only_markup_carried_through_is_italics_even_when_stripping_makes_a_tag(
+        fmt, source, expected):
+    """Spec §15: `<i>` is the only markup carried through. Removing a tag that was written
+    inside another one joins its halves into a new tag, so the strip runs until nothing is left."""
+    if fmt == "srt":
+        data = f"1\n00:00:01,000 --> 00:00:02,000\n{source}\n".encode()
+    else:
+        data = ("[Script Info]\nScriptType: v4.00+\n\n[V4+ Styles]\nFormat: Name, Fontname\n"
+                "Style: Default,Arial\n\n[Events]\nFormat: Layer, Start, End, Style, Name, "
+                "MarginL, MarginR, MarginV, Effect, Text\n"
+                f"Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,{source}\n").encode()
+    (cue,) = f.parse_subtitles(data, fmt)
+    assert cue.text == expected
