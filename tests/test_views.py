@@ -26,6 +26,7 @@ from vid2sub.subs.rendition import cues_body
 from vid2sub.subs.sidecar import Header, HeadRecord, Sidecar, VideoInfo, make_rendition
 from vid2sub.web import views
 from vid2sub.web.backend import Episode, LocalBackend
+from vid2sub.web.episode import Streams
 
 VIDEO = Path("/Users/someone/Secret Shows/Show - S01E01.mkv")
 HEADER = Header(video=VideoInfo(name=VIDEO.name, size=1, quick_sha256="a" * 64,
@@ -176,10 +177,20 @@ def test_the_video_has_the_urls_it_was_given_its_name_and_never_its_folder():
     ep = episode(notes=["kept your outside edit to en"])
     v = view(ep, audio_url="/media/abc")
     assert v["video"] == {"name": "Show - S01E01.mkv", "duration_ms": 20_000, "url": None,
-                          "audio_url": "/media/abc", "playable_audio": True}
+                          "audio_url": "/media/abc", "playable_audio": True, "container": "",
+                          "video_codec": None, "audio_codec": ""}
     assert (v["id"], v["source"], v["notes"]) == ("e1", "ja", ["kept your outside edit to en"])
     text = json.dumps(v, ensure_ascii=False)
     assert "Secret Shows" not in text and "/Users/" not in text
+
+
+def test_the_video_names_its_container_and_codecs_for_the_browser_to_ask_about():
+    # Spec §8.2: playability comes from the probe plus the browser's own canPlayType. The view
+    # carries ffprobe's names for the container, the video and the audio track the editor plays.
+    ep = episode(streams=Streams("matroska,webm", "h264", "aac"))
+    video = view(ep, video_url="/media/v")["video"]
+    assert (video["container"], video["video_codec"], video["audio_codec"]) == (
+        "matroska,webm", "h264", "aac")
 
 
 def test_a_view_is_plain_json():

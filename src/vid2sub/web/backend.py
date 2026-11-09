@@ -118,6 +118,7 @@ from vid2sub.web.episode import (
     SaveError,
     SaveResult,
     Snapshot,
+    Streams,
     all_stale,  # noqa: F401 - re-exported: Tasks 5 to 7's tests use backend.all_stale
     glossary_with,
     setup_changed,
@@ -190,7 +191,8 @@ class LocalBackend:
             tracks=tracks, heads=heads, conflicts=conflicts, words=_words(transcript), notes=notes,
             playable_audio=track.codec not in UNPLAYABLE_AUDIO,
             audio_index=track.index, sidecar=side, base=tracks, taken=cue_ids(side),
-            glossary=glossary, translate_model=self._route_model(_lang(source_key)))
+            glossary=glossary, translate_model=self._route_model(_lang(source_key)),
+            streams=Streams(p.container, p.video_codec, track.codec))
         with self._lock:
             self._open[ep.id] = video
         return ep

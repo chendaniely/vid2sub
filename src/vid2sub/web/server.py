@@ -20,10 +20,11 @@ them, in a task of the tab's own that holds no reactive lock while it waits on t
 so a slow open never freezes another tab and no edit is lost to a Save running at the same time.
 The backend returns a new frozen `Episode` each time, which the editor sets as the reactive value
 the `episode` output reads. The player gets the video by a media token, or the playback audio
-when the browser can't play the video's audio (Decision 2), and both are revoked with the episode
-when the tab opens another or closes: the mount passes no lifespan events on, so that happens in
-`session.on_ended`. Requests come from the browser, so they are checked before use and never
-echoed (§6.3, §6.8).
+when the browser can't play the video's audio (Decision 2) or, as the page reports from
+canPlayType and the video's own errors, the video itself (`playback`, spec §8.2, §8.8); its
+tokens are revoked with the episode when the tab opens another or closes: the mount passes no
+lifespan events on, so that happens in `session.on_ended`. Requests come from the browser, so
+they are checked before use and never echoed (§6.3, §6.8).
 
 The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
 for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
@@ -152,6 +153,26 @@ class Editor:
         if media.problem:
             await notice(self.session, "error", media.problem)
 
+    async def _playback(self, request: object) -> None:
+        """The page found the browser can't play the video (spec §8.2: canPlayType, or the
+        <video>'s error), so the video's token goes and the playback audio plays (§8.8)."""
+        ep = self._named(request)
+        if ep is None or self.media.video_url is None:  # nothing open, or the audio already
+            return
+        await self._set_busy("playback")
+        self.rt.media.revoke_owner(ep.id)
+        self.media = await runtime.blocking(self.rt.media_for, ep, audio_only=True)
+        await self._publish(busy=None)
+        if self.media.problem:
+            await notice(self.session, "error", self.media.problem)
+
+    def _named(self, request: object) -> Episode | None:
+        """The open episode, when the request names it."""
+        if (isinstance(request, dict) and self.ep is not None
+                and request.get("episode") == self.ep.id):
+            return self.ep
+        return None
+
     def _close(self, ep: Episode | None) -> None:
         if ep is not None:
             self.rt.backend.close(ep.id)
@@ -209,6 +230,11 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @reactive.event(input.open)
     def _open() -> None:
         editor.submit("open", input.open())
+
+    @reactive.effect
+    @reactive.event(input.playback)
+    def _playback() -> None:
+        editor.submit("playback", input.playback())
 
     @reactive_output
     def episode():

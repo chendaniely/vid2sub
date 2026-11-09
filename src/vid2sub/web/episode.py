@@ -53,6 +53,16 @@ Snapshot = tuple[Tracks, dict[str, str], dict[str, tuple[str, str | None]]]
 
 
 @dataclass(frozen=True)
+class Streams:
+    """What the browser is asked about before it plays the video (spec §8.2): ffprobe's names for
+    the container, the video's codec and the codec of the audio track the editor plays."""
+
+    container: str = ""  # ffprobe's format_name, such as "mov,mp4,m4a,3gp,3g2,mj2"
+    video_codec: str | None = None  # None: no picture (or only cover art)
+    audio_codec: str = ""
+
+
+@dataclass(frozen=True)
 class Episode:
     id: str
     video: Path
@@ -74,6 +84,7 @@ class Episode:
     taken: set[str] = field(default_factory=set)
     glossary_adds: dict[str, str] = field(default_factory=dict)
     made_with: dict[str, tuple[str, str | None]] = field(default_factory=dict)  # since a redo-all
+    streams: Streams = Streams()  # from the probe at open
 
     @property
     def dirty(self) -> bool:

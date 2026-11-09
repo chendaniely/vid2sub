@@ -500,3 +500,47 @@ def test_closing_the_tab_closes_its_episode_and_revokes_its_media(media_client, 
         time.sleep(0.05)
     assert not media_rt.backend.is_open(two["id"])
     assert media_rt.media.resolve(token) is None
+
+
+# ---- the editor: what the browser can play (Task 14, round 14d) ------------------------------
+
+
+@pytest.mark.media
+def test_the_view_names_the_container_and_codecs_the_browser_is_asked_about(media_client,
+                                                                           tmp_path):
+    video = make_episode(tmp_path / "ep")  # tests/helpers.make_clip: MPEG-4 Part 2 and AAC in MKV
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        ep = t.until(opened)
+        assert {k: ep["video"][k] for k in ("container", "video_codec", "audio_codec")} == {
+            "container": "matroska,webm", "video_codec": "mpeg4", "audio_codec": "aac"}
+
+
+@pytest.mark.media
+def test_a_tab_whose_browser_cant_play_the_video_gets_the_playback_audio_and_its_token_goes(
+        media_client, media_rt, tmp_path):
+    # Spec §8.2, §8.8: the UI reports what canPlayType and the <video> say; the editor then plays
+    # the playback audio with no picture, and the video's own token stops working.
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        ep = t.until(opened)
+        token = ep["video"]["url"].removeprefix("/media/")
+        assert media_rt.media.resolve(token) == video
+        t.set(playback={"episode": ep["id"], "n": 2})
+        audio = t.until(lambda t: opened(t)["video"]["audio_url"] and opened(t))["video"]
+        assert audio["url"] is None
+        played = media_rt.media.resolve(audio["audio_url"].removeprefix("/media/"))
+        assert played is not None and played.name == "playback-a0.m4a"
+        assert media_rt.media.resolve(token) is None
+        busy = [m["values"]["busy"] for m in t.messages if "busy" in m.get("values", {})]
+        assert "playback" in busy and t.value("busy") is None
+        # Asked again, or for an episode the tab has moved on from, nothing happens.
+        sent = len(t.messages)
+        t.set(playback={"episode": ep["id"], "n": 3})
+        t.set(playback={"episode": "e" + "0" * 16, "n": 4})
+        time.sleep(0.5)
+        assert not any("episode" in m.get("values", {}) for m in t.messages[sent:])
+        assert t.notices() == []

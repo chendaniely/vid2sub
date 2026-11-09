@@ -209,3 +209,43 @@ def test_every_control_of_the_view_is_reached_by_keyboard_with_its_focus_visible
         if seen == wanted:
             break
     assert seen == wanted
+
+
+def mpeg4_episode(server) -> Path:
+    """MPEG-4 Part 2 video, which Chromium can't decode, with Opus sound, which it plays, in an
+    MP4: both from ffmpeg's own encoders, so any ffmpeg makes it (tests/helpers.make_clip)."""
+    return make_episode(demo_copy(server) / "mpeg4", name="Clip.mp4", audio_codec="libopus")
+
+
+def media_urls(watch) -> list[str]:
+    return list(dict.fromkeys(u for u in watch.requests if "/media/" in u))
+
+
+def test_a_video_the_browser_cant_decode_plays_its_sound_through_the_playback_audio(
+        page, server, watch):
+    # Spec §8.2, §8.8: canPlayType says no before anything loads, so the page asks for the
+    # playback audio and plays it with no picture. Make preview copy is Phase 3's (S63).
+    assert page.evaluate("""() => document.createElement('video')
+        .canPlayType('video/mp4; codecs="mp4v.20.9"')""") == ""
+    open_episode(page, mpeg4_episode(server))
+    expect(page.get_by_test_id("audio-only")).to_have_text(
+        "Playing the sound only: this browser can't play the video itself.")
+    media = page.get_by_test_id("media")
+    assert media.evaluate("m => m.tagName") == "AUDIO"
+    expect(media).to_have_attribute("src", re.compile(r"^/media/[A-Za-z0-9_-]{43}$"))
+    media.evaluate("m => { m.muted = true; return m.play(); }")
+    page.wait_for_function("() => document.querySelector('[data-testid=media]').currentTime > 0.3")
+    assert len(media_urls(watch)) == 1  # the video itself was never loaded
+
+
+def test_the_videos_own_signals_catch_what_canplaytype_misses(page, server, watch):
+    # A browser that says yes to everything still drops the picture it can't decode, with no
+    # error but no size: the page then asks for the playback audio, and the video's token goes.
+    page.add_init_script(script="HTMLMediaElement.prototype.canPlayType = () => 'probably';")
+    page.reload()
+    open_episode(page, mpeg4_episode(server))
+    expect(page.get_by_test_id("audio-only")).to_have_text(
+        "Playing the sound only: this browser can't play the video itself.")
+    expect(page.get_by_test_id("media")).to_have_attribute("src", re.compile("^/media/"))
+    first, *rest = media_urls(watch)
+    assert rest and page.request.get(first).status == 404  # the video's token was revoked

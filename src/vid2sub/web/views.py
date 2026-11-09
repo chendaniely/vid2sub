@@ -9,10 +9,11 @@ ones (`est`, `halluc`, `edited`) with the lint flags recomputed each time, never
 source text a translation was made from, and on every cue of a track made with another glossary
 or model (§13.4, `episode.all_stale`); `untranslated` for a source cue no translation in a track
 covers; an imported line (no `src`) is never stale and covers the source cues it overlaps in time
-(Q&A item 45). The view never holds a path, only the video's bare file name (§6.8). The server
-runs in Pages too (§21), so this module imports only pure packages and `web.episode` at its top;
-the status views' config and keys are the local engine's, imported only where they are used
-(Task 14 round 14a).
+(Q&A item 45). The view never holds a path, only the video's bare file name (§6.8), and the
+probe's container and codec names, which the browser's canPlayType is asked about (§8.2). The
+server runs in Pages too (§21), so this module imports only pure packages and `web.episode` at
+its top; the status views' config and keys are the local engine's, imported only where they are
+used (Task 14 round 14a).
 """
 
 from __future__ import annotations
@@ -41,7 +42,9 @@ def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None) -
     return {
         "id": ep.id,
         "video": {"name": ep.video.name, "duration_ms": ep.header.video.duration_ms,
-                  "url": video_url, "audio_url": audio_url, "playable_audio": ep.playable_audio},
+                  "url": video_url, "audio_url": audio_url, "playable_audio": ep.playable_audio,
+                  "container": ep.streams.container, "video_codec": ep.streams.video_codec,
+                  "audio_codec": ep.streams.audio_codec},
         "source": ep.source_key,
         "tracks": _tracks(ep),
         "rows": _rows(ep),

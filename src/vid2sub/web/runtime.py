@@ -82,15 +82,16 @@ class Runtime:
                 found[name] = False
         return found
 
-    def media_for(self, ep: Episode) -> Media:
-        """The video by a media token when the browser can play its audio; else the playback
-        audio (spec §8.8; Decision 2), made into the cache under the video's quick hash the first
-        time, which blocks on ffmpeg: call it through `blocking`. Tokens are owned by the
-        episode's id, so closing it revokes them."""
+    def media_for(self, ep: Episode, *, audio_only: bool = False) -> Media:
+        """The video by a media token when the browser can play its audio; else, or with
+        `audio_only` (the browser said it can't play the video, spec §8.2), the playback audio
+        (spec §8.8; Decision 2), made into the cache under the video's quick hash the first time,
+        which blocks on ffmpeg: call it through `blocking`. Tokens are owned by the episode's id,
+        so closing it revokes them."""
         from vid2sub.media.preview import playback_audio
         from vid2sub.media.tools import ToolFailed, ToolMissing
 
-        if ep.playable_audio:
+        if ep.playable_audio and not audio_only:
             try:
                 return Media(f"/media/{self.media.issue(ep.video, owner=ep.id)}", None)
             except ValueError as err:  # never the path: issue's messages name none

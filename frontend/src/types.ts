@@ -63,10 +63,20 @@ export type SpokenWord = { start_ms: number; end_ms: number; text: string };
 export type Version = { rendition: string; by: string | null; at: string | null; cue_count: number };
 
 /** The `episode` output: views.episode_view. `video.url` plays the video; `audio_url` the
- * playback audio when the browser can't play the video's audio (Decision 2). No path, ever. */
+ * playback audio when the browser can't play the video's audio (Decision 2), or the video itself
+ * (spec §8.2: asked with canPlayType about ffprobe's container and codec names). No path, ever. */
 export type EpisodeView = {
   id: string;
-  video: { name: string; duration_ms: number; url: string | null; audio_url: string | null; playable_audio: boolean };
+  video: {
+    name: string;
+    duration_ms: number;
+    url: string | null;
+    audio_url: string | null;
+    playable_audio: boolean;
+    container: string;
+    video_codec: string | null;
+    audio_codec: string;
+  };
   source: string;
   tracks: TrackInfo[];
   rows: Row[];
@@ -80,4 +90,4 @@ export type EpisodeView = {
 };
 
 /** The `busy` output: what the tab's editor is doing, or null. */
-export type Busy = "opening" | null;
+export type Busy = "opening" | "playback" | null;

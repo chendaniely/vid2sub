@@ -12,17 +12,18 @@ const control = "rounded-md border border-input bg-background px-2 py-1 text-sm 
 
 /** The editor (spec §20): the path box, then, once an episode is open, the player on the left
  * and the cue list on the right. */
-export function Editor({ episode, busy, pathInput, onOpen }: {
+export function Editor({ episode, busy, pathInput, onOpen, onCantPlay }: {
   episode: EpisodeView | null;
   busy: Busy;
   pathInput: boolean;
   onOpen: (path: string) => void;
+  onCantPlay: () => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
       {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
       {episode ? (
-        <EpisodeEditor key={episode.id} episode={episode} />
+        <EpisodeEditor key={episode.id} episode={episode} busy={busy} onCantPlay={onCantPlay} />
       ) : (
         <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
       )}
@@ -47,7 +48,11 @@ function OpenForm({ busy, onOpen }: { busy: Busy; onOpen: (path: string) => void
   );
 }
 
-function EpisodeEditor({ episode }: { episode: EpisodeView }) {
+function EpisodeEditor({ episode, busy, onCantPlay }: {
+  episode: EpisodeView;
+  busy: Busy;
+  onCantPlay: () => void;
+}) {
   const translations = episode.tracks.filter((t) => t.role === "translation" && !t.in_conflict);
   const [track, setTrack] = useState<string | null>(translations[0]?.key ?? null);
   const [showing, setShowing] = useState<Showing>("both");
@@ -112,7 +117,7 @@ function EpisodeEditor({ episode }: { episode: EpisodeView }) {
       </header>
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]">
         <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
-          <Player video={episode.video} mediaRef={media} lines={lines} onTime={onTime} />
+          <Player video={episode.video} mediaRef={media} lines={lines} busy={busy} onTime={onTime} onCantPlay={onCantPlay} />
           <div className="flex flex-wrap items-center gap-3 text-sm" data-testid="practice">
             <label className="flex items-center gap-1">
               Captions

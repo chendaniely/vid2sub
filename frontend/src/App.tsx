@@ -24,6 +24,7 @@ export default function App() {
   // Every input is set from here too. Each request carries a count, so the same path asked for
   // twice is still two requests, and "event" sends it at once, never merged with the next.
   const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
+  const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
   const sent = useRef(0);
   const [notices, setNotices] = useState<Shown[]>([]);
   const nextId = useRef(1);
@@ -66,6 +67,7 @@ export default function App() {
           busy={busy ?? null}
           pathInput={capabilities?.path_input ?? false}
           onOpen={(path) => setOpen({ path, n: ++sent.current })}
+          onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
         />
       </main>
       <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">
