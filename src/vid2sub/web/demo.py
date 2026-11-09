@@ -273,10 +273,7 @@ def _target(value, dir_fd) -> str | None:
 
 
 def _refuse_write(path: str | None) -> None:
-    """Refuse a write outside the folder. The null device is let through: subprocess opens it
-    read-write for DEVNULL (the browser opener's stdio), and a write there goes nowhere."""
-    if path == os.devnull:
-        return
+    """Refuse a write outside the folder."""
     if path is not None and (path == "" or not _inside(path, [_state["folder"]])):
         raise DemoIsolationError("the demo writes only inside its own folder")
 
@@ -290,6 +287,10 @@ def _hook(event: str, args: tuple) -> None:
         writes = (isinstance(mode, str) and bool(set(mode) & set("wax+"))) or (
             isinstance(flags, int) and bool(flags & _WRITE_FLAGS))
         if writes:
+            # The null device, by the raw argument and for opens only: subprocess opens it
+            # read-write for DEVNULL (the browser opener's stdio), and a write there goes nowhere.
+            if args[0] == os.devnull:
+                return
             _refuse_write(_target(args[0], None))
             return
         # A read by a bare name is relative to a dir_fd the event doesn't carry (shutil.rmtree's

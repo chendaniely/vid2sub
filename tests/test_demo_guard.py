@@ -78,8 +78,9 @@ def test_the_demo_refuses_every_kind_of_write_outside_its_folder(place):
         lambda: os.rmdir(d),
         lambda: shutil.rmtree(d),
         lambda: shutil.copyfile(folder / "inside.txt", outside / "copy.txt"),
-        lambda: tempfile.mkdtemp(dir=outside),
     ]
+    if os.name != "nt":  # tempfile reads a PermissionError on nt as "that name exists" and
+        writes.append(lambda: tempfile.mkdtemp(dir=outside))  # retries, ending in FileExistsError
     for write in writes:
         with pytest.raises(DemoIsolationError, match="inside its own folder"):
             write()
@@ -253,6 +254,24 @@ def test_the_demo_lets_the_null_device_through_and_nothing_else_outside(place):
         os.open(outside / "fd.txt", os.O_RDWR | os.O_CREAT)
     with pytest.raises(DemoIsolationError, match="inside its own folder"):
         open(outside / "null", "w")  # noqa: SIM115
+
+
+def test_the_null_device_is_let_through_only_to_be_opened(place, monkeypatch):
+    """Not renamed over, removed, changed or truncated (the hook is called directly, so nothing
+    is done to the device); and where os.devnull is the relative "nul", which the OS names by a
+    path of another spelling (Windows), the raw argument of an open is what is compared."""
+    folder, home, _ = place
+    demo.isolate(folder, home=home)
+    for event, args in [("os.remove", (os.devnull,)), ("os.rename", (str(folder / "inside.txt"),
+                        os.devnull)), ("os.chmod", (os.devnull, 0o600)),
+                        ("os.truncate", (os.devnull, 0)), ("shutil.move", ("a", os.devnull))]:
+        with pytest.raises(DemoIsolationError, match="inside its own folder"):
+            demo._hook(event, args)
+    monkeypatch.setattr(os, "devnull", "nul")
+    monkeypatch.setattr(demo, "_target", lambda value, dir_fd: "\\\\.\\nul")
+    demo._hook("open", ("nul", "r+b", os.O_RDWR))  # opened: let through
+    with pytest.raises(DemoIsolationError):
+        demo._hook("os.remove", ("nul",))
 
 
 @pytest.mark.media
