@@ -19,7 +19,8 @@ headers, since none is in front of it; the openai, httpx and chatlas loggers sta
 as for every command (§6.8, §6.2).
 Without the built frontend (`www/ui.js`), serve refuses before it reads or binds anything (§18,
 §23.5). `--demo` serves a fresh copy of the demo instead, reading no vid2sub.toml and no key,
-and isolated from everything else once it is set up (`vid2sub.web.demo`, spec §22.7). The web
+and, once it is set up, guarded against writes, reads and connections beyond it, as far as
+Python audits them (`vid2sub.web.demo`, spec §22.7). The web
 modules are imported only when serve runs, so other commands don't load them, and the Shiny app
 only once `runtime.configure()` has run, as recordings imports it.
 """
@@ -84,8 +85,8 @@ def add_parser(sub) -> None:
     which = p.add_mutually_exclusive_group()
     which.add_argument("--config", metavar="PATH", help="the vid2sub.toml to use")
     which.add_argument("--demo", action="store_true",
-                       help="serve a fresh copy of the demo episode, reading no vid2sub.toml "
-                            "and touching nothing else")
+                       help="serve a fresh copy of the demo episode, reading no vid2sub.toml, "
+                            "with a guard against writes, reads and connections beyond it")
     p.set_defaults(handler=run)
 
 

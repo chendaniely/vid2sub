@@ -10,10 +10,25 @@ the clip's words as Whisper heard them (recordings' demo transcript of the same 
 these 14 s) and a hand-written Japanese translation. Everything goes when the engine exits.
 
 Demo isolation is as in recordings, but enforced by the app, not only watched by a test: a
-Python audit hook (`isolate`) refuses, while the demo runs, any file written outside the demo's
-folder, any file read in the person's home folder outside the demo, Python and vid2sub
-themselves, and any connection or name lookup beyond this machine. The demo's backend opens only
-episodes in its copy, and its runtime reads no vid2sub.toml and no key from the environment.
+Python audit hook (`isolate`) refuses, once the demo is set up and while it runs, the file
+writes Python audits outside the demo's folder, reads of files in the person's home folder
+outside the demo, Python and vid2sub themselves, and the connections, sends and name lookups
+Python audits that go beyond this machine. The demo's backend opens only episodes in its copy,
+and its runtime reads no vid2sub.toml and no key from the environment.
+
+What it can't see (Task 13's Spec review; the first four were accepted in the plan, the rest
+were tried):
+- child processes: ffmpeg, ffprobe and the browser opener, which the demo starts only on its
+  own files;
+- native code, and events Python doesn't audit: `os.mknod` and `os.mkfifo` (both made a file
+  outside), `os.stat`, and listing the home folder (names are read, not files);
+- changes through an already open descriptor: `os.fchmod` and `os.utime` on a descriptor opened
+  read-only;
+- a relative path, which the open event gives without the descriptor it is relative to
+  (`shutil.rmtree`'s walk): only absolute reads are checked, and a bare-name create through a
+  `dir_fd` passes when the working directory is inside the folder;
+- another spelling of a home path on a case-insensitive disk;
+- everything before `isolate`: `prepare` and the imports.
 """
 
 from __future__ import annotations
@@ -216,9 +231,10 @@ _state: dict = {"folder": None, "home": None, "reads": (), "given": (), "tempdir
 
 
 def isolate(folder: Path, *, home: Path | None = None) -> None:
-    """Refuse, from now on in this process, writes outside `folder`, reads in `home` (the
-    person's home folder) outside `folder` and Python's and vid2sub's own files, and any
-    connection or name lookup beyond this machine. Temporary files go in `folder/tmp` (scratch,
+    """Refuse, from now on in this process, the audited writes outside `folder`, absolute reads
+    in `home` (the person's home folder) outside `folder` and Python's and vid2sub's own files,
+    and the audited connections, sends and name lookups beyond this machine (the module
+    docstring lists what the hook can't see). Temporary files go in `folder/tmp` (scratch,
     the redirect file, Shiny's upload folders), and bytecode isn't written, so a lazy import
     doesn't write beside the code. The hook is installed once and can't be removed (Python's
     rule); `release()` lets everything through again and puts the temporary folder back, as
