@@ -53,4 +53,4 @@ skills: ## Install the shinyreact and shadcn agent skills (local tooling, never 
 	$(NVM) npx skills add shadcn/ui --skill shadcn --agent claude-code --yes
 
 help: ## List the targets
-	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  %-9s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-z0-9-]+:.*## / {printf "  %-9s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
