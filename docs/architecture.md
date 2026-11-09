@@ -14,8 +14,8 @@ the browser and can't generate subtitles (spec §3.1).
 flowchart LR
   subgraph user["User's machine"]
     term["Terminal<br/>vid2sub run · detect · translate"]
-    browser["Browser<br/>React UI<br/>(Phase 2)"]
-    web["vid2sub serve<br/>FastAPI + Shiny on 127.0.0.1<br/>(Phase 2)"]
+    browser["Browser<br/>React UI"]
+    web["vid2sub serve<br/>FastAPI + Shiny on 127.0.0.1"]
     core["vid2sub core library<br/>media · engines · subs · translate"]
     tools["ffmpeg · ffprobe · yt-dlp + deno"]
     mlx["In-process engine<br/>mlx-qwen3-asr (Mac)"]
@@ -27,8 +27,8 @@ flowchart LR
   cloud["OpenAI<br/>only with --allow-cloud"]
   pages["GitHub Pages<br/>Shinylive editor<br/>(Phase 4)"]
   term --> core
-  browser -.->|"websocket + token cookie"| web
-  web -.-> core
+  browser -->|"websocket + token cookie"| web
+  web --> core
   core --> tools
   core --> mlx
   core -.-> fw
@@ -38,5 +38,5 @@ flowchart LR
   core -->|"chunks, cue text"| cloud
   pages -.->|"File System Access"| files
   classDef planned stroke-dasharray: 5 5
-  class browser,web,fw,sparkqwen,pages planned
+  class fw,sparkqwen,pages planned
 ```

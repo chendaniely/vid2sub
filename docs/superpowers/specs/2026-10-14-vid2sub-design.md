@@ -63,7 +63,7 @@ test names.
 | S22 | a Cantonese episode through the Spark's Qwen3-ASR and forced aligner, once local-ai serves them | timed words with the text's punctuation attached; when the Spark is down, no fallback | Phase 2 | a fixture recorded from the Spark; `VID2SUB_LIVE_SPARK=1` | planned |
 | S23 | `vid2sub serve` | binds `127.0.0.1` only and opens the browser through the token redirect; the token never reaches a log or `ps` | Phase 2 | `tests/test_cli_serve.py`, `tests/test_web_app.py`, `tests/test_web_auth.py` | built |
 | S24 | a page on another local port calls the app or opens its websocket | refused: no cookie, no access; a wrong Host gets 400; a wrong Origin closes the websocket with 1008 | Phase 2 | `tests/test_web_guards.py`, `tests/test_web_auth.py` | built |
-| S25 | a GET request, or a write that isn't same-origin JSON | a GET never writes anything or starts a process; the write is refused | Phase 2 | `tests/test_web_guards.py`, `tests/test_web_app.py` (the read-only sweep; Task 12 adds the bookmark assertion and the sweep against the real Shiny app to `tests/test_web_server.py`) | built |
+| S25 | a GET request, or a write that isn't same-origin JSON | a GET never writes anything or starts a process; the write is refused | Phase 2 | `tests/test_web_guards.py`, `tests/test_web_app.py`, `tests/test_web_server.py` | built |
 | S26 | a subtitle with `<script>` or ASS overrides, or a hostile file name or YouTube title | shown as plain text; the CSP blocks any script; the caption overlay renders `<i>` only | Phase 2 | Playwright with hostile fixtures | planned |
 | S27 | an M1 episode opened in the editor | the video plays with captions; the cue list follows playback; the spoken word is highlighted | Phase 2 | Playwright against `vid2sub serve --demo`; the exit test | planned |
 | S28 | a source cue edited, split, merged, nudged, inserted or deleted, then undone | the pure `subs.edit` rules apply; translations re-point and are flagged (§13.5) | Phase 2 | `tests/test_edit.py`; Playwright | planned |
@@ -531,7 +531,8 @@ Any script on the app's origin controls everything, so nothing hostile may run t
 - **A key goes only to the origin it was declared with.** Every client gets `api_key` and
   `base_url` passed explicitly (never read from `OPENAI_API_KEY`/`OPENAI_BASE_URL` by the SDK),
   with redirects refused (`follow_redirects=False`), so a 307 can't re-send audio or a key
-  elsewhere.
+  elsewhere. A plain-http endpoint is reached directly, never through a proxy named by the
+  environment; an https one may use a proxy, which sees only `CONNECT` (Phase 2 Task 12).
 - **One client factory** (`engines/clients.py`) creates every openai, httpx and chatlas client.
   A test fails if any other module constructs one (§22.4).
 
@@ -1286,8 +1287,8 @@ UI run from a terminal or a script.
 - **FastAPI shell** (`web/app.py`): `/auth`, `/healthz`, `/media/{token}` (FileResponse with Range,
   §6.3 headers), the Shiny app mounted at `/` last, wrapped as
   `HostGuard(WriteGuard(TokenGuard(api)))` (§6.1, §6.2).
-- **shinyreact** (`web/server.py`): `ReactApp(server)` is called in that file (it finds `www/` from
-  the calling frame). Outputs are `@reactive_output` JSON values from pure view functions;
+- **shinyreact** (`web/server.py`): `ReactApp(server)` is called in that file (with `page_react(src_dir=WWW)`,
+  rendered once at import; §6.2). Outputs are `@reactive_output` JSON values from pure view functions;
   progress uses `send_message`. An unset input is a silent exception the client treats as
   pending; an explicit null clears a pane (`recordings`' pattern).
 - **Backend** (`web/backend.py`, §3.3): the server calls `LocalBackend` or `BrowserBackend`; a
@@ -1749,7 +1750,12 @@ Each is checked in the milestone that first depends on it; the result goes into 
     A model the Spark couldn't fit beside another answered `no_fit`, which vid2sub waited on for
     about ten minutes.
 - **M2:** the CSP that Shiny and shinyreact need (inline styles, `eval`); the 2026 browser codec
-  matrix (Chrome HEVC depends on hardware; Firefox MKV arrived in late 2025).
+  matrix (Chrome HEVC depends on hardware; Firefox MKV arrived in late 2025). *Result (2026-10-24,
+  Chromium via Playwright 1.64.1):* Shiny 1.8.0's one inline script, its busy indicators, is served
+  as a file instead (`server.BUSY_INDICATORS`), so `script-src 'self'` holds with no violation; no
+  `style-src` is needed and none is set; `eval` is never needed. Radix's modal parts and Select
+  inject `<style>` elements, so the editor's modal parts use the native `<dialog>`, its menus are
+  non-modal and its choices native `<select>`s.
 - **M3:** CUDA cuBLAS setup for faster-whisper on Windows.
 - **M4:** Pyodide and Shinylive versions at build time; Safari's File System Access status.
 - **local-ai:** Qwen3-ASR under vLLM or torch on the GB10 (aarch64, sm_121).

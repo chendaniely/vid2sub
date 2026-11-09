@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 12: The frontend scaffold and the shinyreact server, open.
+**Now:** Task 13: The end-to-end harness and the demo, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one.
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower.
 
 ## Decisions made while planning (review these)
 
@@ -16881,6 +16881,24 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 1 · **Scenarios:** S26
 
+**Built differently** (the listing's own steps stay as planned): (1) Round 12d, the two Interfaces
+"Adds": `server.py` writes `bookmark_store="disable"` out in the `ReactApp(...)` call (Shiny's
+default, so there is code for the bookmark test to guard; f5bbfc6), and the page is rendered once,
+at import (`def page() -> Any`, `ui=page()`), not per request: a callable `ui` makes htmltools
+create and remove a throwaway directory for each dependency on every GET (`package_dir`, 12 for one
+GET and one HEAD of "/"), against spec §6.2 and S25, which the real-app sweep found. A rebuilt
+`ui.js` now needs a restart, and a browser may keep its cached copy until then (b92567a). (2)
+Round 12e, after the Tier 1 review: `engines.clients._http(base_url, timeout)` trusts the
+environment only for an https base URL, so a key on plain http never reaches a proxy (spec §6.4;
+068e2c3); `list_models` turns a 200 that isn't a model list into `EngineError("bad_response")`, so
+one junk endpoint no longer leaves every endpoint "checking…" (06b5a93); `make help` lists `e2e`
+(727e4e7); the status check's tests (off the loop, every 60 s), the sweep reading the page's real
+static files and the page's no-inline-handler assertion (a4428c1); `app.sanitize_errors = True`,
+and the `page()` docstring (44e7897). (3) The direct fixes under the re-review's cap (0a19c69): each
+limb of the junk-answer handler has a guard, `RecursionError` joins it, the sanitised-error test
+takes `probed`, and `_http`'s docstring is exact. (4) `npm install` added 491 packages, the listing
+says 492.
+
 **Files:**
 - Create: `frontend/` (`package.json`, `package-lock.json`, `vite.config.js`, `tsconfig.json`,
   `components.json`, `.nvmrc`, `scripts/check-node.mjs`, `src/ui.tsx`, `src/App.tsx`, `src/sr.ts`,
@@ -16927,9 +16945,14 @@ Co-Authored-By: <the model's own line>
   - Message `notice` (`{kind: "info" | "error", text}`): `await server.notice(session, kind,
     text)`; the frontend shows it as plain text, info in a polite live region and errors in an
     alert, the newest three (`lib/notices.ts`).
-  - `server.app = ReactApp(server, ui=server.page, static_assets={"/": WWW})`: the page is
-    shinyreact's `page_react` with `server.BUSY_INDICATORS` (see *The CSP* below); `www/` is also
-    served at "/" for the fonts, as ReactApp's own discovery mounts it.
+  - `server.app = ReactApp(server, ui=server.page(), static_assets={"/": WWW},
+    bookmark_store="disable")`, with `server.app.sanitize_errors` true (spec §6.8): `server.page()
+    -> Any` is shinyreact's `page_react` with `server.BUSY_INDICATORS` (see *The CSP* below),
+    rendered once at import (a per-request render writes a throwaway directory on every GET, against
+    spec §6.2); `www/` is also served at "/" for the fonts, as ReactApp's own discovery mounts it.
+  - `engines.clients._http(base_url, timeout)`: the one httpx client, trusting the environment
+    (proxy variables) only for an https base URL (spec §6.4); `list_models` raises `EngineError`
+    for a 200 that isn't a model list.
   - `frontend/src/sr.ts`: re-exports `useShinyInput`, `useShinyOutputValue`,
     `useShinyOutputStatus`, `useShinyOutputError`, `useShinyInitialized`, `useSetShinyInput`,
     `useShinyMessageHandler` from `window.shinyreact` (types only from the npm package). Every
@@ -17040,11 +17063,11 @@ export function Dialog({ open, onClose, title, side, children, className }: {
 - The `page` fixture's console-error guard stays as it is, so a modal Radix part or a Radix
   Select fails the task that adds it.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
 #### Round 12a: the frontend scaffold, the brand and the fonts
 
-- [ ] **Step 1: Write the failing tests.** `frontend/src/lib/theme.test.ts` (recordings', with
+- [x] **Step 1: Write the failing tests.** `frontend/src/lib/theme.test.ts` (recordings', with
   this repo's storage key):
 
 ```ts
@@ -17326,7 +17349,7 @@ def test_orange_is_never_a_light_mode_text_colour():
     assert contrast(brand_css().tokens(REPO, "light")["brand-orange"], "#FFFFFF") < 4.5
 ```
 
-- [ ] **Step 2: Write the frontend's configuration and install its packages.** Every package is
+- [x] **Step 2: Write the frontend's configuration and install its packages.** Every package is
   pinned exactly, as recordings' versions (packages/ui/frontend at 8deb039), less what this
   scaffold doesn't use yet (cmdk, sonner, @tanstack/react-virtual, axe-core: a later task adds
   what it needs).
@@ -17498,13 +17521,13 @@ export default defineConfig({
   Then `cd frontend && npm install --no-audit --no-fund` (Node 22 or later: `nvm use` reads
   `.nvmrc`). Expected: `added 492 packages`. It writes `frontend/package-lock.json`, which is
   committed.
-- [ ] **Step 3: Run the tests; watch them fail.** `cd frontend && npx vitest run`. Expected:
+- [x] **Step 3: Run the tests; watch them fail.** `cd frontend && npx vitest run`. Expected:
   `FAIL  src/components/TopBar.test.ts`, `Error: Failed to resolve import "./TopBar" from
   "src/components/TopBar.test.ts". Does the file exist?`, and likewise `./notices` and `./theme`,
   then `Test Files  3 failed | 1 passed (4)`. And `uv run pytest tests/test_brand.py -q`:
   `E   FileNotFoundError: [Errno 2] No such file or directory: '…/scripts/brand_css.py'`, then
   `3 failed`.
-- [ ] **Step 4: Write the code.**
+- [x] **Step 4: Write the code.**
 
   `frontend/src/sr.ts`:
 
@@ -18372,7 +18395,7 @@ src/vid2sub/web/www/ui.css
 skills-lock.json
 ```
 
-- [ ] **Step 5: Run the checks; they pass.** `make setup` (npm ci under nvm's Node 22), then
+- [x] **Step 5: Run the checks; they pass.** `make setup` (npm ci under nvm's Node 22), then
   `make build`. Expected, among its lines: `../src/vid2sub/web/www/ui.css  22.62 kB`,
   `../src/vid2sub/web/www/ui.js   71.15 kB`, `✓ built in` (Vite also says each `/fonts/…` URL
   "didn't resolve at build time, it will remain unchanged to be resolved at runtime", which is
@@ -18382,7 +18405,7 @@ skills-lock.json
   `test-js`, `brand` and `skills`. `git check-ignore -v frontend/src/lib/theme.ts` prints nothing
   (the template's `lib/` no longer hides it); `src/vid2sub/web/www/ui.js` and
   `frontend/node_modules` are ignored. `make skills` isn't run here (it fetches agent tooling).
-- [ ] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(frontend): 🤖 the editor's frontend builds into src/vid2sub/web/www/ with React kept external, the brand's theme and fonts served locally
@@ -18428,7 +18451,7 @@ Co-Authored-By: <the model's own line>
 
 #### Round 12b: the shinyreact server, and a page the CSP allows
 
-- [ ] **Step 7: Write the failing test,** `tests/test_web_server.py`:
+- [x] **Step 7: Write the failing test,** `tests/test_web_server.py`:
 
 ```python
 """The Shiny server for the React frontend: its page runs no inline script or style, so the spec's
@@ -18647,9 +18670,9 @@ def test_capabilities_view_is_the_backends_capabilities_as_json(rt):
         "engine": "local", "generate": True, "save": "disk", "path_input": True}
 ```
 
-- [ ] **Step 8: Run it; watch it fail.** `uv run pytest tests/test_web_server.py -q`. Expected:
+- [x] **Step 8: Run it; watch it fail.** `uv run pytest tests/test_web_server.py -q`. Expected:
   `E   ImportError: cannot import name 'server' from 'vid2sub.web' (…/src/vid2sub/web/__init__.py)`.
-- [ ] **Step 9: Write the code,** `src/vid2sub/web/static/busy/busy-indicators.js`:
+- [x] **Step 9: Write the code,** `src/vid2sub/web/static/busy/busy-indicators.js`:
 
 ```js
 // Shiny's busy indicators, switched on as Shiny 1.8.0's shiny.ui.busy_indicators.use() does, but
@@ -18872,12 +18895,12 @@ def status_view(config: Config, keys: KeyRing, reachable: Mapping[str, bool], *,
 def _rows(ep: Episode) -> list[dict[str, Any]]:
 ```
 
-- [ ] **Step 10: Run the checks; they pass.** `uv run pytest tests/test_web_server.py -q`.
+- [x] **Step 10: Run the checks; they pass.** `uv run pytest tests/test_web_server.py -q`.
   Expected: `9 passed`. Without the build (move `www/ui.js` and `ui.css` aside) it still passes,
   with shinyreact's "JS entry point not found" warnings, as CI's Python job will. `make check`.
   Expected: `950 passed, 2 skipped, 4 deselected` twice, `Test Files  4 passed (4)`,
   `All checks passed!`, `no leaks found`.
-- [ ] **Step 11: Each guard fails its tests without its fix.** `git add src/vid2sub/web/server.py
+- [x] **Step 11: Each guard fails its tests without its fix.** `git add src/vid2sub/web/server.py
   src/vid2sub/web/views.py src/vid2sub/web/static/busy/busy-indicators.js
   tests/test_web_server.py`. Then, for each row, make the change in `server.py` (the middle two
   rows: `views.py`), run `uv run pytest tests/test_web_server.py -q`, see it fail, and restore
@@ -18891,7 +18914,7 @@ def _rows(ep: Episode) -> list[dict[str, Any]]:
 | keys by presence only | `key = ("present" if keys.key_for(name, ep) else "missing") if needs_key else "none"` | `key = keys.key_for(name, ep) or "none"` | 2 |
 | only local endpoints probed | `for name in views.local_endpoints(config):` | `for name in config.endpoints:` | 1 |
 
-- [ ] **Step 12: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 12: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 the Shiny server sends capabilities and status as JSON, and its page runs no inline script, so the spec's CSP allows all of it
@@ -18938,7 +18961,7 @@ Co-Authored-By: <the model's own line>
 
 #### Round 12c: the browser tests, and a tab whose engine restarted
 
-- [ ] **Step 13: Write the failing tests.** `tests/e2e/conftest.py`:
+- [x] **Step 13: Write the failing tests.** `tests/e2e/conftest.py`:
 
 ```python
 """Servers and pages for the browser tests (spec §22.7): the real `vid2sub serve`, on a free port,
@@ -19286,12 +19309,12 @@ e2e: build ## The browser tests against vid2sub serve (installs Playwright's Chr
 lint: ## Lint with ruff
 ```
 
-- [ ] **Step 14: Run them; watch them fail.** `make e2e` (it builds the frontend, installs
+- [x] **Step 14: Run them; watch them fail.** `make e2e` (it builds the frontend, installs
   Playwright's Chromium if it isn't there, and runs `pytest -m e2e`). Expected:
   `FAILED tests/e2e/test_csp.py::test_a_restarted_engine_tells_the_page_to_open_the_new_link_and_it_never_reconnects[chromium]`,
   with `AssertionError: Locator expected to contain text 'vid2sub isn't running'`,
   `Actual value: None`, then `1 failed, 3 passed`.
-- [ ] **Step 15: Write the code,** `frontend/src/lib/connection.test.ts`:
+- [x] **Step 15: Write the code,** `frontend/src/lib/connection.test.ts`:
 
 ```ts
 import { describe, expect, it, vi } from "vitest";
@@ -19443,11 +19466,11 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
 }
 ```
 
-- [ ] **Step 16: Run the checks; they pass.** `make test-js`. Expected: `Test Files  5 passed
+- [x] **Step 16: Run the checks; they pass.** `make test-js`. Expected: `Test Files  5 passed
   (5)`, `Tests  24 passed (24)`. `make e2e`, twice. Expected: `4 passed, 956 deselected` each
   time. `make check`. Expected: `950 passed, 2 skipped, 8 deselected` twice (the e2e tests are
   the 4 new ones deselected), the Vitest lines, `All checks passed!`, `no leaks found`.
-- [ ] **Step 17: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 17: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 test(e2e): 🤖 in Chromium the editor runs with no CSP violation, and a tab whose engine restarted says to open the new link instead of reconnecting
@@ -19493,7 +19516,7 @@ Co-Authored-By: <the model's own line>
   frontend/src/lib/connection.ts frontend/src/lib/connection.test.ts frontend/src/App.tsx`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 18: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 18: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
   kickoff council, because it makes the server's whole websocket surface and the only real-browser
   CSP test). Worth the reviewers' time: that the rendered page has no executable inline script,
@@ -21662,8 +21685,62 @@ def test_closing_the_tab_closes_its_episode_and_revokes_its_media(media_client, 
     assert media_rt.media.resolve(token) is None
 ```
 
+  Task 12's endpoint check is `Runtime.reachable` now (`server.reachable` is gone), so in this
+  step also replace Task 12's whole test `test_an_endpoint_answering_junk_is_unreachable_and_the_others_are_still_checked`
+  in `tests/test_web_server.py` with the following, which calls `Runtime.reachable` on a runtime
+  built for the config. Task 12's other tests stay as they are: the `probed` fixture patches
+  `clients.list_models` for whoever calls it, the off-the-loop assertion holds because the check
+  runs through `runtime.blocking` (`asyncio.to_thread`), and the 60 s test finds
+  `server.STATUS_EVERY` and `reactive.invalidate_later` in `server.py` still.
+
+```python
+def test_an_endpoint_answering_junk_is_unreachable_and_the_others_are_still_checked(tmp_path):
+    import http.server
+
+    class Junk(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):  # a web page where the model list should be
+            body = b"<html>not a model server</html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Junk)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    config = Config.model_validate({
+        "endpoints": {"webui": {"base_url": f"http://127.0.0.1:{httpd.server_address[1]}/v1"},
+                      "spark": {"base_url": "http://127.0.0.1:9/v1"}},
+        "models": {"a": {"endpoint": "webui", "model": "w", "parser": "whisper.cpp",
+                         "local": True},
+                   "b": {"endpoint": "spark", "model": "w", "parser": "whisper.cpp",
+                         "local": True}}})
+    calls = []
+    real = clients.list_models
+
+    def list_models(name, endpoint, keys, *, timeout=5.0):
+        calls.append(name)
+        if name == "spark":
+            return ["w"]  # the healthy one, without a real server
+        return real(name, endpoint, keys, timeout=timeout)
+
+    made = runtime.build(config, tools=Tools(None, None, None), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=0))
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(clients, "list_models", list_models)
+            found = made.reachable()
+    finally:
+        httpd.shutdown()
+        made.queue.close()
+    assert found == {"webui": False, "spark": True} and calls == ["webui", "spark"]
+```
+
 - [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q` (each new
-  test waits 20 s for what never comes). Expected: `6 failed, 9 passed`, each with
+  test waits 20 s for what never comes). Expected: `6 failed, 14 passed` (Task 12's file has 14 tests, not 9), each with
   `AssertionError: timed out; the tab saw [{'values': {}, 'inputMessages': [], 'errors': {}}, ...`.
 - [ ] **Step 8: Write the code.** `src/vid2sub/web/runtime.py`: in the docstring replace
   `` `Runtime` (`reachable`). `` with `` `Runtime` (`reachable`, `media_for`). ``; in the
@@ -21799,9 +21876,11 @@ BUSY_INDICATORS = [
 ]
 
 
-def page(request: Any) -> Any:
-    """The page, built per request, so a rebuilt `ui.js` is fetched without a restart (its mtime
-    is the dependency's version, as in ReactApp's own discovery)."""
+def page() -> Any:
+    """The page, rendered once, when this module is imported. A per-request render makes htmltools
+    create and remove a throwaway directory on every GET (`package_dir`), and spec §6.2 says no GET
+    writes anything. The cost: a rebuilt `ui.js` (its mtime is the dependency's version) needs a
+    restart, and until then it is served at the old URL, so a browser may keep its cached copy."""
     return page_react(*BUSY_INDICATORS, src_dir=WWW, title="vid2sub")
 
 
@@ -21943,7 +22022,10 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         return editor.busy()
 
 
-app = ReactApp(server, ui=page, static_assets={"/": WWW})
+# bookmark_store="disable" is Shiny's default, said here so that no session state is written to
+# disk or put in a URL (tests/test_web_server.py checks it).
+app = ReactApp(server, ui=page(), static_assets={"/": WWW}, bookmark_store="disable")
+app.sanitize_errors = True  # an output's error text may hold a key or a path (spec §6.8)
 ```
 
 - [ ] **Step 9: Run the checks; they pass.** First the guard: replace
@@ -29471,7 +29553,10 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         return editor.busy()
 
 
-app = ReactApp(server, ui=page, static_assets={"/": WWW})
+# bookmark_store="disable" is Shiny's default, said here so that no session state is written to
+# disk or put in a URL (tests/test_web_server.py checks it).
+app = ReactApp(server, ui=page(), static_assets={"/": WWW}, bookmark_store="disable")
+app.sanitize_errors = True  # an output's error text may hold a key or a path (spec §6.8)
 ```
 
   with
@@ -29485,7 +29570,10 @@ app = ReactApp(server, ui=page, static_assets={"/": WWW})
         return editor.progress()
 
 
-app = ReactApp(server, ui=page, static_assets={"/": WWW})
+# bookmark_store="disable" is Shiny's default, said here so that no session state is written to
+# disk or put in a URL (tests/test_web_server.py checks it).
+app = ReactApp(server, ui=page(), static_assets={"/": WWW}, bookmark_store="disable")
+app.sanitize_errors = True  # an output's error text may hold a key or a path (spec §6.8)
 ```
 
 - [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_server.py
@@ -35096,7 +35184,7 @@ function Endpoint({ endpoint: e, open, connected, test, onTest, onTypedKey }: {
 ```
 
 - [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_web_settings.py
-  tests/test_translate.py tests/test_clients.py -q` first (`46 passed`), `cd frontend && npx
+  tests/test_translate.py tests/test_clients.py -q` first (`57 passed`: Task 12 added 11 tests to `tests/test_clients.py`), `cd frontend && npx
   vitest run` (`Tests  90 passed (90)`), then `make build && uv run pytest -m e2e
   tests/e2e/test_settings.py -q` five times (`2 passed` each: the key leaves the page when React
   re-renders the closed drawer, a moment after the native close, so the test waits for it).
@@ -38974,7 +39062,8 @@ Co-Authored-By: <the model's own line>
 ```
 
   delete the line `  core -.->|"chunks"| sparkqwen`, and replace
-  `  class browser,web,fw,sparkqwen,pages planned` with `  class browser,web,fw,pages planned`.
+  `  class fw,sparkqwen,pages planned` with `  class fw,pages planned` (Task 12 already made the
+  browser and `vid2sub serve` solid).
   `make check` (as Step 22). Commit:
 
 ```text
@@ -39072,8 +39161,8 @@ Spec §23.2's `frontend` and `e2e` jobs, hardened as §23.1 asks, in the idiom o
   `default` aliased to `system` (runner-images' `install-nvm.sh`), so the Makefile's `nvm use 22`
   fails quietly there and setup-node's Node on `PATH` runs. The Makefile's comment said CI has
   no nvm; this task corrects it.
-- **`make help`** matched only `[a-z-]+` target names, so `e2e` never appeared (escaped from Task
-  12 (Tier 2), found by this task's build); the pattern takes digits now.
+- **`make help`** already lists `e2e`: Task 12's fix round made the pattern take digits (727e4e7),
+  so this task leaves it.
 - **Pins:** checkout v7.0.1, setup-uv v10.3.0 and upload-artifact v7.0.2 are `ci.yml`'s and
   `recordings`' pins; setup-node v7.1.0 is `recordings`'. Each SHA was checked with
   `git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>`.
@@ -39081,7 +39170,7 @@ Spec §23.2's `frontend` and `e2e` jobs, hardened as §23.1 asks, in the idiom o
 **Files:**
 - Modify: `.github/workflows/ci.yml` (the `frontend` and `e2e` jobs), `.github/dependabot.yml`
   (the `npm` ecosystem for `/frontend`, Decision 35), `Makefile` (`actionlint`;
-  `help` lists targets with digits; the nvm comment), `.gitignore` (`/e2e-tmp/`)
+  the nvm comment), `.gitignore` (`/e2e-tmp/`)
 - Test: `tests/test_dependabot.py` (Decision 35)
 - Modify at the close: this plan's Phase-end list (the `npm audit` row's Status)
 
@@ -39188,7 +39277,7 @@ make check
 
 ```
 
-- [ ] **Step 3: The Makefile.** Three edits:
+- [ ] **Step 3: The Makefile.** Two edits:
   - In the `.PHONY:` line, add `actionlint` after `lint`.
   - Replace the comment above `NVM :=`:
 
@@ -39215,13 +39304,6 @@ make check
 
 actionlint: ## Lint the GitHub workflows (actionlint, and shellcheck on run steps where installed)
 	uvx --from 'actionlint-py==1.7.12.25' actionlint
-```
-
-  - In the `help:` recipe, replace `/^[a-z-]+:.*## /` with `/^[a-z0-9-]+:.*## /`, so the line
-    reads:
-
-```make
-	@awk 'BEGIN {FS = ":.*## "} /^[a-z0-9-]+:.*## / {printf "  %-9s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 ```
 
 - [ ] **Step 4: `.gitignore`.** Below the line `/.cache/` in the `# vid2sub` block, add:
@@ -39304,8 +39386,6 @@ UV_FROZEN=1, and Node from frontend/.nvmrc.
   ui.js. So it is unchanged.
 - make actionlint (actionlint-py 1.7.12.25 through uvx; shellcheck on run steps where installed)
   lints the workflows: no findings.
-- make help listed no target with a digit, so e2e was missing: its pattern takes digits now
-  (escaped from Task 12 (Tier 2), found by Task 21's build).
 - The Makefile's nvm comment said CI has no nvm; GitHub's ubuntu-24.04 image has nvm 0.40.8 with
   no Node installed and `default` aliased to system (runner-images' install-nvm.sh), so
   `nvm use 22` fails quietly and setup-node's Node runs. The comment says so now.
@@ -39467,15 +39547,15 @@ Co-Authored-By: <the model's own line>
 Phase 2 built the editor, and the docs still said it was being planned: the README's status line,
 its Develop list (none of Phase 2's `make` targets), `tests/README.md` (no Vitest, no browser
 tests, and `uv run pytest` said to run the e2e tests it deselects), and `docs/architecture.md`
-(the browser and `vid2sub serve` dashed, as planned parts are). This task writes what was built,
+(no section on the local web app). This task writes what was built,
 from the code: spec §23.5's README parts for the editor, the tests and their opt-in variables,
 and the web app's parts as built, solid.
 
 **Why it is built this way** (read 2026-10-24):
 - **Task 20's Step 23 may or may not have run.** It runs `make readme` (the model table's Qwen3-ASR
   rows) and draws the Spark's Qwen3-ASR solid in `docs/architecture.md`, once local-ai serves it.
-  So no edit here touches the model table or the Spark's nodes, and the diagram's class line is
-  edited by its prefix (`  class browser,web,fw,`), which both versions of the line start with.
+  So no edit here touches the model table or the Spark's nodes, and the first diagram's class line
+  is not edited here at all (Task 12 made the browser and `vid2sub serve` solid).
   The listing applies whether Step 23 came first or not.
 - **Plain npm commands, one a line,** for the frontend build: spec §23.5 has the README give uv
   and npm commands so Windows works without make, and an inline `#` comment would reach npm as
@@ -39493,8 +39573,8 @@ and the web app's parts as built, solid.
 **Files:**
 - Modify: `README.md` (the status line; the frontend build under Install; `vid2sub cache clear`
   and `vid2sub serve` under Use; a new section, The editor; Develop), `tests/README.md` (`make
-  test` and `make check`; the frontend's tests; the browser tests), `docs/architecture.md` (the
-  browser and `vid2sub serve` solid; a new section, The local web app)
+  test` and `make check`; the frontend's tests; the browser tests), `docs/architecture.md` (a
+  new section, The local web app)
 
 **Interfaces:**
 - Consumes: `make readme` (it changes nothing: in Phase 2 only Task 20's Step 23 changes the
@@ -39813,39 +39893,10 @@ Co-Authored-By: <the model's own line>
   and keeps them when the job fails.
 ```
 
-- [ ] **Step 5: `docs/architecture.md`.** In the first diagram, the browser and `vid2sub serve`
-  are built: replace
-
-```text
-    browser["Browser<br/>React UI<br/>(Phase 2)"]
-    web["vid2sub serve<br/>FastAPI + Shiny on 127.0.0.1<br/>(Phase 2)"]
-```
-
-  with
-
-```text
-    browser["Browser<br/>React UI"]
-    web["vid2sub serve<br/>FastAPI + Shiny on 127.0.0.1"]
-```
-
-  replace
-
-```text
-  browser -.->|"websocket + token cookie"| web
-  web -.-> core
-```
-
-  with
-
-```text
-  browser -->|"websocket + token cookie"| web
-  web --> core
-```
-
-  and in the line that starts `  class browser,web,fw,` (it ends `sparkqwen,pages planned`, or
-  `pages planned` once Task 20's Step 23 has run), replace that start with `  class fw,`, so
-  only the planned parts stay dashed. Then at the end of the file, after the first diagram's
-  closing fence, append, one blank line first:
+- [ ] **Step 5: `docs/architecture.md`.** Task 12 made the first diagram's browser and
+  `vid2sub serve` solid (their labels, their two arrows and the class line), so nothing in that
+  diagram changes here. At the end of the file, after the first diagram's closing fence, append,
+  one blank line first:
 
 ````markdown
 ## The local web app
@@ -39969,10 +40020,9 @@ failing on any console error or CSP violation; Playwright's Chromium,
 server's server.log, which CI keeps from e2e-tmp/ on a failure). The
 live tests' list is unchanged.
 
-docs/architecture.md: the browser and vid2sub serve are built, so
-they and their arrows are solid now (AGENTS.md: built solid, planned
-dashed). The class line loses only browser and web, so the Spark's
-Qwen3-ASR, faster-whisper and Pages stay dashed. A new section, The
+docs/architecture.md: the first diagram is unchanged (Task 12 made the
+browser and vid2sub serve solid; the Spark's Qwen3-ASR, faster-whisper
+and Pages stay dashed). A new section, The
 local web app, draws the engine as built: HostGuard, WriteGuard and
 TokenGuard in front of the FastAPI shell's /auth, /healthz and
 /media/{token} and the Shiny app at /; then the Pages-safe line, with
@@ -40001,7 +40051,7 @@ Co-Authored-By: <the model's own line>
   `not yet`, `planned` and `unverified`: what is left is the cue rules' "not yet changeable", the
   page's own legend and the Spark's Qwen3-ASR (dashed until Task 20's Step 23). The forward
   review over Task 23 (its Step 2 builds the frontend as the README says), Task 24 (its step 4
-  checks that Phase 2's parts in `docs/architecture.md`, solid since this task, still match the
+  checks that Phase 2's parts in `docs/architecture.md`, solid since Task 12 and this task, still match the
   code), Phase 3's Task 9 (its `tests/README.md` anchor, the `VID2SUB_LIVE_SPARK=1` item, is
   unchanged) and Task 11, and Phase 4's Task 10 (the README's install from the index sits beside
   the editor's build from a clone). The docs this task didn't touch but Phase 2 left short:
@@ -40303,3 +40353,12 @@ fi
 | Task 11 (re-review) | Minor | `src/vid2sub/security.py` | Out of scope: `_ENV_KEEP` passes proxy variables, which may carry credentials, to every child (not new); `get_paths` is re-read per method, so a route registered during the GET pass is swept by HEAD only | open |
 | Task 11 (review) | Minor | `src/vid2sub/commands/serve.py` | Couldn't verify: Windows (signals, SIGBREAK, `os.startfile`'s environment, `SO_EXCLUSIVEADDRUSE`); the environment macOS LaunchServices gives a browser not yet running; a Linux desktop for the helper's environment (xdg-open, KDE, snap and flatpak browsers); a `/media/` read stalled on a network share past `GRACE` (anyio's worker threads aren't daemons) | open |
 | Task 11 (review) | Minor | `src/vid2sub/commands/serve.py` | A failed browser open shows only as the warning, because the helper's stderr is discarded | open |
+| Task 12 (review) | Minor | `frontend/src/components/`, `tests/` | Spec S7, second half: nothing renders a notice with markup in its text; `NoticeCard` isn't importable under Vitest without moving it out of `App.tsx` | open |
+| Task 12 (review) | Minor | `Makefile` | Spec S9: `make skills` installs unpinned packages with `--yes` | open |
+| Task 12 (review) | Minor | `src/vid2sub/web/www/fonts/OFL.txt` | Spec S10: `OFL.txt` doesn't name the Mono fonts' copyright holders | open |
+| Task 12 (review) | Minor | `frontend/src/` | Standards S5: unused `Toggle` and `sr.ts` hooks; mixed code style between the shadcn files and the hand-written ones; the npm `cn` package instead of `clsx` and `tailwind-merge` | open |
+| Task 12 (review) | Minor | `tests/e2e/conftest.py` | Standards S6: the harness prints the server's log tail on failure, safe only while the server logs no titles, paths or tokens | open |
+| Task 12 (re-review) | Minor | `src/vid2sub/web/server.py` | Out of scope: Shiny's `traceback.print_exc()` and `print(str(e))` still write error text to stderr, against spec §6.8; `sanitize_errors` covers only what the browser gets | open |
+| Task 12 (re-review) | Minor | `src/vid2sub/engines/clients.py` | Out of scope: chatlas's async client ignores our `http_client`, so it would trust the environment and follow redirects; nothing calls it today, and a later async chat would reopen spec §6.4 | open |
+| Task 12 (re-review) | Minor | `src/vid2sub/engines/clients.py` | Out of scope: an empty answer (`{}`, `{"data":null}`) counts as reachable | open |
+| Task 12 (review) | Minor | `src/vid2sub/web/` | Couldn't verify: Windows, Python 3.12 and real CI for this range, until the push; browsers other than Chromium under the CSP; what a real browser does with the old URL's cached `ui.js` after a rebuild; macOS system proxy settings reaching the probe; import-time rendering under Pyodide (Phase 4); `make skills` | open |
