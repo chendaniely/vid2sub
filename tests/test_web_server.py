@@ -309,3 +309,18 @@ def test_an_endpoint_answering_junk_is_unreachable_and_the_others_are_still_chec
     finally:
         httpd.shutdown()
     assert found == {"webui": False, "spark": True} and calls == ["webui", "spark"]
+
+
+def test_an_output_that_fails_sends_the_browser_no_text_of_the_error(client, monkeypatch):
+    # shiny 1.8.0, session/_session.py: an output that raises sends str(e) to the browser unless
+    # app.sanitize_errors is set (and the exception isn't a SafeException); server.py sets it
+    # (spec §6.8: no keys or paths in what leaves the engine).
+    assert server.app.sanitize_errors is True
+
+    def fails(caps):
+        raise RuntimeError(f"the endpoint refused key {KEY}")
+
+    monkeypatch.setattr(views, "capabilities_view", fails)
+    messages = _session(client, {"capabilities"},
+                        lambda m: any("capabilities" in x.get("errors", {}) for x in m))
+    assert KEY not in json.dumps(messages)

@@ -66,7 +66,7 @@ def page() -> Any:
     """The page, rendered once, when this module is imported. A per-request render makes htmltools
     create and remove a throwaway directory on every GET (`package_dir`), and spec §6.2 says no GET
     writes anything. The cost: a rebuilt `ui.js` (its mtime is the dependency's version) needs a
-    restart to be served with its new version."""
+    restart, and until then it is served at the old URL, so a browser may keep its cached copy."""
     return page_react(*BUSY_INDICATORS, src_dir=WWW, title="vid2sub")
 
 
@@ -123,3 +123,4 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
 # bookmark_store="disable" is Shiny's default, said here so that no session state is written to
 # disk or put in a URL (tests/test_web_server.py checks it).
 app = ReactApp(server, ui=page(), static_assets={"/": WWW}, bookmark_store="disable")
+app.sanitize_errors = True  # an output's error text may hold a key or a path (spec §6.8)
