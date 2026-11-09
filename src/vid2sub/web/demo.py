@@ -204,10 +204,15 @@ _WRITES: dict[str, tuple[tuple[int, int | None], ...]] = {
     "os.truncate": ((0, None),), "shutil.rmtree": ((0, 1),), "shutil.copyfile": ((1, None),),
     "shutil.copymode": ((1, None),), "shutil.copystat": ((1, None),),
     "shutil.move": ((1, None),),
+    # os.lchflags raises os.chflags; the xattr calls are Linux's; sqlite3.connect's one argument
+    # is the database path (":memory:" is refused too, which nothing in the demo uses).
+    "os.chflags": ((0, None),), "os.setxattr": ((0, None),), "os.removexattr": ((0, None),),
+    "sqlite3.connect": ((0, None),),
 }
+_SENDS = ("socket.connect", "socket.sendto", "socket.sendmsg")  # (socket, address)
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
 _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
-_state: dict = {"folder": None, "home": None, "reads": (), "tempdir": None}
+_state: dict = {"folder": None, "home": None, "reads": (), "given": (), "tempdir": None}
 
 
 def isolate(folder: Path, *, home: Path | None = None) -> None:
@@ -226,6 +231,9 @@ def isolate(folder: Path, *, home: Path | None = None) -> None:
     _state["home"] = os.path.realpath(home if home is not None else Path.home())
     roots = (folder, sys.prefix, sys.base_prefix, Path(vid2sub.__file__).parent)
     _state["reads"] = tuple(os.path.realpath(p) for p in roots)
+    # Only Python's own roots may be reached by a path as written (a venv's symlink to uv's
+    # cache), never a link inside the demo's folder.
+    _state["given"] = tuple(os.path.realpath(p) for p in (sys.prefix, sys.base_prefix))
     sys.dont_write_bytecode = True
     if not _state.get("installed"):
         sys.addaudithook(_hook)
@@ -239,11 +247,14 @@ def release() -> None:
     _state["folder"] = None
 
 
-def _inside(path: str, roots: Sequence[str], *, as_given: bool = False) -> bool:
-    """Whether `path`, symlinks resolved, is in one of `roots`; with `as_given`, the path as
-    written counts too (a read through a venv's symlink to uv's cache)."""
-    seen = [os.path.realpath(path)] + ([os.path.abspath(path)] if as_given else [])
-    return any(p == r or p.startswith(r.rstrip(os.sep) + os.sep) for p in seen for r in roots)
+def _inside(path: str, roots: Sequence[str], *, given: Sequence[str] = ()) -> bool:
+    """Whether `path`, symlinks resolved, is in one of `roots`, or the path as written is in one
+    of `given` (a read through a venv's symlink to uv's cache)."""
+    def under(p: str, rs: Sequence[str]) -> bool:
+        return any(p == r or p.startswith(r.rstrip(os.sep) + os.sep) for r in rs)
+
+    return under(os.path.realpath(path), roots) or (bool(given) and under(os.path.abspath(path),
+                                                                          given))
 
 
 def _fd_folder(fd: int) -> str | None:
@@ -299,18 +310,22 @@ def _hook(event: str, args: tuple) -> None:
         if not isinstance(raw, (str, bytes, os.PathLike)) or not os.path.isabs(os.fsdecode(raw)):
             return
         path = os.fsdecode(raw)
-        if _inside(path, [_state["home"]]) and not _inside(path, _state["reads"], as_given=True):
+        if _inside(path, [_state["home"]]) and not _inside(path, _state["reads"], given=_state["given"]):
             raise DemoIsolationError("the demo reads nothing of yours")
     elif event in _WRITES:
         for at, fd_at in _WRITES[event]:
             if len(args) > at:
                 dir_fd = args[fd_at] if fd_at is not None and len(args) > fd_at else None
                 _refuse_write(_target(args[at], dir_fd))
-    elif event == "socket.connect" and len(args) > 1:
-        address = args[1]
-        if isinstance(address, tuple) and address and address[0] not in _LOOPBACK:
+    elif event in _SENDS and len(args) > 1:
+        address = args[1]  # None: sendmsg on a connected socket, which has its peer already
+        if address is not None and not (isinstance(address, tuple) and address
+                                        and address[0] in _LOOPBACK):
             raise DemoIsolationError("the demo connects to nothing beyond this machine")
-    elif event in ("socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr") and args:
-        host = args[0].decode() if isinstance(args[0], bytes) else args[0]
+    elif event in ("socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr",
+                   "socket.getnameinfo") and args:
+        host = args[0][0] if event == "socket.getnameinfo" and isinstance(args[0], tuple) \
+            else args[0]
+        host = host.decode() if isinstance(host, bytes) else host
         if host is not None and host not in _LOOPBACK:
             raise DemoIsolationError("the demo looks up no other machine")

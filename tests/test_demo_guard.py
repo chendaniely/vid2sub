@@ -309,3 +309,47 @@ def test_demo_mode_hands_the_browser_its_redirect_file(tmp_path):
             proc.wait()
     assert got.startswith("file://") and got.endswith("open.html")
     assert "couldn't open a browser" not in log.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("event, args", [
+    ("os.chflags", ("{outside}/file.txt", 0)),
+    ("os.setxattr", ("{outside}/file.txt", "user.x", b"1", 0)),
+    ("os.removexattr", ("{outside}/file.txt", "user.x")),
+    ("sqlite3.connect", ("{outside}/x.db",)),
+])
+def test_the_demo_refuses_the_other_writes_python_audits(place, event, args):
+    """Each event's argument shape is as CPython's audit table gives it and as a recording hook
+    saw it (os.lchflags raises os.chflags); called directly, as the OS may lack the call."""
+    folder, home, outside = place
+    demo.isolate(folder, home=home)
+    shaped = tuple(a.format(outside=outside) if isinstance(a, str) else a for a in args)
+    with pytest.raises(DemoIsolationError, match="inside its own folder"):
+        demo._hook(event, shaped)
+    inside = tuple(a.replace(str(outside), str(folder)) if isinstance(a, str) else a
+                   for a in shaped)
+    demo._hook(event, inside)  # inside the folder: let through
+
+
+def test_the_demo_refuses_sends_and_reverse_lookups_beyond_this_machine_and_unix_sockets(place):
+    folder, home, _ = place
+    demo.isolate(folder, home=home)
+    sock = object()  # the hook never looks at the socket
+    for event in ("socket.sendto", "socket.sendmsg", "socket.connect"):
+        with pytest.raises(DemoIsolationError, match="beyond this machine"):
+            demo._hook(event, (sock, ("192.0.2.1", 9)))
+        with pytest.raises(DemoIsolationError, match="beyond this machine"):
+            demo._hook(event, (sock, "/tmp/some.sock"))  # AF_UNIX: a path, not a (host, port)
+        demo._hook(event, (sock, ("127.0.0.1", 9)))
+    demo._hook("socket.sendmsg", (sock, None))  # already connected: no address of its own
+    with pytest.raises(DemoIsolationError, match="no other machine"):
+        demo._hook("socket.getnameinfo", (("192.0.2.1", 9), 0))
+    demo._hook("socket.getnameinfo", (("127.0.0.1", 9), 0))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need a privilege on Windows")
+def test_a_link_in_the_demos_folder_to_a_file_in_the_home_folder_is_not_read(place):
+    folder, home, _ = place
+    (folder / "link").symlink_to(home / "vid2sub.toml")
+    demo.isolate(folder, home=home)
+    with pytest.raises(DemoIsolationError, match="nothing of yours"):
+        (folder / "link").read_text(encoding="utf-8")
