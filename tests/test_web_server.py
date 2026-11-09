@@ -9,6 +9,7 @@ import threading
 
 import pytest
 from starlette.testclient import TestClient
+from test_web_app import get_paths, read_only_violations
 
 from vid2sub.cache import Cache
 from vid2sub.config import Config
@@ -222,3 +223,12 @@ def test_shinys_bookmark_store_is_disabled_so_no_session_state_reaches_the_disk(
     # constructor's bookmark_store= by App._init_bookmarking; "server" would save state to disk.
     assert server.app.bookmark_store == "disable"
 
+
+def test_no_get_or_head_route_of_the_real_shiny_app_writes_a_file_or_starts_a_process(
+        client, tmp_path, monkeypatch):
+    # Shiny's session routes (/session/{id}/{action}/{subpath}) are reached with a made-up id,
+    # so only as far as their 404; a task that adds a download or dynamic route adds a
+    # live-session case to `extra`.
+    paths = get_paths(client.app)
+    assert any(p.startswith("/session/") for p in paths), f"no session route among {paths}"
+    assert read_only_violations(client, monkeypatch, tmp_path) == []
