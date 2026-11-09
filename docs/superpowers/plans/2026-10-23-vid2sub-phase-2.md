@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 14: The editor view, open.
+**Now:** Task 15: Editing in the editor, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower. Task 13's drift test and fix round 13c added 24 more (its listed 960 is 1143 in fact, 183 above the listing: the 159 and 24 more, 17 in `tests/test_demo_guard.py` and 7 parser cases in `tests/test_formats.py`): from Task 13's close on, every later listed count is 183 lower than the real one (Task 14's listings count from 960). Task 14's second hostile browser test adds one e2e test, which Task 14's own listings count: from Task 14's close on, every later listed `deselected` count and `make e2e` count is also 1 lower than the real one. A later listing that counts a run of `tests/test_demo_guard.py` (24 tests, not 7) or `tests/test_formats.py` (7 more than before) is that many lower.
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower. Task 13's drift test and fix round 13c added 24 more (its listed 960 is 1143 in fact, 183 above the listing: the 159 and 24 more, 17 in `tests/test_demo_guard.py` and 7 parser cases in `tests/test_formats.py`): from Task 13's close on, every later listed count is 183 lower than the real one (Task 14's listings count from 960). Task 14's second hostile browser test adds one e2e test, which Task 14's own listings count. Task 14's fix round 14e and direct fix add 33 more full-suite tests and one e2e test (the AVI fallback) (its listed 974 is 1190 in fact, 216 above the listing: the 183 and 33 more, among them 19 snippets of the thread and process check in `tests/test_pages_imports.py`): from Task 14's close on, every later listed full-suite count is 216 lower than the real one (Task 15's listings count from 974), and every later listed `deselected` count and `make e2e` count is 2 lower than the real one (the raw file-name case and the AVI test; Task 14's end is `21 deselected` and `17 passed` in fact). Vitest is as Task 14 listed it (9 files, 44 tests). A later listing that counts a run of `tests/test_demo_guard.py` (24 tests, not 7) or `tests/test_formats.py` (7 more than before) is that many lower, and one of `tests/test_web_server.py` is 12 lower (34 tests, not 22), `tests/test_pages_imports.py` 20 lower (25, not 5), `tests/test_backend_open.py` 1 lower, and `tests/e2e/test_editor_view.py` 2 lower (11 tests in fact, counting the raw file-name case as one, against 9 listed).
 
 ## Decisions made while planning (review these)
 
@@ -45,6 +45,8 @@ later listings were built without it. Task 5's fix round added 3 tests (the buil
    are unguessable, die when the engine exits, and are revoked when their episode is closed.
 2. **An audio track the browser can't play makes the video unplayable** (spec §8.2), so Phase 2's
    editor then plays the playback audio with no picture; the preview copy (picture) is Phase 3.
+   A file whose chosen audio track isn't its first counts too, since a page can't choose the
+   track a `<video>` plays (Dan, Q&A item 48, 2026-11-09).
 3. **Edits keep `w` (the word range) only where the words are unchanged:** text and time edits keep
    it; split and insert drop it; merge joins two ranges. A text edit drops the `halluc` flag and a
    time edit drops `est`, since a person has now checked them.
@@ -20867,6 +20869,8 @@ S26 is here because Task 13 left it for this task (the hostile subtitles shown i
 the caption overlay); S37's view half is here (every control reached by keyboard, focus
 visible), its editing half is Task 15's and its job progress Task 19's, so it stays `planned`.
 
+**Built differently** (the listing's steps stay as planned). Rounds 14a to 14d: (1) Task 12's junk-endpoint test moved to `Runtime.reachable` in round 14a, not 14b, because `server.reachable` is gone in that commit (3a4fb7d); `backend.py` re-exported `all_stale` with a `noqa` there, which round 14e removed. (2) The file-name test is parametrised with a second, raw case (markup in the file name, skipped on Windows), which adds one e2e test (91774fa). Round 14e, after the Tier 2 review (Standards approved with 6 Minor; Spec: 9 Important and 4 Minor) and Dan's answer to Q&A item 48: (3) a file whose chosen audio track isn't its first plays that track's playback audio with no picture, as an AC-3 file does: `playable_audio` is false for a non-first track (`AudioTrack.index` is the position among the audio streams, ffmpeg's `a:N`), and `Streams`' docstring and `Player`'s audio-only message say what is true (3fdb841). (4) `Editor.end()` revokes the shown episode's tokens at once, and an episode whose sound must be made is published with `busy="playback"` and no media before ffmpeg works, then again when it is ready (9bd9535). (5) Tests for the queue's promises and the problem path, each shown failing against its mutation (9bd9535). (6) Tests of the `<video>` error fallback, a hostile translation and the overlay's allow-list (dd44ad7). (7) The thread and process check covers `views.py` and more ways to start one (32fe27c). (8) `App.tsx`'s comment no longer claims `event` priority sends requests unmerged, and `backend.py` no longer re-exports `all_stale` (c230aa1). (9) The direct fix after the round's review: `_open` sets `self.media` to `Media(None, None)` as soon as `self.ep` changes, so a failure making the new episode's media leaves it none of the old one's (76308e4).
+
 **Files:**
 - Create: `src/vid2sub/web/episode.py`; `frontend/src/components/{Editor,Player,CaptionOverlay,CueList,CueRow,Flags}.tsx`,
   `frontend/src/components/CaptionOverlay.test.ts`, `frontend/src/lib/{cues,overlay,playable}.ts`
@@ -20980,11 +20984,20 @@ visible), its editing half is Task 15's and its job progress Task 19's, so it st
     `onCantPlay`; `EpisodeEditor` takes `busy`. `types.ts`: the view's three new fields, `Busy`
     gains `"playback"`. `App` sets `playback`.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- Produces, round 14e (after the review and Q&A item 48):
+  - `playable_audio` is false when the chosen audio track isn't the file's first, as well as when
+    its codec is unplayable;
+  - `_open` publishes an episode whose sound must be made before making it (`busy="playback"`,
+    `Media(None, None)`), then publishes again; `self.media` is `Media(None, None)` from the moment
+    `self.ep` changes;
+  - `Editor.end()` revokes the shown episode's tokens at once;
+  - `tests/test_pages_imports.py` checks `server.py` and `views.py`.
+
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
 #### Round 14a: the server imports only what the Pages bundle has
 
-- [ ] **Step 1: Write the failing test,** `tests/test_pages_imports.py`:
+- [x] **Step 1: Write the failing test,** `tests/test_pages_imports.py`:
 
 ```python
 """The Shiny server and its views import only what the Pages bundle has, and never start a thread
@@ -21112,11 +21125,11 @@ def test_blocking_runs_inline_in_pyodide_which_has_no_threads(monkeypatch):
     assert worker == loop_thread
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_pages_imports.py -q`. Expected:
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_pages_imports.py -q`. Expected:
   `4 failed, 1 passed`, with `ImportError: the Pages bundle has no vid2sub.config`,
   `AssertionError: server.py must go through runtime.blocking: ['asyncio.to_thread']` and
   `AttributeError: module 'vid2sub.web.runtime' has no attribute 'blocking'` (and `'INLINE'`).
-- [ ] **Step 3: Write the code.** `src/vid2sub/web/episode.py`:
+- [x] **Step 3: Write the code.** `src/vid2sub/web/episode.py`:
 
 ```python
 """The editor's episode, and the shapes the Shiny server, its views and the backends share (spec
@@ -21459,14 +21472,14 @@ at its top, only the pure packages, shiny, shinyreact, htmltools, pydantic and
   `return await asyncio.to_thread(reachable, rt.config, rt.keys)` with
   `return await runtime.blocking(rt.reachable)`.
 
-- [ ] **Step 4: Run the checks; they pass.** First the guard: put
+- [x] **Step 4: Run the checks; they pass.** First the guard: put
   `from vid2sub.engines import clients  # noqa: F401` back above `from vid2sub.web import WWW,
   runtime, views` in `server.py`, run `uv run pytest tests/test_pages_imports.py -q` and see
   `ImportError: the Pages bundle has no vid2sub.engines` (`1 failed, 4 passed`), then take it out
   again. `make check`. Expected:
   `965 passed, 2 skipped, 10 deselected` (twice: as it is and under `TZ=UTC`), `Tests  24 passed
   (24)`, `All checks passed!`, `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 refactor(web): 🤖 the Shiny server and its views import only what the Pages bundle has, and every blocking call goes through runtime.blocking
@@ -21514,7 +21527,7 @@ Co-Authored-By: <the model's own line>
 
 #### Round 14b: a tab opens an episode and gets its view and its media
 
-- [ ] **Step 6: Write the failing tests,** in `tests/test_web_server.py`: below `import asyncio`
+- [x] **Step 6: Write the failing tests,** in `tests/test_web_server.py`: below `import asyncio`
   add `import contextlib`, below `import threading` add `import time`, below `import pytest` add
   `from episodes import ENGLISH, LINES, make_episode`, and at the end of the file add (the two blank lines first):
 
@@ -21745,10 +21758,10 @@ def test_an_endpoint_answering_junk_is_unreachable_and_the_others_are_still_chec
     assert found == {"webui": False, "spark": True} and calls == ["webui", "spark"]
 ```
 
-- [ ] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q` (each new
+- [x] **Step 7: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q` (each new
   test waits 20 s for what never comes). Expected: `6 failed, 14 passed` (Task 12's file has 14 tests, not 9), each with
   `AssertionError: timed out; the tab saw [{'values': {}, 'inputMessages': [], 'errors': {}}, ...`.
-- [ ] **Step 8: Write the code.** `src/vid2sub/web/runtime.py`: in the docstring replace
+- [x] **Step 8: Write the code.** `src/vid2sub/web/runtime.py`: in the docstring replace
   `` `Runtime` (`reachable`). `` with `` `Runtime` (`reachable`, `media_for`). ``; in the
   `TYPE_CHECKING` block, after `from vid2sub.web.backend import LocalBackend`, add
   `from vid2sub.web.episode import Episode`; above `INLINE = ...` add
@@ -22034,13 +22047,13 @@ app = ReactApp(server, ui=page(), static_assets={"/": WWW}, bookmark_store="disa
 app.sanitize_errors = True  # an output's error text may hold a key or a path (spec §6.8)
 ```
 
-- [ ] **Step 9: Run the checks; they pass.** First the guard: replace
+- [x] **Step 9: Run the checks; they pass.** First the guard: replace
   `session.on_ended(editor.end)` with `pass`, run
   `uv run pytest tests/test_web_server.py -q -k closing` and see `AssertionError: assert not
   True` (the episode still open after the tab closed); do the same with `self._close(old)` in
   `_open`; put both back. `make check`. Expected: `971 passed, 2 skipped, 10 deselected` (twice),
   `Tests  24 passed (24)`, `All checks passed!`, `no leaks found`.
-- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 a tab opens an episode by its path and gets its view, with the video or its playback audio by a media token revoked when the tab moves on or closes
@@ -22082,12 +22095,12 @@ Co-Authored-By: <the model's own line>
 
 #### Round 14c: the player, the captions and the cue list
 
-- [ ] **Step 11: Add the virtualiser,** checked first: `@tanstack/react-virtual` 3.14.14
+- [x] **Step 11: Add the virtualiser,** checked first: `@tanstack/react-virtual` 3.14.14
   (published 2026-10-09; it imports `react`, kept external as `window.shinyreact.React`, and
   `flushSync` from `react-dom`, whose index the build bundles; its `useFlushSync: false` keeps
   React 19's flushSync warning away, as TanStack's React page says).
   `cd frontend && npm install --save-exact @tanstack/react-virtual@3.14.14`.
-- [ ] **Step 12: Write the failing tests.** `frontend/src/lib/cues.test.ts`:
+- [x] **Step 12: Write the failing tests.** `frontend/src/lib/cues.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -22438,13 +22451,13 @@ def test_every_control_of_the_view_is_reached_by_keyboard_with_its_focus_visible
     assert seen == wanted
 ```
 
-- [ ] **Step 13: Run them; watch them fail.** `cd frontend && npx vitest run src/lib
+- [x] **Step 13: Run them; watch them fail.** `cd frontend && npx vitest run src/lib
   src/components/CaptionOverlay.test.ts`. Expected: `Error: Failed to resolve import "./cues"
   from "src/lib/cues.test.ts". Does the file exist?` (and the same for `./overlay` and
   `./CaptionOverlay`). `make build && uv run pytest -m e2e tests/e2e/test_editor_view.py -q -x`.
   Expected: `playwright._impl._errors.TimeoutError: Locator.fill: Timeout 30000ms exceeded.`,
   waiting for `get_by_test_id("open-path")`.
-- [ ] **Step 14: Write the code.** Append to `frontend/src/types.ts`:
+- [x] **Step 14: Write the code.** Append to `frontend/src/types.ts`:
 
 ```ts
 
@@ -23190,11 +23203,11 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
 }
 ```
 
-- [ ] **Step 15: Run the checks; they pass.** `make check`. Expected:
+- [x] **Step 15: Run the checks; they pass.** `make check`. Expected:
   `971 passed, 2 skipped, 17 deselected` (twice), `Test Files  8 passed (8)`, `Tests  37 passed
   (37)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `13 passed`. The
   2,000-cue open took about 0.25 s where this was built.
-- [ ] **Step 16: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 16: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(frontend): 🤖 the editor plays an episode with live captions beside a cue list that follows playback, marks the spoken word and renders only the rows on screen
@@ -23260,7 +23273,7 @@ with the picture dropped (`videoWidth` 0, no frames) and fires no error, so canP
 first; `video/x-matroska; codecs="vp9, opus"` answers `""` though the file plays, so Matroska is
 asked as WebM too.
 
-- [ ] **Step 17: Write the failing tests.** In `tests/test_views.py`, below
+- [x] **Step 17: Write the failing tests.** In `tests/test_views.py`, below
   `from vid2sub.web.backend import Episode, LocalBackend` add
   `from vid2sub.web.episode import Streams`; in
   `test_the_video_has_the_urls_it_was_given_its_name_and_never_its_folder` replace
@@ -23456,7 +23469,7 @@ def test_the_videos_own_signals_catch_what_canplaytype_misses(page, server, watc
     assert rest and page.request.get(first).status == 404  # the video's token was revoked
 ```
 
-- [ ] **Step 18: Run them; watch them fail.** `uv run pytest tests/test_views.py -q`. Expected:
+- [x] **Step 18: Run them; watch them fail.** `uv run pytest tests/test_views.py -q`. Expected:
   `ImportError: cannot import name 'Streams' from 'vid2sub.web.episode'`.
   `uv run pytest tests/test_web_server.py -q -k 'codecs or cant_play'`. Expected: `2 failed, 1
   passed, 14 deselected` (round 14b's AC-3 test matches too), with `KeyError: 'container'` and
@@ -23466,7 +23479,7 @@ def test_the_videos_own_signals_catch_what_canplaytype_misses(page, server, watc
   tests/e2e/test_editor_view.py -q -k 'cant_decode or own_signals'`. Expected: `2 failed`, each
   `AssertionError: Locator expected to have text 'Playing the sound only: this browser can't play
   the video itself.'` (`element(s) not found`).
-- [ ] **Step 19: Write the code.** `src/vid2sub/web/episode.py`: above `@dataclass(frozen=True)`
+- [x] **Step 19: Write the code.** `src/vid2sub/web/episode.py`: above `@dataclass(frozen=True)`
   / `class Episode:` add
 
 ```python
@@ -23824,13 +23837,13 @@ export type EpisodeView = {
           onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
 ```
 
-- [ ] **Step 20: Run the checks; they pass.** First the guard: replace
+- [x] **Step 20: Run the checks; they pass.** First the guard: replace
   `self.rt.media.revoke_owner(ep.id)` in `_playback` with `pass`; `uv run pytest
   tests/test_web_server.py -q -k cant_play` fails `AssertionError: assert PosixPath('…/Show -
   S01E01.mkv') is None` (the video's token still served); put it back. `make check`. Expected:
   `974 passed, 2 skipped, 19 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed
   (44)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `15 passed`.
-- [ ] **Step 21: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 21: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 the browser says whether it can play a video, and one it can't plays its sound through the playback audio
@@ -23886,7 +23899,7 @@ Co-Authored-By: <the model's own line>
   frontend/src/components/Editor.tsx frontend/src/App.tsx frontend/src/types.ts`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 22: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 22: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that `tests/test_pages_imports.py`
   refuses what §21's bundle lacks and that the AST test catches a thread started any other way;
   that no edit or open is lost or reordered by the `Editor`'s queue, and that a slow open never
@@ -23939,6 +23952,8 @@ Co-Authored-By: <the model's own line>
 ### Task 15: Editing in the editor
 
 **Tier:** 2 · **Scenarios:** S28, S33, S37
+
+**Forward, from Task 14's Spec review (S-13):** `CueList`'s `aria-activedescendant` names `cue-<id>` even when virtualisation has removed that row (select a cue, then scroll away); set it only when the row is in `getVirtualItems()`, here, where ↑/↓ arrive. The keyboard test also can't reach the `track` select (only with two or more translations, which the demo doesn't have) or the `<audio>` player: add a two-translation case.
 
 **Files:**
 - Create: `frontend/src/lib/keys.ts` (+ test), `frontend/src/lib/sends.ts` (+ test),
@@ -25701,7 +25716,8 @@ export default function App() {
   const episode = useShinyOutputValue<EpisodeView | null>("episode");
   const busy = useShinyOutputValue<Busy>("busy");
   // Every input is set from here too. Each request carries a count, so the same path asked for
-  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  // twice is still two requests. `debounceMs: 0` is still a trailing timer: two values set in one
+  // task send only the last.
   const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
   const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
   const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
@@ -27738,7 +27754,8 @@ export default function App() {
   const episode = useShinyOutputValue<EpisodeView | null>("episode");
   const busy = useShinyOutputValue<Busy>("busy");
   // Every input is set from here too. Each request carries a count, so the same path asked for
-  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  // twice is still two requests. `debounceMs: 0` is still a trailing timer: two values set in one
+  // task send only the last.
   const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
   const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
   const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
@@ -31106,7 +31123,8 @@ export default function App() {
   const busy = useShinyOutputValue<Busy>("busy");
   const progress = useShinyOutputValue<Progress>("progress");
   // Every input is set from here too. Each request carries a count, so the same path asked for
-  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  // twice is still two requests. `debounceMs: 0` is still a trailing timer: two values set in one
+  // task send only the last.
   const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
   const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
   const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
@@ -34094,7 +34112,8 @@ export default function App() {
   const progress = useShinyOutputValue<Progress>("progress");
   const settings = useShinyOutputValue<SettingsView | null>("settings");
   // Every input is set from here too. Each request carries a count, so the same path asked for
-  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  // twice is still two requests. `debounceMs: 0` is still a trailing timer: two values set in one
+  // task send only the last.
   const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
   const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
   const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
@@ -37274,7 +37293,8 @@ export default function App() {
   const settings = useShinyOutputValue<SettingsView | null>("settings");
   const jobs = useShinyOutputValue<JobsView | null>("jobs");
   // Every input is set from here too. Each request carries a count, so the same path asked for
-  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  // twice is still two requests. `debounceMs: 0` is still a trailing timer: two values set in one
+  // task send only the last.
   const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
   const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
   const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
@@ -40409,3 +40429,11 @@ fi
 | Task 13 (review) | Minor | `tests/fixtures/hostile/` | Spec 8(b): `hostile.ass` reaches only the parser test; the demo projects SRT only, so showing it in the editor needs an ASS projection or import, which no Phase 2 UI offers | open |
 | Task 13 (review) | Minor | `src/vid2sub/web/` | Outside this task: with `UV_LINK_MODE=symlink` the page's `/lib/` assets answer 404 (Starlette's `StaticFiles(follow_symlink=False)`); it affects any `vid2sub serve` | open |
 | Task 13 (review) | Minor | `src/vid2sub/web/demo.py` | Couldn't verify: Windows, for the null-device and `mkdtemp` fixes, until CI runs (they rest on the review's reading and a simulation); the `/proc/self/fd` branch and the xattr rows on Linux; ffmpeg's libvpx and libopus on the CI runners; a headed browser | open |
+| Task 14 (review) | Minor | `frontend/src/components/Editor.tsx` | Spec S-11: `changeRate` sets the speed on the current element only, so after a fall-back to the playback audio, or while it is made, the `<audio>` runs at 1x with the box showing another speed; apply `rate` in an effect keyed on the media source | open |
+| Task 14 (review) | Minor | `frontend/src/components/Player.tsx` | Spec S-12: no message while the audio is made after a `<video>` failure (the "making a copy" text shows only while `src` is empty, so the old `<video>` stays on screen); show it whenever `busy === "playback"` | open |
+| Task 14 (review) | Minor | `tests/test_web_server.py`, `tests/test_pages_imports.py` | Standards S3: `Tab.until`'s failure text can carry an episode's bare title and `test_pages_imports` includes stderr tracebacks; report the messages' keys and the last exception line | open |
+| Task 14 (review) | Minor | `src/vid2sub/web/server.py` | Standards S5: `Editor` dispatches on strings with `getattr(self, f"_{kind}")`, so a typo is a runtime `AttributeError`; a `Literal` or a dict of handlers when Tasks 15 onwards add kinds. `_set_busy` and `_publish` repeat the lock-and-flush shape | open |
+| Task 14 (review) | Minor | `frontend/src/components/` | Standards S6: an import-order slip in `CueRow`; a note that `Player`'s effect leaves `cantPlay` out of its deps on purpose (`asked` is a ref); `flagLabel` has no vitest case; `CaptionOverlay` and `Player` hard-code black and white (defensible over a video, but say so) | open |
+| Task 14 (round 14e) | Minor | `tests/test_web_server.py` | Implementer's note: removing `end()`'s queue clear alone isn't caught, because `_drain`'s loop also stops on `_ended`; the test fails only with both removed | open |
+| Task 14 (round 14e) | Minor | `tests/e2e/test_editor_view.py` | Implementer's note: the "making a copy of its sound" message for an AC-3 file isn't exercised in a browser (the server test covers the early publish) | open |
+| Task 14 (round 14e) | Minor | `tests/` | Couldn't verify: ubuntu-24.04 and windows-2022 for the new tests, until CI runs; real Pyodide (`test_pages_imports` proves import time only); `canPlayType` and the track a `<video>` picks in Safari or Firefox; AC-3 on a:0 with a playable a:1 in Chromium; a real screen reader; the under-a-second assertion on a slower runner, once Task 21 adds CI's e2e job. An uncaptured failure of `tests/test_backend_retranslate.py` with `tests/test_views.py` during the round did not come back in 8 reruns | open |

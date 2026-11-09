@@ -64,8 +64,8 @@ test names.
 | S23 | `vid2sub serve` | binds `127.0.0.1` only and opens the browser through the token redirect; the token never reaches a log or `ps` | Phase 2 | `tests/test_cli_serve.py`, `tests/test_web_app.py`, `tests/test_web_auth.py` | built |
 | S24 | a page on another local port calls the app or opens its websocket | refused: no cookie, no access; a wrong Host gets 400; a wrong Origin closes the websocket with 1008 | Phase 2 | `tests/test_web_guards.py`, `tests/test_web_auth.py` | built |
 | S25 | a GET request, or a write that isn't same-origin JSON | a GET never writes anything or starts a process; the write is refused | Phase 2 | `tests/test_web_guards.py`, `tests/test_web_app.py`, `tests/test_web_server.py` | built |
-| S26 | a subtitle with `<script>` or ASS overrides, or a hostile file name or YouTube title | shown as plain text; the CSP blocks any script; the caption overlay renders `<i>` only | Phase 2 | Playwright with hostile fixtures | planned |
-| S27 | an M1 episode opened in the editor | the video plays with captions; the cue list follows playback; the spoken word is highlighted | Phase 2 | Playwright against `vid2sub serve --demo`; the exit test | planned |
+| S26 | a subtitle with `<script>` or ASS overrides, or a hostile file name or YouTube title | shown as plain text; the CSP blocks any script; the caption overlay renders `<i>` only | Phase 2 | Playwright with hostile fixtures (`tests/e2e/test_shell.py`, `tests/e2e/test_editor_view.py`: `test_hostile_subtitles_show_as_plain_text_and_the_overlay_renders_only_italics` and `test_a_hostile_file_name_shaped_like_a_youtube_title_shows_as_plain_text_and_runs_nothing`) | built |
+| S27 | an M1 episode opened in the editor | the video plays with captions; the cue list follows playback; the spoken word is highlighted | Phase 2 | `tests/e2e/test_editor_view.py`; the exit test | built |
 | S28 | a source cue edited, split, merged, nudged, inserted or deleted, then undone | the pure `subs.edit` rules apply; translations re-point and are flagged (§13.5) | Phase 2 | `tests/test_edit.py`; Playwright | planned |
 | S29 | Save | an editor rendition, a head and projection records are appended, then only vid2sub's files are rewritten | Phase 2 | `tests/test_backend_save.py`; the exit test | planned |
 | S30 | Retranslate stale, from the editor | only the stale cues change; edited translations are kept | Phase 2 | Playwright; the exit test | planned |
@@ -81,7 +81,7 @@ test names.
 | S40 | Review after adding a season | the first two files are sampled; each row suggests models; "apply to all" works; **Allow cloud** starts unticked every time | Phase 3 | `tests/test_review.py`; Playwright | planned |
 | S41 | the tunnel drops while the queue runs | the whole queue pauses with Resume, which restarts from the failed chunk | Phase 3 | `tests/test_jobs.py` | planned |
 | S42 | the queue runs overnight | the machine stays awake until the queue finishes | Phase 3 | `tests/test_awake.py` | planned |
-| S43 | an MKV with AC-3 audio opened in the editor | the playback audio (AAC stereo `.m4a`, made on demand) plays straight away ([Q&A item 13](2026-10-14-vid2sub-qa.md); the preview copy is S63) | Phase 2 | `tests/test_playback.py`; Playwright; the exit test | planned |
+| S43 | an MKV with AC-3 audio opened in the editor | the playback audio (AAC stereo `.m4a`, made on demand) plays straight away ([Q&A item 13](2026-10-14-vid2sub-qa.md); the preview copy is S63) | Phase 2 | `tests/test_playback.py`; `tests/e2e/test_editor_view.py` (the playback audio in the browser); Playwright; the exit test | planned |
 | S44 | the Models page | the catalog, each model marked usable now or why not | Phase 3 | Playwright | planned |
 | S45 | `faster-whisper` on Windows and Linux | transcribes on CPU, or on NVIDIA with cuBLAS 12; CI passes on all three systems | Phase 3 | CI; one manual run | planned |
 | S46 | `vid2sub cache clear`, or the cache past `cache_max_gb` | cleared; the least recently used goes first ([Q&A item 13](2026-10-14-vid2sub-qa.md): with the playback audio) | Phase 2 | `tests/test_cache.py` | built |
@@ -668,7 +668,9 @@ audio stream (index, codec, channels, language tag, `disposition.default`, `star
 
 **Browser playability** comes from the probe plus the browser's own `canPlayType`, reported by
 the UI. Audio in AC-3, E-AC-3, DTS or TrueHD counts as unplayable even when the video codec plays
-(silent playback is worse than none).
+(silent playback is worse than none). So does a file whose chosen audio track (§8.4) isn't its
+first, because a page can't choose the track a `<video>` plays: the editor then plays that track's
+playback audio with no picture (Dan, 2026-11-09).
 
 ### 8.3 Video identity
 

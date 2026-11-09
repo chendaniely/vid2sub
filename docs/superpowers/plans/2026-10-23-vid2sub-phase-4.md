@@ -1289,7 +1289,7 @@ class LocalBackend:
                            [*warnings, *folder.changed_video(side.header, header)])
         transcript = folder.transcript_of(ep.sidecar, ep.heads.get(ep.source_key))
         track = _audio_track(p, transcript, naming.TRACKS.get(ep.source_key))
-        ep = replace(ep, playable_audio=track.codec not in UNPLAYABLE_AUDIO,
+        ep = replace(ep, playable_audio=track.codec not in UNPLAYABLE_AUDIO and track.index == 0,
                      audio_index=track.index,
                      translate_model=self._route_model(_lang(ep.source_key)),
                      streams=Streams(p.container, p.video_codec, track.codec))
@@ -3503,9 +3503,9 @@ index 4387047..996bd1b 100644
 +
 +    async def _opened(self, ep: Episode) -> None:
 +        """Shows an episode just opened, with its video, and closes the one before."""
-         media = await runtime.blocking(self.rt.media_for, ep)
-         old, self.ep, self.media = self.ep, ep, media
+         old, self.ep = self.ep, ep
          if old is not None:
+             self._close(old)
 @@ -792,6 +812,11 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
      def _open() -> None:
          editor.submit("open", input.open())

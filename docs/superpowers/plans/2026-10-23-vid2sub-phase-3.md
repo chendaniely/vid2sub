@@ -14411,6 +14411,8 @@ The settings drawer (§19.2, S35) is `web.settings`'s:
         """The tab closed: drop what waits, and close the episode once the running call ends."""
         self._ended = True
         self._todo.clear()
+        if self.ep is not None:  # at once: a request still running can take an hour (S-2)
+            self.rt.media.revoke_owner(self.ep.id)
         if self._worker is None or self._worker.done():
             self._close(self.ep)
 ```
@@ -14436,6 +14438,8 @@ The settings drawer (§19.2, S35) is `web.settings`'s:
         self._ended = True
         self._todo.clear()
         self._stop_preview(None)
+        if self.ep is not None:  # at once: a request still running can take an hour (S-2)
+            self.rt.media.revoke_owner(self.ep.id)
         if self._worker is None or self._worker.done():
             self._close(self.ep)
 ```
@@ -15047,7 +15051,7 @@ export function Player({ video, mediaRef, lines, busy, generate, preview, onTime
           <p className="text-center text-sm text-white/80" data-testid="audio-only">
             {video.playable_audio
               ? "Playing the sound only: this browser can't play the video itself."
-              : "Playing the sound only: the browser can't play this video's own audio track."}
+              : "Playing the sound only: the browser can't play the audio track these subtitles were made from."}
           </p>
           <audio ref={mediaRef as RefObject<HTMLAudioElement>} src={video.audio_url ?? undefined} controls preload="metadata" className="w-full" data-testid="media" onError={() => setFailed(true)} />
           {offer && (preview ? (
