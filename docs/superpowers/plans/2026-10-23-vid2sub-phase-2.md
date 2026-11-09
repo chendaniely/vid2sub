@@ -32,7 +32,7 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 14: The editor view, open.
+**Now:** Task 14 stopped: waiting on Dan (Q&A, item 48): a video whose chosen audio track isn't its first plays the wrong language under its captions, so does it keep its picture (S27) or lose it, as Decision 2's files do?
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
