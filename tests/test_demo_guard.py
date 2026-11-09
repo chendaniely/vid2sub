@@ -22,7 +22,13 @@ import pytest
 from starlette.testclient import TestClient
 
 import vid2sub
-from vid2sub.media.tools import Tools
+from vid2sub import exitcodes
+from vid2sub.cli import main
+from vid2sub.commands import serve
+from vid2sub.media.identity import full_sha256
+from vid2sub.media.tools import ToolFailed, Tools
+from vid2sub.store import sidecar_path
+from vid2sub.subs.sidecar import parse_sidecar
 from vid2sub.web import demo, runtime, server
 from vid2sub.web.app import create_app
 from vid2sub.web.backend import OpenError
@@ -139,8 +145,13 @@ def test_demo_mode_serves_and_opens_its_episode_touching_nothing_else(tmp_path, 
     copy = demo.prepare(tools)
     rt = demo.runtime_for(copy, tools)
     assert rt.config.endpoints == {} and dict(rt.keys.environ) == {}  # no toml, no key
+    assert rt.backend.cache.root == copy.parent / "cache"  # the demo's own folder
+    side, _ = parse_sidecar(sidecar_path(copy / demo.VIDEO).read_text(encoding="utf-8"))
+    assert side.identity() == full_sha256(copy / demo.VIDEO)  # the identity names this MP4
     runtime.configure(rt)
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)  # restored when the test ends
     demo.isolate(copy.parent, home=home)
+    assert sys.dont_write_bytecode
     try:
         with TestClient(create_app(rt, token=TOKEN, port=PORT, shiny_app=server.app),
                         base_url=BASE) as client:
@@ -353,3 +364,117 @@ def test_a_link_in_the_demos_folder_to_a_file_in_the_home_folder_is_not_read(pla
     demo.isolate(folder, home=home)
     with pytest.raises(DemoIsolationError, match="nothing of yours"):
         (folder / "link").read_text(encoding="utf-8")
+
+
+def test_the_demo_refuses_what_it_cannot_name_and_the_other_lookups_and_addresses(place,
+                                                                                     monkeypatch):
+    folder, home, outside = place
+    monkeypatch.chdir(folder)  # a "" path would then resolve inside the folder, and be let through
+    demo.isolate(folder, home=home)
+    closed = 999_999  # a directory descriptor the OS won't name
+    with pytest.raises(DemoIsolationError, match="inside its own folder"):
+        demo._hook("os.remove", ("inside.txt", closed))
+    with pytest.raises(DemoIsolationError, match="inside its own folder"):
+        demo._hook("os.chown", (str(outside / "file.txt"), -1, -1, None))
+    demo._hook("os.chown", (str(folder / "inside.txt"), -1, -1, None))
+    for event in ("socket.gethostbyname", "socket.gethostbyaddr"):
+        with pytest.raises(DemoIsolationError, match="no other machine"):
+            demo._hook(event, ("192.0.2.1",))
+    for spelling in ("0.0.0.0", "127.1", "::ffff:127.0.0.1", "LOCALHOST"):
+        with pytest.raises(DemoIsolationError, match="beyond this machine"):
+            demo._hook("socket.connect", (object(), (spelling, 9)))
+
+
+@pytest.fixture
+def checkout(tmp_path, monkeypatch):
+    """serve's start-up with the frontend "built" and the temporary folder the test's own."""
+    www = tmp_path / "www"
+    www.mkdir()
+    (www / "ui.js").write_text("// built\n", encoding="utf-8")
+    monkeypatch.setattr(serve, "WWW", www)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    return scratch
+
+
+def test_demo_is_exclusive_with_config(checkout, capsys):
+    with pytest.raises(SystemExit) as stop:
+        main(["serve", "--demo", "--config", "x.toml"])
+    assert stop.value.code == exitcodes.USAGE
+    assert "not allowed with" in capsys.readouterr().err
+
+
+def test_demo_without_ffmpeg_exits_69_and_leaves_nothing(checkout, monkeypatch, capsys):
+    monkeypatch.setattr(Tools, "find", classmethod(lambda cls: cls(None, None, None)))
+    assert main(["serve", "--demo", "--no-browser", "--port", "0"]) == exitcodes.UNAVAILABLE
+    assert "the demo needs ffmpeg" in capsys.readouterr().err  # its folder goes at exit
+
+
+def test_demo_with_an_ffmpeg_lacking_libvpx_or_libopus_exits_69(checkout, monkeypatch, capsys):
+    monkeypatch.setattr(Tools, "find", classmethod(lambda cls: cls("/ffmpeg", None, None)))
+
+    def failing(tools, out):
+        raise ToolFailed("ffmpeg", 1, "Unknown encoder 'libvpx-vp9'")
+
+    monkeypatch.setattr(demo, "mux", failing)
+    assert main(["serve", "--demo", "--no-browser", "--port", "0"]) == exitcodes.UNAVAILABLE
+    assert "libvpx and libopus" in capsys.readouterr().err
+
+
+def test_demo_outside_a_checkout_exits_69(checkout, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(Tools, "find", classmethod(lambda cls: cls("/ffmpeg", None, None)))
+    monkeypatch.setattr(demo, "DEMO", tmp_path / "no-such-demo")
+    assert main(["serve", "--demo", "--no-browser", "--port", "0"]) == exitcodes.UNAVAILABLE
+    assert "run it from a checkout" in capsys.readouterr().err
+    assert list(checkout.iterdir()) == []
+
+
+# The child again, with serve.serve wrapped to try a write outside the demo's folder first, as
+# the engine is about to serve: the app, not a test, must have isolated by then.
+ISOLATED_CHILD = CHILD.replace(
+    "raise SystemExit(", r"""_serve = serve.serve
+
+
+def _wrapped(*args, **kwargs):
+    try:
+        open(sys.argv[2], "w").close()
+    except PermissionError as err:
+        print("write outside:", type(err).__name__, flush=True)
+    else:
+        print("write outside: allowed", flush=True)
+    return _serve(*args, **kwargs)
+
+
+serve.serve = _wrapped
+raise SystemExit(""").replace("sys.argv[2:]", "sys.argv[3:]")
+
+
+@pytest.mark.media
+@pytest.mark.skipif(os.name == "nt", reason="POSIX signals")
+def test_serve_isolates_the_demo_before_it_serves(tmp_path):
+    www = tmp_path / "www"
+    www.mkdir()
+    (www / "ui.js").write_text("// built\n", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    log = tmp_path / "serve.log"
+    with log.open("wb") as out:
+        proc = subprocess.Popen([sys.executable, "-c", ISOLATED_CHILD, str(www), str(outside),
+                                 "serve", "--demo", "--no-browser", "--port", "0"],
+                                env={**os.environ, "TMPDIR": str(tmp_path)}, stdout=out,
+                                stderr=subprocess.STDOUT)
+    try:
+        deadline = time.monotonic() + 60
+        while "port " not in log.read_text(encoding="utf-8", errors="replace"):
+            assert proc.poll() is None, log.read_text(encoding="utf-8", errors="replace")
+            assert time.monotonic() < deadline, "the demo never started"
+            time.sleep(0.1)
+        proc.send_signal(signal.SIGINT)
+        proc.wait(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    said = log.read_text(encoding="utf-8")
+    assert "write outside: DemoIsolationError" in said
+    assert not outside.exists()
