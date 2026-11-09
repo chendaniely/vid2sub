@@ -7,9 +7,12 @@ source cues are all gone sits in the row at its time, so nothing is hidden. Flag
 ones (`est`, `halluc`, `edited`) with the lint flags recomputed each time, never stored as truth
 (§12.5): reading speed, width and duration by each track's own language rules; `stale` from the
 source text a translation was made from, and on every cue of a track made with another glossary
-or model (§13.4, `backend.all_stale`); `untranslated` for a source cue no translation in a track
+or model (§13.4, `episode.all_stale`); `untranslated` for a source cue no translation in a track
 covers; an imported line (no `src`) is never stale and covers the source cues it overlaps in time
-(Q&A item 45). The view never holds a path, only the video's bare file name (§6.8).
+(Q&A item 45). The view never holds a path, only the video's bare file name (§6.8). The server
+runs in Pages too (§21), so this module imports only pure packages and `web.episode` at its top;
+the status views' config and keys are the local engine's, imported only where they are used
+(Task 14 round 14a).
 """
 
 from __future__ import annotations
@@ -17,17 +20,19 @@ from __future__ import annotations
 import dataclasses
 from bisect import bisect_right
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from vid2sub.config import Config, is_local
-from vid2sub.engines.clients import KeyRing
 from vid2sub.subs import langs, naming
 from vid2sub.subs.lint import lint
 from vid2sub.subs.model import Cue
 from vid2sub.subs.rules import rules_for
 from vid2sub.subs.sidecar import HeadRecord
 from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
-from vid2sub.web.backend import Capabilities, Episode, all_stale
+from vid2sub.web.episode import Capabilities, Episode, all_stale
+
+if TYPE_CHECKING:  # local only: the Pages bundle has neither (spec §21)
+    from vid2sub.config import Config
+    from vid2sub.engines.clients import KeyRing
 
 _SCRIPTS = {"Hant": " (Traditional)", "Hans": " (Simplified)"}
 
@@ -57,6 +62,8 @@ def capabilities_view(caps: Capabilities) -> dict[str, Any]:
 
 def local_endpoints(config: Config) -> list[str]:
     """The endpoints that serve a local model, the only ones the engine contacts unasked."""
+    from vid2sub.config import is_local  # here: the Pages bundle has no vid2sub.config
+
     return [name for name in config.endpoints
             if any(m.endpoint == name and is_local(m, config) for m in config.models.values())]
 

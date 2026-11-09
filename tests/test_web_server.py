@@ -302,12 +302,15 @@ def test_an_endpoint_answering_junk_is_unreachable_and_the_others_are_still_chec
             return ["w"]  # the healthy one, without a real server
         return real(name, endpoint, keys, timeout=timeout)
 
+    made = runtime.build(config, tools=Tools(None, None, None), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=0))
     try:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(clients, "list_models", list_models)
-            found = server.reachable(config, KeyRing(environ={}))
+            found = made.reachable()
     finally:
         httpd.shutdown()
+        made.queue.close()
     assert found == {"webui": False, "spark": True} and calls == ["webui", "spark"]
 
 

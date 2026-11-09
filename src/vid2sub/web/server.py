@@ -6,7 +6,11 @@ server holds only reactive computation and returns JSON (the shinyreact-build-ap
 `ReactApp(...)` is called in this file. It reads the launch's parts from `runtime.current()`,
 which `vid2sub serve` sets before importing this module. An unset input is a silent exception the
 client treats as pending; an explicit null clears a pane (§19.1). Work that blocks (the endpoint
-check here; opening, saving and retranslating later) runs off the event loop. Shiny's reconnect
+check here; opening, saving and retranslating later) runs off the event loop, through
+`runtime.blocking` only. The server runs in Pages too (spec §3.3, §21), so this module imports,
+at its top, only the pure packages, shiny, shinyreact, htmltools, pydantic and
+`vid2sub.web.{episode, views, runtime, ops}`, and reaches local-only work through the configured
+`Runtime` (Task 14 round 14a; `tests/test_pages_imports.py`). Shiny's reconnect
 stays off: nothing here calls `session.allow_reconnect`, so a tab whose engine restarted asks for
 the new link instead of retrying (Review Focus 5).
 
@@ -19,7 +23,6 @@ runs no inline script or style, and the CSP needs no `style-src` of its own.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Literal
@@ -30,10 +33,6 @@ from htmltools import HTMLDependency
 from shiny import Inputs, Outputs, Session, reactive
 from shinyreact import ReactApp, page_react, reactive_output
 
-from vid2sub.config import Config
-from vid2sub.engines import clients
-from vid2sub.engines.base import EngineError
-from vid2sub.engines.clients import KeyRing
 from vid2sub.web import WWW, runtime, views
 
 # By name: a test may load this file as a module of another name.
@@ -75,19 +74,6 @@ async def notice(session: Session, kind: Literal["info", "error"], text: str) ->
     await shinyreact.send_message(session, "notice", {"kind": kind, "text": text})
 
 
-def reachable(config: Config, keys: KeyRing) -> dict[str, bool]:
-    """Whether each local endpoint answers its model list. Blocks on the network: run it off the
-    event loop. Cloud endpoints are never contacted."""
-    found = {}
-    for name in views.local_endpoints(config):
-        try:
-            clients.list_models(name, config.endpoints[name], keys, timeout=3.0)
-            found[name] = True
-        except EngineError:
-            found[name] = False
-    return found
-
-
 def server(input: Inputs, output: Outputs, session: Session) -> None:
     rt = runtime.current()
 
@@ -102,7 +88,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
 
     @reactive.extended_task
     async def check() -> dict[str, bool]:
-        return await asyncio.to_thread(reachable, rt.config, rt.keys)
+        return await runtime.blocking(rt.reachable)
 
     @reactive.effect
     def _check_every_minute() -> None:

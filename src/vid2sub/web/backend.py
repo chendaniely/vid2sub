@@ -11,7 +11,9 @@ translations hang off source cues. The spoken words come from the transcript the
 built from, following rendition parents, so word highlighting matches the cues' `w` ranges. Audio
 in AC-3, E-AC-3, DTS or TrueHD can't be played by a browser (§8.2), so the editor then plays the
 playback audio instead (the Phase 2 plan's Decision 2). An `Episode` is never changed in place:
-every call returns a new one, so a reactive value that holds it sees each change. A translation
+every call returns a new one, so a reactive value that holds it sees each change. The `Episode`,
+`SaveResult`, the errors and the stale test live in the pure `web.episode`, so the Shiny server
+imports nothing local (Task 14 round 14a); they are re-exported here. A translation
 is stale, as spec §13.4 says and M1 decides (pipeline._translate_targets), when its source text
 changed, and every cue of it is when the glossary's hash or the translation model differs from
 the ones its head was made with; so the episode holds the glossary beside the video and the model
@@ -70,7 +72,7 @@ import secrets
 import tempfile
 import threading
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
@@ -109,66 +111,24 @@ from vid2sub.subs.sidecar import (
 from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
 from vid2sub.translate.run import make_ask, translate_cues
 from vid2sub.web import ops
+from vid2sub.web.episode import (
+    Capabilities,
+    Episode,
+    OpenError,
+    SaveError,
+    SaveResult,
+    Snapshot,
+    all_stale,  # noqa: F401 - re-exported: Tasks 5 to 7's tests use backend.all_stale
+    glossary_with,
+    setup_changed,
+    track_setup,
+)
 
 UNPLAYABLE_AUDIO = frozenset({"ac3", "eac3", "dts", "truehd"})  # ffprobe's codec names (§8.2)
 NO_SUBTITLES = "no subtitles yet: make them with vid2sub run or the Jobs page first"
 UNDO_STEPS = 200
-# One undo or redo step: the tracks, the glossary adds and `made_with` as they were.
-Snapshot = tuple[Tracks, dict[str, str], dict[str, tuple[str, str | None]]]
 FORMATS = ("srt", "ass")
 GONE = "the sidecar next to the video is gone, so nothing was saved: open the episode again"
-
-
-class OpenError(Exception):
-    """An episode that can't be opened; the reason is fit to show."""
-
-
-class SaveError(Exception):
-    """Nothing was saved; the reason is fit to show."""
-
-
-@dataclass(frozen=True)
-class SaveResult:
-    written: tuple[str, ...]  # file names written
-    foreign: tuple[str, ...]  # file names left alone: someone else's, or changed outside since
-    conflicts: tuple[str, ...]  # tracks in conflict, so not written until a version is picked
-    notes: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class Capabilities:
-    engine: Literal["local", "browser"]
-    generate: bool
-    save: Literal["disk", "download"]
-    path_input: bool
-
-
-@dataclass(frozen=True)
-class Episode:
-    id: str
-    video: Path
-    header: Header  # the video as it is now, from the probe at open
-    source_key: str
-    tracks: Tracks
-    heads: dict[str, str]  # track → the head rendition its cues came from
-    conflicts: dict[str, tuple[str, ...]]  # track → its diverged versions (rendition ids)
-    words: tuple[Word, ...]
-    notes: list[str]
-    playable_audio: bool
-    audio_index: int  # among audio tracks: ffmpeg's a:N, as preview.playback_audio takes
-    sidecar: Sidecar  # as of the open or the last Save
-    base: Tracks  # the tracks as of the open or the last Save
-    glossary: Glossary | None  # beside the video at open; None if it couldn't be read
-    translate_model: str | None  # the model Retranslate would use with none named (offline)
-    undo: list[Snapshot] = field(default_factory=list)
-    redo: list[Snapshot] = field(default_factory=list)
-    taken: set[str] = field(default_factory=set)
-    glossary_adds: dict[str, str] = field(default_factory=dict)
-    made_with: dict[str, tuple[str, str | None]] = field(default_factory=dict)  # since a redo-all
-
-    @property
-    def dirty(self) -> bool:
-        return self.tracks != self.base or bool(self.glossary_adds)
 
 
 class LocalBackend:
@@ -892,47 +852,6 @@ def read_glossary(video: Path) -> Glossary:
     except OSError as err:  # never err.filename: a full path (§6.8)
         raise GlossaryError(f"couldn't read {naming.GLOSSARY_NAME}"
                             + (f" ({err.strerror})" if err.strerror else "")) from None
-
-
-def glossary_with(glossary: Glossary, adds: dict[str, str]) -> Glossary:
-    """The glossary as it will read once Save has added `adds`: a term it has keeps its own."""
-    have = dict(glossary.terms)
-    return Glossary(glossary.description, glossary.terms + tuple(
-        (term, translation) for term, translation in adds.items() if term not in have))
-
-
-def track_setup(ep: Episode, track: str) -> tuple[str, str | None]:
-    """The glossary hash ("" for none) and the model the track's cues were made with: those of a
-    retranslation that redid every unedited cue, while none of the cues it replaced is back (an
-    undo), else its head's."""
-    made = ep.made_with.get(track)
-    if made is not None:
-        before = {c.id for c in ep.base.translations.get(track, ())}
-        if not any(c.id in before for c in ep.tracks.translations.get(track, ())
-                   if "edited" not in c.flags):
-            return made
-    body = ep.sidecar.renditions()[ep.heads[track]].body
-    return body.get("payload", {}).get("glossary_sha") or "", body.get("model")
-
-
-def setup_changed(setup: tuple[str, str | None], glossary_sha: str | None,
-                  model: str | None) -> bool:
-    """Spec §13.4's other two legs, as M1 decides them: the glossary's hash, or the model, isn't
-    the one the cues were made with. A leg whose current value is unknown (None) is left out, and
-    both are when the version has no model: no translator made it (an import, or an editor's or
-    an outside version of one), and M1 never retranslates what it didn't make."""
-    made_sha, made_model = setup
-    if made_model is None:
-        return False
-    return ((glossary_sha is not None and made_sha != glossary_sha)
-            or (model is not None and made_model != model))
-
-
-def all_stale(ep: Episode, track: str) -> bool:
-    """Every cue of a loaded translation track is stale: against the glossary beside the video
-    with the terms waiting for Save, and the model Retranslate would use with none named."""
-    sha = None if ep.glossary is None else glossary_with(ep.glossary, ep.glossary_adds).sha()
-    return setup_changed(track_setup(ep, track), sha, ep.translate_model)
 
 
 def _lang(track: str) -> str:
