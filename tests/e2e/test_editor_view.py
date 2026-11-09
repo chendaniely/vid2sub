@@ -81,9 +81,11 @@ def test_the_demo_episode_plays_with_captions_and_the_cue_list_follows_playback(
 
 
 def test_hostile_subtitles_show_as_plain_text_and_the_overlay_renders_only_italics(page, server):
-    # S26, spec §6.3: written over the demo's English, it comes back as an outside edit.
+    # S26, spec §6.3: written over the demo's English and Japanese, each comes back as an outside
+    # edit, so the source and the translation both reach the page by their own code.
     copy = demo_copy(server)
     shutil.copyfile(HOSTILE / "hostile.srt", copy / "jfk.en.srt")
+    shutil.copyfile(HOSTILE / "hostile.srt", copy / "jfk.ja.srt")
     open_episode(page, copy / "jfk.mp4")
     expect(page.get_by_test_id("episode-notes")).to_contain_text("kept your outside edit to en")
     texts = page.get_by_test_id("cue-text")
@@ -102,6 +104,16 @@ def test_hostile_subtitles_show_as_plain_text_and_the_overlay_renders_only_itali
     expect(line).to_have_text("a link &lt;b&gt; &amp;")
     assert line.evaluate("e => e.children.length") == 0
     seek(page, 11.0)  # cue 6: an <img> with no closing ">" is not a tag, so it is text (Task 13)
+    expect(line).to_have_text('<img src=x onerror="window.__pwned = 9"')
+    assert line.evaluate("e => e.children.length") == 0
+    translations = page.get_by_test_id("cue-translation")
+    assert "red bold <i>italic</i>" in translations.all_inner_texts()
+    assert page.locator("[data-testid=cue-translation] *").count() == 0  # text, never markup
+    page.get_by_test_id("showing").select_option("translation")
+    seek(page, 3.0)  # the translation's cue 2 in the overlay: <i> only
+    expect(line).to_have_text("red bold italic")
+    assert line.evaluate("e => [...e.querySelectorAll('*')].map((c) => c.tagName)") == ["I"]
+    seek(page, 11.0)
     expect(line).to_have_text('<img src=x onerror="window.__pwned = 9"')
     assert line.evaluate("e => e.children.length") == 0
     assert page.evaluate("() => window.__pwned") is None
@@ -249,3 +261,20 @@ def test_the_videos_own_signals_catch_what_canplaytype_misses(page, server, watc
     expect(page.get_by_test_id("media")).to_have_attribute("src", re.compile("^/media/"))
     first, *rest = media_urls(watch)
     assert rest and page.request.get(first).status == 404  # the video's token was revoked
+
+
+def test_a_video_error_falls_back_to_the_playback_audio_once(page, server, watch):
+    # canPlayType says yes and Chromium refuses an AVI: MEDIA_ERR_SRC_NOT_SUPPORTED, the <video>
+    # error path (Decision 15), which neither test above takes.
+    page.add_init_script(script="HTMLMediaElement.prototype.canPlayType = () => 'probably';")
+    page.reload()
+    video = make_episode(demo_copy(server) / "avi", name="Clip.avi", audio_codec="libmp3lame")
+    open_episode(page, video)
+    expect(page.get_by_test_id("audio-only")).to_have_text(
+        "Playing the sound only: this browser can't play the video itself.")
+    assert page.get_by_test_id("media").evaluate("m => m.tagName") == "AUDIO"
+    expect(page.get_by_test_id("media-error")).to_have_count(0)
+    urls = media_urls(watch)
+    assert len(urls) == 2, urls  # the video, then the playback audio: asked for once
+    assert page.request.get(urls[0]).status == 404  # the video's token was revoked
+    assert page.request.get(urls[1]).status == 200
