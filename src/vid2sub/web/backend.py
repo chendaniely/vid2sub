@@ -189,7 +189,10 @@ class LocalBackend:
         ep = Episode(
             id="e" + secrets.token_hex(8), video=video, header=header, source_key=source_key,
             tracks=tracks, heads=heads, conflicts=conflicts, words=_words(transcript), notes=notes,
-            playable_audio=track.codec not in UNPLAYABLE_AUDIO,
+            # A browser plays the track it picks (an MKV's first), not the one the subtitles were
+            # made from, so a non-first track is played as the playback audio, as AC-3 is (Q&A
+            # item 48, Decision 2). `index` is the position among audio streams: ffmpeg's a:N.
+            playable_audio=track.codec not in UNPLAYABLE_AUDIO and track.index == 0,
             audio_index=track.index, sidecar=side, base=tracks, taken=cue_ids(side),
             glossary=glossary, translate_model=self._route_model(_lang(source_key)),
             streams=Streams(p.container, p.video_codec, track.codec))

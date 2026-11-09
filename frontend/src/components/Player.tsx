@@ -102,7 +102,7 @@ export function Player({ video, mediaRef, lines, busy, onTime, onCantPlay }: {
           <p className="text-center text-sm text-white/80" data-testid="audio-only">
             {video.playable_audio
               ? "Playing the sound only: this browser can't play the video itself."
-              : "Playing the sound only: the browser can't play this video's own audio track."}
+              : "Playing the sound only: the browser can't play the audio track these subtitles were made from."}
           </p>
           <audio ref={mediaRef as RefObject<HTMLAudioElement>} src={video.audio_url ?? undefined} controls preload="metadata" className="w-full" data-testid="media" onError={() => setFailed(true)} />
         </div>

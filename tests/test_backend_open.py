@@ -105,6 +105,18 @@ def test_the_audio_track_is_the_one_the_transcript_was_made_from(backend, tmp_pa
     assert ep.audio_index == 1 and ep.playable_audio is False
 
 
+def test_a_track_other_than_the_first_makes_the_audio_unplayable_whatever_its_codec(backend,
+                                                                                    tmp_path):
+    # Q&A item 48: a browser picks the track it likes (an MKV's first), so the sound under captions
+    # made from the second track would be the wrong language; the playback audio maps 0:a:N.
+    second = make_episode(tmp_path / "second", audio_langs=("eng", "jpn"), audio_track=1)
+    first = make_episode(tmp_path / "first", audio_langs=("jpn", "eng"), audio_track=0)
+    ep = backend.open(str(second))
+    assert ep.audio_index == 1 and ep.streams.audio_codec == "aac" and ep.playable_audio is False
+    ep = backend.open(str(first))
+    assert ep.audio_index == 0 and ep.playable_audio is True
+
+
 def test_with_no_transcript_the_audio_track_is_the_source_languages(backend, tmp_path):
     folder = tmp_path / "imported"
     folder.mkdir()

@@ -55,7 +55,9 @@ Snapshot = tuple[Tracks, dict[str, str], dict[str, tuple[str, str | None]]]
 @dataclass(frozen=True)
 class Streams:
     """What the browser is asked about before it plays the video (spec §8.2): ffprobe's names for
-    the container, the video's codec and the codec of the audio track the editor plays."""
+    the container, the video's codec and the codec of the audio track the subtitles were made from
+    (`Episode.audio_index`; the editor plays that track as the playback audio when it isn't the
+    file's first)."""
 
     container: str = ""  # ffprobe's format_name, such as "mov,mp4,m4a,3gp,3g2,mj2"
     video_codec: str | None = None  # None: no picture (or only cover art)

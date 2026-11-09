@@ -544,3 +544,21 @@ def test_a_tab_whose_browser_cant_play_the_video_gets_the_playback_audio_and_its
         time.sleep(0.5)
         assert not any("episode" in m.get("values", {}) for m in t.messages[sent:])
         assert t.notices() == []
+
+
+@pytest.mark.media
+def test_a_video_whose_chosen_audio_track_isnt_its_first_plays_that_tracks_sound_alone(
+        media_client, media_rt, tmp_path):
+    # Q&A item 48: the browser would play the first track under captions made from the second.
+    second = make_episode(tmp_path / "second", audio_langs=("eng", "jpn"), audio_track=1)
+    first = make_episode(tmp_path / "first", audio_langs=("jpn", "eng"), audio_track=0)
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(second), "n": 1})
+        ep = t.until(opened)
+        assert ep["video"]["url"] is None and ep["video"]["playable_audio"] is False
+        audio = media_rt.media.resolve(ep["video"]["audio_url"].removeprefix("/media/"))
+        assert audio is not None and audio.name == "playback-a1.m4a"
+        t.set(open={"path": str(first), "n": 2})
+        ep = t.until(lambda t: opened(t) and opened(t)["id"] != ep["id"] and opened(t))
+        assert ep["video"]["url"] and ep["video"]["audio_url"] is None
