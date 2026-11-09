@@ -14,16 +14,20 @@ covers; an imported line (no `src`) is never stale and covers the source cues it
 
 from __future__ import annotations
 
+import dataclasses
 from bisect import bisect_right
+from collections.abc import Mapping
 from typing import Any
 
+from vid2sub.config import Config, is_local
+from vid2sub.engines.clients import KeyRing
 from vid2sub.subs import langs, naming
 from vid2sub.subs.lint import lint
 from vid2sub.subs.model import Cue
 from vid2sub.subs.rules import rules_for
 from vid2sub.subs.sidecar import HeadRecord
 from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
-from vid2sub.web.backend import Episode, all_stale
+from vid2sub.web.backend import Capabilities, Episode, all_stale
 
 _SCRIPTS = {"Hant": " (Traditional)", "Hans": " (Simplified)"}
 
@@ -45,6 +49,30 @@ def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None) -
         "conflicts": _conflicts(ep),
         "glossary_adds": dict(ep.glossary_adds),
     }
+
+
+def capabilities_view(caps: Capabilities) -> dict[str, Any]:
+    return dataclasses.asdict(caps)
+
+
+def local_endpoints(config: Config) -> list[str]:
+    """The endpoints that serve a local model, the only ones the engine contacts unasked."""
+    return [name for name in config.endpoints
+            if any(m.endpoint == name and is_local(m, config) for m in config.models.values())]
+
+
+def status_view(config: Config, keys: KeyRing, reachable: Mapping[str, bool], *,
+                ffmpeg: bool) -> dict[str, Any]:
+    """`reachable`: what the last check found for each local endpoint; one not in it is `None`
+    (not checked yet), as is every cloud endpoint (never contacted)."""
+    local = set(local_endpoints(config))
+    endpoints = []
+    for name, ep in config.endpoints.items():
+        needs_key = bool(ep.key_env) or ep.allow_typed_key
+        key = ("present" if keys.key_for(name, ep) else "missing") if needs_key else "none"
+        endpoints.append({"name": name, "local": name in local, "key": key,
+                          "reachable": reachable.get(name) if name in local else None})
+    return {"endpoints": endpoints, "ffmpeg": ffmpeg}
 
 
 def _rows(ep: Episode) -> list[dict[str, Any]]:
