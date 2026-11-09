@@ -55,10 +55,11 @@ packages = ["src/vid2sub"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]  # tests/helpers.py and tests/fakes.py are importable
-addopts = "--import-mode=importlib -m 'not live'"
+addopts = "--import-mode=importlib -m 'not live and not e2e'"
 markers = [
     "media: needs ffmpeg and ffprobe (skipped without them unless VID2SUB_REQUIRE_FFMPEG=1)",
     "live: a real model or the Spark; opt-in, see tests/README.md",
+    "e2e: Chromium against vid2sub serve; needs the built frontend (make e2e)",
 ]
 
 [tool.ruff]

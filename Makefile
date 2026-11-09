@@ -1,4 +1,4 @@
-.PHONY: setup build test test-utc test-js lint leaks check hooks live readme brand skills help
+.PHONY: setup build test test-utc test-js e2e lint leaks check hooks live readme brand skills help
 
 FRONTEND := frontend
 # Each recipe line runs in its own shell, so nvm is loaded per line when it is there, and switched
@@ -21,6 +21,10 @@ test-utc: ## Run the test suite under TZ=UTC, as on CI's Ubuntu runners
 
 test-js: ## Typecheck the frontend and run its Vitest tests
 	cd $(FRONTEND) && $(NVM) npm run typecheck && VID2SUB_REQUIRE_SHINYREACT=1 npm test
+
+e2e: build ## The browser tests against vid2sub serve (installs Playwright's Chromium first)
+	uv run playwright install chromium
+	uv run pytest -m e2e
 
 lint: ## Lint with ruff
 	uv run ruff check src tests

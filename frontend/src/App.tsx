@@ -1,9 +1,15 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { TopBar } from "@/components/TopBar";
+import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
 import type { Capabilities, Status } from "@/types";
+
+type JQueryLike = (target: Document) => {
+  on(event: string, handler: () => void): unknown;
+  off(event: string, handler: () => void): unknown;
+};
 
 export default function App() {
   const initialized = useShinyInitialized();
@@ -18,10 +24,35 @@ export default function App() {
     setNotices((shown) => addNotice(shown, data, nextId.current++));
   });
 
-  if (!initialized) return null; // no flash of empty defaults while connecting
+  // The websocket closed: ask the engine once why, and say so; never reconnect (Review Focus 5).
+  const [lost, setLost] = useState<Lost | null>(null);
+  const check = useCallback(() => {
+    void whyLost((input, init) => window.fetch(input, init)).then(setLost);
+  }, []);
+  useEffect(() => {
+    // Shiny triggers shiny:disconnected through jQuery, which addEventListener never sees.
+    const $ = (window as unknown as { jQuery?: JQueryLike }).jQuery;
+    if (!$) return;
+    $(document).on("shiny:disconnected", check);
+    return () => void $(document).off("shiny:disconnected", check);
+  }, [check]);
+
+  if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
   return (
     <div className="flex h-dvh flex-col" data-testid="app">
       <TopBar capabilities={capabilities} status={status} />
+      {lost && (
+        // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
+        <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">
+          <span>{LOST_MESSAGES[lost]}</span>
+          {lost === "stopped" && (
+            <button type="button" className="underline" onClick={check} data-testid="check-again">Check again</button>
+          )}
+          {lost === "dropped" && (
+            <button type="button" className="underline" onClick={() => window.location.reload()}>Reload</button>
+          )}
+        </div>
+      )}
       <main className="flex flex-1 items-center justify-center text-muted-foreground" data-testid="main">
         <p>The editor opens here.</p>
       </main>
