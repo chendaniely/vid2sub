@@ -56,11 +56,22 @@ def fresh_reactive_lock():
 
 @pytest.fixture
 def probed(monkeypatch):
-    """No endpoint is contacted for real: the spark answers, the LAN one is down."""
-    calls: list[str] = []
+    """No endpoint is contacted for real: the spark answers, the LAN one is down. `on_loop` holds,
+    for each call, whether it ran on an event loop's thread."""
+
+    class Calls(list):
+        on_loop: list[bool]
+
+    calls = Calls()
+    calls.on_loop = []
 
     def list_models(name, endpoint, keys, *, timeout=5.0):
         calls.append(name)
+        try:
+            asyncio.get_running_loop()
+            calls.on_loop.append(True)
+        except RuntimeError:
+            calls.on_loop.append(False)
         if name == "lan":
             raise EngineError("connection", "the server isn't reachable")
         return ["w"]
@@ -130,6 +141,8 @@ def test_the_page_runs_no_inline_script_or_style(client):
         assert kind and kind.group(1) in ("application/json", "application/html-dependencies"), (
             f"an inline script the CSP would block: <script{attrs}>{body[:80]}")
     assert "<style" not in r.text and " style=" not in r.text
+    assert not re.search(r"\son\w+\s*=", r.text)  # no inline event handler (onclick=...)
+    assert "javascript:" not in r.text
 
 
 def test_the_busy_indicators_still_switch_on_from_a_file(client):
@@ -172,7 +185,23 @@ def test_status_names_each_endpoint_its_reach_and_its_key_by_presence_only(clien
         ],
     }
     assert sorted(probed) == ["lan", "spark"]  # a cloud endpoint is never contacted
+    assert probed.on_loop == [False, False]  # off the event loop, which would freeze every tab
     assert KEY not in json.dumps(messages)
+
+
+def test_the_status_is_checked_again_every_sixty_seconds(client, probed, monkeypatch):
+    from shiny import reactive
+
+    waits: list[float] = []
+    real = reactive.invalidate_later
+
+    def invalidate_later(delay, **kwargs):
+        waits.append(delay)
+        return real(delay, **kwargs)
+
+    monkeypatch.setattr(reactive, "invalidate_later", invalidate_later)
+    _session(client, {"status"}, lambda m: bool(_values(m).get("status")) and bool(probed))
+    assert server.STATUS_EVERY == 60 and waits == [server.STATUS_EVERY]
 
 
 def test_a_notice_reaches_the_browser_as_a_shinyreact_message():
@@ -231,7 +260,13 @@ def test_no_get_or_head_route_of_the_real_shiny_app_writes_a_file_or_starts_a_pr
     # live-session case to `extra`.
     paths = get_paths(client.app)
     assert any(p.startswith("/session/") for p in paths), f"no session route among {paths}"
-    assert read_only_violations(client, monkeypatch, tmp_path) == []
+    # The page's own scripts and stylesheets, so the static mounts are reached at real files and
+    # not only at their bare paths (a 404): the sweep reads them from the page, as a browser does.
+    page = client.get("/").text
+    files = ["/" + url.split("?")[0].lstrip("/")
+             for url in re.findall(r'(?:src|href)="(lib/[^"]+)"', page)]
+    assert any(url.endswith("/shiny.js") for url in files), f"no real static file in {files}"
+    assert read_only_violations(client, monkeypatch, tmp_path, extra=files) == []
 
 
 def test_an_endpoint_answering_junk_is_unreachable_and_the_others_are_still_checked(tmp_path):
