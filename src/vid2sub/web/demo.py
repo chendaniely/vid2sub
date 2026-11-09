@@ -87,7 +87,8 @@ WORDS: tuple[tuple[str, int, int], ...] = (
 JAPANESE: tuple[tuple[tuple[str, ...], str], ...] = (
     (("I am delighted to be here, and I am particularly delighted to be here on this",
       "occasion."), "ここに来られて光栄です。"),
-    (("We meet at a college noted for knowledge,",), "私たちが集うのは、知識で知られる大学、"),
+    (("We meet at a college noted for knowledge,",),
+     "私たちが集うのは、知識で知られる大学、"),
     (("in a city noted for progress, in a state noted for strength,",),
      "進歩で知られる都市、力強さで知られる州です。"),
 )
@@ -327,7 +328,8 @@ def _hook(event: str, args: tuple) -> None:
         if not isinstance(raw, (str, bytes, os.PathLike)) or not os.path.isabs(os.fsdecode(raw)):
             return
         path = os.fsdecode(raw)
-        if _inside(path, [_state["home"]]) and not _inside(path, _state["reads"], given=_state["given"]):
+        outside_python = not _inside(path, _state["reads"], given=_state["given"])
+        if _inside(path, [_state["home"]]) and outside_python:
             raise DemoIsolationError("the demo reads nothing of yours")
     elif event in _WRITES:
         for at, fd_at in _WRITES[event]:
