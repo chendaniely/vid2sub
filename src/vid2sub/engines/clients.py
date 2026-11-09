@@ -88,11 +88,12 @@ def _key(entry: ModelEntry, config: Config, keys: KeyRing) -> str:
 
 def _http(base_url: str, timeout: float) -> httpx.Client:
     """The one httpx client. Only an https endpoint trusts the environment (httpx's trust_env: the
-    HTTP(S)_PROXY, ALL_PROXY and NO_PROXY variables, and SSL_CERT_FILE and SSL_CERT_DIR): over
-    https a proxy sees only CONNECT and the key stays inside TLS, so cloud calls through a
-    corporate proxy work. Over plain http, which only local and tailnet endpoints may use, a proxy
-    would be sent the request with its Authorization header, and spec §6.4 says a key goes only
-    to the origin it was declared with."""
+    HTTP(S)_PROXY, ALL_PROXY and NO_PROXY variables, the system proxy settings on macOS and
+    Windows, and SSL_CERT_FILE and SSL_CERT_DIR): over https a proxy sees only CONNECT and the key
+    stays inside TLS, so cloud calls through a corporate proxy work. Over plain http, which an
+    endpoint with a key may use only if it is local or on a tailnet, a proxy would be sent the
+    request with its Authorization header, and spec §6.4 says a key goes only to the origin it was
+    declared with."""
     return httpx.Client(follow_redirects=False, timeout=httpx.Timeout(timeout, connect=10.0),
                         trust_env=base_url.lower().startswith("https://"))
 
@@ -193,7 +194,7 @@ def list_models(endpoint_name: str, endpoint: Endpoint, keys: KeyRing, *,
         return [m.id for m in client.models.list()]
     except openai.OpenAIError as err:
         raise map_error(err, key_env=endpoint.key_env, secrets=[key] if key else []) from None
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError, AttributeError, RecursionError):
         # A 200 that isn't a model list (a web page, `null`, broken JSON) raises these out of the
         # openai client; the endpoint is not a model server, so it is unreachable as one, and the
         # message names no URL (spec §6.8).

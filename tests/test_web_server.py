@@ -311,7 +311,7 @@ def test_an_endpoint_answering_junk_is_unreachable_and_the_others_are_still_chec
     assert found == {"webui": False, "spark": True} and calls == ["webui", "spark"]
 
 
-def test_an_output_that_fails_sends_the_browser_no_text_of_the_error(client, monkeypatch):
+def test_an_output_that_fails_sends_the_browser_no_text_of_the_error(client, probed, monkeypatch):
     # shiny 1.8.0, session/_session.py: an output that raises sends str(e) to the browser unless
     # app.sanitize_errors is set (and the exception isn't a SafeException); server.py sets it
     # (spec §6.8: no keys or paths in what leaves the engine).

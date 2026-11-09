@@ -226,9 +226,20 @@ def test_only_an_https_endpoint_trusts_the_environments_proxy():
 # ---- a junk answer is an unreachable endpoint (spec §19.2) -----------------------------------
 
 
-@pytest.mark.parametrize("body", [b"<html>a web page</html>", b"{not json", b"null", b"[1,2]",
-                                  b'{"data":"x"}', b'{"data":[1,2]}'])
-def test_a_200_that_is_not_a_model_list_is_an_engine_error_naming_no_url(body):
+@pytest.mark.parametrize("body, content_type", ids=[
+    "html", "broken json as html", "broken json", "null", "list", "data string", "data int",
+    "data ints", "deeply nested"], argvalues=[
+    (b"<html>a web page</html>", "text/html"),
+    (b"{not json", "text/html"),
+    (b"{not json", "application/json"),  # JSONDecodeError (a ValueError) out of the client
+    (b"null", "application/json"),
+    (b"[1,2]", "application/json"),
+    (b'{"data":"x"}', "application/json"),
+    (b'{"data":5}', "application/json"),  # TypeError: an int isn't iterable
+    (b'{"data":[1,2]}', "application/json"),
+    (b"[" * 300_000, "application/json"),  # RecursionError out of the JSON parser
+])
+def test_a_200_that_is_not_a_model_list_is_an_engine_error_naming_no_url(body, content_type):
     import http.server
     import threading
 
@@ -238,6 +249,7 @@ def test_a_200_that_is_not_a_model_list_is_an_engine_error_naming_no_url(body):
 
         def do_GET(self):
             self.send_response(200)
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
