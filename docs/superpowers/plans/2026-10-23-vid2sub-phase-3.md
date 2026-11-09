@@ -13190,9 +13190,7 @@ with its picture through `/media/` (§6.3).
   each line on as it comes; its readers are threads of its own, so neither pipe stalls ffmpeg,
   and it checks the caller's `cancelled` and its deadline five times a second even while ffmpeg
   is quiet (a sleeping network share), killing ffmpeg on either. Its stdin is a pipe closed at
-  once, not `os.devnull`: Popen opens `os.devnull` for writing too, and the demo's audit hook
-  (`web.demo.isolate`) refuses that, so the demo couldn't make a copy (found by this task's
-  Playwright test). ffmpeg writes to a temporary name in the entry's folder, removed unless the
+  once. ffmpeg writes to a temporary name in the entry's folder, removed unless the
   whole copy is renamed into place: a tab closed mid-encode leaves nothing in the cache.
 - **The encode never holds up the tab.** A long episode takes minutes, so the server runs it in
   a task of the tab's own, through `runtime.blocking`, outside the tab's serial queue: edits and
@@ -13855,8 +13853,7 @@ def stream_tool(args: Sequence[str], *, cwd: Path, timeout: float,
     if not os.path.isabs(args[0]):
         raise ValueError("stream_tool needs an absolute executable path")
     name = Path(args[0]).name
-    # stdin is a pipe closed at once, so the child reads nothing from it; not os.devnull, which
-    # Popen opens for writing too, and the demo's audit hook refuses that (web.demo.isolate).
+    # stdin is a pipe closed at once, so the child reads nothing from it.
     proc = subprocess.Popen(list(args), cwd=cwd, env=child_env(), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
     proc.stdin.close()

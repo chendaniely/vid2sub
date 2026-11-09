@@ -1247,9 +1247,10 @@ UI run from a terminal or a script.
   2026-10-25).
 - `vid2sub models [--json]`: the catalog, with which models are usable on this machine now and
   why the others aren't.
-- `vid2sub serve [--port N] [--no-browser] [--config PATH]`: start the local web app and open the
-  browser through the token redirect (§6.1). (`recordings` never opens a browser; vid2sub is a
-  desktop tool.)
+- `vid2sub serve [--port N] [--no-browser] [--config PATH | --demo]`: start the local web app and
+  open the browser through the token redirect (§6.1). `--demo`, exclusive with `--config`, serves
+  a fresh copy of the demo episode and reads no vid2sub.toml (§22.7). (`recordings` never opens a
+  browser; vid2sub is a desktop tool.)
 - `vid2sub doctor [--json]`: tools and versions, extras, MLX/CUDA, endpoints reachable, keys
   present (presence only), cache size.
 - `vid2sub config init`: prints a starter `vid2sub.toml`.

@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 13: The end-to-end harness and the demo, open.
+**Now:** Task 14: The editor view, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower.
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower. Task 13's drift test and fix round 13c added 24 more (its listed 960 is 1143 in fact, 183 above the listing: the 159 and 24 more, 17 in `tests/test_demo_guard.py` and 7 parser cases in `tests/test_formats.py`): from Task 13's close on, every later listed count is 183 lower than the real one (Task 14's listings count from 960). Task 14's second hostile browser test adds one e2e test, which Task 14's own listings count: from Task 14's close on, every later listed `deselected` count and `make e2e` count is also 1 lower than the real one. A later listing that counts a run of `tests/test_demo_guard.py` (24 tests, not 7) or `tests/test_formats.py` (7 more than before) is that many lower.
 
 ## Decisions made while planning (review these)
 
@@ -19572,6 +19572,8 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 2 · **Scenarios:** S26
 
+**Built differently** (the listing's own steps stay as planned; the commits are b7d6acc for 94d8477 and 05faa32 for c262bef, rebuilt to take a personal path out of one message, Q&A item 47): (1) The null device (b7d6acc, then bae0100): Task 11's browser helper runs the opener with `stdin`, `stdout` and `stderr` on `subprocess.DEVNULL`, which opens `os.devnull` read-write, and the hook took that for a write outside the folder, so `make demo` never opened a browser. The hook now lets exactly that raw argument through, for opens only (so a rename, remove, chmod or truncate of the device is still refused, and on Windows, where it is the relative `nul`, the raw name is what is compared); two tests, one a `--demo` child with an executable `BROWSER` stand-in. (2) Round 13c, after the Tier 2 review (Standards approved with 10 Minor; Spec: 8 Important and 10 Minor): the hook also covers `os.chflags`, `os.setxattr`, `os.removexattr` and `sqlite3.connect`, UDP sends (`socket.sendto`, `socket.sendmsg`), `socket.getnameinfo` and a non-tuple (`AF_UNIX`) address, and the path as written counts for a read only under `sys.prefix` and `sys.base_prefix` (fafa96e); `serve` is pinned to `isolate`, the exit codes and the hook's fail-closed cases have tests (feba95a); the docstrings list what the hook can't see (a8f75d9); the parser's strip runs until stable, escaped from M1 (4940b13); `prepare` writes the sidecar with `safe_write` and `mux` reads its clip through `input_args` (81de2d6); a serve child that never names a redirect file is stopped at teardown, escaped from Task 11 (5fda1bf); the `tempfile.mkdtemp` entry is left out of the write test on Windows. (3) A direct fix: two lines over 100 columns rewrapped (23cf0d6). Standards' "dead `# noqa: SIM115`" was wrong (ruff reports it without them), so a `_create` helper replaced them. Tier 2's one re-review is not used: no fix changed behaviour beyond its finding.
+
 **Files:**
 - Create: `demo/` (`CREDITS.md`, the canned sidecar `jfk.vid2sub.jsonl`, `jfk.en.srt`,
   `jfk.ja.srt`), `src/vid2sub/web/demo.py`, `scripts/demo_sidecar.py`,
@@ -19614,6 +19616,10 @@ Co-Authored-By: <the model's own line>
     delighted to be here on this", "occasion.", "We meet at a college noted for knowledge,", "in a
     city noted for progress, / in a state noted for strength,"), 37 timed words; translation `ja`,
     3 cues, the first covering source cues 1 and 2; `jfk.en.srt` and `jfk.ja.srt` projected.
+  - As built (Built differently above): the hook also refuses the audited chflags, xattr and sqlite
+    writes, UDP sends, reverse lookups and non-tuple (`AF_UNIX`) addresses; the null device is
+    allowed for opens by its raw name only; `tests/fixtures/hostile/hostile.srt` has 7 cues
+    and `hostile.ass` has 6.
 
 **For later tasks.** Task 14 finds the demo's copy from the test as
 `next(server.tmp.glob("vid2sub-demo-*/demo"))` and opens `<copy>/jfk.mp4`; to show the hostile
@@ -19626,11 +19632,11 @@ demo clip only). Anything new that writes while the demo runs must write in its 
 `tempfile` already goes there, and the cache is `copy.parent / "cache"`. Task 21's e2e job needs
 an ffmpeg with libvpx and libopus (Ubuntu's apt ffmpeg has both).
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
 #### Round 13a: the demo, isolated by the app
 
-- [ ] **Step 1: Write the failing test,** `tests/test_demo_guard.py`:
+- [x] **Step 1: Write the failing test,** `tests/test_demo_guard.py`:
 
 ```python
 """Demo mode touches nothing but its own copy, and the app enforces it (spec §22.4, §22.7):
@@ -19876,9 +19882,9 @@ def test_demo_mode_reads_no_vid2sub_toml_and_removes_its_copy_when_it_stops(tmp_
     assert list(scratch.glob("vid2sub-demo-*")) == []
 ```
 
-- [ ] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_demo_guard.py -q`. Expected:
+- [x] **Step 2: Run it; watch it fail.** `uv run pytest tests/test_demo_guard.py -q`. Expected:
   `E   ImportError: cannot import name 'demo' from 'vid2sub.web' (…/src/vid2sub/web/__init__.py)`.
-- [ ] **Step 3: Write the code,** `src/vid2sub/web/demo.py`:
+- [x] **Step 3: Write the code,** `src/vid2sub/web/demo.py`:
 
 ```python
 """The demo: `vid2sub serve --demo` serves a fresh copy of `demo/`, with a canned engine, and
@@ -20478,12 +20484,12 @@ in a state noted for strength,
 
   The sidecar has 9 lines: the header, the transcript, `en` and `ja` renditions, their two heads,
   two projection records and an identity record (its ids and times differ from run to run).
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_demo_guard.py -q`.
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_demo_guard.py -q`.
   Expected: `7 passed`. By hand: `TMPDIR=$(mktemp -d) uv run vid2sub serve --demo --no-browser
   --port 0`, then Ctrl-C: a `vid2sub-demo-…` folder is in that TMPDIR while it runs and gone after.
   `make check`. Expected: `957 passed, 2 skipped, 8 deselected` twice, `Test Files  5 passed (5)`,
   `All checks passed!`, `no leaks found`. The line-length check on the Python files prints nothing.
-- [ ] **Step 5: Each guard fails its tests without its fix.** `git add demo
+- [x] **Step 5: Each guard fails its tests without its fix.** `git add demo
   scripts/demo_sidecar.py src/vid2sub/web/demo.py tests/test_demo_guard.py
   src/vid2sub/commands/serve.py Makefile`. Then, for each row, make the change in `demo.py` (the
   sixth row: `serve.py`), run `uv run pytest tests/test_demo_guard.py -q`, see it fail, and
@@ -20501,7 +20507,7 @@ in a state noted for strength,
 | no reads in the home folder | `raise DemoIsolationError("the demo reads nothing of yours")` | `pass` | 2 |
 | no connections | `raise DemoIsolationError("the demo connects to nothing beyond this machine")` | `pass` | 1 |
 
-- [ ] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 6: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 vid2sub serve --demo serves a fresh copy of the demo episode, and the app itself refuses anything the demo would touch outside it
@@ -20546,7 +20552,7 @@ Co-Authored-By: <the model's own line>
 
 #### Round 13b: the hostile fixtures, and the shell in a browser
 
-- [ ] **Step 7: Write the failing tests,** `tests/test_hostile_fixtures.py`:
+- [x] **Step 7: Write the failing tests,** `tests/test_hostile_fixtures.py`:
 
 ```python
 """The hostile fixtures (spec §6.3, §22.4; S26) are what the browser tests expect: M1's parser
@@ -20626,11 +20632,11 @@ def test_hostile_names_show_as_plain_text_and_run_nothing(open_page, launch, tmp
     assert watch.errors == [] and watch.violations() == []
 ```
 
-- [ ] **Step 8: Run them; watch them fail.** `uv run pytest tests/test_hostile_fixtures.py -q`.
+- [x] **Step 8: Run them; watch them fail.** `uv run pytest tests/test_hostile_fixtures.py -q`.
   Expected: `E       FileNotFoundError: [Errno 2] No such file or directory:
   '…/tests/fixtures/hostile/hostile.srt'`, then `3 failed`; `uv run pytest -m e2e
   tests/e2e/test_shell.py -q` stops at collection with the same for `names.json`.
-- [ ] **Step 9: Write the code.** `tests/fixtures/hostile/hostile.srt`:
+- [x] **Step 9: Write the code.** `tests/fixtures/hostile/hostile.srt`:
 
 ```text
 1
@@ -20782,11 +20788,11 @@ def launch():
         return started[-1]
 ```
 
-- [ ] **Step 10: Run the checks; they pass.** `uv run pytest tests/test_hostile_fixtures.py -q`.
+- [x] **Step 10: Run the checks; they pass.** `uv run pytest tests/test_hostile_fixtures.py -q`.
   Expected: `3 passed`. `make e2e`. Expected: `6 passed, 966 deselected` (Task 12's four, now
   against the demo, and these two). `make check`. Expected: `960 passed, 2 skipped, 10 deselected`
   twice, `Test Files  5 passed (5)`, `All checks passed!`, `no leaks found`.
-- [ ] **Step 11: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 11: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 test(e2e): 🤖 the browser tests run against vid2sub serve --demo, and hostile names show as plain text and run nothing
@@ -20819,7 +20825,7 @@ Co-Authored-By: <the model's own line>
   tests/e2e/test_shell.py tests/e2e/conftest.py`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 12: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 12: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that every write event Python audits is
   covered, `shutil.rmtree`'s descriptor-relative removals included, and that a path the OS won't
   name is refused, not let through; that the demo reads no vid2sub.toml and no key, and opens only
@@ -22247,6 +22253,8 @@ import pytest
 from episodes import make_episode
 from playwright.sync_api import expect
 
+from vid2sub.security import safe_component
+
 pytestmark = pytest.mark.e2e
 
 HOSTILE = Path(__file__).parents[1] / "fixtures" / "hostile"
@@ -22318,7 +22326,9 @@ def test_hostile_subtitles_show_as_plain_text_and_the_overlay_renders_only_itali
     expect(page.get_by_test_id("episode-notes")).to_contain_text("kept your outside edit to en")
     texts = page.get_by_test_id("cue-text")
     expect(texts).to_have_text(["window.__pwned = 1after the script", "red bold <i>italic</i>",
-                                "an image", "a link &lt;b&gt; &amp;", "braces *gone?"])
+                                "an image", "a link &lt;b&gt; &amp;", "braces *gone?",
+                                '<img src=x onerror="window.__pwned = 9"',
+                                "window.__pwned = 10after nesting"])
     assert page.locator("[data-testid=cue-row] [data-testid=cue-text] *").count() == 0
     page.get_by_test_id("showing").select_option("source")
     seek(page, 3.0)  # cue 2
@@ -22329,6 +22339,26 @@ def test_hostile_subtitles_show_as_plain_text_and_the_overlay_renders_only_itali
     seek(page, 7.0)  # cue 4: entities stay as typed
     expect(line).to_have_text("a link &lt;b&gt; &amp;")
     assert line.evaluate("e => e.children.length") == 0
+    seek(page, 11.0)  # cue 6: an <img> with no closing ">" is not a tag, so it is text (Task 13)
+    expect(line).to_have_text('<img src=x onerror="window.__pwned = 9"')
+    assert line.evaluate("e => e.children.length") == 0
+    assert page.evaluate("() => window.__pwned") is None
+
+
+def test_a_hostile_file_name_shaped_like_a_youtube_title_shows_as_plain_text_and_runs_nothing(
+        page, server):
+    # S26's "hostile file name or YouTube title", spec §6.3. A title reaches the app only as the
+    # downloaded file's name (§6.7: safe_component(title) + " [id].mp4"), and Phase 3's
+    # jobs_view names a job by its id, so a hostile name of that shape covers the title case.
+    copy = demo_copy(server)
+    name = safe_component("<img src=x onerror=window.__pwned=1> [abc123xyz00]")
+    assert name == "_img src=x onerror=window.__pwned=1_ [abc123xyz00]"  # what it leaves
+    for suffix in (".mp4", ".vid2sub.jsonl", ".en.srt", ".ja.srt"):
+        shutil.copyfile(copy / f"jfk{suffix}", copy / f"{name}{suffix}")
+    open_episode(page, copy / f"{name}.mp4")
+    expect(page.get_by_test_id("episode-name")).to_have_text(f"{name}.mp4")
+    assert page.locator("[data-testid=episode-name] *").count() == 0  # text only, no element
+    assert page.locator("img[src=x]").count() == 0
     assert page.evaluate("() => window.__pwned") is None
 
 
@@ -23161,8 +23191,8 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
 ```
 
 - [ ] **Step 15: Run the checks; they pass.** `make check`. Expected:
-  `971 passed, 2 skipped, 16 deselected` (twice), `Test Files  8 passed (8)`, `Tests  37 passed
-  (37)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `12 passed`. The
+  `971 passed, 2 skipped, 17 deselected` (twice), `Test Files  8 passed (8)`, `Tests  37 passed
+  (37)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `13 passed`. The
   2,000-cue open took about 0.25 s where this was built.
 - [ ] **Step 16: Commit.** Write the message to `.git/COMMIT_MSG`:
 
@@ -23191,7 +23221,8 @@ Spec §20's view, for S26, S27 and S37's view half, and Review Focus 3:
 - App subscribes `episode` and `busy` and sets `open` ({path, n}, priority "event").
 
 tests/e2e/test_editor_view.py: the demo plays with captions and a following list; the hostile SRT
-shows as text with only <i> in the overlay; a 2,000-cue episode opens in about 0.25 s with fewer
+shows as text with only <i> in the overlay, and a file name shaped like a YouTube title shows as
+text and runs nothing (S26, after Task 13's Spec review); a 2,000-cue episode opens in about 0.25 s with fewer
 than 60 rows in the page; follow can be turned off; the practice aids work; Tab reaches every
 control with its focus visible; and the page fixture sees no console error or CSP violation.
 They failed first with:
@@ -23797,8 +23828,8 @@ export type EpisodeView = {
   `self.rt.media.revoke_owner(ep.id)` in `_playback` with `pass`; `uv run pytest
   tests/test_web_server.py -q -k cant_play` fails `AssertionError: assert PosixPath('…/Show -
   S01E01.mkv') is None` (the video's token still served); put it back. `make check`. Expected:
-  `974 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed
-  (44)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `14 passed`.
+  `974 passed, 2 skipped, 19 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed
+  (44)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `15 passed`.
 - [ ] **Step 21: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -23881,7 +23912,8 @@ audio once and its own token is revoked; that the list renders only what
   `Task 15: Editing in the editor, open.`, and the spec's scenario rows S26 and S27 set to
   `built` (S43's Proof gains `tests/e2e/test_editor_view.py`, the playback audio in the browser;
   it stays `planned` for Task 23's AC-3 check) (S26's Proof: `Playwright with hostile fixtures (tests/e2e/test_shell.py,
-  tests/e2e/test_editor_view.py)`; S27's: `tests/e2e/test_editor_view.py; the exit test`); S37
+  tests/e2e/test_editor_view.py: test_hostile_subtitles_show_as_plain_text_and_the_overlay_renders_only_italics
+  and test_a_hostile_file_name_shaped_like_a_youtube_title_shows_as_plain_text_and_runs_nothing)`; S27's: `tests/e2e/test_editor_view.py; the exit test`); S37
   stays `planned` (Tasks 15 and 19), with the message in `.git/CLOSE_MSG`:
 
 ```text
@@ -40362,3 +40394,18 @@ fi
 | Task 12 (re-review) | Minor | `src/vid2sub/engines/clients.py` | Out of scope: chatlas's async client ignores our `http_client`, so it would trust the environment and follow redirects; nothing calls it today, and a later async chat would reopen spec §6.4 | open |
 | Task 12 (re-review) | Minor | `src/vid2sub/engines/clients.py` | Out of scope: an empty answer (`{}`, `{"data":null}`) counts as reachable | open |
 | Task 12 (review) | Minor | `src/vid2sub/web/` | Couldn't verify: Windows, Python 3.12 and real CI for this range, until the push; browsers other than Chromium under the CSP; what a real browser does with the old URL's cached `ui.js` after a rebuild; macOS system proxy settings reaching the probe; import-time rendering under Pyodide (Phase 4); `make skills` | open |
+| Task 13 (review) | Minor | `src/vid2sub/web/demo.py` | Spec 11: a relative read with a separator (`sub/secret`, `../home/x`) goes unchecked; only bare names (`shutil.rmtree`'s walk) need the gap, so check `abspath` when the path has a separator | open |
+| Task 13 (review) | Minor | `src/vid2sub/web/demo.py` | Spec 12: listing the home folder (`os.listdir`, `os.scandir`, `glob`, `os.walk`) isn't refused; file names are the person's | open |
+| Task 13 (review) | Minor | `src/vid2sub/commands/serve.py` | Spec 13: SIGTERM or SIGHUP during start-up leaves the `vid2sub-demo-*` and scratch folders (the handlers go in only at `serve`), and Ctrl-C then prints a traceback; install them before `_demo()` | open |
+| Task 13 (review) | Minor | `src/vid2sub/commands/serve.py` | Spec 16: other `prepare` failures (an `OSError` from an unwritable temporary folder, a `ProbeError`) show a traceback and exit 1 instead of 69 | open |
+| Task 13 (review) | Minor | `tests/test_demo_guard.py` | Spec 17: two allow-list asserts (Python's and vid2sub's own files readable) can't fail with a made-up home; losing `sys.base_prefix` or the vid2sub entry survives the guard suite | open |
+| Task 13 (review) | Minor | `tests/test_demo_guard.py` | Standards: two child-process tests put the whole server log in the assertion message | open |
+| Task 13 (review) | Minor | `Makefile` | Standards: `make lint` doesn't cover `scripts/` (`scripts/demo_sidecar.py`) | open |
+| Task 13 (review) | Minor | `src/vid2sub/web/demo.py` | Standards: module-level global state (`_state`) and a long `_hook`; split it by event kind | open |
+| Task 13 (review) | Minor | `src/vid2sub/commands/serve.py` | Standards: `args.demo` is tested three ways in `serve.run`; one `made` value would do | open |
+| Task 13 (review) | Minor | `src/vid2sub/web/demo.py` | Standards: `prepare` builds the sidecar name by a string replace on `VIDEO` instead of `sidecar_path` | open |
+| Task 13 (review) | Minor | `scripts/demo_sidecar.py` | Standards: it monkeypatches `pipeline.make_ask` to get the canned translation; a seam in `RunContext` would not | open |
+| Task 13 (review) | Minor | `tests/e2e/test_shell.py` | Standards: the hostile-names test can't fail if the page stops rendering `endpoint` elements at all (its count assert is the only guard) | open |
+| Task 13 (review) | Minor | `tests/fixtures/hostile/` | Spec 8(b): `hostile.ass` reaches only the parser test; the demo projects SRT only, so showing it in the editor needs an ASS projection or import, which no Phase 2 UI offers | open |
+| Task 13 (review) | Minor | `src/vid2sub/web/` | Outside this task: with `UV_LINK_MODE=symlink` the page's `/lib/` assets answer 404 (Starlette's `StaticFiles(follow_symlink=False)`); it affects any `vid2sub serve` | open |
+| Task 13 (review) | Minor | `src/vid2sub/web/demo.py` | Couldn't verify: Windows, for the null-device and `mkdtemp` fixes, until CI runs (they rest on the review's reading and a simulation); the `/proc/self/fd` branch and the xattr rows on Linux; ffmpeg's libvpx and libopus on the CI runners; a headed browser | open |
