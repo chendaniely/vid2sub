@@ -84,31 +84,36 @@ def start_server(tmp: Path, *args: str, port: int = 0, toml: str | None = None) 
              *which, *args],
             env=env, stdout=out, stderr=subprocess.STDOUT)
 
-    def tail() -> str:
-        return log.read_text(encoding="utf-8", errors="replace")[-2000:]
+    try:
+        def tail() -> str:
+            return log.read_text(encoding="utf-8", errors="replace")[-2000:]
 
-    deadline = time.monotonic() + 60
-    while not (found := PAGE_LINE.search(log.read_text(encoding="utf-8", errors="replace"))):
-        if proc.poll() is not None:
-            pytest.fail(f"vid2sub serve exited with {proc.returncode}:\n{tail()}")
-        if time.monotonic() > deadline:
-            proc.kill()
-            pytest.fail(f"vid2sub serve printed no redirect file in 60 s:\n{tail()}")
-        time.sleep(0.1)
-    link = LINK.search(Path(found.group(1)).read_text(encoding="utf-8"))
-    url = f"http://127.0.0.1:{link.group(1)}"
-    while True:
-        try:
-            with urllib.request.urlopen(f"{url}/healthz", timeout=1) as r:
-                if json.load(r) == {"ok": True}:
-                    break
-        except OSError:
-            pass
-        if time.monotonic() > deadline:
-            proc.kill()
-            pytest.fail(f"vid2sub serve never answered /healthz:\n{tail()}")
-        time.sleep(0.1)
-    return Server(url, link.group(0), int(link.group(1)), proc, log, tmp)
+        deadline = time.monotonic() + 60
+        while not (found := PAGE_LINE.search(log.read_text(encoding="utf-8", errors="replace"))):
+            if proc.poll() is not None:
+                pytest.fail(f"vid2sub serve exited with {proc.returncode}:\n{tail()}")
+            if time.monotonic() > deadline:
+                proc.kill()
+                pytest.fail(f"vid2sub serve printed no redirect file in 60 s:\n{tail()}")
+            time.sleep(0.1)
+        link = LINK.search(Path(found.group(1)).read_text(encoding="utf-8"))
+        url = f"http://127.0.0.1:{link.group(1)}"
+        while True:
+            try:
+                with urllib.request.urlopen(f"{url}/healthz", timeout=1) as r:
+                    if json.load(r) == {"ok": True}:
+                        break
+            except OSError:
+                pass
+            if time.monotonic() > deadline:
+                proc.kill()
+                pytest.fail(f"vid2sub serve never answered /healthz:\n{tail()}")
+            time.sleep(0.1)
+        return Server(url, link.group(0), int(link.group(1)), proc, log, tmp)
+    except BaseException:  # a child that never came up is not left running
+        proc.kill()
+        proc.wait()
+        raise
 
 
 @pytest.fixture

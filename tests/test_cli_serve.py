@@ -158,6 +158,8 @@ def start(tmp_path):
             if ignore_hangup:  # `nohup`'s doing: an ignored signal stays ignored across exec
                 command = [sys.executable, "-c", NOHUP, *command]
             proc = subprocess.Popen(command, env=child_env, stdout=out, stderr=subprocess.STDOUT)
+        stopper = Serving(proc, log, scratch, 0, "")  # tracked at once, so a run that never
+        started.append(stopper)  # names a redirect file is still stopped at teardown
         deadline = time.monotonic() + 60
         while not (found := PAGE_LINE.search(log.read_text(encoding="utf-8", errors="replace"))):
             assert proc.poll() is None, log.read_text(encoding="utf-8", errors="replace")
@@ -165,7 +167,7 @@ def start(tmp_path):
             time.sleep(0.1)
         link = LINK.search(Path(found.group(1)).read_text(encoding="utf-8"))
         serving = Serving(proc, log, scratch, int(link.group(1)), link.group(2))
-        started.append(serving)
+        started[-1] = serving
         _wait_for_health(serving, deadline)
         return serving
 

@@ -65,13 +65,18 @@ def place(tmp_path):
     demo.release()
 
 
+def _create(path: Path) -> None:
+    with open(path, "w", encoding="utf-8"):
+        pass
+
+
 def test_the_demo_refuses_every_kind_of_write_outside_its_folder(place):
     folder, home, outside = place
     demo.isolate(folder, home=home)
     file, d = outside / "file.txt", outside / "dir"
     writes = [
-        lambda: open(outside / "new.txt", "w"),  # noqa: SIM115
-        lambda: (file).open("a"),
+        lambda: _create(outside / "new.txt"),
+        lambda: file.open("a"),
         lambda: os.open(outside / "fd.txt", os.O_WRONLY | os.O_CREAT),
         lambda: os.replace(folder / "inside.txt", outside / "moved.txt"),
         lambda: os.mkdir(outside / "made"),
@@ -264,7 +269,7 @@ def test_the_demo_lets_the_null_device_through_and_nothing_else_outside(place):
     with pytest.raises(DemoIsolationError, match="inside its own folder"):
         os.open(outside / "fd.txt", os.O_RDWR | os.O_CREAT)
     with pytest.raises(DemoIsolationError, match="inside its own folder"):
-        open(outside / "null", "w")  # noqa: SIM115
+        _create(outside / "null")
 
 
 def test_the_null_device_is_let_through_only_to_be_opened(place, monkeypatch):

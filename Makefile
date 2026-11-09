@@ -22,7 +22,7 @@ test-utc: ## Run the test suite under TZ=UTC, as on CI's Ubuntu runners
 test-js: ## Typecheck the frontend and run its Vitest tests
 	cd $(FRONTEND) && $(NVM) npm run typecheck && VID2SUB_REQUIRE_SHINYREACT=1 npm test
 
-e2e: build ## The browser tests against vid2sub serve (installs Playwright's Chromium first)
+e2e: build ## The browser tests against vid2sub serve --demo (installs Playwright's Chromium first)
 	uv run playwright install chromium
 	uv run pytest -m e2e
 
