@@ -224,3 +224,14 @@ __marimo__/
 /build/
 /_site/
 /.cache/
+
+# The frontend: its packages, and its build output in www/ (make build). The fonts are committed.
+frontend/node_modules/
+src/vid2sub/web/www/ui.js
+src/vid2sub/web/www/ui.css
+# The Python template's lib/ above would hide the frontend's own lib/.
+!frontend/src/lib/
+# Agent skills are local tooling, made again by make skills.
+.claude/skills/
+.agents/
+skills-lock.json

@@ -42,6 +42,7 @@ dev = [
     "jsonschema>=4.23",
     "ruff>=0.8",
     "pytest-playwright==0.10.0",  # the editor's browser tests (spec §22.7), as recordings pins it
+    "pyyaml==6.0.3",  # tests/test_brand.py reads _brand.yml, as scripts/brand_css.py does
 ]
 
 [build-system]
