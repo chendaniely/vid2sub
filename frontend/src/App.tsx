@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Editor } from "@/components/Editor";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
-import { useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
-import type { Capabilities, Status } from "@/types";
+import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
+import type { Busy, Capabilities, EpisodeView, Status } from "@/types";
 
 type JQueryLike = (target: Document) => {
   on(event: string, handler: () => void): unknown;
@@ -18,6 +19,12 @@ export default function App() {
   // for each later value (recordings' App.tsx). A new output or message gets a line here too.
   const capabilities = useShinyOutputValue<Capabilities>("capabilities");
   const status = useShinyOutputValue<Status>("status");
+  const episode = useShinyOutputValue<EpisodeView | null>("episode");
+  const busy = useShinyOutputValue<Busy>("busy");
+  // Every input is set from here too. Each request carries a count, so the same path asked for
+  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
+  const sent = useRef(0);
   const [notices, setNotices] = useState<Shown[]>([]);
   const nextId = useRef(1);
   useShinyMessageHandler("notice", (data: unknown) => {
@@ -53,8 +60,13 @@ export default function App() {
           )}
         </div>
       )}
-      <main className="flex flex-1 items-center justify-center text-muted-foreground" data-testid="main">
-        <p>The editor opens here.</p>
+      <main className="min-h-0 flex-1" data-testid="main">
+        <Editor
+          episode={episode ?? null}
+          busy={busy ?? null}
+          pathInput={capabilities?.path_input ?? false}
+          onOpen={(path) => setOpen({ path, n: ++sent.current })}
+        />
       </main>
       <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">
         <div role="status" aria-live="polite" className="flex flex-col gap-2">
