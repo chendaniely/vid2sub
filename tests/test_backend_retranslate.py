@@ -21,6 +21,7 @@ from vid2sub.subs.translate_shape import src_sha
 from vid2sub.web import backend as web_backend
 from vid2sub.web import views
 from vid2sub.web.backend import LocalBackend
+from vid2sub.web.episode import all_stale
 from vid2sub.web.ops import parse_op
 
 pytestmark = pytest.mark.media
@@ -315,7 +316,7 @@ def test_an_undo_between_two_redo_alls_gives_back_the_first_ones_glossary_and_mo
     undone = backend.undo(second)
     assert undone.tracks == first.tracks
     assert web_backend.track_setup(undone, "en") == web_backend.track_setup(first, "en")
-    assert web_backend.all_stale(undone, "en")  # its cues lack the second term
+    assert all_stale(undone, "en")  # its cues lack the second term
     assert backend.redo(undone).made_with == second.made_with
 
 

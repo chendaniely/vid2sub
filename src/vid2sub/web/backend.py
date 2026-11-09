@@ -119,7 +119,6 @@ from vid2sub.web.episode import (
     SaveResult,
     Snapshot,
     Streams,
-    all_stale,  # noqa: F401 - re-exported: Tasks 5 to 7's tests use backend.all_stale
     glossary_with,
     setup_changed,
     track_setup,

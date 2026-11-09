@@ -22,7 +22,8 @@ export default function App() {
   const episode = useShinyOutputValue<EpisodeView | null>("episode");
   const busy = useShinyOutputValue<Busy>("busy");
   // Every input is set from here too. Each request carries a count, so the same path asked for
-  // twice is still two requests, and "event" sends it at once, never merged with the next.
+  // twice is still two requests. `debounceMs: 0` is still a trailing timer: two values set in one
+  // task send only the last.
   const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
   const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
   const sent = useRef(0);
