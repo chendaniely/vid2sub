@@ -19,6 +19,8 @@ import sys
 import threading
 from pathlib import Path
 
+import pytest
+
 from vid2sub.web import runtime
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "vid2sub"
@@ -84,11 +86,16 @@ def test_the_refusal_itself_works():
     assert "ImportError: the Pages bundle has no vid2sub.web.backend" in done.stderr
 
 
-THREADS = {"threading", "concurrent", "multiprocessing", "subprocess", "_thread"}
+THREADS = {"threading", "concurrent", "multiprocessing", "subprocess", "_thread", "anyio"}
+# Names that start a thread or a process wherever they are imported from or reached through.
+STARTERS = {"to_thread", "run_in_executor", "run_in_threadpool", "create_subprocess_exec",
+            "create_subprocess_shell"}
+OS_STARTERS = {"system", "fork", "popen", "execv", "execl", "execvp", "execlp"}
 
 
-def test_the_server_never_starts_a_thread_or_a_process_itself():
-    tree = ast.parse((SRC / "web" / "server.py").read_text(encoding="utf-8"))
+def _starts_a_thread_or_process(source: str) -> list[str]:
+    """Every import or attribute in `source` that could start a thread or a process."""
+    tree = ast.parse(source)
     bad = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -96,11 +103,50 @@ def test_the_server_never_starts_a_thread_or_a_process_itself():
         elif isinstance(node, ast.ImportFrom) and node.module:
             if node.module.split(".")[0] in THREADS:
                 bad.append(node.module)
-            bad += [f"{node.module}.{a.name}" for a in node.names
-                    if a.name in ("to_thread", "run_in_executor")]
-        elif isinstance(node, ast.Attribute) and node.attr in ("to_thread", "run_in_executor"):
-            bad.append(ast.unparse(node))
-    assert bad == [], f"server.py must go through runtime.blocking: {bad}"
+            for a in node.names:
+                if a.name in STARTERS or (node.module == "os" and _os_starter(a.name)):
+                    bad.append(f"{node.module}.{a.name}")
+        elif isinstance(node, ast.Attribute):
+            on_os = isinstance(node.value, ast.Name) and node.value.id == "os"
+            if node.attr in STARTERS or (on_os and _os_starter(node.attr)):
+                bad.append(ast.unparse(node))
+    return bad
+
+
+def _os_starter(name: str) -> bool:
+    return name in OS_STARTERS or name.startswith("spawn")
+
+
+@pytest.mark.parametrize("module", ["server.py", "views.py"])
+def test_the_server_and_its_views_never_start_a_thread_or_a_process_themselves(module):
+    bad = _starts_a_thread_or_process((SRC / "web" / module).read_text(encoding="utf-8"))
+    assert bad == [], f"{module} must go through runtime.blocking: {bad}"
+
+
+@pytest.mark.parametrize("line", [
+    "import threading",
+    "from concurrent.futures import ThreadPoolExecutor",
+    "import multiprocessing",
+    "import subprocess",
+    "import _thread",
+    "import anyio",
+    "from anyio.to_thread import run_sync",
+    "from anyio import to_thread",
+    "from starlette.concurrency import run_in_threadpool",
+    "from asyncio import to_thread as x",
+    "from asyncio import create_subprocess_exec",
+    "import asyncio\nx = asyncio.to_thread",
+    "import asyncio\nasyncio.create_subprocess_exec('ls')",
+    "import asyncio\nasyncio.create_subprocess_shell('ls')",
+    "import asyncio\nasyncio.get_running_loop().run_in_executor(None, print)",
+    "import os\nos.system('ls')",
+    "import os\nos.fork()",
+    "import os\nos.spawnl(0, 'ls')",
+    "from os import system",
+])
+def test_the_thread_and_process_check_catches_each_way_of_starting_one(line):
+    # why: a check that flagged nothing would pass the test above whatever the server does.
+    assert _starts_a_thread_or_process(line), line
 
 
 def test_blocking_runs_a_call_off_the_event_loop_and_returns_its_result():
