@@ -166,3 +166,58 @@ def test_a_json_answer_that_is_not_an_object_is_a_bad_response():
     with pytest.raises(EngineError) as err:
         _transcribe([(200, [1], {})])
     assert err.value.kind == "bad_response" and "JSON object" in str(err.value)
+
+
+# ---- a key goes only to the origin it was declared with (spec §6.4) --------------------------
+
+
+def _models_server(seen: list):
+    """A loopback server (port 0) that records each request's path and whether it carried an
+    Authorization header, and answers like a model list."""
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            seen.append((self.path, bool(self.headers.get("Authorization"))))
+            body = (b'{"object":"list","data":'
+                    b'[{"id":"w","object":"model","created":0,"owned_by":"x"}]}')
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def test_a_plain_http_endpoint_is_reached_directly_and_never_through_a_proxy(monkeypatch):
+    proxy_saw: list = []
+    endpoint_saw: list = []
+    proxy, endpoint = _models_server(proxy_saw), _models_server(endpoint_saw)
+    try:
+        for name in ("NO_PROXY", "no_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY",
+                     "all_proxy", "http_proxy"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("HTTP_PROXY", f"http://127.0.0.1:{proxy.server_address[1]}")
+        ep = Endpoint(base_url=f"http://127.0.0.1:{endpoint.server_address[1]}/v1",
+                      key_env="SPARK_API_KEY")
+        keys = clients.KeyRing(environ={"SPARK_API_KEY": "k" * 24})
+        assert clients.list_models("spark", ep, keys) == ["w"]
+        assert proxy_saw == []  # the key's request never reached the proxy
+        assert endpoint_saw == [("/v1/models", True)]
+    finally:
+        proxy.shutdown()
+        endpoint.shutdown()
+
+
+def test_only_an_https_endpoint_trusts_the_environments_proxy():
+    # Over https a proxy sees only CONNECT and the key stays inside TLS, so cloud calls through a
+    # corporate proxy keep working; over plain http, the request itself would reach the proxy.
+    assert clients._http("https://api.openai.com/v1", 5.0).trust_env is True
+    assert clients._http("http://127.0.0.1:9100/v1", 5.0).trust_env is False

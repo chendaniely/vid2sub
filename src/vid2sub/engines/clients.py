@@ -86,8 +86,15 @@ def _key(entry: ModelEntry, config: Config, keys: KeyRing) -> str:
     return key or "unused"
 
 
-def _http(timeout: float) -> httpx.Client:
-    return httpx.Client(follow_redirects=False, timeout=httpx.Timeout(timeout, connect=10.0))
+def _http(base_url: str, timeout: float) -> httpx.Client:
+    """The one httpx client. Only an https endpoint trusts the environment (httpx's trust_env: the
+    HTTP(S)_PROXY, ALL_PROXY and NO_PROXY variables, and SSL_CERT_FILE and SSL_CERT_DIR): over
+    https a proxy sees only CONNECT and the key stays inside TLS, so cloud calls through a
+    corporate proxy work. Over plain http, which only local and tailnet endpoints may use, a proxy
+    would be sent the request with its Authorization header, and spec §6.4 says a key goes only
+    to the origin it was declared with."""
+    return httpx.Client(follow_redirects=False, timeout=httpx.Timeout(timeout, connect=10.0),
+                        trust_env=base_url.lower().startswith("https://"))
 
 
 def transcription_client(name: str, entry: ModelEntry, config: Config, policy: RunPolicy,
@@ -95,7 +102,7 @@ def transcription_client(name: str, entry: ModelEntry, config: Config, policy: R
     check_allowed(name, entry, config, policy)
     ep = config.endpoints[entry.endpoint]
     return openai.OpenAI(api_key=_key(entry, config, keys), base_url=ep.base_url,
-                         http_client=_http(timeout), max_retries=0)
+                         http_client=_http(ep.base_url, timeout), max_retries=0)
 
 
 def _json(response: Any) -> Any:
@@ -181,7 +188,7 @@ def list_models(endpoint_name: str, endpoint: Endpoint, keys: KeyRing, *,
     if key:
         _require_safe_transport(endpoint)
     client = openai.OpenAI(api_key=key or "unused", base_url=endpoint.base_url,
-                           http_client=_http(timeout), max_retries=0)
+                           http_client=_http(endpoint.base_url, timeout), max_retries=0)
     try:
         return [m.id for m in client.models.list()]
     except openai.OpenAIError as err:
@@ -199,7 +206,7 @@ def chat(name: str, entry: ModelEntry, config: Config, policy: RunPolicy, keys: 
     factory = ChatOpenAI if api == "responses" else ChatOpenAICompletions
     return factory(model=entry.model, base_url=ep.base_url, api_key=_key(entry, config, keys),
                    system_prompt=system_prompt,
-                   kwargs={"http_client": _http(timeout), "max_retries": 0})
+                   kwargs={"http_client": _http(ep.base_url, timeout), "max_retries": 0})
 
 
 def call_structured(chat_obj: Any, prompt: str, data_model: type[BaseModel], *,
