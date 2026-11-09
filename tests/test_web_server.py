@@ -870,3 +870,88 @@ def test_an_open_whose_media_fails_leaves_the_new_episode_no_media_of_the_old_on
         t.until(lambda t: len(t.notices()) == 2)
         assert not any(m.get("values", {}).get("busy") == "playback" for m in t.messages[sent:])
         assert calls == [first, second]
+
+
+# ---- the editor: edits, undo and redo (Task 15) -----------------------------------------------
+
+
+def opened_in(t: Tab, video) -> dict:
+    t.until(lambda t: t.has("episode"))
+    t.set(open={"path": str(video), "n": 1})
+    return t.until(opened)
+
+
+def latest(t: Tab, check):
+    """The episode output once `check(episode)` holds."""
+    return t.until(lambda t: opened(t) and check(t.value("episode")) and t.value("episode"))
+
+
+@pytest.mark.media
+def test_edits_undo_and_redo_reach_the_episode_one_at_a_time_in_the_order_sent(
+        media_client, tmp_path):
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        first = ep["rows"][0]
+        ask = {"episode": ep["id"]}
+        # sent back to back, each in its own message, as the frontend's pacer sends them
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": first["id"], "text": "やあ"}})
+        t.set(edit={**ask, "n": 2, "op": {"op": "nudge", "cue": first["id"], "delta_ms": 100}})
+        t.set(undo={**ask, "n": 3})
+        t.set(redo={**ask, "n": 4})
+        t.set(undo={**ask, "n": 5})
+        done = latest(t, lambda e: e["rows"][0]["text"] == "やあ" and e["can_redo"])
+        assert done["rows"][0]["start_ms"] == first["start_ms"]  # the nudge is undone again
+        assert done["dirty"] and done["can_undo"]
+        # the translation re-points nowhere new, but its source text changed: it is stale
+        assert "stale" in done["rows"][0]["tr"]["en"]["cues"][0]["flags"]
+        t.set(undo={**ask, "n": 6})
+        clean = latest(t, lambda e: not e["dirty"])
+        assert clean["rows"][0]["text"] == first["text"] and not clean["can_undo"]
+
+
+@pytest.mark.media
+def test_a_bad_edit_is_a_notice_naming_the_field_and_never_what_was_sent(media_client,
+                                                                        tmp_path):
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        cue = ep["rows"][0]["id"]
+        for n, op in enumerate([
+            {"op": "set_text", "cue": cue, "text": "x", "<img src=x>": 1},  # an unknown field
+            {"op": "set_text", "cue": "<script>", "text": "x"},  # not a cue id's shape
+            {"op": "nudge", "cue": cue, "delta_ms": "100"},  # a string is never a number
+            {"op": "merge_next", "cue": ep["rows"][-1]["id"], "id": "cd0000001",
+             "joined": {}},  # the rules refuse it
+            # a new cue's id, drawn by the page (Decision 31): its shape, then that it is free
+            {"op": "insert", "start_ms": 3100, "end_ms": 3500, "text": "x", "id": "<b>"},
+            {"op": "insert", "start_ms": 3100, "end_ms": 3500, "text": "x", "id": cue},
+        ]):
+            t.set(edit={"episode": ep["id"], "n": n, "op": op})
+        t.until(lambda t: len(t.notices()) == 6)
+        assert [n["text"] for n in t.notices()] == [
+            "this edit can't be made: it has a field no edit has",
+            "this edit can't be made: cue isn't valid",
+            "this edit can't be made: delta_ms has the wrong type",
+            "the last cue has no next cue to merge with",
+            "this edit can't be made: id isn't valid",
+            "a new cue's id is already in use; try again",
+        ]
+        assert "<img" not in json.dumps(t.messages) and "<script>" not in json.dumps(t.messages)
+        assert "<b>" not in json.dumps(t.messages)
+        assert not t.value("episode")["dirty"]
+
+
+@pytest.mark.media
+def test_an_edit_for_an_episode_the_tab_has_moved_on_from_is_dropped(media_client, tmp_path):
+    first, second = make_episode(tmp_path / "one"), make_episode(tmp_path / "two")
+    with tab(media_client) as t:
+        one = opened_in(t, first)
+        t.set(open={"path": str(second), "n": 2})
+        two = t.until(lambda t: opened(t) and opened(t)["id"] != one["id"] and opened(t))
+        t.set(edit={"episode": one["id"], "n": 3,
+                    "op": {"op": "delete", "cue": one["rows"][0]["id"]}})
+        t.set(edit={"episode": two["id"], "n": 4,
+                    "op": {"op": "set_text", "cue": two["rows"][1]["id"], "text": "二"}})
+        done = latest(t, lambda e: e["rows"][1]["text"] == "二")
+        assert len(done["rows"]) == len(LINES) and t.notices() == []

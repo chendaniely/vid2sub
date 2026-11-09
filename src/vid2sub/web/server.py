@@ -15,16 +15,19 @@ stays off: nothing here calls `session.allow_reconnect`, so a tab whose engine r
 the new link instead of retrying (Review Focus 5).
 
 The editor (spec §20): each tab holds at most one open episode, in an `Editor`. Every call that
-changes it (open here; edits, Save and picks later) runs one at a time, in the order the tab sent
-them, in a task of the tab's own that holds no reactive lock while it waits on the disk or ffmpeg,
-so a slow open never freezes another tab and no edit is lost to a Save running at the same time.
-The backend returns a new frozen `Episode` each time, which the editor sets as the reactive value
-the `episode` output reads. The player gets the video by a media token, or the playback audio
-when the browser can't play the video's audio (Decision 2) or, as the page reports from
-canPlayType and the video's own errors, the video itself (`playback`, spec §8.2, §8.8); its
+changes it (open, edits, undo and redo; Save and picks later) runs one at a time, in the order
+the tab sent them, in a task of the tab's own that holds no reactive lock while it waits on the
+disk or ffmpeg, so a slow open never freezes another tab and no edit is lost to a Save running at
+the same time. The backend returns a new frozen `Episode` each time, which the editor sets as the
+reactive value the `episode` output reads. The player gets the video by a media token, or the
+playback audio when the browser can't play the video's audio (Decision 2) or, as the page reports
+from canPlayType and the video's own errors, the video itself (`playback`, spec §8.2, §8.8); its
 tokens are revoked with the episode when the tab opens another or closes: the mount passes no
 lifespan events on, so that happens in `session.on_ended`. Requests come from the browser, so
-they are checked before use and never echoed (§6.3, §6.8).
+they are checked before use and never echoed (§6.3, §6.8). Edits go through the backend's
+`apply`, so the rules exist once (§20): an edit is checked at the door by `ops.parse_op`, and it,
+undo and redo run on the event loop (about 0.02 s for 2,000 cues, Task 6); a request naming an
+episode the tab has since moved on from (sent before an open finished) is dropped.
 
 The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
 for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
@@ -47,7 +50,8 @@ from htmltools import HTMLDependency
 from shiny import Inputs, Outputs, Session, reactive
 from shinyreact import ReactApp, page_react, reactive_output
 
-from vid2sub.web import WWW, runtime, views
+from vid2sub.subs.edit import EditError
+from vid2sub.web import WWW, ops, runtime, views
 from vid2sub.web.episode import Episode, OpenError
 
 # By name: a test may load this file as a module of another name.
@@ -162,6 +166,32 @@ class Editor:
         if self.media.problem:
             await notice(self.session, "error", self.media.problem)
 
+    async def _edit(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is None or not isinstance(request, dict):
+            return
+        try:
+            new = self.rt.backend.apply(ep, ops.parse_op(request.get("op")))
+        except (ops.BadOp, EditError, OpenError) as err:  # each is fit to show, and echoes nothing
+            await notice(self.session, "error", str(err))
+            return
+        await self._show(new)
+
+    async def _undo(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is not None:
+            await self._show(self.rt.backend.undo(ep))
+
+    async def _redo(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is not None:
+            await self._show(self.rt.backend.redo(ep))
+
+    async def _show(self, ep: Episode) -> None:
+        if ep is not self.ep:  # the backend returns `ep` itself when nothing changed
+            self.ep = ep
+            await self._publish(busy=None)
+
     async def _playback(self, request: object) -> None:
         """The page found the browser can't play the video (spec §8.2: canPlayType, or the
         <video>'s error), so the video's token goes and the playback audio plays (§8.8)."""
@@ -244,6 +274,21 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @reactive.event(input.playback)
     def _playback() -> None:
         editor.submit("playback", input.playback())
+
+    @reactive.effect
+    @reactive.event(input.edit)
+    def _edit() -> None:
+        editor.submit("edit", input.edit())
+
+    @reactive.effect
+    @reactive.event(input.undo)
+    def _undo() -> None:
+        editor.submit("undo", input.undo())
+
+    @reactive.effect
+    @reactive.event(input.redo)
+    def _redo() -> None:
+        editor.submit("redo", input.redo())
 
     @reactive_output
     def episode():
