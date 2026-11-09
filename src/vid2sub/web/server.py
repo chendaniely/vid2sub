@@ -14,6 +14,17 @@ at its top, only the pure packages, shiny, shinyreact, htmltools, pydantic and
 stays off: nothing here calls `session.allow_reconnect`, so a tab whose engine restarted asks for
 the new link instead of retrying (Review Focus 5).
 
+The editor (spec §20): each tab holds at most one open episode, in an `Editor`. Every call that
+changes it (open here; edits, Save and picks later) runs one at a time, in the order the tab sent
+them, in a task of the tab's own that holds no reactive lock while it waits on the disk or ffmpeg,
+so a slow open never freezes another tab and no edit is lost to a Save running at the same time.
+The backend returns a new frozen `Episode` each time, which the editor sets as the reactive value
+the `episode` output reads. The player gets the video by a media token, or the playback audio
+when the browser can't play the video's audio (Decision 2), and both are revoked with the episode
+when the tab opens another or closes: the mount passes no lifespan events on, so that happens in
+`session.on_ended`. Requests come from the browser, so they are checked before use and never
+echoed (§6.3, §6.8).
+
 The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
 for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
 indicators on with an inline script, which the CSP's `script-src 'self'` blocks (§6.3), so the
@@ -23,7 +34,9 @@ runs no inline script or style, and the CSP needs no `style-src` of its own.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections import deque
 from pathlib import Path
 from typing import Any, Literal
 
@@ -34,11 +47,14 @@ from shiny import Inputs, Outputs, Session, reactive
 from shinyreact import ReactApp, page_react, reactive_output
 
 from vid2sub.web import WWW, runtime, views
+from vid2sub.web.episode import Episode, OpenError
 
 # By name: a test may load this file as a module of another name.
 log = logging.getLogger("vid2sub.web.server")
 
 STATUS_EVERY = 60  # seconds between checks of the local endpoints
+MAX_PATH = 4096  # characters in a typed path
+TYPE_A_PATH = "type the video's full path to open it"
 # htmltools keeps the highest version of a dependency per name. Shiny's own version with a local
 # label (1.8.0+vid2sub, which PEP 440 sorts above 1.8.0) makes this one replace Shiny's
 # shiny-busy-indicators: its stylesheet, without the inline script in its head. The second
@@ -74,6 +90,87 @@ async def notice(session: Session, kind: Literal["info", "error"], text: str) ->
     await shinyreact.send_message(session, "notice", {"kind": kind, "text": text})
 
 
+class Editor:
+    """One tab's episode. `submit` queues a request; one task per tab runs them in order, each to
+    the end before the next, and publishes the episode the backend returned."""
+
+    def __init__(self, rt: runtime.Runtime, session: Session):
+        self.rt = rt
+        self.session = session
+        self.ep: Episode | None = None  # the truth; only the worker changes it
+        self.media = runtime.Media(None, None)
+        self.shown: reactive.Value[tuple[Episode, runtime.Media] | None] = reactive.value(None)
+        self.busy: reactive.Value[str | None] = reactive.value(None)
+        self._todo: deque[tuple[str, object]] = deque()
+        self._worker: asyncio.Task | None = None
+        self._ended = False
+
+    def submit(self, kind: str, request: object) -> None:
+        if self._ended:
+            return
+        self._todo.append((kind, request))
+        if self._worker is None or self._worker.done():
+            self._worker = asyncio.create_task(self._drain())
+
+    async def end(self) -> None:
+        """The tab closed: drop what waits, and close the episode once the running call ends."""
+        self._ended = True
+        self._todo.clear()
+        if self._worker is None or self._worker.done():
+            self._close(self.ep)
+
+    async def _drain(self) -> None:
+        while self._todo and not self._ended:
+            kind, request = self._todo.popleft()
+            try:
+                await getattr(self, f"_{kind}")(request)
+            except Exception as err:  # noqa: BLE001 - one failing must not stop the queue
+                # The type only: a message or traceback can carry a path (spec §6.8).
+                log.error("the editor's %s failed: %s", kind, type(err).__name__)
+                await notice(self.session, "error", f"something went wrong ({kind}); see the log")
+                await self._set_busy(None)
+        if self._ended:
+            self._close(self.ep)
+
+    async def _open(self, request: object) -> None:
+        path = request.get("path") if isinstance(request, dict) else None
+        if not isinstance(path, str) or not path.strip() or len(path) > MAX_PATH:
+            await notice(self.session, "error", TYPE_A_PATH)
+            return
+        await self._set_busy("opening")
+        try:
+            ep = await runtime.blocking(self.rt.backend.open, path)
+        except OpenError as err:
+            await self._set_busy(None)
+            await notice(self.session, "error", str(err))
+            return
+        media = await runtime.blocking(self.rt.media_for, ep)
+        old, self.ep, self.media = self.ep, ep, media
+        if old is not None:
+            self._close(old)
+        await self._publish(busy=None)
+        if media.problem:
+            await notice(self.session, "error", media.problem)
+
+    def _close(self, ep: Episode | None) -> None:
+        if ep is not None:
+            self.rt.backend.close(ep.id)
+            self.rt.media.revoke_owner(ep.id)
+
+    async def _publish(self, *, busy: str | None) -> None:
+        """Shows the episode as it is now: the reactive values change under Shiny's lock, and the
+        flush sends the outputs, as an extended task's result does."""
+        async with reactive.lock():
+            self.shown.set(None if self.ep is None else (self.ep, self.media))
+            self.busy.set(busy)
+            await reactive.flush()
+
+    async def _set_busy(self, busy: str | None) -> None:
+        async with reactive.lock():
+            self.busy.set(busy)
+            await reactive.flush()
+
+
 def server(input: Inputs, output: Outputs, session: Session) -> None:
     rt = runtime.current()
 
@@ -104,6 +201,26 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     def status():
         return views.status_view(rt.config, rt.keys, found(),
                                  ffmpeg=bool(rt.backend.tools.ffmpeg))
+
+    editor = Editor(rt, session)
+    session.on_ended(editor.end)
+
+    @reactive.effect
+    @reactive.event(input.open)
+    def _open() -> None:
+        editor.submit("open", input.open())
+
+    @reactive_output
+    def episode():
+        shown = editor.shown()
+        if shown is None:
+            return None  # an explicit null: nothing is open
+        ep, media = shown
+        return views.episode_view(ep, video_url=media.video_url, audio_url=media.audio_url)
+
+    @reactive_output
+    def busy():
+        return editor.busy()
 
 
 # bookmark_store="disable" is Shiny's default, said here so that no session state is written to

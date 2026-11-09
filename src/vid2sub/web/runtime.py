@@ -12,7 +12,7 @@ pipeline (S36), a job that somehow reaches it fails without running anything.
 The server runs in Pages too (spec §3.3, §21), so this module imports nothing the Pages bundle
 lacks at its top: `build()` imports the local parts (the backend, the queue, ffmpeg's tools, the
 cache, the network client) when it runs, and the server reaches local-only work through the
-`Runtime` (`reachable`). Every call that blocks goes through `blocking`, never a
+`Runtime` (`reachable`, `media_for`). Every call that blocks goes through `blocking`, never a
 thread or an executor of the server's own: a worker thread here, inline in Pyodide, which has no
 threads (Task 14 round 14a, decided with the coordinator 2026-10-24).
 """
@@ -33,8 +33,10 @@ if TYPE_CHECKING:
     from vid2sub.media.tools import Tools
     from vid2sub.pipeline import Event, InputResult
     from vid2sub.web.backend import LocalBackend
+    from vid2sub.web.episode import Episode
     from vid2sub.web.media import MediaTokens
 
+PLAYBACK_TIMEOUT = 3600.0  # seconds: a two-hour episode's audio, read from a slow network share
 INLINE = sys.platform == "emscripten"  # Pyodide: no threads, so a blocking call runs inline
 
 
@@ -45,6 +47,15 @@ async def blocking[**P, R](fn: Callable[P, R], /, *args: P.args, **kwargs: P.kwa
     if INLINE:
         return fn(*args, **kwargs)
     return await asyncio.to_thread(fn, *args, **kwargs)
+
+
+@dataclass(frozen=True)
+class Media:
+    """What the player plays an episode by: `/media/<token>` URLs, or a problem fit to show."""
+
+    video_url: str | None
+    audio_url: str | None
+    problem: str | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +81,30 @@ class Runtime:
             except EngineError:
                 found[name] = False
         return found
+
+    def media_for(self, ep: Episode) -> Media:
+        """The video by a media token when the browser can play its audio; else the playback
+        audio (spec §8.8; Decision 2), made into the cache under the video's quick hash the first
+        time, which blocks on ffmpeg: call it through `blocking`. Tokens are owned by the
+        episode's id, so closing it revokes them."""
+        from vid2sub.media.preview import playback_audio
+        from vid2sub.media.tools import ToolFailed, ToolMissing
+
+        if ep.playable_audio:
+            try:
+                return Media(f"/media/{self.media.issue(ep.video, owner=ep.id)}", None)
+            except ValueError as err:  # never the path: issue's messages name none
+                return Media(None, None, f"the browser can't be given this video: {err}")
+        try:
+            audio = playback_audio(ep.video, key=ep.header.video.quick_sha256,
+                                   audio_index=ep.audio_index, tools=self.backend.tools,
+                                   cache=self.backend.cache, timeout=PLAYBACK_TIMEOUT)
+            return Media(None, f"/media/{self.media.issue(audio, owner=ep.id)}")
+        except ToolMissing as err:
+            return Media(None, None, f"the browser can't play this video's audio, and {err}")
+        except (ToolFailed, OSError, ValueError):
+            return Media(None, None, "the browser can't play this video's audio, and ffmpeg "
+                         "couldn't make a copy it can play")
 
 
 _current: Runtime | None = None

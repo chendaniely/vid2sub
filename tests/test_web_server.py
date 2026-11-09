@@ -3,11 +3,14 @@ CSP allows all of it; `capabilities` and `status` are JSON outputs, with keys by
 and `notice` is a shinyreact message (spec §19.1, §19.2, §6.3; S26)."""
 
 import asyncio
+import contextlib
 import json
 import re
 import threading
+import time
 
 import pytest
+from episodes import ENGLISH, LINES, make_episode
 from starlette.testclient import TestClient
 from test_web_app import get_paths, read_only_violations
 
@@ -327,3 +330,173 @@ def test_an_output_that_fails_sends_the_browser_no_text_of_the_error(client, pro
     messages = _session(client, {"capabilities"},
                         lambda m: any("capabilities" in x.get("errors", {}) for x in m))
     assert KEY not in json.dumps(messages)
+
+
+# ---- the editor: opening an episode (Task 14) -------------------------------------------------
+
+
+class Tab:
+    """One browser tab's websocket to the Shiny server, driven by hand: inputs go in as
+    shinyreact sends them (`<id>:shinyreact.default`), and a reader thread keeps every message."""
+
+    def __init__(self, ws):
+        self.ws = ws
+        self.messages: list[dict] = []
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self) -> None:
+        with contextlib.suppress(Exception):  # until the socket closes
+            while True:
+                self.messages.append(json.loads(self.ws.receive_text()))
+
+    def send(self, method: str, data: dict) -> None:
+        self.ws.send_text(json.dumps({"method": method, "data": data}))
+
+    def set(self, **inputs) -> None:
+        self.send("update", {f"{name}:shinyreact.default": v for name, v in inputs.items()})
+
+    def until(self, check, timeout: float = 20.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            found = check(self)
+            if found:
+                return found
+            time.sleep(0.02)
+        raise AssertionError(f"timed out; the tab saw {self.messages[-5:]}")
+
+    def value(self, name: str):
+        """The output's latest value; KeyError while it has none."""
+        for m in reversed(self.messages):
+            if name in m.get("values", {}):
+                return m["values"][name]
+        raise KeyError(name)
+
+    def has(self, name: str) -> bool:
+        try:
+            self.value(name)
+        except KeyError:
+            return False
+        return True
+
+    def notices(self) -> list[dict]:
+        return [m["custom"]["shinyReactMessage"]["data"] for m in self.messages
+                if m.get("custom", {}).get("shinyReactMessage", {}).get("id") == "notice"]
+
+
+EDITOR_OUTPUTS = {"episode", "busy"}
+
+
+@contextlib.contextmanager
+def tab(client, outputs=EDITOR_OUTPUTS):
+    with client.websocket_connect(WS, headers={"Origin": BASE}) as ws:
+        t = Tab(ws)
+        t.send("init", {f".clientdata_output_{name}_hidden": False for name in outputs})
+        yield t
+
+
+@pytest.fixture
+def media_rt(tmp_path):
+    """A runtime with the real ffmpeg and ffprobe, for opening episodes."""
+    made = runtime.build(Config(), tools=Tools.find(), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=10**9))
+    runtime.configure(made)
+    yield made
+    runtime.configure(None)
+    made.queue.close()
+
+
+@pytest.fixture
+def media_client(media_rt):
+    with TestClient(create_app(media_rt, token=TOKEN, port=PORT, shiny_app=server.app),
+                    base_url=BASE) as c:
+        r = c.post("/auth", content=json.dumps({"token": TOKEN}), headers={**JSON, **PAGE})
+        assert r.status_code == 204
+        yield c
+
+
+def opened(t: Tab):
+    return t.has("episode") and t.value("episode")
+
+
+def test_with_no_episode_open_the_episode_output_is_null_and_nothing_is_busy(client):
+    with tab(client) as t:
+        t.until(lambda t: t.has("episode") and t.has("busy"))
+        assert t.value("episode") is None and t.value("busy") is None
+
+
+@pytest.mark.media
+def test_opening_an_episode_sends_its_view_with_the_video_by_a_media_token(
+        media_client, media_rt, tmp_path):
+    video = make_episode(tmp_path / "Secret Show")
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        ep = t.until(opened)
+        assert [r["text"] for r in ep["rows"]] == list(LINES)
+        assert [c["text"] for r in ep["rows"] for c in r["tr"]["en"]["cues"]] == list(ENGLISH)
+        url = ep["video"]["url"]
+        assert re.fullmatch(r"/media/[A-Za-z0-9_-]{43}", url) and ep["video"]["audio_url"] is None
+        assert media_rt.media.resolve(url.removeprefix("/media/")) == video
+        assert media_rt.backend.is_open(ep["id"])
+        everything = json.dumps(t.messages)
+        assert "Secret Show" not in everything and str(tmp_path) not in everything
+        assert t.value("busy") is None
+
+
+@pytest.mark.media
+def test_a_video_whose_audio_the_browser_cant_play_gets_the_playback_audio_instead(
+        media_client, media_rt, tmp_path):
+    # Decision 2: AC-3 can't be played by a browser, so the player gets the playback audio and no
+    # picture; the audio is made into the cache, keyed by the video's quick hash (§8.8, §8.9).
+    video = make_episode(tmp_path / "ac3", audio_codec="ac3")
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        ep = t.until(opened)
+        assert ep["video"]["url"] is None and ep["video"]["playable_audio"] is False
+        audio = media_rt.media.resolve(ep["video"]["audio_url"].removeprefix("/media/"))
+        assert audio is not None and audio.name == "playback-a0.m4a"
+        assert audio.parent.parent == tmp_path / "cache"
+
+
+@pytest.mark.media
+def test_an_episode_that_cant_be_opened_is_a_notice_and_the_editor_stays_empty(
+        media_client, tmp_path):
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": "Show.mkv", "n": 1})
+        notice = t.until(lambda t: t.notices())[0]
+        assert notice == {"kind": "error", "text": "give the video's full path"}
+        assert t.value("episode") is None
+
+
+def test_an_open_request_that_isnt_a_path_is_refused_without_echoing_it(client):
+    with tab(client) as t:
+        t.until(lambda t: t.has("episode"))
+        for bad in ({"path": 7, "n": 1}, {"n": 2}, "<img src=x>", {"path": "x" * 5000, "n": 3}):
+            t.set(open=bad)
+        t.until(lambda t: len(t.notices()) == 4)
+        assert {n["text"] for n in t.notices()} == {"type the video's full path to open it"}
+        assert "<img" not in json.dumps(t.messages)
+
+
+@pytest.mark.media
+def test_closing_the_tab_closes_its_episode_and_revokes_its_media(media_client, media_rt,
+                                                                 tmp_path):
+    first, second = make_episode(tmp_path / "one"), make_episode(tmp_path / "two")
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(first), "n": 1})
+        one = t.until(opened)
+        t.set(open={"path": str(second), "n": 2})
+        two = t.until(lambda t: opened(t) and opened(t)["id"] != one["id"] and opened(t))
+        # opening another episode closes the first, and its token stops working
+        assert not media_rt.backend.is_open(one["id"])
+        assert media_rt.media.resolve(one["video"]["url"].removeprefix("/media/")) is None
+        token = two["video"]["url"].removeprefix("/media/")
+        assert media_rt.media.resolve(token) == second
+    deadline = time.monotonic() + 10
+    while media_rt.backend.is_open(two["id"]) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not media_rt.backend.is_open(two["id"])
+    assert media_rt.media.resolve(token) is None
