@@ -193,6 +193,11 @@ def list_models(endpoint_name: str, endpoint: Endpoint, keys: KeyRing, *,
         return [m.id for m in client.models.list()]
     except openai.OpenAIError as err:
         raise map_error(err, key_env=endpoint.key_env, secrets=[key] if key else []) from None
+    except (ValueError, TypeError, AttributeError):
+        # A 200 that isn't a model list (a web page, `null`, broken JSON) raises these out of the
+        # openai client; the endpoint is not a model server, so it is unreachable as one, and the
+        # message names no URL (spec §6.8).
+        raise EngineError("bad_response", "the server's answer wasn't a model list") from None
     finally:
         client.close()
 

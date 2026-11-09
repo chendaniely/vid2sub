@@ -232,3 +232,45 @@ def test_no_get_or_head_route_of_the_real_shiny_app_writes_a_file_or_starts_a_pr
     paths = get_paths(client.app)
     assert any(p.startswith("/session/") for p in paths), f"no session route among {paths}"
     assert read_only_violations(client, monkeypatch, tmp_path) == []
+
+
+def test_an_endpoint_answering_junk_is_unreachable_and_the_others_are_still_checked(tmp_path):
+    import http.server
+
+    class Junk(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):  # a web page where the model list should be
+            body = b"<html>not a model server</html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Junk)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    config = Config.model_validate({
+        "endpoints": {"webui": {"base_url": f"http://127.0.0.1:{httpd.server_address[1]}/v1"},
+                      "spark": {"base_url": "http://127.0.0.1:9/v1"}},
+        "models": {"a": {"endpoint": "webui", "model": "w", "parser": "whisper.cpp",
+                         "local": True},
+                   "b": {"endpoint": "spark", "model": "w", "parser": "whisper.cpp",
+                         "local": True}}})
+    calls = []
+    real = clients.list_models
+
+    def list_models(name, endpoint, keys, *, timeout=5.0):
+        calls.append(name)
+        if name == "spark":
+            return ["w"]  # the healthy one, without a real server
+        return real(name, endpoint, keys, timeout=timeout)
+
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(clients, "list_models", list_models)
+            found = server.reachable(config, KeyRing(environ={}))
+    finally:
+        httpd.shutdown()
+    assert found == {"webui": False, "spark": True} and calls == ["webui", "spark"]

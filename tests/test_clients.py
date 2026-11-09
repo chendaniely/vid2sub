@@ -221,3 +221,33 @@ def test_only_an_https_endpoint_trusts_the_environments_proxy():
     # corporate proxy keep working; over plain http, the request itself would reach the proxy.
     assert clients._http("https://api.openai.com/v1", 5.0).trust_env is True
     assert clients._http("http://127.0.0.1:9100/v1", 5.0).trust_env is False
+
+
+# ---- a junk answer is an unreachable endpoint (spec §19.2) -----------------------------------
+
+
+@pytest.mark.parametrize("body", [b"<html>a web page</html>", b"{not json", b"null", b"[1,2]",
+                                  b'{"data":"x"}', b'{"data":[1,2]}'])
+def test_a_200_that_is_not_a_model_list_is_an_engine_error_naming_no_url(body):
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        ep = Endpoint(base_url=f"http://127.0.0.1:{srv.server_address[1]}/v1")
+        with pytest.raises(EngineError) as err:
+            clients.list_models("junk", ep, clients.KeyRing(environ={}))
+    finally:
+        srv.shutdown()
+    assert err.value.kind == "bad_response" and "127.0.0.1" not in str(err.value)
