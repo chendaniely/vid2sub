@@ -118,4 +118,6 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                                  ffmpeg=bool(rt.backend.tools.ffmpeg))
 
 
-app = ReactApp(server, ui=page, static_assets={"/": WWW})
+# bookmark_store="disable" is Shiny's default, said here so that no session state is written to
+# disk or put in a URL (tests/test_web_server.py checks it).
+app = ReactApp(server, ui=page, static_assets={"/": WWW}, bookmark_store="disable")

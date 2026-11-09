@@ -212,3 +212,13 @@ def test_an_endpoint_not_checked_yet_or_in_the_cloud_is_neither_reachable_nor_no
 def test_capabilities_view_is_the_backends_capabilities_as_json(rt):
     assert views.capabilities_view(rt.backend.capabilities()) == {
         "engine": "local", "generate": True, "save": "disk", "path_input": True}
+
+
+# ---- what a session may leave behind ---------------------------------------------------------
+
+
+def test_shinys_bookmark_store_is_disabled_so_no_session_state_reaches_the_disk():
+    # shiny 1.8.0 keeps it on the app: App.bookmark_store (shiny/_app.py), set from the
+    # constructor's bookmark_store= by App._init_bookmarking; "server" would save state to disk.
+    assert server.app.bookmark_store == "disable"
+
