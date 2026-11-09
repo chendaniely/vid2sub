@@ -1,4 +1,4 @@
-.PHONY: setup build test test-utc test-js e2e lint leaks check hooks live readme brand skills help
+.PHONY: setup build test test-utc test-js e2e demo demo-sidecar lint leaks check hooks live readme brand skills help
 
 FRONTEND := frontend
 # Each recipe line runs in its own shell, so nvm is loaded per line when it is there, and switched
@@ -25,6 +25,12 @@ test-js: ## Typecheck the frontend and run its Vitest tests
 e2e: build ## The browser tests against vid2sub serve (installs Playwright's Chromium first)
 	uv run playwright install chromium
 	uv run pytest -m e2e
+
+demo: build ## Serve a fresh copy of the demo episode, touching nothing else (needs ffmpeg)
+	uv run vid2sub serve --demo
+
+demo-sidecar: ## Remake demo/'s canned sidecar and subtitles with the pipeline and the canned engine
+	uv run python scripts/demo_sidecar.py
 
 lint: ## Lint with ruff
 	uv run ruff check src tests

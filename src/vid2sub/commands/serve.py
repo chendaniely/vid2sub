@@ -18,8 +18,10 @@ paused video holds its stream open. uvicorn's access log is off and it trusts no
 headers, since none is in front of it; the openai, httpx and chatlas loggers stay at WARNING,
 as for every command (§6.8, §6.2).
 Without the built frontend (`www/ui.js`), serve refuses before it reads or binds anything (§18,
-§23.5). The web modules are imported only when serve runs, so other commands don't load them, and
-the Shiny app only once `runtime.configure()` has run, as recordings imports it.
+§23.5). `--demo` serves a fresh copy of the demo instead, reading no vid2sub.toml and no key,
+and isolated from everything else once it is set up (`vid2sub.web.demo`, spec §22.7). The web
+modules are imported only when serve runs, so other commands don't load them, and the Shiny app
+only once `runtime.configure()` has run, as recordings imports it.
 """
 
 from __future__ import annotations
@@ -43,6 +45,8 @@ from vid2sub.web import WWW
 if TYPE_CHECKING:
     import uvicorn
     from starlette.types import ASGIApp
+
+    from vid2sub.media.tools import Tools
 
 HOST = "127.0.0.1"
 GRACE = 3  # seconds a shutdown waits for open responses before it cancels them
@@ -77,7 +81,11 @@ def add_parser(sub) -> None:
                         "0 takes any free port)")
     p.add_argument("--no-browser", action="store_true",
                    help="print the link to open, but don't open a browser")
-    p.add_argument("--config", metavar="PATH", help="the vid2sub.toml to use")
+    which = p.add_mutually_exclusive_group()
+    which.add_argument("--config", metavar="PATH", help="the vid2sub.toml to use")
+    which.add_argument("--demo", action="store_true",
+                       help="serve a fresh copy of the demo episode, reading no vid2sub.toml "
+                            "and touching nothing else")
     p.set_defaults(handler=run)
 
 
@@ -115,8 +123,9 @@ def bind(port: int) -> socket.socket:
 
 
 def run(args: argparse.Namespace) -> int:
+    from vid2sub.config import Config
     from vid2sub.engines.clients import quiet_libraries
-    from vid2sub.web import auth, runtime
+    from vid2sub.web import auth, demo, runtime
     from vid2sub.web.app import create_app
 
     quiet_libraries()  # OPENAI_LOG and CHATLAS_LOG are ignored (§6.8)
@@ -125,16 +134,19 @@ def run(args: argparse.Namespace) -> int:
         if not (WWW / "ui.js").is_file():
             raise CommandError(exitcodes.UNAVAILABLE, "build the frontend first",
                                "make build (it needs Node 22 or later), then vid2sub serve")
-        config = load(args)
+        made = _demo() if args.demo else None
+        config = Config() if args.demo else load(args)  # the demo reads no vid2sub.toml
         sock = bind(config.server.port if args.port is None else args.port)
     except CommandError as err:
         return fail(out, err)
     rt = None
     try:
-        rt = runtime.build(config)
+        rt = demo.runtime_for(*made) if made else runtime.build(config)
         runtime.configure(rt)
         token = auth.new_token()
         app = create_app(rt, token=token, port=sock.getsockname()[1], shiny_app=shiny_app())
+        if made:
+            demo.isolate(made[0].parent)  # from here on, the demo touches nothing else
     except BaseException:  # a bug: leave nothing running behind the traceback
         sock.close()
         if rt is not None:
@@ -142,6 +154,24 @@ def run(args: argparse.Namespace) -> int:
         raise
     browser = config.server.open_browser and not args.no_browser
     return serve(app, sock, token=token, open_browser=browser, out=out)
+
+
+def _demo() -> tuple[Path, Tools]:
+    """The demo's fresh copy (spec §22.7), and the tools that made its video."""
+    from vid2sub.media.tools import ToolFailed, ToolMissing, Tools
+    from vid2sub.web import demo
+
+    tools = Tools.find()
+    try:
+        return demo.prepare(tools), tools
+    except demo.DemoMissing as err:
+        raise CommandError(exitcodes.UNAVAILABLE, str(err)) from None
+    except ToolMissing:
+        raise CommandError(exitcodes.UNAVAILABLE, "the demo needs ffmpeg",
+                           "install ffmpeg 6 or later (vid2sub doctor checks it)") from None
+    except ToolFailed:
+        raise CommandError(exitcodes.UNAVAILABLE, "ffmpeg couldn't make the demo's video",
+                           "it needs ffmpeg built with libvpx and libopus") from None
 
 
 def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
