@@ -50,8 +50,9 @@ from vid2sub.engines.base import ChunkResult, ModelStamp
 from vid2sub.engines.clients import KeyRing
 from vid2sub.media.identity import full_sha256, identify
 from vid2sub.media.probe import probe
-from vid2sub.media.tools import Tools, run_tool
+from vid2sub.media.tools import Tools, input_args, run_tool
 from vid2sub.parse import ParsedChunk
+from vid2sub.security import safe_write
 from vid2sub.store import header_for, now, sidecar_path
 from vid2sub.subs.model import Segment, Word
 from vid2sub.subs.sidecar import IdentityRecord, Sidecar, parse_sidecar, serialize
@@ -151,7 +152,7 @@ def mux(tools: Tools, out: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="vid2sub-") as scratch:
         run_tool([ffmpeg, "-nostdin", "-v", "error", "-y",
                   "-f", "lavfi", "-i", "color=c=0x236192:s=640x360:r=2:d=14",
-                  "-i", f"file:{CLIP}", "-map", "0:v", "-map", "1:a", "-shortest",
+                  *input_args(CLIP), "-map", "0:v", "-map", "1:a", "-shortest",
                   "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "40", "-deadline", "realtime",
                   "-c:a", "libopus", "-b:a", "48k", "-map_metadata", "-1",
                   "-fflags", "+bitexact", f"file:{out}"], cwd=Path(scratch), timeout=120)
@@ -177,7 +178,7 @@ def prepare(tools: Tools) -> Path:
     header = header_for(video, identify(video), duration)
     records = [r for r in side.records if not isinstance(r, IdentityRecord)]
     records.append(IdentityRecord(sha256=full_sha256(video), at=now()))
-    path.write_text(serialize(Sidecar(header, tuple(records))), encoding="utf-8")
+    safe_write(path, serialize(Sidecar(header, tuple(records))).encode("utf-8"), overwrite=True)
     return copy
 
 

@@ -478,3 +478,27 @@ def test_serve_isolates_the_demo_before_it_serves(tmp_path):
     said = log.read_text(encoding="utf-8")
     assert "write outside: DemoIsolationError" in said
     assert not outside.exists()
+
+
+def test_the_demos_clip_is_read_through_the_input_whitelist(tmp_path, monkeypatch):
+    """Spec §6.7: ffmpeg reads a file only with the protocol and format whitelists."""
+    seen: list[list[str]] = []
+    monkeypatch.setattr(demo, "run_tool", lambda args, **kwargs: seen.append(list(args)))
+    demo.mux(Tools("/ffmpeg", None, None), tmp_path / "out.mp4")
+    (args,) = seen
+    at = args.index("-protocol_whitelist")
+    assert args[at + 1] == "file" and "-format_whitelist" in args
+    assert args[args.index("-i", at) + 1] == f"file:{demo.CLIP}"
+
+
+@pytest.mark.media
+def test_the_demos_sidecar_is_written_with_lf_bytes_on_every_os(monkeypatch):
+    """Spec §22.2: LF bytes on every OS. Path.write_text translates newlines on Windows, so it
+    is made to here (as it would there); safe_write writes the bytes it is given."""
+    real = Path.write_text
+    monkeypatch.setattr(Path, "write_text", lambda self, data, encoding=None, errors=None,
+                        newline=None: real(self, data, encoding=encoding, errors=errors,
+                                           newline="\r\n"))
+    copy = demo.prepare(Tools.find())
+    raw = sidecar_path(copy / demo.VIDEO).read_bytes()
+    assert raw.endswith(b"\n") and b"\r" not in raw
