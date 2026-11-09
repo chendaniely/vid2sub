@@ -955,3 +955,17 @@ def test_an_edit_for_an_episode_the_tab_has_moved_on_from_is_dropped(media_clien
                     "op": {"op": "set_text", "cue": two["rows"][1]["id"], "text": "二"}})
         done = latest(t, lambda e: e["rows"][1]["text"] == "二")
         assert len(done["rows"]) == len(LINES) and t.notices() == []
+
+
+@pytest.mark.media
+def test_an_edit_holding_a_list_is_read_as_json_has_it_though_shiny_makes_lists_tuples(
+        media_client, tmp_path):
+    # Shiny 1.8.0 decodes every JSON array in a message as a tuple (_utils.lists_to_tuples),
+    # and ops.parse_op is strict: a tuple is not a list.
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        t.set(edit={"episode": ep["id"], "n": 1, "op": {
+            "op": "replace_all", "find": "元気", "replace": "げんき", "tracks": ["source", "en"]}})
+        done = latest(t, lambda e: e["rows"][1]["text"] == "げんきですか")
+        assert done["rows"][2]["text"] == "はい、げんきです" and t.notices() == []

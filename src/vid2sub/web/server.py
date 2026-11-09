@@ -90,6 +90,16 @@ def page() -> Any:
     return page_react(*BUSY_INDICATORS, src_dir=WWW, title="vid2sub")
 
 
+def as_json(value: object) -> object:
+    """An input's value as JSON has it: Shiny 1.8.0 reads every JSON array in a message as a tuple
+    (`shiny._utils.lists_to_tuples`), and `ops.parse_op` takes JSON's lists, strictly."""
+    if isinstance(value, dict):
+        return {k: as_json(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return [as_json(v) for v in value]
+    return value
+
+
 async def notice(session: Session, kind: Literal["info", "error"], text: str) -> None:
     """Tell the person something, as plain text (the frontend never renders it as markup)."""
     await shinyreact.send_message(session, "notice", {"kind": kind, "text": text})
@@ -113,7 +123,7 @@ class Editor:
     def submit(self, kind: str, request: object) -> None:
         if self._ended:
             return
-        self._todo.append((kind, request))
+        self._todo.append((kind, as_json(request)))
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self._drain())
 
