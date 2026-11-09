@@ -117,6 +117,8 @@ class Editor:
         """The tab closed: drop what waits, and close the episode once the running call ends."""
         self._ended = True
         self._todo.clear()
+        if self.ep is not None:  # at once: a request still running can take an hour (S-2)
+            self.rt.media.revoke_owner(self.ep.id)
         if self._worker is None or self._worker.done():
             self._close(self.ep)
 
@@ -145,13 +147,20 @@ class Editor:
             await self._set_busy(None)
             await notice(self.session, "error", str(err))
             return
-        media = await runtime.blocking(self.rt.media_for, ep)
-        old, self.ep, self.media = self.ep, ep, media
+        old, self.ep = self.ep, ep
         if old is not None:
             self._close(old)
+        if ep.playable_audio:  # the video's token is made at once
+            self.media = await runtime.blocking(self.rt.media_for, ep)
+        else:
+            # The playback audio can take minutes to make (§8.8): show the episode now, saying
+            # so, and publish again when it is ready (Review Focus 3).
+            self.media = runtime.Media(None, None)
+            await self._publish(busy="playback")
+            self.media = await runtime.blocking(self.rt.media_for, ep)
         await self._publish(busy=None)
-        if media.problem:
-            await notice(self.session, "error", media.problem)
+        if self.media.problem:
+            await notice(self.session, "error", self.media.problem)
 
     async def _playback(self, request: object) -> None:
         """The page found the browser can't play the video (spec §8.2: canPlayType, or the

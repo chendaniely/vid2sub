@@ -1,10 +1,13 @@
 """The Shiny server for the React frontend: its page runs no inline script or style, so the spec's
 CSP allows all of it; `capabilities` and `status` are JSON outputs, with keys by presence only;
-and `notice` is a shinyreact message (spec §19.1, §19.2, §6.3; S26)."""
+`notice` is a shinyreact message (spec §19.1, §19.2, §6.3; S26); and the editor's `open` and
+`playback` inputs and `episode` and `busy` outputs, with their media tokens and the queue that
+runs them, are here too (spec §19.1, §20, §8.2, §8.8)."""
 
 import asyncio
 import contextlib
 import json
+import logging
 import re
 import threading
 import time
@@ -418,6 +421,12 @@ def opened(t: Tab):
     return t.has("episode") and t.value("episode")
 
 
+def has_sound_only(t: Tab):
+    """The open episode, once its playback audio is there (it is shown first, without)."""
+    ep = opened(t)
+    return ep and ep["video"]["audio_url"] and ep
+
+
 def test_with_no_episode_open_the_episode_output_is_null_and_nothing_is_busy(client):
     with tab(client) as t:
         t.until(lambda t: t.has("episode") and t.has("busy"))
@@ -452,11 +461,14 @@ def test_a_video_whose_audio_the_browser_cant_play_gets_the_playback_audio_inste
     with tab(media_client) as t:
         t.until(lambda t: t.has("episode"))
         t.set(open={"path": str(video), "n": 1})
-        ep = t.until(opened)
+        ep = t.until(has_sound_only)
         assert ep["video"]["url"] is None and ep["video"]["playable_audio"] is False
         audio = media_rt.media.resolve(ep["video"]["audio_url"].removeprefix("/media/"))
         assert audio is not None and audio.name == "playback-a0.m4a"
         assert audio.parent.parent == tmp_path / "cache"
+        token = ep["video"]["audio_url"].removeprefix("/media/")
+    # the audio's token is the episode's too: it goes with the tab
+    assert wait(lambda: media_rt.media.resolve(token) is None)
 
 
 @pytest.mark.media
@@ -529,6 +541,12 @@ def test_a_tab_whose_browser_cant_play_the_video_gets_the_playback_audio_and_its
         ep = t.until(opened)
         token = ep["video"]["url"].removeprefix("/media/")
         assert media_rt.media.resolve(token) == video
+        # A request for an episode the tab has moved on from changes nothing: the queue runs it
+        # before the bad open that follows, whose notice says it has been through.
+        t.set(playback={"episode": "e" + "0" * 16, "n": 1})
+        t.set(open={"n": 2})
+        t.until(lambda t: t.notices())
+        assert media_rt.media.resolve(token) == video and opened(t)["video"]["url"] is not None
         t.set(playback={"episode": ep["id"], "n": 2})
         audio = t.until(lambda t: opened(t)["video"]["audio_url"] and opened(t))["video"]
         assert audio["url"] is None
@@ -537,13 +555,12 @@ def test_a_tab_whose_browser_cant_play_the_video_gets_the_playback_audio_and_its
         assert media_rt.media.resolve(token) is None
         busy = [m["values"]["busy"] for m in t.messages if "busy" in m.get("values", {})]
         assert "playback" in busy and t.value("busy") is None
-        # Asked again, or for an episode the tab has moved on from, nothing happens.
+        # Asked again, nothing happens: a bad open after it says it has been through.
         sent = len(t.messages)
         t.set(playback={"episode": ep["id"], "n": 3})
-        t.set(playback={"episode": "e" + "0" * 16, "n": 4})
-        time.sleep(0.5)
+        t.set(open={"n": 4})
+        t.until(lambda t: len(t.notices()) == 2)
         assert not any("episode" in m.get("values", {}) for m in t.messages[sent:])
-        assert t.notices() == []
 
 
 @pytest.mark.media
@@ -555,10 +572,263 @@ def test_a_video_whose_chosen_audio_track_isnt_its_first_plays_that_tracks_sound
     with tab(media_client) as t:
         t.until(lambda t: t.has("episode"))
         t.set(open={"path": str(second), "n": 1})
-        ep = t.until(opened)
+        ep = t.until(has_sound_only)
         assert ep["video"]["url"] is None and ep["video"]["playable_audio"] is False
         audio = media_rt.media.resolve(ep["video"]["audio_url"].removeprefix("/media/"))
         assert audio is not None and audio.name == "playback-a1.m4a"
         t.set(open={"path": str(first), "n": 2})
         ep = t.until(lambda t: opened(t) and opened(t)["id"] != ep["id"] and opened(t))
         assert ep["video"]["url"] and ep["video"]["audio_url"] is None
+
+
+# ---- the editor's queue: what it promises (Task 14, round 14e) -------------------------------
+
+
+def wait(check, timeout: float = 15.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if check():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+class Slow:
+    """Wraps a blocking callable: it records its calls in order and waits for `release`."""
+
+    def __init__(self, real):
+        self.real, self.started, self.release = real, threading.Event(), threading.Event()
+        self.calls: list = []
+        self.results: list = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append(args)
+        self.started.set()
+        assert self.release.wait(30)
+        out = self.real(*args, **kwargs)
+        self.results.append(out)
+        return out
+
+
+def slow_media_for(rt_) -> Slow:
+    slow = Slow(rt_.media_for)
+    object.__setattr__(rt_, "media_for", slow)  # the runtime is frozen; this shadows the method
+    return slow
+
+
+def live_tokens(rt_) -> dict:
+    return dict(rt_.media._issued)
+
+
+def reactive_lock_held() -> bool:
+    from shiny.reactive import _core
+
+    lock = _core._reactive_environment._lock
+    return lock is not None and lock.locked()
+
+
+@pytest.mark.media
+def test_a_tab_closing_while_the_backend_opens_leaves_no_episode_and_no_token(
+        media_client, media_rt, tmp_path):
+    video = make_episode(tmp_path / "one")
+    slow = Slow(media_rt.backend.open)
+    media_rt.backend.open = slow
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        assert slow.started.wait(10)
+    slow.release.set()  # the websocket is closed; the running open goes on
+    assert wait(lambda: slow.results)
+    assert wait(lambda: not media_rt.backend.is_open(slow.results[0].id))
+    assert wait(lambda: not live_tokens(media_rt))
+
+
+@pytest.mark.media
+def test_a_tab_closing_while_the_media_is_made_leaves_no_episode_and_no_token(
+        media_client, media_rt, tmp_path):
+    video = make_episode(tmp_path / "one", audio_codec="ac3")
+    slow = slow_media_for(media_rt)
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        assert slow.started.wait(10)
+    slow.release.set()
+    assert wait(lambda: slow.results)
+    assert wait(lambda: not media_rt.backend.is_open(slow.calls[0][0].id))
+    assert wait(lambda: not live_tokens(media_rt))
+
+
+@pytest.mark.media
+def test_a_slow_open_holds_no_reactive_lock_and_another_tab_is_served(
+        media_client, media_rt, tmp_path):
+    video = make_episode(tmp_path / "one")
+    slow = Slow(media_rt.backend.open)
+    media_rt.backend.open = slow
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        assert slow.started.wait(10)
+        t.until(lambda t: t.has("busy") and t.value("busy") == "opening")
+        assert not reactive_lock_held()
+        with tab(media_client) as other:  # a second tab starts and is served meanwhile
+            other.until(lambda o: o.has("episode") and o.has("busy"), timeout=5)
+            other.set(open="not a dict")
+            other.until(lambda o: o.notices(), timeout=5)
+        assert t.value("busy") == "opening"
+        slow.release.set()
+        t.until(opened)
+
+
+@pytest.mark.media
+def test_quick_opens_run_one_at_a_time_in_the_order_sent_and_leave_one_episode(
+        media_client, media_rt, tmp_path):
+    videos = [make_episode(tmp_path / name) for name in "abc"]
+    slow = Slow(media_rt.backend.open)
+    media_rt.backend.open = slow
+    running = [0, 0]  # now, most at once
+    real = slow.real
+
+    def counted(path):
+        running[0] += 1
+        running[1] = max(running)
+        try:
+            return real(path)
+        finally:
+            running[0] -= 1
+
+    slow.real = counted
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        for n, video in enumerate(videos, 1):
+            t.set(open={"path": str(video), "n": n})
+        assert slow.started.wait(10)
+        time.sleep(0.3)  # the others have arrived and wait
+        slow.release.set()
+        assert wait(lambda: len(slow.results) == 3)
+        last = slow.results[-1].id
+        t.until(lambda t: opened(t) and opened(t)["id"] == last)
+        assert [c[0] for c in slow.calls] == [str(v) for v in videos]
+        assert running[1] == 1
+        assert [e.id for e in slow.results if media_rt.backend.is_open(e.id)] == [last]
+        assert len(live_tokens(media_rt)) == 1
+
+
+@pytest.mark.media
+def test_a_failure_in_the_queue_logs_its_type_tells_the_tab_in_fixed_words_and_the_next_runs(
+        media_client, media_rt, tmp_path, caplog):
+    secret = str(tmp_path / "Secret Show" / "x.mkv")
+    good = make_episode(tmp_path / "good")
+    real = media_rt.backend.open
+    failed = []
+
+    def fails_once(path):
+        if not failed:
+            failed.append(path)
+            raise PermissionError(13, "denied", secret)
+        return real(path)
+
+    media_rt.backend.open = fails_once
+    with caplog.at_level(logging.DEBUG), tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(good), "n": 1})
+        t.until(lambda t: t.notices() and t.has("busy") and t.value("busy") is None)
+        assert t.notices() == [{"kind": "error",
+                                "text": "something went wrong (open); see the log"}]
+        assert t.value("episode") is None  # the failed request left nothing open or shown
+        t.set(open={"path": str(good), "n": 2})  # and the queue goes on
+        assert t.until(opened)
+        assert t.value("busy") is None
+    assert "Secret Show" not in caplog.text
+    assert "the editor's open failed: PermissionError" in caplog.text
+
+
+@pytest.mark.media
+def test_the_shown_episodes_token_goes_with_the_tab_though_another_open_is_still_running(
+        media_client, media_rt, tmp_path):
+    first, second = make_episode(tmp_path / "one"), make_episode(tmp_path / "two")
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(first), "n": 1})
+        token = t.until(opened)["video"]["url"].removeprefix("/media/")
+        slow = Slow(media_rt.backend.open)
+        media_rt.backend.open = slow
+        t.set(open={"path": str(second), "n": 2})
+        assert slow.started.wait(10)
+    # the tab is gone, the open is not: the first episode's token must not wait for it
+    assert wait(lambda: media_rt.media.resolve(token) is None, timeout=5)
+    slow.release.set()
+    assert wait(lambda: slow.results)
+    assert wait(lambda: not live_tokens(media_rt))
+
+
+@pytest.mark.media
+def test_an_ac3_episode_is_shown_at_once_while_its_playback_audio_is_made(
+        media_client, media_rt, tmp_path):
+    video = make_episode(tmp_path / "ac3", audio_codec="ac3")
+    slow = slow_media_for(media_rt)
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        assert slow.started.wait(10)
+        ep = t.until(opened)  # the cue list arrives before ffmpeg is done
+        assert ep["video"]["url"] is None and ep["video"]["audio_url"] is None
+        assert [r["text"] for r in ep["rows"]] == list(LINES)
+        assert t.value("busy") == "playback"
+        slow.release.set()
+        ep = t.until(lambda t: opened(t) and opened(t)["video"]["audio_url"] and opened(t))
+        assert media_rt.media.resolve(ep["video"]["audio_url"].removeprefix("/media/"))
+        t.until(lambda t: t.value("busy") is None)
+
+
+@pytest.mark.media
+@pytest.mark.parametrize("how", ["no-ffmpeg", "ffmpeg-fails"])
+def test_a_playback_audio_that_cant_be_made_is_a_notice_after_the_episode_opens(
+        media_client, media_rt, tmp_path, monkeypatch, how):
+    from vid2sub.media import preview
+    from vid2sub.media.tools import ToolFailed
+
+    video = make_episode(tmp_path / "ac3", audio_codec="ac3")
+    real_open = media_rt.backend.open
+
+    def open_then_lose_ffmpeg(path):
+        ep = real_open(path)
+        if how == "no-ffmpeg":
+            media_rt.backend.tools = Tools(None, None, None)
+        return ep
+
+    def fails(*args, **kwargs):
+        raise ToolFailed("ffmpeg", 1, f"cannot read {video}")
+
+    media_rt.backend.open = open_then_lose_ffmpeg
+    if how == "ffmpeg-fails":
+        monkeypatch.setattr(preview, "playback_audio", fails)
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        ep = t.until(opened)
+        note = t.until(lambda t: t.notices())[0]
+        assert ep["video"]["url"] is None and ep["video"]["audio_url"] is None
+        assert note["kind"] == "error"
+        assert note["text"].startswith("the browser can't play this video's audio, and ")
+        assert str(tmp_path) not in json.dumps(t.messages) and "cannot read" not in note["text"]
+        assert t.value("busy") is None
+
+
+@pytest.mark.media
+def test_a_tab_closing_drops_the_requests_still_waiting_in_its_queue(
+        media_client, media_rt, tmp_path):
+    first, second = make_episode(tmp_path / "one"), make_episode(tmp_path / "two")
+    slow = Slow(media_rt.backend.open)
+    media_rt.backend.open = slow
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(first), "n": 1})
+        assert slow.started.wait(10)
+        t.set(open={"path": str(second), "n": 2})  # waits behind the first
+        time.sleep(0.3)
+    slow.release.set()
+    assert wait(lambda: slow.results)
+    assert wait(lambda: not live_tokens(media_rt) and not media_rt.backend.is_open(
+        slow.results[0].id))
+    time.sleep(0.5)  # long enough for a second open to have started
+    assert [c[0] for c in slow.calls] == [str(first)]
