@@ -150,12 +150,12 @@ class Editor:
         old, self.ep = self.ep, ep
         if old is not None:
             self._close(old)
+        self.media = runtime.Media(None, None)  # none of the old episode's, whatever happens next
         if ep.playable_audio:  # the video's token is made at once
             self.media = await runtime.blocking(self.rt.media_for, ep)
         else:
             # The playback audio can take minutes to make (§8.8): show the episode now, saying
             # so, and publish again when it is ready (Review Focus 3).
-            self.media = runtime.Media(None, None)
             await self._publish(busy="playback")
             self.media = await runtime.blocking(self.rt.media_for, ep)
         await self._publish(busy=None)

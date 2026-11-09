@@ -71,13 +71,15 @@ def test_the_demo_episode_plays_with_captions_and_the_cue_list_follows_playback(
     seek(page, 6.3)  # "college" is spoken from 6.16 s to 6.62 s
     expect(current).to_have_attribute("data-cue", rows.nth(2).get_attribute("data-cue"))
     expect(current.get_by_test_id("spoken-word")).to_have_text("college")
-    expect(captions).to_have_text([DEMO_EN[2], "私たちが集うのは、\n知識で知られる大学、"])
+    expect(captions).to_have_text([
+        DEMO_EN[2], "私たちが集うのは、\n知識で知られる大学、"])
     seek(page, 4.8)  # the gap between cues 2 and 3: nothing is current, no caption
     expect(current).to_have_count(0)
     expect(captions).to_have_count(0)
     page.get_by_test_id("showing").select_option("translation")
     seek(page, 10.0)
-    expect(captions).to_have_text(["進歩で知られる都市、\n力強さで知られる州です。"])
+    expect(captions).to_have_text([
+        "進歩で知られる都市、\n力強さで知られる州です。"])
 
 
 def test_hostile_subtitles_show_as_plain_text_and_the_overlay_renders_only_italics(page, server):

@@ -832,3 +832,41 @@ def test_a_tab_closing_drops_the_requests_still_waiting_in_its_queue(
         slow.results[0].id))
     time.sleep(0.5)  # long enough for a second open to have started
     assert [c[0] for c in slow.calls] == [str(first)]
+
+
+@pytest.mark.media
+def test_an_open_whose_media_fails_leaves_the_new_episode_no_media_of_the_old_one(
+        media_client, media_rt, tmp_path):
+    # With the new episode set and the old one's media still on the editor, the next request
+    # would treat the new episode as playing the old one's (revoked) video URL.
+    first, second = make_episode(tmp_path / "one"), make_episode(tmp_path / "two")
+    real_open, real_media = media_rt.backend.open, media_rt.media_for
+    opened_eps, calls = [], []
+
+    def recording_open(path):
+        opened_eps.append(real_open(path))
+        return opened_eps[-1]
+
+    def fails_for_the_second(ep, **kwargs):
+        calls.append(ep.video)
+        if ep.video == second:
+            raise KeyError("not one media_for expects")
+        return real_media(ep, **kwargs)
+
+    media_rt.backend.open = recording_open
+    object.__setattr__(media_rt, "media_for", fails_for_the_second)
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(first), "n": 1})
+        t.until(opened)
+        t.set(open={"path": str(second), "n": 2})
+        t.until(lambda t: t.notices())
+        assert t.notices()[0]["text"] == "something went wrong (open); see the log"
+        # A page that asks for the playback audio of the new episode has no video to swap out:
+        # ffmpeg is not asked again, and nothing is published for it.
+        sent = len(t.messages)
+        t.set(playback={"episode": opened_eps[1].id, "n": 3})
+        t.set(open={"n": 4})
+        t.until(lambda t: len(t.notices()) == 2)
+        assert not any(m.get("values", {}).get("busy") == "playback" for m in t.messages[sent:])
+        assert calls == [first, second]
