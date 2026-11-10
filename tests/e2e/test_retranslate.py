@@ -181,3 +181,66 @@ def test_an_undo_with_nothing_to_undo_after_a_pick_never_makes_restore_take_back
     expect(rows_c.nth(1).get_by_test_id("cue-text")).to_have_text("source edit before the pick")
     expect(c.get_by_test_id("save-state")).to_have_text("Unsaved changes")
     assert third.errors == [] and third.violations() == []
+
+
+def type_into_translation(page, rows, k: int, text: str) -> None:
+    """Opens row k's translation box and types, without committing."""
+    cell = rows.nth(k).get_by_test_id("cue-translation")
+    cell.click()
+    page.keyboard.press("Enter")
+    page.get_by_test_id("cue-editor").fill(text)
+
+
+def test_retranslating_a_cue_commits_the_box_open_on_it_first(page, server):
+    # Task 17's Spec review, C-1: Esc and Cancel are the only discards, so Retranslate commits an
+    # open box as Save does: the typed text is an undo step, the retranslation the next.
+    rows = open_demo(page, server)
+    type_into_translation(page, rows, 2, "手で直した訳")
+    page.get_by_test_id("retranslate-selected").click()
+    expect(page.get_by_test_id("cue-editor")).to_have_count(0)
+    expect(page.get_by_test_id("notice")).to_have_count(1)
+    assert notices(page) == ["Retranslated 1 Japanese cue"] and translation(rows, 2) == COLLEGE
+    page.get_by_test_id("tool-undo").click()  # the retranslation
+    expect(rows.nth(2).get_by_test_id("cue-translation")).to_have_text("手で直した訳")
+    expect(page.get_by_test_id("cue-editor")).to_have_count(0)  # committed text, not a box again
+
+
+def test_retranslate_stale_commits_the_box_open_on_a_stale_cue_and_keeps_it(page, server):
+    # C-1: the typed fix makes the translation an edited one, which Retranslate stale never
+    # replaces; dropped, it was lost with the box.
+    rows = open_demo(page, server)
+    edit(page, rows.nth(2).get_by_test_id("cue-text"), "We meet at a college known for knowledge,")
+    expect(rows.nth(2).locator("[data-flag=stale]")).to_have_count(1)
+    type_into_translation(page, rows, 2, "手で直した訳")
+    page.get_by_test_id("retranslate-stale").click()
+    expect(page.get_by_test_id("cue-editor")).to_have_count(0)
+    expect(page.get_by_test_id("notice")).to_have_count(1)  # "Nothing to retranslate": it is edited
+    expect(rows.nth(2).get_by_test_id("cue-translation")).to_have_text("手で直した訳")
+    expect(rows.nth(2).locator("[data-flag=edited]")).to_have_count(1)
+
+
+def test_restore_after_editing_a_retranslations_new_cue_and_undoing_it_keeps_the_first_edit(
+        open_page, server):
+    # Task 17's Spec review, C-2: the edit to the cue a retranslation made can't be replayed (the
+    # restored episode never had the cue), so neither can the undo that took it back.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit(a, rows.nth(1).get_by_test_id("cue-text"), "occasion!")
+    rows.nth(2).get_by_test_id("cue-text").click()
+    a.get_by_test_id("retranslate-selected").click()
+    expect(a.get_by_test_id("notice")).to_have_count(1)
+    edit(a, rows.nth(2).get_by_test_id("cue-translation"), "新訳")
+    a.get_by_test_id("tool-undo").click()
+    expect(rows.nth(2).get_by_test_id("cue-translation")).not_to_have_text("新訳")
+    assert translation(rows, 2) == COLLEGE
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
+    a.close()
+    second = open_page(server)
+    b = second.page
+    rows = open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_contain_text("1 unsaved edit from")
+    b.get_by_test_id("draft-restore").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
+    expect(b.get_by_test_id("draft")).to_have_count(0)
+    assert notices(b) == [] and second.errors == [] and second.violations() == []

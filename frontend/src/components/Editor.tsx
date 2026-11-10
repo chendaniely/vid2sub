@@ -462,8 +462,8 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
               selected={range ? range[1] - range[0] + 1 : 0}
               busy={busy}
               progress={progress}
-              onSelected={(allowCloud) => requests.retranslate(shownTrack, selectedIds(rows, range), allowCloud)}
-              onStale={(allowCloud) => requests.retranslate(shownTrack, null, allowCloud)}
+              onSelected={(allowCloud) => { flushBox(); requests.retranslate(shownTrack, selectedIds(rows, range), allowCloud); }}
+              onStale={(allowCloud) => { flushBox(); requests.retranslate(shownTrack, null, allowCloud); }}
             />
           )}
           <div role="toolbar" aria-label="Edit the selected cue" className="flex flex-wrap gap-1" data-testid="edit-bar">

@@ -5,7 +5,7 @@ import { resultNotices } from "@/components/SaveBar";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
 import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, followHeads, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage, trimSaved } from "@/lib/draft";
-import { randomHex } from "@/lib/ids";
+import { randomHex, shownIds } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { retranslateNotice } from "@/lib/retranslate";
 import { pacer } from "@/lib/sends";
@@ -197,9 +197,11 @@ export default function App() {
   useEffect(() => {
     if (savesHeard > 0) saveInFlight.current = false;
   }, [savesHeard]);
+  // the cues the opened episode has: what a restored draft's edits can name (C-2)
+  const known = useMemo(() => (episode ? shownIds(episode.rows) : new Set<string>()), [episode]);
   const saving: Saving = {
     // the steps Restore would send, for each draft that has any
-    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps).length })).filter((d) => d.steps > 0),
+    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps, known).length })).filter((d) => d.steps > 0),
     conflictsFound,
     onTyping: setTyping,
     onRestore: (key) => {
@@ -217,7 +219,7 @@ export default function App() {
         clearDraft(store, at.key);
       }
       const sent: number[] = [];
-      for (const step of replayable(draft.steps)) {
+      for (const step of replayable(draft.steps, known)) {
         const { n: _, ...asSent } = step;
         const n = steps(asSent as Step);
         if (n !== null) sent.push(n);

@@ -308,17 +308,19 @@ def test_two_tabs_on_one_episode_keep_separate_drafts(open_page, server):
 
 def test_a_restore_the_server_refuses_a_step_of_keeps_the_draft_and_says_how_many(
         open_page, server):
-    # A draft is cleared only after a replay with no refused step (Decision 31).
+    # A draft is cleared only after a replay with no refused step (Decision 31). The step names a
+    # cue the episode has: one it never had isn't sent at all (Task 17's Spec review, C-2).
     first = open_page(server)
     a = first.page
     rows = open_demo(a, server)
     edit_cue(a, rows, 1, "occasion!")
-    a.evaluate("""() => {  // a step this episode can't take: a cue it never had
+    last = rows.nth(3).get_attribute("data-cue")
+    a.evaluate("""(last) => {  // a step the rules refuse: the last cue has nothing to merge with
         const key = Object.keys(localStorage).find((k) => k.startsWith("vid2sub.draft."));
         const draft = JSON.parse(localStorage.getItem(key));
-        draft.steps.push({ edit: { op: "set_text", cue: "c00000000", text: "lost" }, n: 999 });
+        draft.steps.push({ edit: { op: "merge_next", cue: last, id: "cd0000001", joined: {} }, n: 999 });
         localStorage.setItem(key, JSON.stringify(draft));
-    }""")
+    }""", last)
     a.close()
     second = open_page(server)
     b = second.page

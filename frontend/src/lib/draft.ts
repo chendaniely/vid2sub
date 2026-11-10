@@ -182,20 +182,38 @@ export function heard(replay: Replay, n: number, ok: boolean): Replay | null {
   return { ...replay, waiting: replay.waiting.filter((w) => w !== n), refused: replay.refused + (ok ? 0 : 1) };
 }
 
+/** The cue an edit names, and the cues it makes (Decision 31's ids). */
+function cuesOf(op: EditOp): { names: string[]; makes: string[] } {
+  const names = "cue" in op ? [op.cue] : [];
+  if (op.op === "split") return { names, makes: op.ids };
+  if (op.op === "merge_next") return { names, makes: [op.id, ...Object.values(op.joined)] };
+  if (op.op === "insert") return { names, makes: [op.id] };
+  return { names, makes: [] };
+}
+
 /** The steps Restore sends: the edits, undos and redos, without the retranslations. The undo
  * history is followed as the server keeps it (every step in the draft moved it, since a step that
  * changed nothing is dropped, and only the last 200 can be undone), so an undo or a redo that
- * took back or brought back a retranslation is left out too, rather than landing on an edit. */
-export function replayable(steps: readonly DraftStep[]): DraftStep[] {
+ * took back or brought back a retranslation is left out too, rather than landing on an edit.
+ * `known` is the cue ids of the episode Restore runs on: an edit to a cue it hasn't, and doesn't
+ * make, one a retranslation made, can't replay (the server would refuse it), so it counts as a
+ * retranslation does: not sent, and nor is the undo or redo of it (Task 17's Spec review, C-2). */
+export function replayable(steps: readonly DraftStep[], known: ReadonlySet<string>): DraftStep[] {
   const out: DraftStep[] = [];
   const done: boolean[] = []; // the undo history: true for an edit, false for a retranslation
   const undone: boolean[] = []; // what redo would bring back
+  const have = new Set(known);
   for (const step of steps) {
     if ("edit" in step || "retranslate" in step) {
-      done.push("edit" in step);
+      const { names, makes } = "edit" in step ? cuesOf(step.edit) : { names: [], makes: [] };
+      const sent = "edit" in step && names.every((id) => have.has(id));
+      done.push(sent);
       if (done.length > UNDO_STEPS) done.shift(); // the server forgets its oldest step too
       undone.length = 0;
-      if ("edit" in step) out.push(step);
+      if (sent) {
+        out.push(step);
+        for (const id of makes) have.add(id);
+      }
       continue;
     }
     const [from, to] = "undo" in step ? [done, undone] : [undone, done];

@@ -178,19 +178,23 @@ describe("a retranslation in the draft (Task 17)", () => {
   const RT = { retranslate: true, n: 3 } as const;
   const UNDO = { undo: true, n: 9 } as const;
   const REDO = { redo: true, n: 10 } as const;
+  // the ids the opened episode has: EDIT's cue, and the cues of EDIT2's and INSERT's targets come
+  // from the edits themselves or are unknown (a retranslation made them)
+  const KNOWN = new Set(["c0000000a", "c0000000b"]);
+  const NEW_CUE = { edit: { op: "set_translation_text", track: "ja", cue: "c0000000f", text: "新訳" }, n: 20 } as const;
 
   it("is never replayed, so a restored draft never asks a model again", () => {
-    expect(replayable([EDIT, RT, EDIT2])).toEqual([EDIT, EDIT2]);
+    expect(replayable([EDIT, RT, EDIT2], KNOWN)).toEqual([EDIT, EDIT2]);
   });
 
   it("still takes the undo that undid it, and the redo that redid it, so neither lands elsewhere", () => {
     const steps: DraftStep[] = [EDIT, RT, UNDO, EDIT2];
-    expect(replayable(steps)).toEqual([EDIT, EDIT2]);
-    expect(replayable([EDIT, RT, UNDO, REDO])).toEqual([EDIT]);
-    expect(replayable([RT, EDIT, UNDO, { undo: true, n: 11 }, { undo: true, n: 12 }])).toEqual([EDIT, UNDO]);
-    expect(replayable([EDIT, UNDO, REDO])).toEqual([EDIT, UNDO, REDO]);
+    expect(replayable(steps, KNOWN)).toEqual([EDIT, EDIT2]);
+    expect(replayable([EDIT, RT, UNDO, REDO], KNOWN)).toEqual([EDIT]);
+    expect(replayable([RT, EDIT, UNDO, { undo: true, n: 11 }, { undo: true, n: 12 }], KNOWN)).toEqual([EDIT, UNDO]);
+    expect(replayable([EDIT, UNDO, REDO], KNOWN)).toEqual([EDIT, UNDO, REDO]);
     // a new edit clears what redo could bring back, on the server as here
-    expect(replayable([RT, UNDO, EDIT2, REDO])).toEqual([EDIT2]);
+    expect(replayable([RT, UNDO, EDIT2, REDO], KNOWN)).toEqual([EDIT2]);
   });
 
   it("follows the server's undo history only as far back as it keeps, 200 steps", () => {
@@ -198,10 +202,27 @@ describe("a retranslation in the draft (Task 17)", () => {
     // can't be undone and stays; Restore must keep it too (Task 17's review).
     const edits = Array.from({ length: 199 }, (_, i) => ({ edit: { op: "set_text", cue: "c0000000a", text: `${i + 1}` }, n: 100 + i }) as DraftStep);
     const undos = Array.from({ length: 201 }, (_, i) => ({ undo: true, n: 400 + i }) as DraftStep);
-    const sent = replayable([EDIT, RT, ...edits, ...undos]);
+    const sent = replayable([EDIT, RT, ...edits, ...undos], KNOWN);
     expect(sent.filter((s) => "edit" in s)).toHaveLength(200);
     expect(sent.filter((s) => "undo" in s)).toHaveLength(199); // E199 to E1; never E0
     expect(UNDO_STEPS).toBe(200);
+  });
+
+  it("leaves out an edit to a cue the opened episode doesn't have, and the undo that took it back (Task 17's Spec review, C-2)", () => {
+    // an edit, a retranslation, an edit to the cue it made, that edit undone: the undo would land
+    // on the first edit if the second were not left out
+    expect(replayable([EDIT, RT, NEW_CUE, { undo: true, n: 21 }], KNOWN)).toEqual([EDIT]);
+    expect(replayable([EDIT, RT, NEW_CUE, { undo: true, n: 21 }, { redo: true, n: 22 }], KNOWN)).toEqual([EDIT]);
+    expect(replayable([RT, NEW_CUE, EDIT2], KNOWN)).toEqual([EDIT2]);
+  });
+
+  it("knows the cues an edit it sends makes, so later edits to them are sent", () => {
+    const made = { edit: { op: "insert", start_ms: 1, end_ms: 2, text: "…", id: "c0000000f" }, n: 19 } as const;
+    expect(replayable([made, NEW_CUE], KNOWN)).toEqual([made, NEW_CUE]);
+    // but not the cues of an edit that wasn't sent
+    const skipped = { edit: { op: "split", cue: "c0000000e", at_char: 1, at_ms: 5, ids: ["c00000010", "c00000011"] }, n: 18 } as DraftStep;
+    const onSplit = { edit: { op: "set_text", cue: "c00000010", text: "x" }, n: 19 } as DraftStep;
+    expect(replayable([skipped, onSplit], KNOWN)).toEqual([]);
   });
 
   it("is dropped when the server says it changed nothing, and only that one", () => {
