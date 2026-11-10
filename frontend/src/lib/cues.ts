@@ -78,3 +78,35 @@ export function formatTime(ms: number): string {
   const ss = String(s).padStart(2, "0");
   return h ? `${h}:${String(m).padStart(2, "0")}:${ss}.${frac}` : `${m}:${ss}.${frac}`;
 }
+
+/** Where to split a text at `share` (0 to 1) of its length when there is no caret: the space
+ * nearest that point, else the point itself, never at either end (spec §20's split). */
+export function splitPoint(text: string, share: number): number {
+  const target = Math.min(text.length - 1, Math.max(1, Math.round(text.length * share)));
+  let best = -1;
+  for (let k = 1; k < text.length; k++) {
+    if (/\s/.test(text[k]) && (best < 0 || Math.abs(k - target) < Math.abs(best - target))) best = k;
+  }
+  return best > 0 ? best : target;
+}
+
+/** How many times `find` is in the chosen tracks (`sourceKey` for the source), as replace_all
+ * would count it: plain and case-sensitive, each translation cue once. */
+export function countMatches(rows: readonly Row[], sourceKey: string, tracks: readonly string[], find: string): number {
+  if (!find) return 0;
+  const count = (text: string) => text.split(find).length - 1;
+  let n = 0;
+  for (const track of tracks) {
+    if (track === sourceKey) for (const r of rows) n += count(r.text);
+    else for (const c of trackCues(rows, track)) n += count(c.text);
+  }
+  return n;
+}
+
+/** The id of the selected row for `aria-activedescendant`, only while that row is in the page: the
+ * list is virtualised, so a selected row scrolled out of the window has no element to name. */
+export function activeDescendant(rows: readonly { id: string }[], selected: number, inPage: Iterable<number>): string | undefined {
+  if (selected < 0 || selected >= rows.length) return undefined;
+  for (const index of inPage) if (index === selected) return `cue-${rows[selected].id}`;
+  return undefined;
+}

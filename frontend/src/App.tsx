@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Editor } from "@/components/Editor";
+import { Editor, type Requests } from "@/components/Editor";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
+import { pacer } from "@/lib/sends";
 import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
-import type { Busy, Capabilities, EpisodeView, Status } from "@/types";
+import type { Busy, Capabilities, EditOp, EpisodeView, Status } from "@/types";
+
+type Ask = { episode: string; n: number };
 
 type JQueryLike = (target: Document) => {
   on(event: string, handler: () => void): unknown;
@@ -26,7 +29,22 @@ export default function App() {
   // task send only the last.
   const setOpen = useSetShinyInput<{ path: string; n: number } | null>("open", null, { priority: "event", debounceMs: 0 });
   const setPlayback = useSetShinyInput<{ episode: string; n: number } | null>("playback", null, { priority: "event", debounceMs: 0 });
+  const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
+  const setUndo = useSetShinyInput<Ask | null>("undo", null, { priority: "event", debounceMs: 0 });
+  const setRedo = useSetShinyInput<Ask | null>("redo", null, { priority: "event", debounceMs: 0 });
   const sent = useRef(0);
+  // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
+  const pace = useMemo(() => pacer(), []);
+  const episodeId = episode?.id ?? null;
+  const requests = useMemo<Requests>(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+    const send = <T,>(set: (v: T) => void, value: T | null) => value && pace(() => set(value));
+    return {
+      edit: (op) => { const a = ask(); send(setEdit, a && { ...a, op }); },
+      undo: () => send(setUndo, ask()),
+      redo: () => send(setRedo, ask()),
+    };
+  }, [episodeId, pace, setEdit, setUndo, setRedo]);
   const [notices, setNotices] = useState<Shown[]>([]);
   const nextId = useRef(1);
   useShinyMessageHandler("notice", (data: unknown) => {
@@ -69,6 +87,7 @@ export default function App() {
           pathInput={capabilities?.path_input ?? false}
           onOpen={(path) => setOpen({ path, n: ++sent.current })}
           onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
+          requests={requests}
         />
       </main>
       <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">

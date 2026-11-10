@@ -91,3 +91,17 @@ export type EpisodeView = {
 
 /** The `busy` output: what the tab's editor is doing, or null. */
 export type Busy = "opening" | "playback" | null;
+
+/** An edit, as `vid2sub.web.ops` takes it: every edit goes through the server's `apply`. */
+export type EditOp =
+  | { op: "set_text"; cue: string; text: string }
+  | { op: "set_translation_text"; track: string; cue: string; text: string }
+  | { op: "set_times"; cue: string; start_ms?: number; end_ms?: number }
+  | { op: "nudge"; cue: string; delta_ms: number; edge?: "start" | "end" | "both" }
+  | { op: "split"; cue: string; at_char: number; at_ms: number; ids: [string, string] }
+  | { op: "merge_next"; cue: string; id: string; joined: Record<string, string> }
+  | { op: "insert"; start_ms: number; end_ms: number; text: string; id: string }
+  | { op: "delete"; cue: string }
+  | { op: "detach"; track: string; cue: string; detached: boolean }
+  | { op: "replace_all"; find: string; replace: string; tracks: string[] }
+  | { op: "glossary_add"; term: string; translation: string };

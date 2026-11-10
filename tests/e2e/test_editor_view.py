@@ -225,6 +225,36 @@ def test_every_control_of_the_view_is_reached_by_keyboard_with_its_focus_visible
     assert seen == wanted
 
 
+def test_with_two_translations_the_track_select_is_reached_by_keyboard_too(page, server):
+    # S37: the demo has one translation, so no `track` select; two make one appear, in Tab order.
+    video = make_episode(demo_copy(server) / "two", targets=("en", "fr"))
+    open_episode(page, video)
+    page.get_by_test_id("open-path").focus()
+    seen = []
+    for _ in range(40):
+        page.keyboard.press("Tab")
+        found = page.evaluate("() => document.activeElement.dataset.testid || null")
+        if found in ("showing", "track", "speed") and found not in seen:
+            seen.append(found)
+            assert page.evaluate("() => document.activeElement.matches(':focus-visible')"), found
+        if seen == ["showing", "track", "speed"]:
+            break
+    assert seen == ["showing", "track", "speed"]
+
+
+def test_the_cue_list_names_no_active_row_that_is_scrolled_out_of_the_page(page, server):
+    # S-13: aria-activedescendant may only name a row in the page, and virtualisation removes rows.
+    open_episode(page, make_episode(demo_copy(server) / "long2", n=2000))
+    lst = page.get_by_test_id("cue-list")
+    page.get_by_test_id("cue-row").first.click()
+    expect(lst).to_have_attribute("aria-activedescendant", re.compile(r"^cue-c[0-9a-f]{8}$"))
+    page.get_by_test_id("media").evaluate("m => { m.pause(); }")
+    page.get_by_test_id("follow").uncheck()
+    lst.evaluate("e => { e.scrollTop = e.scrollHeight / 2; }")
+    expect(page.locator("[data-testid=cue-row][aria-selected=true]")).to_have_count(0)
+    expect(lst).not_to_have_attribute("aria-activedescendant", re.compile(r".+"))
+
+
 def mpeg4_episode(server) -> Path:
     """MPEG-4 Part 2 video, which Chromium can't decode, with Opus sound, which it plays, in an
     MP4: both from ffmpeg's own encoders, so any ffmpeg makes it (tests/helpers.make_clip)."""

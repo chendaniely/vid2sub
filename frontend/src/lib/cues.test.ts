@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Row } from "@/types";
 
-import { formatTime, indexAt, trackCues, wordAt, wordSpans } from "./cues";
+import { activeDescendant, countMatches, formatTime, indexAt, splitPoint, trackCues, wordAt, wordSpans } from "./cues";
 
 const cues = [
   { start_ms: 0, end_ms: 1000 },
@@ -76,5 +76,40 @@ describe("times", () => {
     expect(formatTime(3600)).toBe("0:03.600");
     expect(formatTime(61_005)).toBe("1:01.005");
     expect(formatTime(7_199_999)).toBe("1:59:59.999");
+  });
+});
+
+describe("where a split falls without a caret", () => {
+  it("is the space nearest the share of the text, never an end", () => {
+    expect(splitPoint("I am here and there", 0.5)).toBe(9); // "I am here| and there"
+    expect(splitPoint("I am here and there", 0.1)).toBe(1);
+    expect(splitPoint("おはようございます", 0.5)).toBe(5); // no space: the point itself
+    expect(splitPoint("ab", 0)).toBe(1);
+    expect(splitPoint("ab", 1)).toBe(1);
+  });
+});
+
+describe("counting what find would replace", () => {
+  const rows: Row[] = [
+    { id: "a", n: 1, start_ms: 0, end_ms: 1, text: "delighted, delighted", w: null, flags: [], tr: { en: { cues: [{ id: "x", start_ms: 0, end_ms: 2, text: "delighted", src: ["a", "b"], detached: false, flags: [] }], flags: [] } } },
+    { id: "b", n: 2, start_ms: 1, end_ms: 2, text: "here", w: null, flags: [], tr: { en: { cues: [], flags: [] } } },
+  ];
+
+  it("counts each match in the chosen tracks, a translation spanning rows once", () => {
+    expect(countMatches(rows, "ja", ["ja", "en"], "delighted")).toBe(3);
+    expect(countMatches(rows, "ja", ["en"], "delighted")).toBe(1);
+    expect(countMatches(rows, "ja", ["ja"], "Delighted")).toBe(0); // case-sensitive, as replace_all
+    expect(countMatches(rows, "ja", ["ja"], "")).toBe(0);
+  });
+});
+
+describe("the cue list's active descendant (S-13)", () => {
+  const rows = [{ id: "ca0000001" }, { id: "ca0000002" }, { id: "ca0000003" }];
+
+  it("names the selected row only while the row is in the page", () => {
+    expect(activeDescendant(rows, 1, [0, 1, 2])).toBe("cue-ca0000002");
+    expect(activeDescendant(rows, 2, [0, 1])).toBeUndefined(); // scrolled away: virtualised out
+    expect(activeDescendant(rows, -1, [0, 1, 2])).toBeUndefined();
+    expect(activeDescendant(rows, 3, [0, 1, 2, 3])).toBeUndefined();
   });
 });
