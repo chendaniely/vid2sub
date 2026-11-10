@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 15: Editing in the editor, open.
+**Now:** Task 16: Saving, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower. Task 13's drift test and fix round 13c added 24 more (its listed 960 is 1143 in fact, 183 above the listing: the 159 and 24 more, 17 in `tests/test_demo_guard.py` and 7 parser cases in `tests/test_formats.py`): from Task 13's close on, every later listed count is 183 lower than the real one (Task 14's listings count from 960). Task 14's second hostile browser test adds one e2e test, which Task 14's own listings count. Task 14's fix round 14e and direct fix add 33 more full-suite tests and one e2e test (the AVI fallback) (its listed 974 is 1190 in fact, 216 above the listing: the 183 and 33 more, among them 19 snippets of the thread and process check in `tests/test_pages_imports.py`): from Task 14's close on, every later listed full-suite count is 216 lower than the real one (Task 15's listings count from 974), and every later listed `deselected` count and `make e2e` count is 2 lower than the real one (the raw file-name case and the AVI test; Task 14's end is `21 deselected` and `17 passed` in fact). Vitest is as Task 14 listed it (9 files, 44 tests). A later listing that counts a run of `tests/test_demo_guard.py` (24 tests, not 7) or `tests/test_formats.py` (7 more than before) is that many lower, and one of `tests/test_web_server.py` is 12 lower (34 tests, not 22), `tests/test_pages_imports.py` 20 lower (25, not 5), `tests/test_backend_open.py` 1 lower, and `tests/e2e/test_editor_view.py` 2 lower (11 tests in fact, counting the raw file-name case as one, against 9 listed).
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower. Task 13's drift test and fix round 13c added 24 more (its listed 960 is 1143 in fact, 183 above the listing: the 159 and 24 more, 17 in `tests/test_demo_guard.py` and 7 parser cases in `tests/test_formats.py`): from Task 13's close on, every later listed count is 183 lower than the real one (Task 14's listings count from 960). Task 14's second hostile browser test adds one e2e test, which Task 14's own listings count. Task 14's fix round 14e and direct fix add 33 more full-suite tests and one e2e test (the AVI fallback) (its listed 974 is 1190 in fact, 216 above the listing: the 183 and 33 more, among them 19 snippets of the thread and process check in `tests/test_pages_imports.py`): from Task 14's close on, every later listed full-suite count is 216 lower than the real one (Task 15's listings count from 974), and every later listed `deselected` count and `make e2e` count is 2 lower than the real one (the raw file-name case and the AVI test; Task 14's end is `21 deselected` and `17 passed` in fact). Vitest is as Task 14 listed it (9 files, 44 tests). A later listing that counts a run of `tests/test_demo_guard.py` (24 tests, not 7) or `tests/test_formats.py` (7 more than before) is that many lower, and one of `tests/test_web_server.py` is 12 lower (34 tests, not 22), `tests/test_pages_imports.py` 20 lower (25, not 5), `tests/test_backend_open.py` 1 lower, and `tests/e2e/test_editor_view.py` 2 lower (11 tests in fact, counting the raw file-name case as one, against 9 listed). Task 15's fix rounds and direct fixes add 4 server tests (round 15d's) to the full suite: its listed 978 is 1198 in fact, 220 above the listing (the 216 and 4 more): from Task 15's close on, every later listed full-suite count is 220 lower than the real one (Task 16's listings count from 978). The offset for `deselected` and `make e2e` that Task 14's close gave as 2 is **3**, since Task 13's close added a test to Task 14 that Task 15's listing wasn't rewritten for; Task 15 adds 25 more e2e tests beyond its listing (3 in round 15c's drift, 20 in round 15d and 2 in the direct fixes), so from Task 15's close on every later listed `deselected` count and `make e2e` count is **28** lower than the real one (the 3 and 25 more; Task 15's end is `52 deselected` and `48 passed` in fact, against the listed 24 and 20). Vitest: Task 15 listed 12 files and 58 tests and has 14 files and 68 tests in fact (`CueRow.test.ts`, `BusyNote.test.ts`, `activeDescendant`'s test and the round 15d cases), so from Task 15's close on every later listed Vitest file count is 2 lower and test count 10 lower (Task 16's listings count from 12 and 58). A later listing that counts a run of `tests/test_web_server.py` is 21 lower (42 tests in fact after Task 15, against the 21 its listing ends on), and `tests/e2e/test_editor_view.py` has 13 tests in fact and `tests/e2e/test_editing.py` 29 (6 listed).
 
 ## Decisions made while planning (review these)
 
@@ -23953,7 +23953,11 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 2 · **Scenarios:** S28, S33, S37
 
+S37's editing half is here (the keyboard model, every action a button with visible focus), its view half was Task 14's and its job progress is Task 19's, so it stays `planned`.
+
 **Forward, from Task 14's Spec review (S-13):** `CueList`'s `aria-activedescendant` names `cue-<id>` even when virtualisation has removed that row (select a cue, then scroll away); set it only when the row is in `getVirtualItems()`, here, where ↑/↓ arrive. The keyboard test also can't reach the `track` select (only with two or more translations, which the demo doesn't have) or the `<audio>` player: add a two-translation case.
+
+**Built differently** (the listing's own steps stay as planned). Round 15c's drift (d472c11): (1) S-13's note is built as `lib/cues.ts`'s pure `activeDescendant(rows, selected, inPage)`, which `CueList` calls, with a Vitest test and an e2e test that scrolls the selected row out of the page (2,000 cues); (2) a two-translation e2e case in `test_editor_view.py` reaches the `track` select by keyboard (the `<audio>` half is not covered: it is Tab-reachable with the browser's own focus ring, per the Spec review's probe); (3) `CueRow.test.ts` and an e2e test show markup typed into a cue as text, the overlay drawing only `<i>`. Round 15d, after the Tier 2 review (Standards approved with 9 Minor; Spec: 1 Critical, 11 Important, 4 Minor), Dan's ruling on the Critical (Q&A item 49) and one re-review: (4) the crash fix (S-1): `current`, `word` and `trAt` are found again from the playhead when `rows` or the translation's cues change, and the overlay line, the loop and `row` read them safely, so deleting, merging or undoing away the current cue no longer blanks the page; (5) a draft is committed whenever edit mode is left any way but Esc (a click on another cell, the Edit button on another cell, Insert), Edit on the open cell keeps it, and `Editing` records the `track` the box was opened on, so a commit goes to that track; split and merge act on the cue being edited; (6) `tool-commit` and `tool-cancel` (while a box is open) and `tool-earlier-500` and `tool-later-500` buttons; (7) split at the caret sends the caret in code points of the text the server will hold (`lib/cues.ts`'s `canonicalOffset`, which mirrors `subs.text.canonical` only for the count), and `splitPoint` counts code points; (8) Replace all is a `type="button"`: Enter in a find field does nothing; (9) `BusyNote`: while the playback audio is made, a line says edits made now apply when the sound is ready; (10) a translation cell holding several cues shows each as its own selectable `cue-translation-line` (click, or ← and →), carrying its `trId`, and Enter edits the chosen one; (11) the tests the Spec review found missing (S-9 to S-12; 2235b0d holds S-1 to S-11 in one commit, since `Editor.tsx` and `test_editing.py` are single files; the four server tests are 95a6337). Task 14's hostile-subtitles e2e now allows the lines the view makes inside `cue-translation` and none inside them. The direct fixes under the cap, after the re-review (fe567f2): (12) an insert answered late no longer replaces a draft opened since (R-1; held-ffmpeg e2e test); (13) `BusyNote` shows only for `"playback"`, since an edit made while another episode opens names the old episode and is dropped (R-2); (14) a test that Cancel and Esc never send a changed draft (R-3); (15) an unused index in `CueRow` and five over-long test lines. The Run-order paragraph counts all of it.
 
 **Files:**
 - Create: `frontend/src/lib/keys.ts` (+ test), `frontend/src/lib/sends.ts` (+ test),
@@ -23988,33 +23992,41 @@ Co-Authored-By: <the model's own line>
     twice), `shownIds(rows) -> Set<string>` (the rows' ids and their translations'). The
     `Editor` draws a split's two ids, a merge's id and one per translation track (`joined`), and an
     insert's id, and finds the inserted cue by its id.
+  - `components/BusyNote.tsx` (round 15d): `BusyNote({busy})`, a `role="status"` line
+    (`data-testid="busy-note"`) while `busy` is `"playback"`, nothing otherwise.
   - `lib/keys.ts`: `type Mode = "navigate" | "edit"`; `type Action` (`play-pause`, `back`,
     `pause`, `play`, `previous`, `next`, `cell` with `"source" | "translation"`, `set-start`,
     `set-end`, `nudge` with `delta_ms`, `edit`, `undo`, `redo`, `commit`, `split`, `merge`,
     `cancel`); `type KeyLike`; `NUDGE_MS = 100`, `BIG_NUDGE_MS = 500`;
     `actionFor(e: KeyLike, mode: Mode): Action | null` (null while `isComposing` or keyCode 229).
   - `lib/sends.ts`: `pacer(schedule?) -> (send: () => void) => void`, one queued send per task.
-  - `lib/cues.ts`: `splitPoint(text, share): number`; `countMatches(rows, sourceKey, tracks,
-    find): number`.
+  - `lib/cues.ts`: `splitPoint(text, share): number` (in code points); `countMatches(rows,
+    sourceKey, tracks, find): number`; round 15d adds `canonicalOffset(draft, caret): number` (a
+    caret as the server counts it) and `activeDescendant(rows, selected, inPage)`.
   - Components: `Editor({episode, busy, pathInput, onOpen, onCantPlay, requests})` with
     `type Requests = {edit(op), undo(), redo()}` and `control` (the class string controls use);
     `CueList({listRef, rows, words, track, current, word, selected, cell, editing, follow, onPick,
     onKeyDown, onDraft, onEditKey, editorRef})`; `CueRow({..., cell, editing, onPick(cell),
     onDraft, onEditKey, editorRef})` with `type Cell` and `type Editing = {id, cell, trId, text}`;
+    round 15d gives `Editing` a `track` (the track the box was opened on), `CueList` and `CueRow` a
+    `trId` (the chosen translation cue of a cell holding several) and `onPick(cell, trId?)` (the
+    list's `onPick(index, cell, trId?)`), and a translation cell its lines
+    (`data-testid="cue-translation-line"`, `data-selected` on the chosen one);
     `FindReplace({episode, onEdit, onClose})`. Test ids: `cue-editor` (the text box),
     `cue-times`, `data-selected` on the selected cell, the edit bar's `tool-edit`, `tool-start`,
     `tool-end`, `tool-earlier`, `tool-later`, `tool-split`, `tool-merge`, `tool-insert`,
-    `tool-delete`, `tool-undo`, `tool-redo`, `tool-find`; find's `find`, `replace`,
+    `tool-delete`, `tool-undo`, `tool-redo`, `tool-find`, and round 15d's `tool-commit` and
+    `tool-cancel` (only while a box is open), `tool-earlier-500` and `tool-later-500`; find's `find`, `replace`,
     `match-count`, `find-track-<key>`, `replace-all`, `glossary-term`, `glossary-translation`,
     `glossary-add`, `glossary-adds`.
   - `App` sets `edit`, `undo` and `redo` with `useSetShinyInput(id, null, {priority: "event",
     debounceMs: 0})`, each through one `pacer()`.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
 #### Round 15a: edits, undo and redo reach the episode
 
-- [ ] **Step 1: Write the failing tests,** at the end of `tests/test_web_server.py` (the two blank lines first):
+- [x] **Step 1: Write the failing tests,** at the end of `tests/test_web_server.py` (the two blank lines first):
 
 ```python
 
@@ -24104,10 +24116,10 @@ def test_an_edit_for_an_episode_the_tab_has_moved_on_from_is_dropped(media_clien
         assert len(done["rows"]) == len(LINES) and t.notices() == []
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q -k
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q -k
   'edits_undo or bad_edit or moved_on'`. Expected: `3 failed, 17 deselected`, each with
   `AssertionError: timed out; the tab saw [...`.
-- [ ] **Step 3: Write the code,** in `src/vid2sub/web/server.py`. Replace the module docstring's
+- [x] **Step 3: Write the code,** in `src/vid2sub/web/server.py`. Replace the module docstring's
   paragraph that begins `The editor (spec §20):` with
 
 ```python
@@ -24185,8 +24197,8 @@ from vid2sub.web import WWW, ops, runtime, views
         editor.submit("redo", input.redo())
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `make check`. Expected: `977 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed (44)`, `All checks passed!`, `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 4: Run the checks; they pass.** `make check`. Expected: `977 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed (44)`, `All checks passed!`, `no leaks found`.
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 a tab's edits, undo and redo reach its episode through the backend's rules, one at a time in the order sent
@@ -24221,7 +24233,7 @@ input message as a tuple (`shiny/_utils.py`, `lists_to_tuples`, passed as `json.
 `object_hook` in `Session._run`), and `ops.parse_op` is strict, so `replace_all`'s `tracks` came
 back as `this edit can't be made: tracks has the wrong type`.
 
-- [ ] **Step 6: Write the failing test,** at the end of `tests/test_web_server.py` (the two blank lines first):
+- [x] **Step 6: Write the failing test,** at the end of `tests/test_web_server.py` (the two blank lines first):
 
 ```python
 
@@ -24240,10 +24252,10 @@ def test_an_edit_holding_a_list_is_read_as_json_has_it_though_shiny_makes_lists_
         assert done["rows"][2]["text"] == "はい、げんきです" and t.notices() == []
 ```
 
-- [ ] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_web_server.py -q -k
+- [x] **Step 7: Run it; watch it fail.** `uv run pytest tests/test_web_server.py -q -k
   holding_a_list`. Expected: `1 failed, 20 deselected`, with `AssertionError: timed out; the tab saw
   [{'values': {'episode': {...`.
-- [ ] **Step 8: Write the code,** in `src/vid2sub/web/server.py`: above `async def notice` add
+- [x] **Step 8: Write the code,** in `src/vid2sub/web/server.py`: above `async def notice` add
 
 ```python
 def as_json(value: object) -> object:
@@ -24260,8 +24272,8 @@ def as_json(value: object) -> object:
 
   and in `Editor.submit` replace `self._todo.append((kind, request))` with
   `self._todo.append((kind, as_json(request)))`.
-- [ ] **Step 9: Run the checks; they pass.** `make check`. Expected: `978 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed (44)`, `All checks passed!`, `no leaks found`.
-- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 9: Run the checks; they pass.** `make check`. Expected: `978 passed, 2 skipped, 18 deselected` (twice), `Test Files  9 passed (9)`, `Tests  44 passed (44)`, `All checks passed!`, `no leaks found`.
+- [x] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 fix(web): 🤖 an edit holding a list, such as replace_all's tracks, is read as JSON has it
@@ -24288,7 +24300,7 @@ Co-Authored-By: <the model's own line>
 
 #### Round 15c: the keyboard model, the edit bar, and find and replace
 
-- [ ] **Step 11: Write the failing tests.** `frontend/src/lib/keys.test.ts`:
+- [x] **Step 11: Write the failing tests.** `frontend/src/lib/keys.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -24822,13 +24834,13 @@ def test_an_edit_to_a_two_hour_episode_comes_back_in_under_a_second(page, server
     assert elapsed < 1.0, f"{elapsed:.2f} s"
 ```
 
-- [ ] **Step 12: Run them; watch them fail.** `cd frontend && npx vitest run src/lib`. Expected:
+- [x] **Step 12: Run them; watch them fail.** `cd frontend && npx vitest run src/lib`. Expected:
   `Error: Failed to resolve import "./keys" from "src/lib/keys.test.ts". Does the file exist?`,
   the same for `./sends` and `./ids`, and `TypeError: splitPoint is not a function` and `TypeError:
   countMatches is not a function`. `make build && uv run pytest -m e2e tests/e2e/test_editing.py
   -q -k a_cue_edited`. Expected: `AssertionError: Locator expected to be focused`, `Error:
   element(s) not found` for `get_by_test_id("cue-editor")`.
-- [ ] **Step 13: Write the code.** `frontend/src/lib/keys.ts`:
+- [x] **Step 13: Write the code.** `frontend/src/lib/keys.ts`:
 
 ```ts
 // The editor's keyboard model, verbatim from spec §20, safe with CJK input methods.
@@ -25804,14 +25816,14 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
 }
 ```
 
-- [ ] **Step 14: Run the checks; they pass.** First the guard (S33): comment out `if
+- [x] **Step 14: Run the checks; they pass.** First the guard (S33): comment out `if
   (e.isComposing || e.keyCode === 229) return null;` in `keys.ts`; `npx vitest run
   src/lib/keys.test.ts` fails `an input method's keys (S33) > are never an action while a
   composition runs, whatever the key`, and after `make build`, `uv run pytest -m e2e
   tests/e2e/test_editing.py -q -k input_method` fails `AssertionError: Locator expected to have
   count '0'` (navigate mode's Enter opened the editor); put the line back. `make check`.
   Expected: `978 passed, 2 skipped, 24 deselected` (twice), `Test Files  12 passed (12)`, `Tests  58 passed (58)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `20 passed`.
-- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(frontend): 🤖 the editor edits, splits, merges, nudges, inserts, deletes, undoes and finds and replaces by spec §20's keyboard model, and an IME's Enter fires nothing
@@ -25875,7 +25887,7 @@ Co-Authored-By: <the model's own line>
   frontend/src/components/FindReplace.tsx tests/e2e/test_editing.py`,
   `git commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 16: Review, look forward, close.** The Tier 2 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*). Worth the reviewers' time: that every edit reaches the server's
   `apply` and none is lost to shinyreact's debounce (`pacer`) or reordered (the `Editor`'s
   queue); that `as_json` changes only tuples, so `parse_op` stays strict on everything else; that
@@ -27320,12 +27332,13 @@ export function ConflictPicker({ episode, open, onClose, onPick }: {
 ```tsx
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
+import { canonicalOffset, indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
 import { newCueIds, shownIds } from "@/lib/ids";
-import { type Action, type KeyLike, actionFor } from "@/lib/keys";
+import { type Action, BIG_NUDGE_MS, type KeyLike, NUDGE_MS, actionFor } from "@/lib/keys";
 import { captionLines, type Showing } from "@/lib/overlay";
 import type { Busy, EditOp, EpisodeView } from "@/types";
 
+import { BusyNote } from "./BusyNote";
 import { ConflictPicker } from "./ConflictPicker";
 import { type Cell, type Editing } from "./CueRow";
 import { CueList } from "./CueList";
@@ -27418,6 +27431,7 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
   const [trAt, setTrAt] = useState(-1);
   const [sel, setSel] = useState<{ index: number; id: string | null }>({ index: -1, id: null });
   const [cell, setCell] = useState<Cell>("source");
+  const [trId, setTrId] = useState<string | null>(null); // the chosen translation cue of the row
   const [editing, setEditing] = useState<Editing | null>(null);
   const [finding, setFinding] = useState(false);
   const conflicted = episode.tracks.filter((t) => t.in_conflict);
@@ -27426,24 +27440,31 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
   const list = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
   const pending = useRef<string | null>(null); // an inserted cue's id, to select and edit
+  const editingNow = useRef<Editing | null>(null); // `editing`, for effects that must not re-run
+  editingNow.current = editing;
 
   const rows = episode.rows;
   const shownTrack = track && episode.tracks.some((t) => t.key === track) ? track : null;
   const trCues = useMemo(() => trackCues(rows, shownTrack), [rows, shownTrack]);
   const selected = sel.index;
-  const row = selected >= 0 ? rows[selected] : undefined;
+  const row = selected >= 0 && selected < rows.length ? rows[selected] : undefined;
 
   // The rows change with every edit: the selection follows its cue, else stays at its place (a
   // split or merge replaces the cue's id); an inserted cue is selected and edited.
   useEffect(() => {
     if (pending.current) {
       const at = rows.findIndex((r) => r.id === pending.current);
-      pending.current = null;
-      if (at >= 0) {
-        setSel({ index: at, id: rows[at].id });
-        setCell("source");
-        setEditing({ id: rows[at].id, cell: "source", trId: null, text: rows[at].text });
-        return;
+      if (at >= 0) { // (until it shows: a draft's own edit can come back first)
+        pending.current = null;
+        // Only when no box is open: an insert answered late (while the sound is made, minutes)
+        // must not replace a draft opened since (the re-review's R-1).
+        if (!editingNow.current) {
+          setSel({ index: at, id: rows[at].id });
+          setCell("source");
+          setTrId(null);
+          setEditing({ id: rows[at].id, cell: "source", trId: null, track: null, text: rows[at].text });
+          return;
+        }
       }
     }
     setSel((s) => {
@@ -27476,38 +27497,58 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
     setTrAt(indexAt(trCues, ms));
   }, [loop, rows, trCues, episode.words]);
 
-  // New rows (an edit, a Save, a pick): look again at what plays now, even while paused.
+  // The rows or the translation's cues changed (an edit, undo or redo): current, word and trAt
+  // are indexes into them, so they are found again from the playhead. Until this runs, the render
+  // below reads them safely (the Spec review's S-1: a delete once blanked the page). Also after a Save or a pick.
+  const seen = useRef({ rows, trCues });
   useEffect(() => {
-    if (media.current) onTime(media.current.currentTime * 1000);
-  }, [onTime]);
+    if (seen.current.rows === rows && seen.current.trCues === trCues) return;
+    seen.current = { rows, trCues };
+    onTime(Math.round((media.current?.currentTime ?? 0) * 1000));
+  }, [rows, trCues, onTime]);
 
   const playhead = () => Math.round((media.current?.currentTime ?? 0) * 1000);
   const seekTo = (ms: number) => {
     if (media.current) media.current.currentTime = ms / 1000;
   };
-  const select = (index: number, which: Cell = cell) => {
+  const select = (index: number, which: Cell = cell, chosen: string | null = null) => {
     if (index < 0 || index >= rows.length) return;
+    // Moving off the cell being edited commits its draft: Esc is the only way out that discards.
+    if (editing && !(rows[index].id === editing.id && which === editing.cell && (chosen ?? editing.trId) === editing.trId)) {
+      commit();
+      setEditing(null);
+    }
     setSel({ index, id: rows[index].id });
     setCell(which);
+    setTrId(chosen);
     seekTo(rows[index].start_ms + 1);
   };
   const focusList = () => list.current?.focus();
 
   const startEditing = (which: Cell) => {
     if (!row) return;
-    if (which === "source") {
-      setEditing({ id: row.id, cell: "source", trId: null, text: row.text });
-      return;
+    const open = which === "source" ? { cell: which, trId: null as string | null }
+      : shownTrack ? { cell: which, trId: row.tr[shownTrack]?.cues.find((c) => c.id === trId)?.id ?? row.tr[shownTrack]?.cues[0]?.id ?? null } : null;
+    if (!open || (which === "translation" && !open.trId)) return;
+    if (editing) {
+      if (editing.id === row.id && editing.cell === open.cell && editing.trId === open.trId) {
+        editor.current?.focus(); // already open: its draft stays
+        return;
+      }
+      commit(); // another cell: the draft is not thrown away
     }
-    const tr = shownTrack ? row.tr[shownTrack]?.cues[0] : undefined;
-    if (tr) setEditing({ id: row.id, cell: "translation", trId: tr.id, text: tr.text });
+    const text = which === "source" ? row.text : row.tr[shownTrack ?? ""]?.cues.find((c) => c.id === open.trId)?.text ?? "";
+    setEditing({ id: row.id, cell: which, trId: open.trId, track: which === "source" ? null : shownTrack, text });
   };
+  // The cue being edited, which is not always the selected one.
+  const editedRow = () => (editing ? rows.find((r) => r.id === editing.id) : undefined);
   const commit = (): boolean => {
-    if (!editing || !row) return false;
-    const before = editing.cell === "source" ? row.text : row.tr[shownTrack ?? ""]?.cues.find((c) => c.id === editing.trId)?.text;
+    const target = editedRow();
+    if (!editing || !target) return false;
+    const before = editing.cell === "source" ? target.text : target.tr[editing.track ?? ""]?.cues.find((c) => c.id === editing.trId)?.text;
     if (editing.text === before) return false;
     if (editing.cell === "source") requests.edit({ op: "set_text", cue: editing.id, text: editing.text });
-    else if (shownTrack && editing.trId) requests.edit({ op: "set_translation_text", track: shownTrack, cue: editing.trId, text: editing.text });
+    else if (editing.track && editing.trId) requests.edit({ op: "set_translation_text", track: editing.track, cue: editing.trId, text: editing.text });
     return true;
   };
   const stopEditing = () => {
@@ -27516,29 +27557,36 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
   };
   // Split at the caret in edit mode (committing the text first), else at the space nearest the
   // playhead's share of the cue; at the playhead when it is inside the cue, else at the caret's
-  // share of the cue's time.
+  // share of the cue's time. Always the cue being edited, and counted as the server counts.
   const split = () => {
-    if (!row) return;
+    const target = editedRow() ?? row;
+    if (!target) return;
     const ph = playhead();
-    const inside = row.start_ms < ph && ph < row.end_ms;
-    let text = row.text;
+    const inside = target.start_ms < ph && ph < target.end_ms;
+    let length = Array.from(target.text).length;
     let at: number;
     if (editing?.cell === "source") {
+      const caret = editor.current?.selectionStart ?? Math.floor(editing.text.length / 2);
+      at = canonicalOffset(editing.text, caret);
+      length = canonicalOffset(editing.text, editing.text.length);
       commit();
-      text = editing.text;
-      at = editor.current?.selectionStart ?? Math.floor(text.length / 2);
       stopEditing();
     } else {
-      at = splitPoint(text, inside ? (ph - row.start_ms) / (row.end_ms - row.start_ms) : 0.5);
+      if (editing) {
+        commit();
+        stopEditing();
+      }
+      at = splitPoint(target.text, inside ? (ph - target.start_ms) / (target.end_ms - target.start_ms) : 0.5);
     }
-    const share = text.length ? at / text.length : 0.5;
+    const share = length ? at / length : 0.5;
     const at_ms = inside ? ph
-      : Math.min(row.end_ms - 1, Math.max(row.start_ms + 1, Math.round(row.start_ms + (row.end_ms - row.start_ms) * share)));
+      : Math.min(target.end_ms - 1, Math.max(target.start_ms + 1, Math.round(target.start_ms + (target.end_ms - target.start_ms) * share)));
     const [a, b] = newCueIds(2, shownIds(rows));
-    requests.edit({ op: "split", cue: row.id, at_char: at, at_ms, ids: [a, b] });
+    requests.edit({ op: "split", cue: target.id, at_char: at, at_ms, ids: [a, b] });
   };
   const merge = () => {
-    if (!row) return;
+    const target = editedRow() ?? row;
+    if (!target) return;
     if (editing) {
       commit();
       stopEditing();
@@ -27546,9 +27594,13 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
     // the merged cue's id, and one for each translation track, in case its two parts' cues join
     const tracks = episode.tracks.filter((t) => t.role !== "source").map((t) => t.key);
     const [id, ...joined] = newCueIds(1 + tracks.length, shownIds(rows));
-    requests.edit({ op: "merge_next", cue: row.id, id, joined: Object.fromEntries(tracks.map((k, i) => [k, joined[i]])) });
+    requests.edit({ op: "merge_next", cue: target.id, id, joined: Object.fromEntries(tracks.map((k, i) => [k, joined[i]])) });
   };
   const insert = () => {
+    if (editing) {
+      commit(); // a draft is committed, never replaced by the new cue's box
+      setEditing(null);
+    }
     const ph = playhead();
     let start = ph;
     if (indexAt(rows, ph) >= 0 && row) start = row.end_ms;
@@ -27559,6 +27611,23 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
     requests.edit({ op: "insert", start_ms: start, end_ms: end, text: "…", id });
   };
 
+  // ←/→ choose the source or the translation cell; on a translation cell holding several cues,
+  // → moves to the next one and ← back to the one before (the Spec review's S-8).
+  const chooseCell = (which: Cell) => {
+    const cues = shownTrack && row ? row.tr[shownTrack]?.cues ?? [] : [];
+    if (which === "translation" && !shownTrack) return;
+    if (cell === "translation" && cues.length > 1) {
+      const at = Math.max(0, cues.findIndex((c) => c.id === (trId ?? cues[0].id)));
+      const to = at + (which === "translation" ? 1 : -1);
+      if (to >= 0 && to < cues.length) {
+        setTrId(cues[to].id);
+        return;
+      }
+      if (which === "translation") return;
+    }
+    setCell(which);
+    setTrId(null);
+  };
   const act = (a: Action) => {
     const m = media.current;
     switch (a.kind) {
@@ -27568,7 +27637,7 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
       case "play": if (m) void m.play().catch(() => undefined); return;
       case "previous": select(Math.max(0, selected - 1)); return;
       case "next": select(Math.min(rows.length - 1, selected + 1)); return;
-      case "cell": if (a.cell === "source" || shownTrack) setCell(a.cell); return;
+      case "cell": chooseCell(a.cell); return;
       case "set-start": if (row) requests.edit({ op: "set_times", cue: row.id, start_ms: playhead() }); return;
       case "set-end": if (row) requests.edit({ op: "set_times", cue: row.id, end_ms: playhead() }); return;
       case "nudge": if (row) requests.edit({ op: "nudge", cue: row.id, delta_ms: a.delta_ms, edge: "both" }); return;
@@ -27608,7 +27677,7 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
     if (media.current) media.current.playbackRate = value;
   };
 
-  // The indexes can be a render behind the rows (an edit, or a track gone into conflict).
+  // (current and trAt can name a cue an edit has just removed, until the effect above runs) Also a track gone into conflict.
   const lines = captionLines(showing, rows[current]?.text ?? null, trCues[trAt]?.text ?? null);
   const stale = translations.filter((t) => t.all_stale);
   const noRow = !row;
@@ -27640,6 +27709,7 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
             ))}
           </ul>
         )}
+        <BusyNote busy={busy} />
       </header>
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]">
         <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
@@ -27682,10 +27752,14 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
         <section aria-label="Cue list" className="flex min-h-0 flex-col gap-2">
           <div role="toolbar" aria-label="Edit the selected cue" className="flex flex-wrap gap-1" data-testid="edit-bar">
             {tool("Edit", "Enter", () => startEditing(cell), "tool-edit")}
+            {editing && tool("Commit", "Meta+Enter", () => act({ kind: "commit" }), "tool-commit", false)}
+            {editing && tool("Cancel", "Escape", () => act({ kind: "cancel" }), "tool-cancel", false)}
             {tool("Start to playhead", "[", () => act({ kind: "set-start" }), "tool-start")}
             {tool("End to playhead", "]", () => act({ kind: "set-end" }), "tool-end")}
-            {tool("−100 ms", "Alt+ArrowLeft", () => act({ kind: "nudge", delta_ms: -100 }), "tool-earlier")}
-            {tool("+100 ms", "Alt+ArrowRight", () => act({ kind: "nudge", delta_ms: 100 }), "tool-later")}
+            {tool("−500 ms", "Alt+Shift+ArrowLeft", () => act({ kind: "nudge", delta_ms: -BIG_NUDGE_MS }), "tool-earlier-500")}
+            {tool("−100 ms", "Alt+ArrowLeft", () => act({ kind: "nudge", delta_ms: -NUDGE_MS }), "tool-earlier")}
+            {tool("+100 ms", "Alt+ArrowRight", () => act({ kind: "nudge", delta_ms: NUDGE_MS }), "tool-later")}
+            {tool("+500 ms", "Alt+Shift+ArrowRight", () => act({ kind: "nudge", delta_ms: BIG_NUDGE_MS }), "tool-later-500")}
             {tool("Split", "Meta+Shift+S", split, "tool-split")}
             {tool("Merge with next", "Meta+M", merge, "tool-merge", noRow || selected >= rows.length - 1)}
             {tool("Insert", "", insert, "tool-insert", false)}
@@ -27704,9 +27778,10 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
               word={word}
               selected={selected}
               cell={cell}
+              trId={trId}
               editing={editing}
               follow={follow}
-              onPick={(index, which) => select(index, which)}
+              onPick={(index, which, id) => select(index, which, id ?? null)}
               onKeyDown={onListKey}
               onDraft={(text) => setEditing((e) => (e ? { ...e, text } : e))}
               onEditKey={onEditKey}
@@ -28001,8 +28076,8 @@ Spec §14.4 and §14.5, for S29, S31, S32 and S34 end to end, and Review Focus 4
   unsaved carries it to the new heads.
 - beforeunload warns while the episode has unsaved edits, listened for only then (MDN), with
   preventDefault and returnValue.
-- The Editor guards its playing-cue indexes, which can be a render behind new rows (a track gone
-  into conflict has none until it is picked).
+- The Editor's guard on its playing-cue indexes (Task 15's round 15d) also covers a track gone
+  into conflict, which has none until it is picked.
 
 The draft's three new browser tests failed on the code before Decision 31 (the plan's earlier
 Task 16): AssertionError: Locator expected to have text 'We meet at a college, in a city noted
@@ -28384,7 +28459,11 @@ Co-Authored-By: <the model's own line>
   throw; that `beforeunload` is added only while there are unsaved edits; that the picker is the
   native `<dialog>` with zero CSP violations, focus in, Tab never on the page behind, Esc closing it
   and focus back on the opener; that the picker's differences are right (matched by id, a cue
-  missing from one version shown as missing, at most 50) and plain text. The forward review over
+  missing from one version shown as missing, at most 50) and plain text; and two things Task 15's
+  close found: `frontend/src` has no error boundary, so any later render error still blanks the
+  page, which the crash draft should allow for (a draft written before the crash is what is left);
+  and `n` is no guard against replay on the server (the very same message sent twice applies
+  twice), so the draft's replay must not rely on it. The forward review over
   Tasks 17, 18, 19, 22 and 23 (Task 17's retranslation is an undo step, and in the draft a marker
   that is never replayed, so a restored draft never asks a model again (Decision 27); Task
   18's settings drawer is `Dialog` with `side="right"`, and its per-session formats default feeds
@@ -30418,83 +30497,64 @@ export function Retranslate({ label, selected, busy, progress, onSelected, onSta
 }
 ```
 
-  `frontend/src/components/CueRow.tsx`:
-
-  Replace
-
-```tsx
-/** One source cue with its translation alongside (spec §20): number, times, source text, the
- * chosen track's translation and the flags. The current cue has the orange bar and
- * `aria-current`; in it the spoken word is marked, found in the text from the transcript's words.
- * The selected row's selected cell is outlined, and in edit mode it is a text box. Every string is
- * a text node or a text box's value (spec §6.3). */
-export function CueRow({ row, track, current, selected, cell, editing, word, words, total, onPick, onDraft, onEditKey, editorRef }: {
-  row: Row;
-  track: string | null;
-  current: boolean;
-  selected: boolean;
-  cell: Cell;
-  editing: Editing | null; // only when this row is being edited
-  word: number; // the spoken word's index in `words`, or -1
-  words: readonly SpokenWord[];
-  total: number;
-  onPick: (cell: Cell) => void;
-  onDraft: (text: string) => void;
-  onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
-  editorRef: RefObject<HTMLTextAreaElement | null>;
-```
-
-  with
+  `frontend/src/components/CueRow.tsx`, in full (Task 15's as built after its round 15d, with this task's `inRange`,
+  `aria-selected` for a row inside the Shift selection and `onPick(cell, extend, trId?)`):
 
 ```tsx
+import type { KeyboardEvent, RefObject } from "react";
+
+import { formatTime, wordSpans } from "@/lib/cues";
+import { cn } from "@/lib/utils";
+import type { Row, SpokenWord } from "@/types";
+
+import { Flags } from "./Flags";
+
+export type Cell = "source" | "translation";
+
+/** The cell being edited: the source cue, or the translation cue `trId` of `track` (the track the
+ * box was opened on, whichever is shown when it is committed), and the text so far. */
+export type Editing = { id: string; cell: Cell; trId: string | null; track: string | null; text: string };
+
 /** One source cue with its translation alongside (spec §20): number, times, source text, the
  * chosen track's translation and the flags. The current cue has the orange bar and
  * `aria-current`; in it the spoken word is marked, found in the text from the transcript's words.
  * The selected row's selected cell is outlined, and in edit mode it is a text box; a row in the
  * selection a Shift+click or Shift+↑/↓ made is marked selected too, for Retranslate. Every string
  * is a text node or a text box's value (spec §6.3). */
-export function CueRow({ row, track, current, selected, inRange, cell, editing, word, words, total, onPick, onDraft, onEditKey, editorRef }: {
+export function CueRow({ row, track, current, selected, inRange, cell, trId, editing, word, words, total, onPick, onDraft, onEditKey, editorRef }: {
   row: Row;
   track: string | null;
   current: boolean;
   selected: boolean;
   inRange: boolean; // in the selection, beside the selected row
   cell: Cell;
+  trId: string | null; // the chosen translation cue, when the cell holds several
   editing: Editing | null; // only when this row is being edited
   word: number; // the spoken word's index in `words`, or -1
   words: readonly SpokenWord[];
   total: number;
-  onPick: (cell: Cell, extend: boolean) => void; // extend: Shift was held
+  onPick: (cell: Cell, extend: boolean, trId?: string) => void; // extend: Shift was held
   onDraft: (text: string) => void;
   onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   editorRef: RefObject<HTMLTextAreaElement | null>;
-```
-
-  Replace
-
-```tsx
-    <div
-      role="option"
-      id={`cue-${row.id}`}
-      aria-selected={selected}
-      aria-current={current ? "true" : undefined}
-      aria-setsize={total}
-      aria-posinset={row.n}
-      data-testid="cue-row"
-      data-cue={row.id}
-      onClick={() => onPick("source")}
-      className={cn(
-        "grid cursor-pointer grid-cols-[2.5rem_1fr] gap-x-2 border-b border-l-4 border-b-border px-2 py-1.5",
-        current ? "border-l-(--brand-orange)" : "border-l-transparent",
-        selected && "bg-accent",
-      )}
-    >
-      <span className="pt-0.5 text-xs text-muted-foreground tabular-nums">{row.n}</span>
-```
-
-  with
-
-```tsx
+}) {
+  const tr = track ? row.tr[track] : undefined;
+  const flags = [...row.flags, ...(tr?.flags ?? []), ...(tr?.cues.flatMap((c) => c.flags) ?? [])];
+  const marked = (which: Cell) => selected && cell === which && !editing;
+  const box = (which: Cell) => (
+    <textarea
+      ref={editorRef}
+      value={editing?.text ?? ""}
+      rows={Math.max(2, (editing?.text ?? "").split("\n").length)}
+      onChange={(e) => onDraft(e.target.value)}
+      onKeyDown={onEditKey}
+      onClick={(e) => e.stopPropagation()}
+      aria-label={`${which === "source" ? "Cue" : "Translation of cue"} ${row.n}: ⌘↵ to commit, Esc to cancel`}
+      className="w-full resize-none rounded-sm border border-input bg-background px-1 font-sans text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+      data-testid="cue-editor"
+    />
+  );
+  return (
     <div
       role="option"
       id={`cue-${row.id}`}
@@ -30512,162 +30572,167 @@ export function CueRow({ row, track, current, selected, inRange, cell, editing, 
       )}
     >
       <span className="pt-0.5 text-xs text-muted-foreground tabular-nums">{row.n}</span>
-```
-
-  Replace
-
-```tsx
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="font-mono text-xs text-muted-foreground" data-testid="cue-times">
+          {formatTime(row.start_ms)} → {formatTime(row.end_ms)}
+        </span>
+        {editing?.cell === "source" ? box("source") : (
+          <span data-selected={marked("source") || undefined} className={cn("rounded-sm", marked("source") && "outline-2 outline-ring")}>
+            <SourceText row={row} word={current ? word : -1} words={words} />
           </span>
         )}
-        {tr && (editing?.cell === "translation" ? box("translation") : (
-          <span onClick={(e) => { e.stopPropagation(); onPick("translation"); }} data-selected={marked("translation") || undefined} className={cn("rounded-sm whitespace-pre-line text-muted-foreground", marked("translation") && "outline-2 outline-ring")} data-testid="cue-translation">
-            {tr.cues.length ? tr.cues.map((c) => c.text).join("\n") : "—"}
-          </span>
-        ))}
-```
-
-  with
-
-```tsx
+        {tr && (
+          <span onClick={(e) => { e.stopPropagation(); onPick("translation", e.shiftKey); }} data-selected={marked("translation") && tr.cues.length <= 1 || undefined} className={cn("flex flex-col rounded-sm whitespace-pre-line text-muted-foreground", marked("translation") && tr.cues.length <= 1 && "outline-2 outline-ring")} data-testid="cue-translation">
+            {tr.cues.length === 0 && "—"}
+            {tr.cues.map((c) => {
+              const chosen = marked("translation") && tr.cues.length > 1 && (trId ?? tr.cues[0].id) === c.id;
+              return editing?.cell === "translation" && editing.trId === c.id ? (
+                <span key={c.id}>{box("translation")}</span>
+              ) : (
+                <span key={c.id} onClick={(e) => { e.stopPropagation(); onPick("translation", e.shiftKey, c.id); }} data-selected={chosen || undefined} data-cue={c.id} className={cn("rounded-sm", chosen && "outline-2 outline-ring")} data-testid="cue-translation-line">
+                  {c.text}
+                </span>
+              );
+            })}
           </span>
         )}
-        {tr && (editing?.cell === "translation" ? box("translation") : (
-          <span onClick={(e) => { e.stopPropagation(); onPick("translation", e.shiftKey); }} data-selected={marked("translation") || undefined} className={cn("rounded-sm whitespace-pre-line text-muted-foreground", marked("translation") && "outline-2 outline-ring")} data-testid="cue-translation">
-            {tr.cues.length ? tr.cues.map((c) => c.text).join("\n") : "—"}
-          </span>
-        ))}
+        <Flags flags={flags} />
+      </div>
+    </div>
+  );
+}
+
+function SourceText({ row, word, words }: { row: Row; word: number; words: readonly SpokenWord[] }) {
+  const span = word >= 0 && row.w ? wordSpans(row.text, words.slice(row.w[0], row.w[1]))[word - row.w[0]] : null;
+  if (!span) return <span className="whitespace-pre-line" data-testid="cue-text">{row.text}</span>;
+  const [start, end] = span;
+  return (
+    <span className="whitespace-pre-line" data-testid="cue-text">
+      {row.text.slice(0, start)}
+      <mark className="rounded-sm bg-primary px-0.5 text-primary-foreground" data-testid="spoken-word">{row.text.slice(start, end)}</mark>
+      {row.text.slice(end)}
+    </span>
+  );
+}
 ```
 
-  `frontend/src/components/CueList.tsx`:
-
-  Replace
-
-```tsx
- * side, are in the page (Review Focus 3: about 2,000 cues for two hours), measured as they render
- * since a row's height follows its text; @tanstack/react-virtual places them, through React's
- * style props (the CSSOM, which the CSP allows), never a style attribute in the markup. The
- * selected row is scrolled into view, and while playback is followed so is the current one. */
-export function CueList({ listRef, rows, words, track, current, word, selected, cell, editing, follow, onPick, onKeyDown, onDraft, onEditKey, editorRef }: {
-  listRef: RefObject<HTMLDivElement | null>;
-  rows: readonly Row[];
-  words: readonly SpokenWord[];
-```
-
-  with
+  `frontend/src/components/CueList.tsx`, in full (Task 15's as built after its round 15d, with this task's `range`,
+  `aria-multiselectable` and `onPick(index, cell, extend, trId?)`):
 
 ```tsx
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { type KeyboardEvent, type RefObject, useCallback, useEffect } from "react";
+
+import { activeDescendant } from "@/lib/cues";
+import type { Row, SpokenWord } from "@/types";
+
+import { type Cell, CueRow, type Editing } from "./CueRow";
+
+/** The cue list (spec §20), one row per source cue, and navigate mode's home: with focus here,
+ * the keyboard model's navigate keys act (`onKeyDown`). Only the rows on screen, and a few either
  * side, are in the page (Review Focus 3: about 2,000 cues for two hours), measured as they render
  * since a row's height follows its text; @tanstack/react-virtual places them, through React's
  * style props (the CSSOM, which the CSP allows), never a style attribute in the markup. The
  * selected row is scrolled into view, and while playback is followed so is the current one.
  * Shift+click and Shift+↑/↓ select a run of rows, for Retranslate (`aria-multiselectable`). */
-export function CueList({ listRef, rows, words, track, current, word, selected, range, cell, editing, follow, onPick, onKeyDown, onDraft, onEditKey, editorRef }: {
+export function CueList({ listRef, rows, words, track, current, word, selected, range, cell, trId, editing, follow, onPick, onKeyDown, onDraft, onEditKey, editorRef }: {
   listRef: RefObject<HTMLDivElement | null>;
   rows: readonly Row[];
   words: readonly SpokenWord[];
-```
-
-  Replace
-
-```tsx
-  current: number;
-  word: number;
-  selected: number;
-  cell: Cell;
-  editing: Editing | null;
-  follow: boolean;
-  onPick: (index: number, cell: Cell) => void;
-  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
-  onDraft: (text: string) => void;
-  onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
-```
-
-  with
-
-```tsx
+  track: string | null;
   current: number;
   word: number;
   selected: number;
   range: [number, number] | null; // the selection's first and last rows
   cell: Cell;
+  trId: string | null;
   editing: Editing | null;
   follow: boolean;
-  onPick: (index: number, cell: Cell, extend: boolean) => void;
+  onPick: (index: number, cell: Cell, extend: boolean, trId?: string) => void;
   onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
   onDraft: (text: string) => void;
   onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
-```
+  editorRef: RefObject<HTMLTextAreaElement | null>;
+}) {
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 84,
+    overscan: 6,
+    getItemKey: useCallback((i: number) => rows[i].id, [rows]),
+    useFlushSync: false, // React 19 warns of flushSync inside a render (TanStack's React docs)
+  });
 
-  Replace
+  useEffect(() => {
+    if (follow && current >= 0 && !editing) virtualizer.scrollToIndex(current, { align: "auto" });
+  }, [follow, current, editing, virtualizer]);
+  useEffect(() => {
+    if (selected >= 0) virtualizer.scrollToIndex(selected, { align: "auto" });
+  }, [selected, virtualizer]);
 
-```tsx
-      ref={listRef}
-      role="listbox"
-      aria-label="Cues: arrows to move, Enter to edit, Space to play"
-      tabIndex={0}
-      aria-activedescendant={selected >= 0 && selected < rows.length ? `cue-${rows[selected].id}` : undefined}
-      onKeyDown={onKeyDown}
-```
-
-  with
-
-```tsx
+  const items = virtualizer.getVirtualItems();
+  return (
+    <div
       ref={listRef}
       role="listbox"
       aria-label="Cues: arrows to move, Enter to edit, Space to play"
       aria-multiselectable="true"
       tabIndex={0}
-      aria-activedescendant={selected >= 0 && selected < rows.length ? `cue-${rows[selected].id}` : undefined}
+      aria-activedescendant={activeDescendant(rows, selected, items.map((item) => item.index))}
       onKeyDown={onKeyDown}
-```
-
-  Replace
-
-```tsx
-                  track={track}
-                  current={item.index === current}
-                  selected={item.index === selected}
-                  cell={cell}
-                  editing={editing?.id === row.id ? editing : null}
-                  word={word}
-                  words={words}
-                  total={rows.length}
-                  onPick={(which) => onPick(item.index, which)}
-                  onDraft={onDraft}
-                  onEditKey={onEditKey}
-                  editorRef={editorRef}
-```
-
-  with
-
-```tsx
+      className="h-full min-h-0 overflow-y-auto rounded-lg border border-border bg-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      data-testid="cue-list"
+    >
+      <div role="none" className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+        <div role="none" className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${items[0]?.start ?? 0}px)` }}>
+          {items.map((item) => {
+            const row = rows[item.index];
+            return (
+              <div role="none" key={item.key} data-index={item.index} ref={virtualizer.measureElement}>
+                <CueRow
+                  row={row}
                   track={track}
                   current={item.index === current}
                   selected={item.index === selected}
                   inRange={range !== null && range[0] <= item.index && item.index <= range[1]}
                   cell={cell}
+                  trId={trId}
                   editing={editing?.id === row.id ? editing : null}
                   word={word}
                   words={words}
                   total={rows.length}
-                  onPick={(which, extend) => onPick(item.index, which, extend)}
+                  onPick={(which, extend, id) => onPick(item.index, which, extend, id)}
                   onDraft={onDraft}
                   onEditKey={onEditKey}
                   editorRef={editorRef}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
 ```
+
+  `frontend/src/components/CueRow.test.ts` (Task 15's): `CueRow` now needs `inRange`, so in `props`
+  replace `selected: true, cell: "source" as const,` with `selected: true, inRange: false, cell:
+  "source" as const,`.
 
   `frontend/src/components/Editor.tsx`, in full:
 
 ```tsx
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
+import { canonicalOffset, indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
 import { newCueIds, shownIds } from "@/lib/ids";
-import { type Action, type KeyLike, actionFor } from "@/lib/keys";
+import { type Action, BIG_NUDGE_MS, type KeyLike, NUDGE_MS, actionFor } from "@/lib/keys";
 import { captionLines, type Showing } from "@/lib/overlay";
 import { selectedIds, selectionRange } from "@/lib/retranslate";
 import type { Busy, EditOp, EpisodeView, Progress } from "@/types";
 
+import { BusyNote } from "./BusyNote";
 import { ConflictPicker } from "./ConflictPicker";
 import { type Cell, type Editing } from "./CueRow";
 import { CueList } from "./CueList";
@@ -30768,6 +30833,7 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
   const [sel, setSel] = useState<{ index: number; id: string | null }>({ index: -1, id: null });
   const [anchor, setAnchor] = useState<string | null>(null); // where a Shift selection started
   const [cell, setCell] = useState<Cell>("source");
+  const [trId, setTrId] = useState<string | null>(null); // the chosen translation cue of the row
   const [editing, setEditing] = useState<Editing | null>(null);
   const [finding, setFinding] = useState(false);
   const conflicted = episode.tracks.filter((t) => t.in_conflict);
@@ -30776,12 +30842,14 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
   const list = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
   const pending = useRef<string | null>(null); // an inserted cue's id, to select and edit
+  const editingNow = useRef<Editing | null>(null); // `editing`, for effects that must not re-run
+  editingNow.current = editing;
 
   const rows = episode.rows;
   const shownTrack = track && episode.tracks.some((t) => t.key === track) ? track : null;
   const trCues = useMemo(() => trackCues(rows, shownTrack), [rows, shownTrack]);
   const selected = sel.index;
-  const row = selected >= 0 ? rows[selected] : undefined;
+  const row = selected >= 0 && selected < rows.length ? rows[selected] : undefined;
   const range = selectionRange(rows, selected, anchor);
 
   // The rows change with every edit: the selection follows its cue, else stays at its place (a
@@ -30789,12 +30857,17 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
   useEffect(() => {
     if (pending.current) {
       const at = rows.findIndex((r) => r.id === pending.current);
-      pending.current = null;
-      if (at >= 0) {
-        setSel({ index: at, id: rows[at].id });
-        setCell("source");
-        setEditing({ id: rows[at].id, cell: "source", trId: null, text: rows[at].text });
-        return;
+      if (at >= 0) { // (until it shows: a draft's own edit can come back first)
+        pending.current = null;
+        // Only when no box is open: an insert answered late (while the sound is made, minutes)
+        // must not replace a draft opened since (the re-review's R-1).
+        if (!editingNow.current) {
+          setSel({ index: at, id: rows[at].id });
+          setCell("source");
+          setTrId(null);
+          setEditing({ id: rows[at].id, cell: "source", trId: null, track: null, text: rows[at].text });
+          return;
+        }
       }
     }
     setSel((s) => {
@@ -30827,39 +30900,59 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
     setTrAt(indexAt(trCues, ms));
   }, [loop, rows, trCues, episode.words]);
 
-  // New rows (an edit, a Save, a pick): look again at what plays now, even while paused.
+  // The rows or the translation's cues changed (an edit, undo or redo): current, word and trAt
+  // are indexes into them, so they are found again from the playhead. Until this runs, the render
+  // below reads them safely (the Spec review's S-1: a delete once blanked the page). Also after a Save or a pick.
+  const seen = useRef({ rows, trCues });
   useEffect(() => {
-    if (media.current) onTime(media.current.currentTime * 1000);
-  }, [onTime]);
+    if (seen.current.rows === rows && seen.current.trCues === trCues) return;
+    seen.current = { rows, trCues };
+    onTime(Math.round((media.current?.currentTime ?? 0) * 1000));
+  }, [rows, trCues, onTime]);
 
   const playhead = () => Math.round((media.current?.currentTime ?? 0) * 1000);
   const seekTo = (ms: number) => {
     if (media.current) media.current.currentTime = ms / 1000;
   };
-  const select = (index: number, which: Cell = cell, extend = false) => {
+  const select = (index: number, which: Cell = cell, chosen: string | null = null, extend = false) => {
     if (index < 0 || index >= rows.length) return;
     setAnchor(extend ? (anchor ?? sel.id) : null);
+    // Moving off the cell being edited commits its draft: Esc is the only way out that discards.
+    if (editing && !(rows[index].id === editing.id && which === editing.cell && (chosen ?? editing.trId) === editing.trId)) {
+      commit();
+      setEditing(null);
+    }
     setSel({ index, id: rows[index].id });
     setCell(which);
+    setTrId(chosen);
     seekTo(rows[index].start_ms + 1);
   };
   const focusList = () => list.current?.focus();
 
   const startEditing = (which: Cell) => {
     if (!row) return;
-    if (which === "source") {
-      setEditing({ id: row.id, cell: "source", trId: null, text: row.text });
-      return;
+    const open = which === "source" ? { cell: which, trId: null as string | null }
+      : shownTrack ? { cell: which, trId: row.tr[shownTrack]?.cues.find((c) => c.id === trId)?.id ?? row.tr[shownTrack]?.cues[0]?.id ?? null } : null;
+    if (!open || (which === "translation" && !open.trId)) return;
+    if (editing) {
+      if (editing.id === row.id && editing.cell === open.cell && editing.trId === open.trId) {
+        editor.current?.focus(); // already open: its draft stays
+        return;
+      }
+      commit(); // another cell: the draft is not thrown away
     }
-    const tr = shownTrack ? row.tr[shownTrack]?.cues[0] : undefined;
-    if (tr) setEditing({ id: row.id, cell: "translation", trId: tr.id, text: tr.text });
+    const text = which === "source" ? row.text : row.tr[shownTrack ?? ""]?.cues.find((c) => c.id === open.trId)?.text ?? "";
+    setEditing({ id: row.id, cell: which, trId: open.trId, track: which === "source" ? null : shownTrack, text });
   };
+  // The cue being edited, which is not always the selected one.
+  const editedRow = () => (editing ? rows.find((r) => r.id === editing.id) : undefined);
   const commit = (): boolean => {
-    if (!editing || !row) return false;
-    const before = editing.cell === "source" ? row.text : row.tr[shownTrack ?? ""]?.cues.find((c) => c.id === editing.trId)?.text;
+    const target = editedRow();
+    if (!editing || !target) return false;
+    const before = editing.cell === "source" ? target.text : target.tr[editing.track ?? ""]?.cues.find((c) => c.id === editing.trId)?.text;
     if (editing.text === before) return false;
     if (editing.cell === "source") requests.edit({ op: "set_text", cue: editing.id, text: editing.text });
-    else if (shownTrack && editing.trId) requests.edit({ op: "set_translation_text", track: shownTrack, cue: editing.trId, text: editing.text });
+    else if (editing.track && editing.trId) requests.edit({ op: "set_translation_text", track: editing.track, cue: editing.trId, text: editing.text });
     return true;
   };
   const stopEditing = () => {
@@ -30868,29 +30961,36 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
   };
   // Split at the caret in edit mode (committing the text first), else at the space nearest the
   // playhead's share of the cue; at the playhead when it is inside the cue, else at the caret's
-  // share of the cue's time.
+  // share of the cue's time. Always the cue being edited, and counted as the server counts.
   const split = () => {
-    if (!row) return;
+    const target = editedRow() ?? row;
+    if (!target) return;
     const ph = playhead();
-    const inside = row.start_ms < ph && ph < row.end_ms;
-    let text = row.text;
+    const inside = target.start_ms < ph && ph < target.end_ms;
+    let length = Array.from(target.text).length;
     let at: number;
     if (editing?.cell === "source") {
+      const caret = editor.current?.selectionStart ?? Math.floor(editing.text.length / 2);
+      at = canonicalOffset(editing.text, caret);
+      length = canonicalOffset(editing.text, editing.text.length);
       commit();
-      text = editing.text;
-      at = editor.current?.selectionStart ?? Math.floor(text.length / 2);
       stopEditing();
     } else {
-      at = splitPoint(text, inside ? (ph - row.start_ms) / (row.end_ms - row.start_ms) : 0.5);
+      if (editing) {
+        commit();
+        stopEditing();
+      }
+      at = splitPoint(target.text, inside ? (ph - target.start_ms) / (target.end_ms - target.start_ms) : 0.5);
     }
-    const share = text.length ? at / text.length : 0.5;
+    const share = length ? at / length : 0.5;
     const at_ms = inside ? ph
-      : Math.min(row.end_ms - 1, Math.max(row.start_ms + 1, Math.round(row.start_ms + (row.end_ms - row.start_ms) * share)));
+      : Math.min(target.end_ms - 1, Math.max(target.start_ms + 1, Math.round(target.start_ms + (target.end_ms - target.start_ms) * share)));
     const [a, b] = newCueIds(2, shownIds(rows));
-    requests.edit({ op: "split", cue: row.id, at_char: at, at_ms, ids: [a, b] });
+    requests.edit({ op: "split", cue: target.id, at_char: at, at_ms, ids: [a, b] });
   };
   const merge = () => {
-    if (!row) return;
+    const target = editedRow() ?? row;
+    if (!target) return;
     if (editing) {
       commit();
       stopEditing();
@@ -30898,9 +30998,13 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
     // the merged cue's id, and one for each translation track, in case its two parts' cues join
     const tracks = episode.tracks.filter((t) => t.role !== "source").map((t) => t.key);
     const [id, ...joined] = newCueIds(1 + tracks.length, shownIds(rows));
-    requests.edit({ op: "merge_next", cue: row.id, id, joined: Object.fromEntries(tracks.map((k, i) => [k, joined[i]])) });
+    requests.edit({ op: "merge_next", cue: target.id, id, joined: Object.fromEntries(tracks.map((k, i) => [k, joined[i]])) });
   };
   const insert = () => {
+    if (editing) {
+      commit(); // a draft is committed, never replaced by the new cue's box
+      setEditing(null);
+    }
     const ph = playhead();
     let start = ph;
     if (indexAt(rows, ph) >= 0 && row) start = row.end_ms;
@@ -30911,6 +31015,23 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
     requests.edit({ op: "insert", start_ms: start, end_ms: end, text: "…", id });
   };
 
+  // ←/→ choose the source or the translation cell; on a translation cell holding several cues,
+  // → moves to the next one and ← back to the one before (the Spec review's S-8).
+  const chooseCell = (which: Cell) => {
+    const cues = shownTrack && row ? row.tr[shownTrack]?.cues ?? [] : [];
+    if (which === "translation" && !shownTrack) return;
+    if (cell === "translation" && cues.length > 1) {
+      const at = Math.max(0, cues.findIndex((c) => c.id === (trId ?? cues[0].id)));
+      const to = at + (which === "translation" ? 1 : -1);
+      if (to >= 0 && to < cues.length) {
+        setTrId(cues[to].id);
+        return;
+      }
+      if (which === "translation") return;
+    }
+    setCell(which);
+    setTrId(null);
+  };
   const act = (a: Action) => {
     const m = media.current;
     switch (a.kind) {
@@ -30920,8 +31041,8 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
       case "play": if (m) void m.play().catch(() => undefined); return;
       case "previous": select(Math.max(0, selected - 1)); return;
       case "next": select(Math.min(rows.length - 1, selected + 1)); return;
-      case "extend": select(Math.min(rows.length - 1, Math.max(0, selected + a.by)), cell, true); return;
-      case "cell": if (a.cell === "source" || shownTrack) setCell(a.cell); return;
+      case "extend": select(Math.min(rows.length - 1, Math.max(0, selected + a.by)), cell, null, true); return;
+      case "cell": chooseCell(a.cell); return;
       case "set-start": if (row) requests.edit({ op: "set_times", cue: row.id, start_ms: playhead() }); return;
       case "set-end": if (row) requests.edit({ op: "set_times", cue: row.id, end_ms: playhead() }); return;
       case "nudge": if (row) requests.edit({ op: "nudge", cue: row.id, delta_ms: a.delta_ms, edge: "both" }); return;
@@ -30961,7 +31082,7 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
     if (media.current) media.current.playbackRate = value;
   };
 
-  // The indexes can be a render behind the rows (an edit, or a track gone into conflict).
+  // (current and trAt can name a cue an edit has just removed, until the effect above runs) Also a track gone into conflict.
   const lines = captionLines(showing, rows[current]?.text ?? null, trCues[trAt]?.text ?? null);
   const stale = translations.filter((t) => t.all_stale);
   const noRow = !row;
@@ -30996,6 +31117,7 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
             ))}
           </ul>
         )}
+        <BusyNote busy={busy} />
       </header>
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]">
         <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
@@ -31048,10 +31170,14 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
           )}
           <div role="toolbar" aria-label="Edit the selected cue" className="flex flex-wrap gap-1" data-testid="edit-bar">
             {tool("Edit", "Enter", () => startEditing(cell), "tool-edit")}
+            {editing && tool("Commit", "Meta+Enter", () => act({ kind: "commit" }), "tool-commit", false)}
+            {editing && tool("Cancel", "Escape", () => act({ kind: "cancel" }), "tool-cancel", false)}
             {tool("Start to playhead", "[", () => act({ kind: "set-start" }), "tool-start")}
             {tool("End to playhead", "]", () => act({ kind: "set-end" }), "tool-end")}
-            {tool("−100 ms", "Alt+ArrowLeft", () => act({ kind: "nudge", delta_ms: -100 }), "tool-earlier")}
-            {tool("+100 ms", "Alt+ArrowRight", () => act({ kind: "nudge", delta_ms: 100 }), "tool-later")}
+            {tool("−500 ms", "Alt+Shift+ArrowLeft", () => act({ kind: "nudge", delta_ms: -BIG_NUDGE_MS }), "tool-earlier-500")}
+            {tool("−100 ms", "Alt+ArrowLeft", () => act({ kind: "nudge", delta_ms: -NUDGE_MS }), "tool-earlier")}
+            {tool("+100 ms", "Alt+ArrowRight", () => act({ kind: "nudge", delta_ms: NUDGE_MS }), "tool-later")}
+            {tool("+500 ms", "Alt+Shift+ArrowRight", () => act({ kind: "nudge", delta_ms: BIG_NUDGE_MS }), "tool-later-500")}
             {tool("Split", "Meta+Shift+S", split, "tool-split")}
             {tool("Merge with next", "Meta+M", merge, "tool-merge", noRow || selected >= rows.length - 1)}
             {tool("Insert", "", insert, "tool-insert", false)}
@@ -31071,9 +31197,10 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
               selected={selected}
               range={range}
               cell={cell}
+              trId={trId}
               editing={editing}
               follow={follow}
-              onPick={(index, which, extend) => select(index, which, extend)}
+              onPick={(index, which, extend, id) => select(index, which, id ?? null, extend)}
               onKeyDown={onListKey}
               onDraft={(text) => setEditing((e) => (e ? { ...e, text } : e))}
               onEditKey={onEditKey}
@@ -31408,8 +31535,8 @@ Co-Authored-By: <the model's own line>
 ```
 
   `git add frontend/src/App.tsx frontend/src/components/CueList.tsx
-  frontend/src/components/CueRow.tsx frontend/src/components/Editor.tsx
-  frontend/src/components/Retranslate.tsx frontend/src/lib/draft.test.ts frontend/src/lib/draft.ts
+  frontend/src/components/CueRow.tsx frontend/src/components/CueRow.test.ts
+  frontend/src/components/Editor.tsx frontend/src/components/Retranslate.tsx frontend/src/lib/draft.test.ts frontend/src/lib/draft.ts
   frontend/src/lib/keys.test.ts frontend/src/lib/keys.ts frontend/src/lib/retranslate.test.ts
   frontend/src/lib/retranslate.ts frontend/src/types.ts tests/e2e/test_retranslate.py`, `git
   commit -F .git/COMMIT_MSG`, then `git log -1 --format='%(trailers)'` shows `Plan:`.
@@ -32030,7 +32157,11 @@ Co-Authored-By: <the model's own line>
   reviewers' time: that `allow_cloud` comes only from the request, true or false, and the box
   unticks after every request (§7.2); that a late `progress` never shows after its retranslation
   ended, and `busy` always goes back to null; that an edit sent during a retranslation lands on the
-  retranslated episode, one undo step after it; that "Retranslate stale" never replaces an edited
+  retranslated episode, one undo step after it, and that the page says something while they wait
+  (`Retranslate`'s status line says `Retranslating…` once `busy` is `"retranslating"`; `BusyNote`
+  speaks only for the playback audio, so a person editing during a retranslation is not told
+  that the edit waits: say so there, or list it, as Task 15's S-7 did for the sound; its `ids`
+  reach the server as a list through `as_json`, checked by `isinstance(ids, list)`); that "Retranslate stale" never replaces an edited
   translation and named cues do (Decision 8), in the demo and with a real route; that
   `retranslate_result` follows every request naming the open episode, so the draft's marker is
   dropped exactly when nothing changed; that `replayable` follows the server's undo history (a new
@@ -40437,3 +40568,17 @@ fi
 | Task 14 (round 14e) | Minor | `tests/test_web_server.py` | Implementer's note: removing `end()`'s queue clear alone isn't caught, because `_drain`'s loop also stops on `_ended`; the test fails only with both removed | open |
 | Task 14 (round 14e) | Minor | `tests/e2e/test_editor_view.py` | Implementer's note: the "making a copy of its sound" message for an AC-3 file isn't exercised in a browser (the server test covers the early publish) | open |
 | Task 14 (round 14e) | Minor | `tests/` | Couldn't verify: ubuntu-24.04 and windows-2022 for the new tests, until CI runs; real Pyodide (`test_pages_imports` proves import time only); `canPlayType` and the track a `<video>` picks in Safari or Firefox; AC-3 on a:0 with a playable a:1 in Chromium; a real screen reader; the under-a-second assertion on a slower runner, once Task 21 adds CI's e2e job. An uncaptured failure of `tests/test_backend_retranslate.py` with `tests/test_views.py` during the round did not come back in 8 reruns | open |
+| Task 15 (review) | Minor | `frontend/src/components/Editor.tsx`, `FindReplace.tsx` | Spec S-13: closing Find with the keyboard drops focus to the page; `onClose` should focus `tool-find` | open |
+| Task 15 (review) | Minor | `frontend/src/components/CueList.tsx` | Spec S-14: scrolling the edited row away takes the box out of the page and focus falls to `<body>`; scrolled back, the box and its draft are there, not focused; keep the edited row in the virtual range (`rangeExtractor`) or refocus when it mounts | open |
+| Task 15 (review) | Minor | `frontend/src/components/Editor.tsx`, `FindReplace.tsx` | Spec S-15 and its family: a commit the server refuses (a draft over 2,000 characters, an emptied box) loses the draft and is followed by its split (`maxLength={2000}` on the box closes it); a Replace all with Find equal to Replace makes an undo step and marks matching translations `edited` (disable it when `find === replace`) | open |
+| Task 15 (review) | Minor | `frontend/src/types.ts` | Spec S-16, for Dan: `detach` has no way to be sent from the editor (spec §13.4, §13.5); a control, or a row in the spec's Later table, which changes the spec | open |
+| Task 15 (review) | Minor | `src/vid2sub/web/server.py` | Spec S-7's other half: `_open` holds the tab's queue through `media_for`, so edits wait minutes behind the playback audio (the editor now says so, `BusyNote`); make the media outside the queue, which reaches `end` and the revoke paths | open |
+| Task 15 (review) | Minor | `src/vid2sub/web/server.py`, `frontend/src/components/` | Standards M1 to M9: `_edit`, `_undo` and `_redo` run on the event loop, not `runtime.blocking` (documented); `FindReplace`'s `button` and `field` duplicate `control`; snake_case `at_ms` in `split`; `tool(...)`'s bare boolean and empty-string arguments; `EpisodeEditor` is about 250 lines; the editing-focus effect's deps need a comment; the `./CueRow` import precedes `./CueList`; `as_json` doesn't recurse into lists; `d472c11`'s subject is about 170 characters | open |
+| Task 15 (re-review) | Minor | `frontend/src/components/CueRow.tsx` | R-4 and R-5: changing the track select with a box open hides the box on a real episode (a translation's cue ids differ per track; `tests/episodes.py` gives every target the same ids, so the test at `test_a_commit_goes_to_the_track_the_box_was_opened_on` runs a path real episodes never take), and a stale `trId` leaves a multi-line cell unmarked | open |
+| Task 15 (re-review) | Minor | `frontend/src/components/Editor.tsx` | R-6: Undo (and Delete on the edited cue) drops a draft on a cue the undo removes, with no notice; 2235b0d's subject's "never dropped" is too strong | open |
+| Task 15 (re-review) | Minor | `frontend/src/components/CueRow.tsx` | R-7: a drag-selection in a translation box ending on its own row sends the click to the row, which commits and closes the box (a source box is unaffected) | open |
+| Task 15 (re-review) | Minor | `frontend/src/lib/cues.ts` | R-8: `canonicalOffset`'s `trim` isn't Python's `strip` (JS strips U+FEFF and not U+0085 or U+001C to U+001F; Python the reverse): a pasted draft with such a character can split one character off | open |
+| Task 15 (re-review) | Minor | `tests/` | R-9: thin guards: `startEditing` not committing another cell, merge not committing and the same-cell guard survive all tests; the redo in the no-op test has nothing to redo; the merge test's `[data-flag]` check already held before the merge | open |
+| Task 15 (re-review) | Minor | `frontend/src/` | There is no error boundary, so any later render error still blanks the page (found by the re-review; Task 16's crash draft should allow for it) | open |
+| Task 14 (close) | Minor | `src/vid2sub/web/` (Phase 4) | Phase 4's `folder.opened` keeps `playable_audio=True`, so in Pages a file whose chosen track isn't its first still plays its first track, and Q&A item 48's rule has no playback audio to fall back on there; Phase 4's start decides | open |
+| Task 15 (review) | Minor | `tests/` | Couldn't verify: a real input method (macOS Japanese or Pinyin, Windows IMEs), Safari and Firefox (S33 is Chromium through CDP; whether Safari fires implicit form submission on an IME's Enter), ubuntu-24.04 and windows-2022 for the new tests until CI runs, and a real screen reader (a `textarea` inside `role="option"`, whose children ARIA calls presentational) | open |

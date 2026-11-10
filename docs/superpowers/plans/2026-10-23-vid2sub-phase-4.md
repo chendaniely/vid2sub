@@ -6865,20 +6865,23 @@ diff --git a/frontend/src/components/Editor.tsx b/frontend/src/components/Editor
 index fcbba86..4be4e0f 100644
 --- a/frontend/src/components/Editor.tsx
 +++ b/frontend/src/components/Editor.tsx
-@@ -3,13 +3,15 @@ import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, us
- import { indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
- import { type Action, type KeyLike, actionFor } from "@/lib/keys";
+@@ -3,16 +3,18 @@ import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, us
+ import { canonicalOffset, indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
+ import { newCueIds, shownIds } from "@/lib/ids";
+ import { type Action, BIG_NUDGE_MS, type KeyLike, NUDGE_MS, actionFor } from "@/lib/keys";
  import { captionLines, type Showing } from "@/lib/overlay";
 +import type { Folder } from "@/lib/folder";
  import { selectedIds, selectionRange } from "@/lib/retranslate";
 -import type { Busy, EditOp, EpisodeView, PreviewProgress, Progress } from "@/types";
 +import type { Busy, EditOp, EpisodeView, FoundItem, PreviewProgress, Progress } from "@/types";
  
+ import { BusyNote } from "./BusyNote";
  import { ConflictPicker } from "./ConflictPicker";
  import { type Cell, type Editing } from "./CueRow";
  import { CueList } from "./CueList";
  import { FindReplace } from "./FindReplace";
 +import { FolderPicker } from "./FolderPicker";
+ import { HeardBadge } from "./HeardBadge";
  import { Player } from "./Player";
  import { Retranslate } from "./Retranslate";
  import { SaveBar } from "./SaveBar";
