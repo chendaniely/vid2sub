@@ -1160,7 +1160,8 @@ def test_each_edit_undo_and_redo_is_answered_with_whether_it_was_made(media_clie
     with tab(media_client) as t:
         ep = opened_in(t, video)
         ask, rows = {"episode": ep["id"]}, ep["rows"]
-        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": rows[0]["id"], "text": "やあ"}})
+        t.set(edit={**ask, "n": 1,
+                    "op": {"op": "set_text", "cue": rows[0]["id"], "text": "やあ"}})
         t.set(edit={**ask, "n": 2, "op": {"op": "merge_next", "cue": rows[-1]["id"],
                                           "id": "cd0000001", "joined": {}}})  # the rules refuse it
         t.set(undo={**ask, "n": 3})
@@ -1223,7 +1224,7 @@ def test_a_refused_save_or_pick_leaves_nothing_busy(media_client, tmp_path, monk
         t.until(lambda t: len(t.notices()) == 2)
         t.until(lambda t: t.value("busy") is None)
         assert {"saving", "picking"} <= set(busy_seen(t))
-        assert [n["text"] for n in t.notices()][0] == "nothing was saved: the disk said no"
+        assert t.notices()[0]["text"] == "nothing was saved: the disk said no"
 
 
 @pytest.mark.media
@@ -1258,7 +1259,8 @@ def test_an_edit_sent_during_a_slow_save_waits_for_it_and_lands_on_the_saved_epi
         t.until(lambda t: len(applied(t)) == 2)
         final = latest(t, lambda e: e["rows"][1]["text"] == "元気？")
         assert final["dirty"] and final["rows"][0]["text"] == "おはよう！"
-        assert index_of(t, lambda m: custom_id(m) == "save_result") < index_of(
-            t, lambda m: custom_id(m) == "applied" and m["custom"]["shinyReactMessage"]["data"][
-                "n"] == 3)
-        assert "元気？" not in (video.with_name("Show - S01E01.ja.srt")).read_text(encoding="utf-8")
+        third = index_of(t, lambda m: custom_id(m) == "applied"
+                         and m["custom"]["shinyReactMessage"]["data"]["n"] == 3)
+        assert index_of(t, lambda m: custom_id(m) == "save_result") < third
+        srt = video.with_name("Show - S01E01.ja.srt")
+        assert "元気？" not in srt.read_text(encoding="utf-8")  # the Save wrote without it

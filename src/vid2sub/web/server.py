@@ -15,25 +15,26 @@ stays off: nothing here calls `session.allow_reconnect`, so a tab whose engine r
 the new link instead of retrying (Review Focus 5).
 
 The editor (spec §20): each tab holds at most one open episode, in an `Editor`. Every call that
-changes it (open, edits, undo, redo, Save and picks) runs one at a time, in the order the tab sent
-them, in a task of the tab's own that holds no reactive lock while it waits on the disk or ffmpeg,
-so a slow open never freezes another tab and no edit is lost to a Save running at the same time. The
-backend returns a new frozen `Episode` each time, which the editor sets as the reactive value the
-`episode` output reads. The player gets the video by a media token, or the playback audio when the
-browser can't play the video's audio (Decision 2) or, as the page reports from canPlayType and the
-video's own errors, the video itself (`playback`, spec §8.2, §8.8); its tokens are revoked with the
-episode when the tab opens another or closes: the mount passes no lifespan events on, so that
-happens in `session.on_ended`. Requests come from the browser, so they are checked before use and
-never echoed (§6.3, §6.8). Edits go through the backend's `apply`, so the rules exist once (§20): an
-edit is checked at the door by `ops.parse_op`, and it, undo and redo run on the event loop (about
-0.02 s for 2,000 cues, Task 6); a request naming an episode the tab has since moved on from (sent
-before an open finished) is dropped. Each edit, undo and redo is answered with `applied`, so the
-tab's crash draft keeps only what was done and a Restore knows which steps were refused (Decision
-31). Save (§14.5) and a pick of a conflicted track's version (§14.4) block on the disk, so they run
-through `runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each
-sends `save_result`: what was written, what was left alone, which tracks are in conflict, and the
-notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save sees
-(Review Focus 4, S32).
+changes it (open, edits, undo, redo, Save and picks) runs one at a time, in the order the tab
+sent them, in a task of the tab's own that holds no reactive lock while it waits on the disk or
+ffmpeg, so a slow open never freezes another tab and no edit is lost to a Save running at the
+same time. The backend returns a new frozen `Episode` each time, which the editor sets as the
+reactive value the `episode` output reads. The player gets the video by a media token, or the
+playback audio when the browser can't play the video's audio (Decision 2) or, as the page
+reports from canPlayType and the video's own errors, the video itself (`playback`, spec §8.2,
+§8.8); its tokens are revoked with the episode when the tab opens another or closes: the mount
+passes no lifespan events on, so that happens in `session.on_ended`. Requests come from the
+browser, so they are checked before use and never echoed (§6.3, §6.8). Edits go through the
+backend's `apply`, so the rules exist once (§20): an edit is checked at the door by
+`ops.parse_op`, and it, undo and redo run on the event loop (about 0.02 s for 2,000 cues, Task
+6); a request naming an episode the tab has since moved on from (sent before an open finished)
+is dropped. Each edit, undo and redo is answered with `applied`, so the tab's crash draft keeps
+only what was done and a Restore knows which steps were refused (Decision 31). Save (§14.5) and
+a pick of a conflicted track's version (§14.4) block on the disk, so they run through
+`runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each
+sends `save_result`: what was written, what was left alone, which tracks are in conflict, and
+the notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save
+sees (Review Focus 4, S32).
 
 The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
 for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
