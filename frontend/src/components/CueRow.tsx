@@ -79,7 +79,7 @@ export function CueRow({ row, track, current, selected, cell, trId, editing, wor
         {tr && (
           <span onClick={(e) => { e.stopPropagation(); onPick("translation"); }} data-selected={marked("translation") && tr.cues.length <= 1 || undefined} className={cn("flex flex-col rounded-sm whitespace-pre-line text-muted-foreground", marked("translation") && tr.cues.length <= 1 && "outline-2 outline-ring")} data-testid="cue-translation">
             {tr.cues.length === 0 && "—"}
-            {tr.cues.map((c, k) => {
+            {tr.cues.map((c) => {
               const chosen = marked("translation") && tr.cues.length > 1 && (trId ?? tr.cues[0].id) === c.id;
               return editing?.cell === "translation" && editing.trId === c.id ? (
                 <span key={c.id}>{box("translation")}</span>

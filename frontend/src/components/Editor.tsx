@@ -90,6 +90,8 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
   const list = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
   const pending = useRef<string | null>(null); // an inserted cue's id, to select and edit
+  const editingNow = useRef<Editing | null>(null); // `editing`, for effects that must not re-run
+  editingNow.current = editing;
 
   const rows = episode.rows;
   const shownTrack = track && episode.tracks.some((t) => t.key === track) ? track : null;
@@ -104,11 +106,15 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
       const at = rows.findIndex((r) => r.id === pending.current);
       if (at >= 0) { // (until it shows: a draft's own edit can come back first)
         pending.current = null;
-        setSel({ index: at, id: rows[at].id });
-        setCell("source");
-        setTrId(null);
-        setEditing({ id: rows[at].id, cell: "source", trId: null, track: null, text: rows[at].text });
-        return;
+        // Only when no box is open: an insert answered late (while the sound is made, minutes)
+        // must not replace a draft opened since (the re-review's R-1).
+        if (!editingNow.current) {
+          setSel({ index: at, id: rows[at].id });
+          setCell("source");
+          setTrId(null);
+          setEditing({ id: rows[at].id, cell: "source", trId: null, track: null, text: rows[at].text });
+          return;
+        }
       }
     }
     setSel((s) => {

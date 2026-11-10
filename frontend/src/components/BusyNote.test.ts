@@ -11,7 +11,9 @@ describe("what an edit made while the sound is being made does (S-7)", () => {
     expect(html).toContain('role="status"');
   });
 
-  it("says nothing when nothing is being made", () => {
+  it("says nothing when nothing is being made, or while another episode opens", () => {
     expect(renderToStaticMarkup(createElement(BusyNote, { busy: null }))).toBe("");
+    // an edit made then names the old episode and is dropped: the note would say the reverse
+    expect(renderToStaticMarkup(createElement(BusyNote, { busy: "opening" }))).toBe("");
   });
 });

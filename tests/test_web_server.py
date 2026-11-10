@@ -966,7 +966,8 @@ def test_an_edit_holding_a_list_is_read_as_json_has_it_though_shiny_makes_lists_
     with tab(media_client) as t:
         ep = opened_in(t, video)
         t.set(edit={"episode": ep["id"], "n": 1, "op": {
-            "op": "replace_all", "find": "元気", "replace": "げんき", "tracks": ["source", "en"]}})
+            "op": "replace_all", "find": "元気", "replace": "げんき",
+            "tracks": ["source", "en"]}})
         done = latest(t, lambda e: e["rows"][1]["text"] == "げんきですか")
         assert done["rows"][2]["text"] == "はい、げんきです" and t.notices() == []
 

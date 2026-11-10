@@ -5,7 +5,9 @@ forth, find and replace works across tracks with a glossary term held for Save, 
 input method's candidate with Enter fires nothing, everything is done by keyboard with focus
 visible, and an edit to a two-hour episode comes back in under a second. Run with `make e2e`."""
 
+import os
 import re
+import shutil
 import time
 from pathlib import Path
 
@@ -136,7 +138,8 @@ def test_find_and_replace_works_across_tracks_and_a_glossary_term_waits_for_save
     page.get_by_test_id("glossary-term").fill("ケネディ")
     page.get_by_test_id("glossary-translation").fill("Kennedy")
     page.get_by_test_id("glossary-add").click()
-    expect(page.get_by_test_id("glossary-adds")).to_have_text("ケネディ → Kennedy (written at Save)")
+    expect(page.get_by_test_id("glossary-adds")).to_have_text(
+        "ケネディ → Kennedy (written at Save)")
     # A term waiting for Save makes every cue of the translation stale (Decision 9).
     expect(page.get_by_test_id("episode-notes")).to_contain_text("Every Japanese cue is stale")
     page.get_by_test_id("tool-undo").click()  # the glossary add is an undo step too
@@ -230,7 +233,8 @@ def test_the_editor_works_by_keyboard_alone_with_focus_always_visible(page, serv
             && getComputedStyle(document.activeElement).outlineStyle !== 'none'"""), wanted
     box.focus()
     page.keyboard.press("ControlOrMeta+Enter")
-    expect(rows.first.get_by_test_id("cue-translation")).to_have_text("ここに来られてうれしいです。")
+    expect(rows.first.get_by_test_id("cue-translation")).to_have_text(
+        "ここに来られてうれしいです。")
     expect(rows.first.locator("[data-flag=edited]")).to_have_count(1)  # Decision 4
     page.keyboard.press("ArrowLeft")
     page.keyboard.press("Enter")
@@ -497,7 +501,8 @@ def test_a_second_translation_cue_in_a_row_can_be_chosen_and_edited(page, server
     # S-8: jfk.ja.srt edited outside, two lines inside the first cue's time
     copy = next(server.tmp.glob("vid2sub-demo-*/demo"))
     (copy / "jfk.ja.srt").write_text(
-        "1\n00:00:00,000 --> 00:00:01,500\n一行目\n\n2\n00:00:02,000 --> 00:00:03,500\n二行目\n\n"
+        "1\n00:00:00,000 --> 00:00:01,500\n一行目\n\n"
+        "2\n00:00:02,000 --> 00:00:03,500\n二行目\n\n"
         "3\n00:00:04,940 --> 00:00:09,276\n三行目\n\n", encoding="utf-8")
     page.get_by_test_id("open-path").fill(str(copy / "jfk.mp4"))
     page.get_by_test_id("open-button").click()
@@ -630,7 +635,8 @@ def test_find_and_replace_works_across_the_source_and_a_translation_track(page, 
     page.get_by_test_id("replace").fill("名誉")
     page.get_by_test_id("replace-all").click()
     expect(page.get_by_test_id("match-count")).to_have_text("0 matches")
-    expect(rows.first.get_by_test_id("cue-translation")).to_have_text("ここに来られて名誉です。")
+    expect(rows.first.get_by_test_id("cue-translation")).to_have_text(
+        "ここに来られて名誉です。")
     expect(rows.first.locator("[data-flag=edited]")).to_have_count(1)
     assert texts(page)[0] == f"{LINE_1}\n{LINE_2}"  # the source is untouched
 
@@ -646,3 +652,65 @@ def test_merging_two_rows_with_their_own_translations_joins_them_and_flags_the_j
     translation = merged.get_by_test_id("cue-translation")
     assert translation.inner_text().strip() not in ("", "—")
     assert merged.locator("[data-flag]").count() >= 1
+
+
+# ---- the re-review's direct fixes (R-1, R-3) ----------------------------------------------------
+
+
+@pytest.fixture
+def held_ffmpeg(tmp_path, monkeypatch):
+    """An `ffmpeg` ahead of the real one on PATH that waits while `hold` exists, so the playback
+    audio takes seconds, as it takes minutes for a long AC-3 episode. It must be a fixture listed
+    before `server`, which starts the engine with this PATH."""
+    real = shutil.which("ffmpeg")
+    assert real, "ffmpeg is needed"
+    bin_dir = tmp_path / "held-bin"
+    bin_dir.mkdir()
+    hold = tmp_path / "hold"
+    script = bin_dir / "ffmpeg"
+    script.write_text(f'#!/bin/sh\nwhile [ -e "{hold}" ]; do sleep 0.1; done\nexec "{real}" "$@"\n')
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return hold
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the held ffmpeg is a shell script")
+def test_an_insert_answered_late_does_not_replace_a_draft_opened_since(held_ffmpeg, page, server):
+    # R-1: the insert waits behind the playback audio; the person starts a draft meanwhile
+    copy = next(server.tmp.glob("vid2sub-demo-*/demo"))
+    video = make_episode(Path(copy) / "ac3", audio_codec="ac3", n=4)
+    held_ffmpeg.write_text("hold")
+    page.get_by_test_id("open-path").fill(str(video))
+    page.get_by_test_id("open-button").click()
+    rows = page.get_by_test_id("cue-row")
+    expect(page.get_by_test_id("busy-note")).to_be_visible()
+    pick(rows, 3)  # no playhead yet: an insert goes after the selected cue
+    page.get_by_test_id("tool-insert").click()
+    pick(rows, 1)
+    page.keyboard.press("Enter")
+    box = page.get_by_test_id("cue-editor")
+    box.fill("a draft typed while waiting")
+    held_ffmpeg.unlink()  # the sound is made; the insert is answered
+    expect(rows).to_have_count(5)
+    expect(page.get_by_test_id("busy-note")).to_have_count(0)
+    expect(page.get_by_test_id("cue-editor")).to_have_value("a draft typed while waiting")
+    page.keyboard.press("ControlOrMeta+Enter")
+    assert "a draft typed while waiting" in texts(page)
+    assert "…" in texts(page)  # the inserted cue is there too
+
+
+def test_cancel_and_esc_never_send_a_changed_draft(page, server):
+    # R-3: "never sent" can only be seen after an answer would have come
+    rows = open_demo(page, server)
+    for how in ("button", "esc"):
+        pick(rows, 1)
+        page.keyboard.press("Enter")
+        page.get_by_test_id("cue-editor").fill("a draft that is dropped")
+        if how == "button":
+            page.get_by_test_id("tool-cancel").click()
+        else:
+            page.keyboard.press("Escape")
+        expect(page.get_by_test_id("cue-editor")).to_have_count(0)
+        page.wait_for_timeout(700)  # long enough for the server's answer to a sent edit
+        expect(page.get_by_test_id("tool-undo")).to_be_disabled()
+        expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion.")
