@@ -110,6 +110,15 @@ export default function App() {
   // "Retranslate stale", for the notice.
   const asking = useRef(new Map<number, { track: string; stale: boolean }>());
   const episodeId = episode?.id ?? null;
+  // The tracks with a retranslation sent whose result isn't back: from the click, not from when
+  // `busy` arrives (the request may wait in the queue behind a Save or the playback audio). The
+  // page opens no box on such a track and sends no second request (Task 17's Spec review, C-3,
+  // I-1). Another episode opened ends them: its results are for the old one.
+  const [pending, setPending] = useState<{ n: number; track: string }[]>([]);
+  useEffect(() => {
+    asking.current.clear();
+    setPending([]);
+  }, [episodeId]);
   const steps = useMemo(() => {
     const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
     // Sends one edit, undo or redo, and keeps it in the draft as sent; returns its request's count.
@@ -144,8 +153,10 @@ export default function App() {
         send(setResolve, a && { ...a, track, rendition });
       },
       retranslate: (track, ids, allowCloud) => {
+        if (asking.current.size > 0) return; // one at a time: its buttons are disabled too
         const a = ask();
         if (!a) return;
+        setPending((p) => [...p, { n: a.n, track }]);
         dropOffers();
         if (drafted.current) addStep(draftStorage(), drafted.current.key, { retranslate: true, n: a.n });
         asking.current.set(a.n, { track, stale: ids === null });
@@ -157,6 +168,7 @@ export default function App() {
     if (!episode || data.episode !== episode.id || data.n === null) return;
     const asked = asking.current.get(data.n);
     asking.current.delete(data.n);
+    setPending((p) => p.filter((r) => r.n !== data.n));
     if (!(data.ok && data.changed > 0) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
     if (!asked) return;
     const label = episode.tracks.find((t) => t.key === asked.track)?.label ?? asked.track;
@@ -284,6 +296,7 @@ export default function App() {
           episode={episode ?? null}
           busy={busy ?? null}
           progress={progress ?? null}
+          retranslating={pending.map((p) => p.track)}
           pathInput={capabilities?.path_input ?? false}
           generate={capabilities?.generate ?? false}
           onOpen={(path) => setOpen({ path, n: ++sent.current })}

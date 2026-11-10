@@ -44,10 +44,11 @@ export type Saving = {
 /** The editor (spec §20): the path box, then, once an episode is open, the player on the left
  * and the cue list on the right, with the edit bar, Retranslate (where the engine has models:
  * `generate`) and find and replace. */
-export function Editor({ episode, busy, progress, pathInput, generate, onOpen, onCantPlay, requests, saving }: {
+export function Editor({ episode, busy, progress, retranslating, pathInput, generate, onOpen, onCantPlay, requests, saving }: {
   episode: EpisodeView | null;
   busy: Busy;
   progress: Progress;
+  retranslating: string[]; // the tracks with a retranslation sent and not yet answered
   pathInput: boolean;
   generate: boolean;
   onOpen: (path: string) => void;
@@ -59,7 +60,7 @@ export function Editor({ episode, busy, progress, pathInput, generate, onOpen, o
     <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
       {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
       {episode ? (
-        <EpisodeEditor key={episode.id} episode={episode} busy={busy} progress={progress} generate={generate} requests={requests} saving={saving} onCantPlay={onCantPlay} />
+        <EpisodeEditor key={episode.id} episode={episode} busy={busy} progress={progress} retranslating={retranslating} generate={generate} requests={requests} saving={saving} onCantPlay={onCantPlay} />
       ) : (
         <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
       )}
@@ -88,10 +89,11 @@ function keyOf(e: KeyboardEvent): KeyLike {
   return { key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey };
 }
 
-function EpisodeEditor({ episode, busy, progress, generate, requests, saving, onCantPlay }: {
+function EpisodeEditor({ episode, busy, progress, retranslating, generate, requests, saving, onCantPlay }: {
   episode: EpisodeView;
   busy: Busy;
   progress: Progress;
+  retranslating: string[];
   generate: boolean;
   requests: Requests;
   saving: Saving;
@@ -208,6 +210,9 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
 
   const startEditing = (which: Cell) => {
     if (!row) return;
+    // A retranslation of this track replaces its lines: a box opened now would lose its text
+    // (the note above says why). Nothing opens, and focus stays where it was.
+    if (which === "translation" && shownTrack && retranslating.includes(shownTrack)) return;
     const open = which === "source" ? { cell: which, trId: null as string | null }
       : shownTrack ? { cell: which, trId: row.tr[shownTrack]?.cues.find((c) => c.id === trId)?.id ?? row.tr[shownTrack]?.cues[0]?.id ?? null } : null;
     if (!open || (which === "translation" && !open.trId)) return;
@@ -414,7 +419,7 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
             ))}
           </ul>
         )}
-        <BusyNote busy={busy} />
+        <BusyNote busy={busy} retranslating={retranslating.length ? (episode.tracks.find((t) => t.key === retranslating[0])?.label ?? retranslating[0]) : null} />
       </header>
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]">
         <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
@@ -462,6 +467,7 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
               selected={range ? range[1] - range[0] + 1 : 0}
               busy={busy}
               progress={progress}
+              pending={retranslating.length > 0}
               onSelected={(allowCloud) => { flushBox(); requests.retranslate(shownTrack, selectedIds(rows, range), allowCloud); }}
               onStale={(allowCloud) => { flushBox(); requests.retranslate(shownTrack, null, allowCloud); }}
             />

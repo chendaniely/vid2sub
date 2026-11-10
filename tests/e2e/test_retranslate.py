@@ -6,8 +6,13 @@ after each request; and a crashed tab's draft never replays a retranslation. Run
 `make e2e`."""
 
 import re
+import threading
+from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
+from episodes import make_episode
+from fakes import FakeServer, chat_responder
 from playwright.sync_api import expect
 
 from vid2sub.web.demo import JAPANESE, NO_TRANSLATION
@@ -244,3 +249,126 @@ def test_restore_after_editing_a_retranslations_new_cue_and_undoing_it_keeps_the
     expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
     expect(b.get_by_test_id("draft")).to_have_count(0)
     assert notices(b) == [] and second.errors == [] and second.violations() == []
+
+
+# ---- a retranslation held on a loopback model: the tab's queue while it runs (Task 17, 17d) ----
+
+
+@dataclass
+class Held:
+    server: object
+    video: Path
+    gate: threading.Event  # the model answers once this is set
+    fake: FakeServer
+
+
+@pytest.fixture
+def held(launch, tmp_path):
+    """A `vid2sub serve` with a translation model on a loopback fake that holds each chat answer
+    until `gate` is set, and an episode with two translation tracks (en and ko). Nothing leaves
+    this machine."""
+    gate = threading.Event()
+
+    def responder(req):
+        if req.path.endswith("/models"):
+            return 200, {"object": "list", "data": [{"id": "gemma", "object": "model"}]}, {}
+        assert gate.wait(60)
+        return chat_responder(req)
+
+    with FakeServer(responder=responder) as fake:
+        video = make_episode(tmp_path / "ep", targets=("en", "ko"), project=("ja", "en", "ko"))
+        toml = (f'[endpoints.spark]\nbase_url = "{fake.url}"\n\n[models.gemma]\n'
+                'catalog = "gemma-4-26b-a4b"\nendpoint = "spark"\nmodel = "gemma"\n'
+                'task = "translate"\nlocal = true\n')
+        server = launch(tmp_path / "server", toml=toml)
+        try:
+            yield Held(server, video, gate, fake)
+        finally:
+            gate.set()
+
+
+def open_held(open_page, held, *, before=None):
+    """The held server's episode, open; `before(page)` runs first (the page reloaded after it)."""
+    page = open_page(held.server).page
+    if before:
+        before(page)
+        page.reload()
+    page.get_by_test_id("open-path").fill(str(held.video))
+    page.get_by_test_id("open-button").click()
+    rows = page.get_by_test_id("cue-row")
+    expect(rows).to_have_count(3)
+    return page, rows
+
+
+def test_a_track_being_retranslated_opens_no_box_and_says_why_while_other_edits_wait(
+        open_page, held):
+    # Task 17's Spec review, C-3 (Dan's A, Q&A item 53) and I-2: an edit to a line the run
+    # replaces would be refused, and its text lost; the page opens no box on the track while the
+    # retranslation is pending or running, and a line says that other edits apply when it ends.
+    page, rows = open_held(open_page, held)
+    rows.nth(0).get_by_test_id("cue-text").click()
+    page.get_by_test_id("retranslate-selected").click()
+    note = page.get_by_test_id("retranslating-note")
+    expect(note).to_contain_text("Retranslating the English translation")
+    expect(note).to_contain_text("its lines can be edited when it finishes")
+    expect(note).to_contain_text("other edits apply then")
+    rows.nth(1).get_by_test_id("cue-translation").click()
+    page.keyboard.press("Enter")
+    page.get_by_test_id("tool-edit").click()
+    expect(page.get_by_test_id("cue-editor")).to_have_count(0)  # nothing opens, and...
+    expect(rows.nth(1).get_by_test_id("cue-translation")).to_have_text("How are you?")
+    # ...another track, and the source, are not locked: a source edit queues behind the run
+    rows.nth(2).get_by_test_id("cue-text").click()
+    page.keyboard.press("Enter")
+    page.get_by_test_id("cue-editor").fill("はい、元気です！")
+    page.keyboard.press("ControlOrMeta+Enter")
+    expect(page.get_by_test_id("cue-editor")).to_have_count(0)
+    expect(rows.nth(2).get_by_test_id("cue-text")).to_have_text("はい、元気です")  # not yet
+    held.gate.set()
+    expect(rows.nth(2).get_by_test_id("cue-text")).to_have_text("はい、元気です！")
+    expect(rows.nth(0).get_by_test_id("cue-translation")).to_have_text(re.compile(r"^EN ca"))
+    expect(note).to_have_count(0)  # the lock ended with the result
+    rows.nth(1).get_by_test_id("cue-translation").click()
+    page.keyboard.press("Enter")
+    expect(page.get_by_test_id("cue-editor")).to_have_count(1)
+
+
+def hide_retranslating(page) -> None:
+    """The page never hears `busy` is "retranslating": a request waiting behind another call in
+    the tab's queue (a Save, the playback audio) looks like this, whose buttons the page itself
+    must hold. Every other message goes through."""
+    def through(ws):
+        server = ws.connect_to_server()
+        ws.on_message(lambda m: server.send(m))
+        server.on_message(lambda m: None if '"retranslating"' in str(m) else ws.send(m))
+
+    page.route_web_socket(re.compile(r".*/websocket/.*"), through)
+
+
+def test_a_double_click_on_retranslate_sends_one_request(open_page, held):
+    # Task 17's Spec review, I-1: the buttons were enabled until `busy` arrived, so a double-click
+    # asked the model twice (and with two allow_cloud values).
+    page, rows = open_held(open_page, held, before=hide_retranslating)
+    page.evaluate("""() => {
+        window.__sent = 0;
+        const send = WebSocket.prototype.send;
+        WebSocket.prototype.send = function (data) {
+            if (String(data).includes("retranslate:shinyreact.default")) window.__sent += 1;
+            return send.call(this, data);
+        };
+    }""")
+    rows.nth(0).get_by_test_id("cue-text").click()
+    page.get_by_test_id("retranslate-selected").dblclick()
+    expect(page.get_by_test_id("retranslate-progress")).to_have_text("Waiting to retranslate…")
+    expect(page.get_by_test_id("retranslating-note")).to_be_visible()  # pending counts too
+    expect(page.get_by_test_id("retranslate-stale")).to_be_disabled()
+    held.gate.set()
+    expect(page.get_by_test_id("notice")).to_have_text(re.compile("^Retranslated 1 English cue"))
+    # (a second click lands within Shiny's input debounce and would replace the first request,
+    # which then never answers: its pending state would never end, so the track would stay
+    # locked and its note shown)
+    expect(page.get_by_test_id("retranslating-note")).to_have_count(0)
+    expect(page.get_by_test_id("retranslate-selected")).to_be_enabled()
+    expect(page.get_by_test_id("retranslate-stale")).to_be_enabled()
+    assert page.evaluate("() => window.__sent") == 1
+    assert len([r for r in held.fake.requests if r.path.endswith("/chat/completions")]) == 1

@@ -11,6 +11,17 @@ describe("what an edit made while the sound is being made does (S-7)", () => {
     expect(html).toContain('role="status"');
   });
 
+  it("says a retranslation's track can't be edited and other edits apply when it finishes (Task 17, I-2)", () => {
+    for (const busy of ["retranslating", null] as const) { // running, or waiting behind another call
+      const html = renderToStaticMarkup(createElement(BusyNote, { busy, retranslating: "Japanese" }));
+      expect(html).toContain("Retranslating the Japanese translation");
+      expect(html).toContain("its lines can be edited when it finishes");
+      expect(html).toContain("other edits apply then");
+      expect(html).toContain('data-testid="retranslating-note"');
+    }
+    expect(renderToStaticMarkup(createElement(BusyNote, { busy: "retranslating", retranslating: null }))).toContain("other edits apply when it finishes");
+  });
+
   it("says nothing when nothing is being made, or while another episode opens", () => {
     expect(renderToStaticMarkup(createElement(BusyNote, { busy: null }))).toBe("");
     // an edit made then names the old episode and is dropped: the note would say the reverse
