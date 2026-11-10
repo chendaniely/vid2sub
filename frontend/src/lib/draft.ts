@@ -1,24 +1,26 @@
 // The tab's crash-recovery draft (spec §14.5, S34): unsaved edits live in the tab, and every
 // request that changes the episode is also written to localStorage, so a tab that crashes or is
 // closed can offer them back when the episode is opened again. The draft is the edits, undos and
-// redos as they were sent, each with its request's number, replayed through the server's rules
-// on Restore, so the rules exist once (§20). An edit that makes cues carries their ids (Decision
-// 31, Dan's answer to the kickoff council), so the replay makes the same cues and the edits made
-// to them land too; a step the server refused is dropped, so the draft holds only what was done,
-// and a restored draft is cleared only once the server has done every step of it again. Each tab
-// keeps its own draft, keyed by the heads the episode was opened at and the tab's id, held in
-// sessionStorage: two tabs on one episode never write each other's, and opening an episode
-// offers every tab's draft for its heads; restoring another tab's draft clears it (Decision 36).
-// A Save or a pick moves the heads: the offers are worked out again for the new heads, so a draft
-// is only ever offered on the versions its edits were made against, and this tab's own draft
-// comes across (followHeads), less the steps a Save wrote (trimSaved). Every storage call is
-// wrapped in try/catch: a private window or blocked site data throws, and the editor must work
-// without it.
+// redos as they were sent, each with its request's number, replayed through the server's rules on
+// Restore, so the rules exist once (§20). An edit that makes cues carries their ids (Decision 31,
+// Dan's answer to the kickoff council), so the replay makes the same cues and the edits made to
+// them land too; a step the server refused is dropped, so the draft holds only what was done, and a
+// restored draft is cleared only once the server has done every step of it again. A retranslation
+// is kept only as a marker, never replayed, so a restored draft never asks a model again; it still
+// takes the undo that undid it, so that undo doesn't take back an edit instead (Task 17), and the
+// server's word that it changed nothing drops it. Each tab keeps its own draft, keyed by the heads
+// the episode was opened at and the tab's id, held in sessionStorage: two tabs on one episode never
+// write each other's, and opening an episode offers every tab's draft for its heads; restoring
+// another tab's draft clears it (Decision 36). A Save or a pick moves the heads: the offers are
+// worked out again for the new heads, so a draft is only ever offered on the versions its edits
+// were made against, and this tab's own draft comes across (followHeads), less the steps a Save
+// wrote (trimSaved). Every storage call is wrapped in try/catch: a private window or blocked site
+// data throws, and the editor must work without it.
 
 import { randomHex } from "@/lib/ids";
 import type { EditOp } from "@/types";
 
-export type DraftStep = ({ edit: EditOp } | { undo: true } | { redo: true }) & { n: number };
+export type DraftStep = ({ edit: EditOp } | { undo: true } | { redo: true } | { retranslate: true }) & { n: number };
 export type Draft = { v: 1; at: string; steps: DraftStep[] };
 export type Offer = { key: string; draft: Draft };
 export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
@@ -177,4 +179,27 @@ export function followHeads(storage: DraftStorage | null, from: string, to: stri
 export function heard(replay: Replay, n: number, ok: boolean): Replay | null {
   if (!replay.waiting.includes(n)) return null;
   return { ...replay, waiting: replay.waiting.filter((w) => w !== n), refused: replay.refused + (ok ? 0 : 1) };
+}
+
+/** The steps Restore sends: the edits, undos and redos, without the retranslations. The undo
+ * history is followed as the server keeps it, so an undo or a redo that took back or brought back
+ * a retranslation is left out too, rather than landing on an edit. */
+export function replayable(steps: readonly DraftStep[]): DraftStep[] {
+  const out: DraftStep[] = [];
+  const done: boolean[] = []; // the undo history: true for an edit, false for a retranslation
+  const undone: boolean[] = []; // what redo would bring back
+  for (const step of steps) {
+    if ("edit" in step || "retranslate" in step) {
+      done.push("edit" in step);
+      undone.length = 0;
+      if ("edit" in step) out.push(step);
+      continue;
+    }
+    const [from, to] = "undo" in step ? [done, undone] : [undone, done];
+    const edit = from.pop();
+    if (edit === undefined) continue; // nothing to take back: the server ignores it too
+    to.push(edit);
+    if (edit) out.push(step);
+  }
+  return out;
 }

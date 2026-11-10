@@ -11,8 +11,9 @@ import { type Cell, CueRow, type Editing } from "./CueRow";
  * side, are in the page (Review Focus 3: about 2,000 cues for two hours), measured as they render
  * since a row's height follows its text; @tanstack/react-virtual places them, through React's
  * style props (the CSSOM, which the CSP allows), never a style attribute in the markup. The
- * selected row is scrolled into view, and while playback is followed so is the current one. */
-export function CueList({ listRef, rows, words, track, current, word, selected, cell, trId, editing, follow, onPick, onKeyDown, onDraft, onEditKey, editorRef }: {
+ * selected row is scrolled into view, and while playback is followed so is the current one.
+ * Shift+click and Shift+↑/↓ select a run of rows, for Retranslate (`aria-multiselectable`). */
+export function CueList({ listRef, rows, words, track, current, word, selected, range, cell, trId, editing, follow, onPick, onKeyDown, onDraft, onEditKey, editorRef }: {
   listRef: RefObject<HTMLDivElement | null>;
   rows: readonly Row[];
   words: readonly SpokenWord[];
@@ -20,11 +21,12 @@ export function CueList({ listRef, rows, words, track, current, word, selected, 
   current: number;
   word: number;
   selected: number;
+  range: [number, number] | null; // the selection's first and last rows
   cell: Cell;
   trId: string | null;
   editing: Editing | null;
   follow: boolean;
-  onPick: (index: number, cell: Cell, trId?: string) => void;
+  onPick: (index: number, cell: Cell, extend: boolean, trId?: string) => void;
   onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
   onDraft: (text: string) => void;
   onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -52,6 +54,7 @@ export function CueList({ listRef, rows, words, track, current, word, selected, 
       ref={listRef}
       role="listbox"
       aria-label="Cues: arrows to move, Enter to edit, Space to play"
+      aria-multiselectable="true"
       tabIndex={0}
       aria-activedescendant={activeDescendant(rows, selected, items.map((item) => item.index))}
       onKeyDown={onKeyDown}
@@ -69,13 +72,14 @@ export function CueList({ listRef, rows, words, track, current, word, selected, 
                   track={track}
                   current={item.index === current}
                   selected={item.index === selected}
+                  inRange={range !== null && range[0] <= item.index && item.index <= range[1]}
                   cell={cell}
                   trId={trId}
                   editing={editing?.id === row.id ? editing : null}
                   word={word}
                   words={words}
                   total={rows.length}
-                  onPick={(which, id) => onPick(item.index, which, id)}
+                  onPick={(which, extend, id) => onPick(item.index, which, extend, id)}
                   onDraft={onDraft}
                   onEditKey={onEditKey}
                   editorRef={editorRef}

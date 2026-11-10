@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addStep, clearDraft, draftKey, type DraftStorage, dropStep, followHeads, headsKey, heard, loadDraft, moveDraft, offersFor, tabId, trimSaved } from "./draft";
+import { addStep, clearDraft, draftKey, type DraftStep, type DraftStorage, dropStep, followHeads, headsKey, heard, loadDraft, moveDraft, offersFor, replayable, tabId, trimSaved } from "./draft";
 
 function memory(): DraftStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -170,5 +170,37 @@ describe("the draft across a Save or a pick (the Task 16 Spec review's C-3, I-1)
     expect(() => trimSaved(throwing, "k", 3)).not.toThrow();
     expect(() => followHeads(throwing, "k", "j", 3)).not.toThrow();
     expect(() => followHeads(null, "k", "j", 3)).not.toThrow();
+  });
+});
+
+describe("a retranslation in the draft (Task 17)", () => {
+  const EDIT2 = { edit: { op: "set_text", cue: "c0000000b", text: "We meet." }, n: 8 } as const;
+  const RT = { retranslate: true, n: 3 } as const;
+  const UNDO = { undo: true, n: 9 } as const;
+  const REDO = { redo: true, n: 10 } as const;
+
+  it("is never replayed, so a restored draft never asks a model again", () => {
+    expect(replayable([EDIT, RT, EDIT2])).toEqual([EDIT, EDIT2]);
+  });
+
+  it("still takes the undo that undid it, and the redo that redid it, so neither lands elsewhere", () => {
+    const steps: DraftStep[] = [EDIT, RT, UNDO, EDIT2];
+    expect(replayable(steps)).toEqual([EDIT, EDIT2]);
+    expect(replayable([EDIT, RT, UNDO, REDO])).toEqual([EDIT]);
+    expect(replayable([RT, EDIT, UNDO, { undo: true, n: 11 }, { undo: true, n: 12 }])).toEqual([EDIT, UNDO]);
+    expect(replayable([EDIT, UNDO, REDO])).toEqual([EDIT, UNDO, REDO]);
+    // a new edit clears what redo could bring back, on the server as here
+    expect(replayable([RT, UNDO, EDIT2, REDO])).toEqual([EDIT2]);
+  });
+
+  it("is dropped when the server says it changed nothing, and only that one", () => {
+    const s = memory();
+    const key = draftKey(HEADS, "t0000000a");
+    for (const step of [EDIT, RT, { retranslate: true, n: 5 }, EDIT2] as DraftStep[]) addStep(s, key, step, AT);
+    dropStep(s, key, 3);
+    expect(loadDraft(s, key)?.steps).toEqual([EDIT, { retranslate: true, n: 5 }, EDIT2]);
+    dropStep(s, key, 9);
+    expect(loadDraft(s, key)?.steps).toEqual([EDIT, { retranslate: true, n: 5 }, EDIT2]);
+    expect(() => dropStep(throwing, key, 5)).not.toThrow();
   });
 });

@@ -1,7 +1,8 @@
 // The editor's keyboard model, verbatim from spec §20, safe with CJK input methods.
 //
 // Navigate mode (the default): Space plays or pauses, J/K/L shuttle (J back two seconds, K
-// pause, L play), ↑/↓ the previous or next cue, ←/→ the source or the translation cell, `[` and
+// pause, L play), ↑/↓ the previous or next cue (with Shift, the selection grows a cue that way,
+// for Retranslate), ←/→ the source or the translation cell, `[` and
 // `]` set the cue's start or end to the playhead, Alt+←/→ nudge it 100 ms (500 ms with Shift),
 // Enter edits the selected cell, Ctrl/⌘+Z undoes and Ctrl/⌘+Shift+Z (or Ctrl+Y) redoes. Edit
 // mode: typing goes to the text and only Ctrl/⌘ chords act (⌘↵ commit, ⌘⇧S split at the caret,
@@ -19,6 +20,7 @@ export type Action =
   | { kind: "play" }
   | { kind: "previous" }
   | { kind: "next" }
+  | { kind: "extend"; by: -1 | 1 }
   | { kind: "cell"; cell: "source" | "translation" }
   | { kind: "set-start" }
   | { kind: "set-end" }
@@ -75,8 +77,8 @@ export function actionFor(e: KeyLike, mode: Mode): Action | null {
     case "j": return e.shiftKey ? null : { kind: "back" };
     case "k": return e.shiftKey ? null : { kind: "pause" };
     case "l": return e.shiftKey ? null : { kind: "play" };
-    case "ArrowUp": return { kind: "previous" };
-    case "ArrowDown": return { kind: "next" };
+    case "ArrowUp": return e.shiftKey ? { kind: "extend", by: -1 } : { kind: "previous" };
+    case "ArrowDown": return e.shiftKey ? { kind: "extend", by: 1 } : { kind: "next" };
     case "ArrowLeft": return { kind: "cell", cell: "source" };
     case "ArrowRight": return { kind: "cell", cell: "translation" };
     case "[": return { kind: "set-start" };

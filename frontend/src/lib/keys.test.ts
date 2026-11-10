@@ -34,6 +34,11 @@ describe("navigate mode (spec §20)", () => {
     expect(actionFor(press("y", { ctrlKey: true }), "navigate")).toEqual({ kind: "redo" });
   });
 
+  it("extends the selection a cue up or down with Shift and the arrows (spec §20's selection)", () => {
+    expect(actionFor(press("ArrowUp", { shiftKey: true }), "navigate")).toEqual({ kind: "extend", by: -1 });
+    expect(actionFor(press("ArrowDown", { shiftKey: true }), "navigate")).toEqual({ kind: "extend", by: 1 });
+  });
+
   it("leaves every other key to the browser", () => {
     for (const k of [press("a"), press("Tab"), press("Escape"), press("s", { metaKey: true }), press("ArrowUp", { altKey: true })]) {
       expect(actionFor(k, "navigate")).toBeNull();

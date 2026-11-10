@@ -97,7 +97,14 @@ export type EpisodeView = {
 };
 
 /** The `busy` output: what the tab's editor is doing, or null. */
-export type Busy = "opening" | "playback" | "saving" | "picking" | null;
+export type Busy = "opening" | "playback" | "saving" | "picking" | "retranslating" | null;
+
+/** The `progress` output: a running retranslation's batches, once the first is done, else null. */
+export type Progress = { done: number; of: number } | null;
+
+/** The `retranslate_result` message: how many translation cues request `n` changed (0: nothing
+ * was stale, or it failed, which a notice says). */
+export type RetranslateResultMessage = { episode: string; n: number | null; changed: number };
 
 /** An edit, as `vid2sub.web.ops` takes it: every edit goes through the server's `apply`. */
 export type EditOp =

@@ -15,20 +15,22 @@ export type Editing = { id: string; cell: Cell; trId: string | null; track: stri
 /** One source cue with its translation alongside (spec §20): number, times, source text, the
  * chosen track's translation and the flags. The current cue has the orange bar and
  * `aria-current`; in it the spoken word is marked, found in the text from the transcript's words.
- * The selected row's selected cell is outlined, and in edit mode it is a text box. Every string is
- * a text node or a text box's value (spec §6.3). */
-export function CueRow({ row, track, current, selected, cell, trId, editing, word, words, total, onPick, onDraft, onEditKey, editorRef }: {
+ * The selected row's selected cell is outlined, and in edit mode it is a text box; a row in the
+ * selection a Shift+click or Shift+↑/↓ made is marked selected too, for Retranslate. Every string
+ * is a text node or a text box's value (spec §6.3). */
+export function CueRow({ row, track, current, selected, inRange, cell, trId, editing, word, words, total, onPick, onDraft, onEditKey, editorRef }: {
   row: Row;
   track: string | null;
   current: boolean;
   selected: boolean;
+  inRange: boolean; // in the selection, beside the selected row
   cell: Cell;
   trId: string | null; // the chosen translation cue, when the cell holds several
   editing: Editing | null; // only when this row is being edited
   word: number; // the spoken word's index in `words`, or -1
   words: readonly SpokenWord[];
   total: number;
-  onPick: (cell: Cell, trId?: string) => void;
+  onPick: (cell: Cell, extend: boolean, trId?: string) => void; // extend: Shift was held
   onDraft: (text: string) => void;
   onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   editorRef: RefObject<HTMLTextAreaElement | null>;
@@ -53,17 +55,17 @@ export function CueRow({ row, track, current, selected, cell, trId, editing, wor
     <div
       role="option"
       id={`cue-${row.id}`}
-      aria-selected={selected}
+      aria-selected={selected || inRange}
       aria-current={current ? "true" : undefined}
       aria-setsize={total}
       aria-posinset={row.n}
       data-testid="cue-row"
       data-cue={row.id}
-      onClick={() => onPick("source")}
+      onClick={(e) => onPick("source", e.shiftKey)}
       className={cn(
         "grid cursor-pointer grid-cols-[2.5rem_1fr] gap-x-2 border-b border-l-4 border-b-border px-2 py-1.5",
         current ? "border-l-(--brand-orange)" : "border-l-transparent",
-        selected && "bg-accent",
+        (selected || inRange) && "bg-accent",
       )}
     >
       <span className="pt-0.5 text-xs text-muted-foreground tabular-nums">{row.n}</span>
@@ -77,14 +79,14 @@ export function CueRow({ row, track, current, selected, cell, trId, editing, wor
           </span>
         )}
         {tr && (
-          <span onClick={(e) => { e.stopPropagation(); onPick("translation"); }} data-selected={marked("translation") && tr.cues.length <= 1 || undefined} className={cn("flex flex-col rounded-sm whitespace-pre-line text-muted-foreground", marked("translation") && tr.cues.length <= 1 && "outline-2 outline-ring")} data-testid="cue-translation">
+          <span onClick={(e) => { e.stopPropagation(); onPick("translation", e.shiftKey); }} data-selected={marked("translation") && tr.cues.length <= 1 || undefined} className={cn("flex flex-col rounded-sm whitespace-pre-line text-muted-foreground", marked("translation") && tr.cues.length <= 1 && "outline-2 outline-ring")} data-testid="cue-translation">
             {tr.cues.length === 0 && "—"}
             {tr.cues.map((c) => {
               const chosen = marked("translation") && tr.cues.length > 1 && (trId ?? tr.cues[0].id) === c.id;
               return editing?.cell === "translation" && editing.trId === c.id ? (
                 <span key={c.id}>{box("translation")}</span>
               ) : (
-                <span key={c.id} onClick={(e) => { e.stopPropagation(); onPick("translation", c.id); }} data-selected={chosen || undefined} data-cue={c.id} className={cn("rounded-sm", chosen && "outline-2 outline-ring")} data-testid="cue-translation-line">
+                <span key={c.id} onClick={(e) => { e.stopPropagation(); onPick("translation", e.shiftKey, c.id); }} data-selected={chosen || undefined} data-cue={c.id} className={cn("rounded-sm", chosen && "outline-2 outline-ring")} data-testid="cue-translation-line">
                   {c.text}
                 </span>
               );

@@ -4,7 +4,8 @@ import { canonicalOffset, indexAt, splitPoint, trackCues, wordAt } from "@/lib/c
 import { newCueIds, shownIds } from "@/lib/ids";
 import { type Action, BIG_NUDGE_MS, type KeyLike, NUDGE_MS, actionFor } from "@/lib/keys";
 import { captionLines, type Showing } from "@/lib/overlay";
-import type { Busy, EditOp, EpisodeView } from "@/types";
+import { selectedIds, selectionRange } from "@/lib/retranslate";
+import type { Busy, EditOp, EpisodeView, Progress } from "@/types";
 
 import { BusyNote } from "./BusyNote";
 import { ConflictPicker } from "./ConflictPicker";
@@ -12,6 +13,7 @@ import { type Cell, type Editing } from "./CueRow";
 import { CueList } from "./CueList";
 import { FindReplace } from "./FindReplace";
 import { Player } from "./Player";
+import { Retranslate } from "./Retranslate";
 import { SaveBar } from "./SaveBar";
 
 const SPEEDS = [0.75, 1, 1.25] as const; // the practice aids' playback rates (spec §20)
@@ -25,6 +27,7 @@ export type Requests = {
   redo: () => void;
   save: (formats: ("srt" | "ass")[]) => void;
   resolve: (track: string, rendition: string) => void;
+  retranslate: (track: string, ids: string[] | null, allowCloud: boolean) => void; // null: stale
 };
 
 /** Saving's state, from App: the drafts tabs left for these versions (S34, Decision 31), and a
@@ -39,11 +42,14 @@ export type Saving = {
 };
 
 /** The editor (spec §20): the path box, then, once an episode is open, the player on the left
- * and the cue list on the right, with the edit bar and find and replace. */
-export function Editor({ episode, busy, pathInput, onOpen, onCantPlay, requests, saving }: {
+ * and the cue list on the right, with the edit bar, Retranslate (where the engine has models:
+ * `generate`) and find and replace. */
+export function Editor({ episode, busy, progress, pathInput, generate, onOpen, onCantPlay, requests, saving }: {
   episode: EpisodeView | null;
   busy: Busy;
+  progress: Progress;
   pathInput: boolean;
+  generate: boolean;
   onOpen: (path: string) => void;
   onCantPlay: () => void;
   requests: Requests;
@@ -53,7 +59,7 @@ export function Editor({ episode, busy, pathInput, onOpen, onCantPlay, requests,
     <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
       {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
       {episode ? (
-        <EpisodeEditor key={episode.id} episode={episode} busy={busy} requests={requests} saving={saving} onCantPlay={onCantPlay} />
+        <EpisodeEditor key={episode.id} episode={episode} busy={busy} progress={progress} generate={generate} requests={requests} saving={saving} onCantPlay={onCantPlay} />
       ) : (
         <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
       )}
@@ -82,9 +88,11 @@ function keyOf(e: KeyboardEvent): KeyLike {
   return { key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey };
 }
 
-function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
+function EpisodeEditor({ episode, busy, progress, generate, requests, saving, onCantPlay }: {
   episode: EpisodeView;
   busy: Busy;
+  progress: Progress;
+  generate: boolean;
   requests: Requests;
   saving: Saving;
   onCantPlay: () => void;
@@ -99,6 +107,7 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
   const [word, setWord] = useState(-1);
   const [trAt, setTrAt] = useState(-1);
   const [sel, setSel] = useState<{ index: number; id: string | null }>({ index: -1, id: null });
+  const [anchor, setAnchor] = useState<string | null>(null); // where a Shift selection started
   const [cell, setCell] = useState<Cell>("source");
   const [trId, setTrId] = useState<string | null>(null); // the chosen translation cue of the row
   const [editing, setEditing] = useState<Editing | null>(null);
@@ -117,6 +126,7 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
   const trCues = useMemo(() => trackCues(rows, shownTrack), [rows, shownTrack]);
   const selected = sel.index;
   const row = selected >= 0 && selected < rows.length ? rows[selected] : undefined;
+  const range = selectionRange(rows, selected, anchor);
 
   // The rows change with every edit: the selection follows its cue, else stays at its place (a
   // split or merge replaces the cue's id); an inserted cue is selected and edited.
@@ -181,8 +191,9 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
   const seekTo = (ms: number) => {
     if (media.current) media.current.currentTime = ms / 1000;
   };
-  const select = (index: number, which: Cell = cell, chosen: string | null = null) => {
+  const select = (index: number, which: Cell = cell, chosen: string | null = null, extend = false) => {
     if (index < 0 || index >= rows.length) return;
+    setAnchor(extend ? (anchor ?? sel.id) : null);
     // Moving off the cell being edited commits its draft: Esc is the only way out that discards.
     if (editing && !(rows[index].id === editing.id && which === editing.cell && (chosen ?? editing.trId) === editing.trId)) {
       commit();
@@ -326,6 +337,7 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
       case "play": if (m) void m.play().catch(() => undefined); return;
       case "previous": select(Math.max(0, selected - 1)); return;
       case "next": select(Math.min(rows.length - 1, selected + 1)); return;
+      case "extend": select(Math.min(rows.length - 1, Math.max(0, selected + a.by)), cell, null, true); return;
       case "cell": chooseCell(a.cell); return;
       case "set-start": if (row) requests.edit({ op: "set_times", cue: row.id, start_ms: playhead() }); return;
       case "set-end": if (row) requests.edit({ op: "set_times", cue: row.id, end_ms: playhead() }); return;
@@ -344,7 +356,7 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
     const a = actionFor(keyOf(e), "navigate");
     if (!a) return;
     e.preventDefault();
-    if (selected < 0 && (a.kind === "next" || a.kind === "previous")) {
+    if (selected < 0 && (a.kind === "next" || a.kind === "previous" || a.kind === "extend")) {
       select(current >= 0 ? current : 0);
       return;
     }
@@ -389,7 +401,10 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
           <ul role="status" className="flex flex-col gap-0.5 text-sm" data-testid="episode-notes">
             {episode.notes.map((note, k) => <li key={k}>{note}</li>)}
             {stale.map((t) => (
-              <li key={`stale-${t.key}`}>Every {t.label} cue is stale: the glossary or the translation model changed since it was made, or a glossary term is waiting for Save.</li>
+              <li key={`stale-${t.key}`}>
+                Every {t.label} cue is stale: the glossary or the translation model changed since it was made, or a glossary term is waiting for Save.
+                {generate && " Retranslate stale redoes them all, except those you edited."}
+              </li>
             ))}
             {conflicted.map((t) => (
               <li key={`conflict-${t.key}`} className="flex flex-wrap items-center gap-2 text-destructive">
@@ -440,6 +455,16 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
             onPick={(track, rendition) => { requests.resolve(track, rendition); setPicking(false); }} />
         </section>
         <section aria-label="Cue list" className="flex min-h-0 flex-col gap-2">
+          {generate && shownTrack && (
+            <Retranslate
+              label={translations.find((t) => t.key === shownTrack)?.label ?? shownTrack}
+              selected={range ? range[1] - range[0] + 1 : 0}
+              busy={busy}
+              progress={progress}
+              onSelected={(allowCloud) => requests.retranslate(shownTrack, selectedIds(rows, range), allowCloud)}
+              onStale={(allowCloud) => requests.retranslate(shownTrack, null, allowCloud)}
+            />
+          )}
           <div role="toolbar" aria-label="Edit the selected cue" className="flex flex-wrap gap-1" data-testid="edit-bar">
             {tool("Edit", "Enter", () => startEditing(cell), "tool-edit")}
             {editing && tool("Commit", "Meta+Enter", () => act({ kind: "commit" }), "tool-commit", false)}
@@ -467,11 +492,12 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
               current={current}
               word={word}
               selected={selected}
+              range={range}
               cell={cell}
               trId={trId}
               editing={editing}
               follow={follow}
-              onPick={(index, which, id) => select(index, which, id ?? null)}
+              onPick={(index, which, extend, id) => select(index, which, id ?? null, extend)}
               onKeyDown={onListKey}
               onDraft={(text) => setEditing((e) => (e ? { ...e, text } : e))}
               onEditKey={onEditKey}

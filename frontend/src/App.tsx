@@ -4,12 +4,13 @@ import { Editor, type Requests, type Saving } from "@/components/Editor";
 import { resultNotices } from "@/components/SaveBar";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
-import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, followHeads, heard, loadDraft, moveDraft, offersFor, tabId, tabStorage, trimSaved } from "@/lib/draft";
+import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, followHeads, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage, trimSaved } from "@/lib/draft";
 import { randomHex } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
+import { retranslateNotice } from "@/lib/retranslate";
 import { pacer } from "@/lib/sends";
 import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
-import type { AppliedMessage, Busy, Capabilities, EditOp, EpisodeView, SaveResultMessage, Status } from "@/types";
+import type { AppliedMessage, Busy, Capabilities, EditOp, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, Status } from "@/types";
 
 type Ask = { episode: string; n: number };
 type Step = { edit: EditOp } | { undo: true } | { redo: true };
@@ -28,6 +29,7 @@ export default function App() {
   const status = useShinyOutputValue<Status>("status");
   const episode = useShinyOutputValue<EpisodeView | null>("episode");
   const busy = useShinyOutputValue<Busy>("busy");
+  const progress = useShinyOutputValue<Progress>("progress");
   // Every input is set from here too. Each request carries a count, so the same path asked for
   // twice is still two requests. `debounceMs: 0` is still a trailing timer: two values set in one
   // task send only the last.
@@ -38,6 +40,7 @@ export default function App() {
   const setRedo = useSetShinyInput<Ask | null>("redo", null, { priority: "event", debounceMs: 0 });
   const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
   const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
+  const setRetranslate = useSetShinyInput<(Ask & { track: string; ids: string[] | null; allow_cloud: boolean }) | null>("retranslate", null, { priority: "event", debounceMs: 0 });
   const sent = useRef(0);
   // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
   const pace = useMemo(() => pacer(), []);
@@ -102,6 +105,10 @@ export default function App() {
     if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
   }, []);
 
+  // A retranslation goes in the draft as a marker only (never replayed: a restored draft asks no
+  // model), dropped when the server says it changed nothing; `asking` remembers which were
+  // "Retranslate stale", for the notice.
+  const asking = useRef(new Map<number, { track: string; stale: boolean }>());
   const episodeId = episode?.id ?? null;
   const steps = useMemo(() => {
     const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
@@ -136,8 +143,26 @@ export default function App() {
         const a = ask();
         send(setResolve, a && { ...a, track, rendition });
       },
+      retranslate: (track, ids, allowCloud) => {
+        const a = ask();
+        if (!a) return;
+        dropOffers();
+        if (drafted.current) addStep(draftStorage(), drafted.current.key, { retranslate: true, n: a.n });
+        asking.current.set(a.n, { track, stale: ids === null });
+        send(setRetranslate, { ...a, track, ids, allow_cloud: allowCloud });
+      },
     };
-  }, [episodeId, pace, dropOffers, steps, setSave, setResolve]);
+  }, [episodeId, pace, dropOffers, steps, setSave, setResolve, setRetranslate]);
+  useShinyMessageHandler("retranslate_result", (data: RetranslateResultMessage) => {
+    if (!episode || data.episode !== episode.id || data.n === null) return;
+    const asked = asking.current.get(data.n);
+    asking.current.delete(data.n);
+    if (data.changed === 0 && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    if (!asked) return;
+    const label = episode.tracks.find((t) => t.key === asked.track)?.label ?? asked.track;
+    const n = retranslateNotice(data.changed, label, asked.stale);
+    if (n) setNotices((shown) => addNotice(shown, n, nextId.current++));
+  });
 
   useShinyMessageHandler("applied", (data: AppliedMessage) => {
     if (!episode || data.episode !== episode.id) return;
@@ -172,7 +197,8 @@ export default function App() {
     if (savesHeard > 0) saveInFlight.current = false;
   }, [savesHeard]);
   const saving: Saving = {
-    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: o.draft.steps.length })),
+    // the steps Restore would send, for each draft that has any
+    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps).length })).filter((d) => d.steps > 0),
     conflictsFound,
     onTyping: setTyping,
     onRestore: (key) => {
@@ -190,7 +216,7 @@ export default function App() {
         clearDraft(store, at.key);
       }
       const sent: number[] = [];
-      for (const step of draft.steps) {
+      for (const step of replayable(draft.steps)) {
         const { n: _, ...asSent } = step;
         const n = steps(asSent as Step);
         if (n !== null) sent.push(n);
@@ -254,7 +280,9 @@ export default function App() {
         <Editor
           episode={episode ?? null}
           busy={busy ?? null}
+          progress={progress ?? null}
           pathInput={capabilities?.path_input ?? false}
+          generate={capabilities?.generate ?? false}
           onOpen={(path) => setOpen({ path, n: ++sent.current })}
           onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
           requests={requests}
