@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 16: Saving, open.
+**Now:** Task 17: Retranslating, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower. Task 13's drift test and fix round 13c added 24 more (its listed 960 is 1143 in fact, 183 above the listing: the 159 and 24 more, 17 in `tests/test_demo_guard.py` and 7 parser cases in `tests/test_formats.py`): from Task 13's close on, every later listed count is 183 lower than the real one (Task 14's listings count from 960). Task 14's second hostile browser test adds one e2e test, which Task 14's own listings count. Task 14's fix round 14e and direct fix add 33 more full-suite tests and one e2e test (the AVI fallback) (its listed 974 is 1190 in fact, 216 above the listing: the 183 and 33 more, among them 19 snippets of the thread and process check in `tests/test_pages_imports.py`): from Task 14's close on, every later listed full-suite count is 216 lower than the real one (Task 15's listings count from 974), and every later listed `deselected` count and `make e2e` count is 2 lower than the real one (the raw file-name case and the AVI test; Task 14's end is `21 deselected` and `17 passed` in fact). Vitest is as Task 14 listed it (9 files, 44 tests). A later listing that counts a run of `tests/test_demo_guard.py` (24 tests, not 7) or `tests/test_formats.py` (7 more than before) is that many lower, and one of `tests/test_web_server.py` is 12 lower (34 tests, not 22), `tests/test_pages_imports.py` 20 lower (25, not 5), `tests/test_backend_open.py` 1 lower, and `tests/e2e/test_editor_view.py` 2 lower (11 tests in fact, counting the raw file-name case as one, against 9 listed). Task 15's fix rounds and direct fixes add 4 server tests (round 15d's) to the full suite: its listed 978 is 1198 in fact, 220 above the listing (the 216 and 4 more): from Task 15's close on, every later listed full-suite count is 220 lower than the real one (Task 16's listings count from 978). The offset for `deselected` and `make e2e` that Task 14's close gave as 2 is **3**, since Task 13's close added a test to Task 14 that Task 15's listing wasn't rewritten for; Task 15 adds 25 more e2e tests beyond its listing (3 in round 15c's drift, 20 in round 15d and 2 in the direct fixes), so from Task 15's close on every later listed `deselected` count and `make e2e` count is **28** lower than the real one (the 3 and 25 more; Task 15's end is `52 deselected` and `48 passed` in fact, against the listed 24 and 20). Vitest: Task 15 listed 12 files and 58 tests and has 14 files and 68 tests in fact (`CueRow.test.ts`, `BusyNote.test.ts`, `activeDescendant`'s test and the round 15d cases), so from Task 15's close on every later listed Vitest file count is 2 lower and test count 10 lower (Task 16's listings count from 12 and 58). A later listing that counts a run of `tests/test_web_server.py` is 21 lower (42 tests in fact after Task 15, against the 21 its listing ends on), and `tests/e2e/test_editor_view.py` has 13 tests in fact and `tests/e2e/test_editing.py` 29 (6 listed).
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower. Task 13's drift test and fix round 13c added 24 more (its listed 960 is 1143 in fact, 183 above the listing: the 159 and 24 more, 17 in `tests/test_demo_guard.py` and 7 parser cases in `tests/test_formats.py`): from Task 13's close on, every later listed count is 183 lower than the real one (Task 14's listings count from 960). Task 14's second hostile browser test adds one e2e test, which Task 14's own listings count. Task 14's fix round 14e and direct fix add 33 more full-suite tests and one e2e test (the AVI fallback) (its listed 974 is 1190 in fact, 216 above the listing: the 183 and 33 more, among them 19 snippets of the thread and process check in `tests/test_pages_imports.py`): from Task 14's close on, every later listed full-suite count is 216 lower than the real one (Task 15's listings count from 974), and every later listed `deselected` count and `make e2e` count is 2 lower than the real one (the raw file-name case and the AVI test; Task 14's end is `21 deselected` and `17 passed` in fact). Vitest is as Task 14 listed it (9 files, 44 tests). A later listing that counts a run of `tests/test_demo_guard.py` (24 tests, not 7) or `tests/test_formats.py` (7 more than before) is that many lower, and one of `tests/test_web_server.py` is 12 lower (34 tests, not 22), `tests/test_pages_imports.py` 20 lower (25, not 5), `tests/test_backend_open.py` 1 lower, and `tests/e2e/test_editor_view.py` 2 lower (11 tests in fact, counting the raw file-name case as one, against 9 listed). Task 15's fix rounds and direct fixes add 4 server tests (round 15d's) to the full suite: its listed 978 is 1198 in fact, 220 above the listing (the 216 and 4 more): from Task 15's close on, every later listed full-suite count is 220 lower than the real one (Task 16's listings count from 978). The offset for `deselected` and `make e2e` that Task 14's close gave as 2 is **3**, since Task 13's close added a test to Task 14 that Task 15's listing wasn't rewritten for; Task 15 adds 25 more e2e tests beyond its listing (3 in round 15c's drift, 20 in round 15d and 2 in the direct fixes), so from Task 15's close on every later listed `deselected` count and `make e2e` count is **28** lower than the real one (the 3 and 25 more; Task 15's end is `52 deselected` and `48 passed` in fact, against the listed 24 and 20). Vitest: Task 15 listed 12 files and 58 tests and has 14 files and 68 tests in fact (`CueRow.test.ts`, `BusyNote.test.ts`, `activeDescendant`'s test and the round 15d cases), so from Task 15's close on every later listed Vitest file count is 2 lower and test count 10 lower (Task 16's listings count from 12 and 58). A later listing that counts a run of `tests/test_web_server.py` is 21 lower (42 tests in fact after Task 15, against the 21 its listing ends on), and `tests/e2e/test_editor_view.py` has 13 tests in fact and `tests/e2e/test_editing.py` 29 (6 listed). Task 16's fix round 16d and its direct fixes add 4 full-suite tests (3 server tests and one view test), 15 e2e tests and 6 Vitest tests beyond its listing: its listed 985 is 1209 in fact, 224 above the listing (the 220 and 4 more): from Task 16's close on, every later listed full-suite count is 224 lower than the real one (Task 17's listings count from 985), every later listed `deselected` count and `make e2e` count is 43 lower (the 28 and 15 more; Task 16's end is `74 deselected` and `70 passed` in fact, against the listed 31 and 27), and Vitest is 2 files and 16 tests lower (17 files and 89 tests in fact, against the listed 15 and 73: Task 15's 2 files and 10 tests, and `draft.test.ts` 13 tests in fact against the 9 listed, `SaveBar.test.ts` 7 against 5). Task 17's round 17c gains one e2e test (Task 16's I-2) that its Step 14 counts (`36 deselected`, `32 passed`) but whose later listings do not: from Task 17's close on, every later listed `deselected` count and `make e2e` count is 44 lower than the real one. A later listing that counts a run of `tests/test_web_server.py` is 24 lower (49 tests in fact after Task 16, against the 25 its listing ends on), `tests/test_views.py` 3 lower (27 against 24), and `tests/e2e/test_saving.py` has 22 tests in fact against the 7 listed.
 
 ## Decisions made while planning (review these)
 
@@ -101,7 +101,9 @@ later listings were built without it. Task 5's fix round added 3 tests (the buil
     refuses empty text (Task 15).
 18. **The crash draft is a replay of the tab's edits, undos and redos,** keyed by the heads it
     started from. A pick that leaves unsaved edits carries the draft forward; editing without
-    restoring an offered draft discards it (Task 16).
+    restoring an offered draft discards it; a Save takes out the steps it wrote, and a Save that
+    changed nothing leaves an offered draft on offer (Q&A item 51: Dan changed Task 16's "a Save
+    instead clears it") (Task 16).
 19. **"ASS too" at Save writes ASS for every track,** as the backend's `save` does (Task 16).
 20. **The conflict picker numbers the versions and shows the cues where they differ,** side by
     side as plain text: at most 50, then how many more. While the source track itself is in
@@ -25931,6 +25933,8 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 1 · **Scenarios:** S29, S31, S32, S34
 
+**Built differently** (the listing's own steps stay as planned). (1) The timing tests (9487800, escaped from Tasks 2 and 5, found by the controller on Task 15's closed tree): `test_edit`'s and `test_views`'s two-hour tests take the fastest of three runs, and `test_backend_edit` applies each edit three times to the episode as it stood, so three suites at once no longer fail them; the 1 s bound is unchanged. (2) The listing's gaps (59736a3, ae96b40): the replacement for `views.py`'s docstring named text the file's docstring doesn't have, so the new sentences went into the docstring as it stands; `types.ts` also gains `AppliedMessage`, which `App.tsx` imports and Step 8 never wrote. (3) 0993b01: Save uses `aria-disabled` and a guarded click instead of `disabled`: a disabled button loses focus, so the conflict picker a Save opens had nothing to give focus back to (the picker's focus test failed 7 runs in 12). (4) Round 16d, after the Tier 1 review (Standards approved with 9 Minor; Spec: 3 Critical, 3 Important and 7 Minor) and Dan's ruling on the Criticals (Q&A item 50: fix all three now): Save and "Pick a version" commit an open box first, and the status and `beforeunload` count a box whose text differs from its cue (C-1; de5a40b); the draft follows the heads, keeps an edit sent while a Save runs, and a Save takes out only the steps it wrote, with `trimSaved` and `followHeads` in `lib/draft.ts`, while the offers are worked out again when the heads move (C-2, C-3, I-1, M-3; 5e1d4e8); `formats` is exactly `["srt"]` or `["srt", "ass"]` (M-5) and the server's queue, busy, ordering and `differences` have tests that fail without them (22549d9); the draft, Restore, Discard, the torn-episode picker, `beforeunload` and Save's `aria-disabled` have tests (213d9e8, I-3); `pressSave` is the pure function the Save button calls; over-long lines wrapped (20feb0b). (5) After one re-review (all addressed; one new Important and 8 Minor) and Dan's ruling on the Important (Q&A item 51: a draft on offer stays when a Save changed nothing), the direct fixes under the cap (f11bb3c): the `save_result` handler leaves a draft on offer alone and the heads clear it only when a Save moved them; no Save's count trims an offered draft, whose counts are from an earlier page; `App.tsx`'s comment says what the code does; the separate-drafts test waits for the Save's notice; `open_demo` says why when the demo does not open. The Run-order paragraph counts all of it.
+
 **Files:**
 - Create: `frontend/src/lib/draft.ts` (+ test), `frontend/src/components/{SaveBar,ConflictPicker}.tsx`,
   `frontend/src/components/{SaveBar,ConflictPicker}.test.ts`, `frontend/src/components/ui/dialog.tsx` (Task 12's
@@ -25948,7 +25952,7 @@ Co-Authored-By: <the model's own line>
   `useShinyMessageHandler` and `addNotice` (Task 12).
 - Produces:
   - Input `save`: `{"episode": str, "n": int, "formats": ["srt"] | ["srt", "ass"]}`; any other
-    `formats` is the notice `Save writes srt, and ass when asked for: nothing was saved`. Input
+    `formats` (exactly those two lists) is the notice `Save writes srt, and ass when asked for: nothing was saved`. Input
     `resolve`: `{"episode": str, "n": int, "track": str, "rendition": str}`; a rendition not of
     `make_rendition`'s shape (`r_` and 16 hex) is the notice `pick one of the track's versions`.
     Both join the tab's `Editor` queue and run through `runtime.blocking`, with `busy` at
@@ -25980,11 +25984,16 @@ Co-Authored-By: <the model's own line>
     id); `draftStorage()`, `tabStorage()` (sessionStorage), `tabId(storage)` (`t` and 8 hex, kept
     in sessionStorage, else one for the page); `loadDraft(storage, key)`, `offersFor(storage,
     heads)` (every tab's draft for these heads, oldest first), `addStep(storage, key, step, now?)`,
-    `dropStep(storage, key, n)`, `moveDraft(storage, from, to)`, `clearDraft(storage, key)`;
+    `dropStep(storage, key, n)`, `moveDraft(storage, from, to)`, `clearDraft(storage, key)`,
+    `trimSaved(storage, key, upTo)` (takes out the steps a Save wrote: those with a request count at or
+    below its own) and `followHeads(storage, from, to, savedUpTo)` (the draft moves with the heads, less
+    what a Save wrote);
     `heard(replay, n, ok) -> Replay | null`; none ever throws.
   - `components/ui/dialog.tsx`: `Dialog({open, onClose, title, side?, children, className?})`,
     as Task 12's note gives it; `index.css` gains `html.dialog-open { overflow: hidden; }`.
-  - `SaveBar({dirty, busy, formats, drafts, onSave, onRestore(key), onDiscard})` (one row per
+  - `SaveBar({dirty, busy, formats, drafts, onSave, onRestore(key), onDiscard})` with `pressSave(busy,
+    ass, onSave)`, the pure function its Save button calls, and `aria-disabled`, not `disabled`, while a
+    Save or a pick runs, since a disabled button loses focus (one row per
     draft offered, each with its time and its own Restore; one Discard), `OVERWRITE_COMMAND`
     (`vid2sub write <video> --overwrite-foreign`, the placeholder literal) and
     `resultNotices(result: SaveResultMessage, tracks: TrackInfo[], video: string): Notice[]` (a
@@ -25995,20 +26004,32 @@ Co-Authored-By: <the model's own line>
     Test ids: `save`, `save-ass`, `save-state`, `draft`, `draft-restore`, `draft-discard`,
     `conflict-picker`, `version` (each version's label), `keep-<track>`, `picker-close`,
     `pick-version` (the conflict note's button).
-  - `Editor` takes `saving: Saving` (`{drafts, conflictsFound, onRestore(key), onDiscard}`) beside
+  - `Editor` takes `saving: Saving` (`{drafts, conflictsFound, onTyping(typing), onRestore(key),
+    onDiscard}`) beside
     round 14d's `onCantPlay`, and
     `Requests` gains `save(formats)` and `resolve(track, rendition)`. `App` sets `save` and
     `resolve` through the pacer, handles `save_result` and `applied`, keeps this tab's draft
     (Decision 31: it offers every tab's draft for the heads, restores one by replaying its steps
     as sent and clears it only once none was refused, else says how many were and keeps it; a
-    Save, a discard or an edit instead clears only this tab's own) and adds the `beforeunload`
-    listener only while the episode is dirty.
+    discard or an edit instead clears only this tab's own; a Save takes out the steps it wrote, and
+    clears a draft on offer only when it moved the heads, so a Save that changed nothing leaves it on
+    offer: Q&A item 51, where this listing said a Save instead clears it) and adds the
+    `beforeunload` listener only while the episode is dirty or a box is open whose text differs from
+    its cue.
+  - Round 16d (the Tier 1 review; Q&A item 50): Save, and the conflict note's "Pick a version",
+    first commit an open box (round 15d's rule: only Esc discards it); `EpisodeEditor` tells `App`
+    by `Saving.onTyping` when a box's text differs from its cue, and the status and `beforeunload`
+    count it. A key change for the same episode (a Save or a pick moved the heads) moves this
+    tab's draft with `followHeads`, which a Save's `save_result` then trims with `trimSaved`; a
+    draft on offer is only moved (its counts are from an earlier page) or, when a Save moved the
+    heads, cleared; the offers are worked out again for the new heads. `formats` is exactly
+    `["srt"]` or `["srt", "ass"]`.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
 #### Round 16a: Save, the pick and what they did
 
-- [ ] **Step 1: Write the failing tests.** In `tests/test_views.py`, replace
+- [x] **Step 1: Write the failing tests.** In `tests/test_views.py`, replace
   `from vid2sub.subs.sidecar import Header, HeadRecord, Sidecar, VideoInfo, make_rendition` with
 
 ```python
@@ -26160,12 +26181,12 @@ def test_each_edit_undo_and_redo_is_answered_with_whether_it_was_made(media_clie
                               ((1, True), (2, False), (3, True), (4, True), (5, False), (7, True))]
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_server.py
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_server.py
   tests/test_views.py -q -k 'save or conflict or well_formed or head_and_the_formats or answered'`.
   Expected: `5 failed, 3 passed, 39 deselected`, four with `AssertionError: timed out; the tab saw
   [...` (the `applied` test's among them: no edit, undo or redo is answered yet) and one with
   `KeyError: 'heads'`.
-- [ ] **Step 3: Write the code.** `src/vid2sub/web/views.py`: in the module docstring replace
+- [x] **Step 3: Write the code.** `src/vid2sub/web/views.py`: in the module docstring replace
   `` container and codec names, which the browser's canPlayType is asked about (§8.2). The top
   bar's `` (one line) with
 
@@ -26351,8 +26372,8 @@ RENDITION = re.compile(r"r_[0-9a-f]{16}")  # sidecar.make_rendition's ids (spec 
         editor.submit("resolve", input.resolve())
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `make check`. Expected: `958 passed, 2 skipped, 24 deselected` (twice), `Test Files  11 passed (11)`, `Tests  55 passed (55)`, `All checks passed!`, `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 4: Run the checks; they pass.** `make check`. Expected: `958 passed, 2 skipped, 24 deselected` (twice), `Test Files  11 passed (11)`, `Tests  55 passed (55)`, `All checks passed!`, `no leaks found`.
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 a tab saves its episode and picks a conflicted track's version, and hears what was written, left alone or in conflict
@@ -26393,7 +26414,7 @@ Co-Authored-By: <the model's own line>
 
 #### Round 16b: the save bar, the conflict picker, the draft and the warning
 
-- [ ] **Step 6: Write the failing tests.** `frontend/src/lib/draft.test.ts`:
+- [x] **Step 6: Write the failing tests.** `frontend/src/lib/draft.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -26901,13 +26922,13 @@ def test_a_restore_the_server_refuses_a_step_of_keeps_the_draft_and_says_how_man
     expect(b.get_by_test_id("draft")).to_have_count(2)
 ```
 
-- [ ] **Step 7: Run them; watch them fail.** `cd frontend && npx vitest run src/lib/draft.test.ts
+- [x] **Step 7: Run them; watch them fail.** `cd frontend && npx vitest run src/lib/draft.test.ts
   src/components/SaveBar.test.ts`. Expected: `Error: Failed to resolve import "./draft" from
   "src/lib/draft.test.ts". Does the file exist?` and the same for `./SaveBar`.
   `uv run pytest -m e2e tests/e2e/test_saving.py -q -k srt_edited`. Expected:
   `playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.`, waiting for
   `get_by_test_id("save")`.
-- [ ] **Step 8: Write the code.** `frontend/src/lib/draft.ts`:
+- [x] **Step 8: Write the code.** `frontend/src/lib/draft.ts`:
 
 ```ts
 // The tab's crash-recovery draft (spec §14.5, S34): unsaved edits live in the tab, and every
@@ -28035,7 +28056,7 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
 }
 ```
 
-- [ ] **Step 9: Run the checks; they pass.** First the guards: comment out
+- [x] **Step 9: Run the checks; they pass.** First the guards: comment out
   `window.addEventListener("beforeunload", warn);` in `App.tsx`, `make build`, and
   `uv run pytest -m e2e tests/e2e/test_saving.py -q -k crashed` fails
   `TargetClosedError: Page.wait_for_timeout: Target page, context or browser has been closed`
@@ -28043,7 +28064,7 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
   `npx vitest run src/lib/draft.test.ts` fails `never throws where storage is forbidden or full`;
   put both back and `make build`. `make check`. Expected: `983 passed, 2 skipped, 31 deselected` (twice), `Test Files  14 passed (14)`, `Tests  72 passed (72)`, `All checks passed!`, `no leaks found`. Then `make e2e`.
   Expected: `27 passed`.
-- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(frontend): 🤖 the editor saves, says what it wrote and left alone, picks a conflicted version in a native dialog, keeps a crash draft and warns before closing with unsaved edits
@@ -28121,7 +28142,7 @@ that diverged shows both versions for the user to pick". With who, when and how 
 two tabs saving a minute apart read "Saved in the editor, 10:42: 120 cues" and "…10:43: 120
 cues", and nothing tells the person which holds their work.
 
-- [ ] **Step 11: Write the failing tests.** In `tests/test_views.py`, above
+- [x] **Step 11: Write the failing tests.** In `tests/test_views.py`, above
   `def test_dirty_undo_and_redo_follow_the_episode():` add
 
 ```python
@@ -28221,13 +28242,13 @@ describe("the conflict picker (spec §14.4, S32)", () => {
     expect(difference.locator("td")).to_have_text(["0:03.820", "occasion!", "occasion?"])
 ```
 
-- [ ] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_views.py -q -k 'differ or
+- [x] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_views.py -q -k 'differ or
   fifty'`. Expected: `2 failed, 22 deselected`, each `KeyError: 'differences'`. `cd frontend &&
   npx vitest run src/components/ConflictPicker.test.ts`. Expected: `AssertionError: expected
   '<dialog aria-labelledby="_R_0_" class…' to contain 'Version 1: Saved in the editor: 2 cues'`.
   `uv run pytest -m e2e tests/e2e/test_saving.py -q -k two_tabs`. Expected: `AssertionError:
   assert ['Saved in th...itor: 4 cues'] == ['Version 1: ...itor: 4 cues']`.
-- [ ] **Step 13: Write the code.** `src/vid2sub/web/views.py`: in the module docstring, replace
+- [x] **Step 13: Write the code.** `src/vid2sub/web/views.py`: in the module docstring, replace
   everything from `formats Save writes: ASS too where one was written before (§15.2). The top
   bar's` to the line before the closing `"""` with
 
@@ -28406,11 +28427,11 @@ function Differences({ versions, found }: { versions: number; found?: EpisodeVie
 }
 ```
 
-- [ ] **Step 14: Run the checks; they pass.** `make check`. Expected: `985 passed, 2 skipped, 31
+- [x] **Step 14: Run the checks; they pass.** `make check`. Expected: `985 passed, 2 skipped, 31
   deselected` (twice), `Test Files  15 passed (15)`, `Tests  73 passed (73)`, `All checks
   passed!`, `no leaks found`. Then `make e2e`. Expected: `27 passed`. (A view of a 2,000-cue track
   whose every cue differs took 0.012 s where this was built.)
-- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 the conflict picker shows the cues where two versions differ, side by side, so a person can tell which holds their work
@@ -28445,7 +28466,7 @@ Co-Authored-By: <the model's own line>
   frontend/src/types.ts`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
   kickoff council, because it holds the crash draft and its replay, the safety net for unsaved edits
   (Decision 31)). Worth the reviewers' time: that an edit sent during a Save lands on the saved
@@ -29418,10 +29439,10 @@ at its top, only the pure packages, shiny, shinyreact, htmltools, pydantic and
   Replace
 
 ```python
-through `runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each
-sends `save_result`: what was written, what was left alone, which tracks are in conflict, and the
-notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save sees
-(Review Focus 4, S32).
+`runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each
+sends `save_result`: what was written, what was left alone, which tracks are in conflict, and
+the notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save
+sees (Review Focus 4, S32).
 
 The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
 for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
@@ -29430,14 +29451,14 @@ for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.
   with
 
 ```python
-through `runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each
-sends `save_result`: what was written, what was left alone, which tracks are in conflict, and the
-notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save sees
-(Review Focus 4, S32). Retranslate (§13.4, §20; S30) names source cues, or none for every stale
-one; it waits on the model's server, so it too runs through `runtime.blocking`, with `busy` at
-"retranslating" from the start (with no model named, the route's servers are asked first) and
-`progress` after each batch, handed back to the loop from the worker thread. It is reached
-through the runtime, whose `retranslate` turns the engine's errors into the pure
+`runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each
+sends `save_result`: what was written, what was left alone, which tracks are in conflict, and
+the notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save
+sees (Review Focus 4, S32). Retranslate (§13.4, §20; S30) names source cues, or none for every
+stale one; it waits on the model's server, so it too runs through `runtime.blocking`, with
+`busy` at "retranslating" from the start (with no model named, the route's servers are asked
+first) and `progress` after each batch, handed back to the loop from the worker thread. It is
+reached through the runtime, whose `retranslate` turns the engine's errors into the pure
 `RetranslateError`, so nothing here imports them. Cloud models only when the request itself says
 `allow_cloud: true` (§7.2): the editor's box, unticked every time.
 
@@ -29475,7 +29496,7 @@ log = logging.getLogger("vid2sub.web.server")
   Replace
 
 ```python
-FORMATS = ("srt", "ass")
+FORMATS = (["srt"], ["srt", "ass"])  # exactly these two, as the page sends them
 BAD_FORMATS = "Save writes srt, and ass when asked for: nothing was saved"
 RENDITION = re.compile(r"r_[0-9a-f]{16}")  # sidecar.make_rendition's ids (spec §14.2)
 # htmltools keeps the highest version of a dependency per name. Shiny's own version with a local
@@ -29486,7 +29507,7 @@ RENDITION = re.compile(r"r_[0-9a-f]{16}")  # sidecar.make_rendition's ids (spec 
   with
 
 ```python
-FORMATS = ("srt", "ass")
+FORMATS = (["srt"], ["srt", "ass"])  # exactly these two, as the page sends them
 BAD_FORMATS = "Save writes srt, and ass when asked for: nothing was saved"
 RENDITION = re.compile(r"r_[0-9a-f]{16}")  # sidecar.make_rendition's ids (spec §14.2)
 CUE_ID = re.compile(r"c[0-9a-f]{8}")  # model.new_cue_id's ids, as ops.CueId checks them
@@ -29792,7 +29813,7 @@ Co-Authored-By: <the model's own line>
 ```ts
 import { describe, expect, it } from "vitest";
 
-import { addStep, clearDraft, draftKey, type DraftStep, type DraftStorage, dropStep, headsKey, heard, loadDraft, moveDraft, offersFor, replayable, tabId } from "./draft";
+import { addStep, clearDraft, draftKey, type DraftStep, type DraftStorage, dropStep, followHeads, headsKey, heard, loadDraft, moveDraft, offersFor, replayable, tabId, trimSaved } from "./draft";
 
 function memory(): DraftStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -29909,6 +29930,59 @@ describe("the crash-recovery draft (spec §14.5, S34)", () => {
     expect(() => clearDraft(throwing, "k")).not.toThrow();
     expect(loadDraft(null, "k")).toBeNull();
     expect(() => addStep(null, "k", EDIT)).not.toThrow();
+  });
+});
+
+describe("the draft across a Save or a pick (the Task 16 Spec review's C-3, I-1)", () => {
+  const OLD = draftKey(HEADS, "t0000000a");
+  const NEW = draftKey({ en: "r_1", ja: "r_3" }, "t0000000a");
+  const NUDGE = { edit: { op: "nudge", cue: "c0000000a", delta_ms: 100, edge: "both" }, n: 7 } as const;
+
+  it("takes out the steps a Save wrote and keeps the ones sent behind it", () => {
+    const s = memory();
+    addStep(s, OLD, EDIT, AT); // n 4
+    addStep(s, OLD, { undo: true, n: 6 }, AT);
+    addStep(s, OLD, NUDGE, AT); // sent after the Save, n 7
+    trimSaved(s, OLD, 6);
+    expect(loadDraft(s, OLD)?.steps).toEqual([NUDGE]);
+    trimSaved(s, OLD, 6);
+    expect(loadDraft(s, OLD)?.steps).toEqual([NUDGE]);
+    trimSaved(s, OLD, 7);
+    expect(s.data.has(OLD)).toBe(false);
+  });
+
+  it("carries an edit sent while the Save ran to the new heads, whichever of the two news came first", () => {
+    // the episode first (the Save's result not heard yet): everything comes across, then the
+    // result trims what the Save wrote
+    const first = memory();
+    addStep(first, OLD, EDIT, AT);
+    addStep(first, OLD, NUDGE, AT);
+    followHeads(first, OLD, NEW, 0);
+    expect(first.data.has(OLD)).toBe(false);
+    expect(loadDraft(first, NEW)?.steps).toEqual([EDIT, NUDGE]);
+    trimSaved(first, NEW, 6);
+    expect(loadDraft(first, NEW)?.steps).toEqual([NUDGE]);
+    // the result first, then the episode (both in one batch is this order too): the Save's steps
+    // are gone before the draft moves, so a nudge it wrote is not applied a second time
+    const second = memory();
+    addStep(second, OLD, EDIT, AT);
+    addStep(second, OLD, NUDGE, AT);
+    trimSaved(second, OLD, 6);
+    followHeads(second, OLD, NEW, 6);
+    expect(loadDraft(second, NEW)?.steps).toEqual([NUDGE]);
+  });
+
+  it("leaves nothing under either key once everything was written", () => {
+    const s = memory();
+    addStep(s, OLD, EDIT, AT);
+    followHeads(s, OLD, NEW, 4);
+    expect(s.data.size).toBe(0);
+  });
+
+  it("never throws where storage is forbidden", () => {
+    expect(() => trimSaved(throwing, "k", 3)).not.toThrow();
+    expect(() => followHeads(throwing, "k", "j", 3)).not.toThrow();
+    expect(() => followHeads(null, "k", "j", 3)).not.toThrow();
   });
 });
 
@@ -30245,10 +30319,12 @@ export type EditOp =
 // takes the undo that undid it, so that undo doesn't take back an edit instead (Task 17), and the
 // server's word that it changed nothing drops it. Each tab keeps its own draft, keyed by the heads
 // the episode was opened at and the tab's id, held in sessionStorage: two tabs on one episode never
-// write or clear each other's, and opening an episode offers every tab's draft for its heads. A
-// Save moves the heads, so a draft is only ever offered on the versions its edits were made
-// against. Every storage call is wrapped in try/catch: a private window or blocked site data
-// throws, and the editor must work without it.
+// write each other's, and opening an episode offers every tab's draft for its heads; restoring
+// another tab's draft clears it (Decision 36). A Save or a pick moves the heads: the offers are
+// worked out again for the new heads, so a draft is only ever offered on the versions its edits
+// were made against, and this tab's own draft comes across (followHeads), less the steps a Save
+// wrote (trimSaved). Every storage call is wrapped in try/catch: a private window or blocked site
+// data throws, and the editor must work without it.
 
 import { randomHex } from "@/lib/ids";
 import type { EditOp } from "@/types";
@@ -30382,6 +30458,29 @@ export function clearDraft(storage: DraftStorage | null, key: string): void {
   } catch {
     /* nothing to clear where storage is forbidden */
   }
+}
+
+/** Takes out the steps with request count `upTo` or below: a Save wrote them. A draft with
+ * nothing left is removed. Steps sent behind the Save (a higher count) stay (Decision 31). */
+export function trimSaved(storage: DraftStorage | null, key: string, upTo: number): void {
+  try {
+    const draft = loadDraft(storage, key);
+    if (!draft) return;
+    const steps = draft.steps.filter((s) => s.n > upTo);
+    if (steps.length === draft.steps.length) return;
+    if (steps.length) storage?.setItem(key, JSON.stringify({ ...draft, steps }));
+    else storage?.removeItem(key);
+  } catch {
+    /* forbidden: there is no draft to trim */
+  }
+}
+
+/** The heads moved (a Save or a pick) from the key `from` to `to`: this tab's draft goes with
+ * them, whole, then less what a Save has written (`savedUpTo`, 0 while none has been heard of).
+ * An edit sent while the Save ran is in the draft by then and stays in it. */
+export function followHeads(storage: DraftStorage | null, from: string, to: string, savedUpTo: number): void {
+  if (from !== to) moveDraft(storage, from, to);
+  trimSaved(storage, to, savedUpTo);
 }
 
 /** The Restore after the server's answer to request `n`, or null when `n` isn't one of its
@@ -30761,6 +30860,7 @@ export type Requests = {
 export type Saving = {
   drafts: { key: string; at: string; steps: number }[];
   conflictsFound: number;
+  onTyping: (typing: boolean) => void;
   onRestore: (key: string) => void;
   onDiscard: () => void;
 };
@@ -30902,7 +31002,8 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
 
   // The rows or the translation's cues changed (an edit, undo or redo): current, word and trAt
   // are indexes into them, so they are found again from the playhead. Until this runs, the render
-  // below reads them safely (the Spec review's S-1: a delete once blanked the page). Also after a Save or a pick.
+  // below reads them safely (the Spec review's S-1: a delete once blanked the page). The same
+  // holds after a Save or a pick, which replace the rows.
   const seen = useRef({ rows, trCues });
   useEffect(() => {
     if (seen.current.rows === rows && seen.current.trCues === trCues) return;
@@ -30954,6 +31055,25 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
     if (editing.cell === "source") requests.edit({ op: "set_text", cue: editing.id, text: editing.text });
     else if (editing.track && editing.trId) requests.edit({ op: "set_translation_text", track: editing.track, cue: editing.trId, text: editing.text });
     return true;
+  };
+  // A box whose text differs from its cue is an unsaved edit the server has not seen (the Spec
+  // review's C-1): Save counts it, commits it first, and closing the tab warns of it.
+  const boxText = (() => {
+    const target = editedRow();
+    if (!editing || !target) return undefined;
+    return editing.cell === "source" ? target.text : target.tr[editing.track ?? ""]?.cues.find((c) => c.id === editing.trId)?.text;
+  })();
+  const typing = editing !== null && boxText !== undefined && editing.text !== boxText;
+  const { onTyping } = saving;
+  useEffect(() => {
+    onTyping(typing);
+    return () => onTyping(false);
+  }, [typing, onTyping]);
+  // Moving off the box to Save or to the picker commits its draft, as moving to another cell does.
+  const flushBox = () => {
+    if (!editing) return;
+    commit();
+    setEditing(null);
   };
   const stopEditing = () => {
     setEditing(null);
@@ -31082,7 +31202,8 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
     if (media.current) media.current.playbackRate = value;
   };
 
-  // (current and trAt can name a cue an edit has just removed, until the effect above runs) Also a track gone into conflict.
+  // (current and trAt can name a cue an edit has just removed, until the effect above runs; a
+  // track gone into conflict has no cues until it is picked, which reads the same way)
   const lines = captionLines(showing, rows[current]?.text ?? null, trCues[trAt]?.text ?? null);
   const stale = translations.filter((t) => t.all_stale);
   const noRow = !row;
@@ -31097,8 +31218,8 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
       <header className="flex flex-col gap-1">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <h1 className="truncate text-lg font-bold" data-testid="episode-name">{episode.video.name}</h1>
-          <SaveBar dirty={episode.dirty} busy={busy} formats={episode.formats} drafts={saving.drafts}
-            onSave={requests.save} onRestore={saving.onRestore} onDiscard={saving.onDiscard} />
+          <SaveBar dirty={episode.dirty || typing} busy={busy} formats={episode.formats} drafts={saving.drafts}
+            onSave={(formats) => { flushBox(); requests.save(formats); }} onRestore={saving.onRestore} onDiscard={saving.onDiscard} />
         </div>
         {(episode.notes.length > 0 || stale.length > 0 || conflicted.length > 0) && (
           <ul role="status" className="flex flex-col gap-0.5 text-sm" data-testid="episode-notes">
@@ -31112,7 +31233,7 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
             {conflicted.map((t) => (
               <li key={`conflict-${t.key}`} className="flex flex-wrap items-center gap-2 text-destructive">
                 The {t.label} track has two versions: pick one before editing it.
-                <button type="button" className={control} onClick={() => setPicking(true)} data-testid="pick-version">Pick a version</button>
+                <button type="button" className={control} onClick={() => { flushBox(); setPicking(true); }} data-testid="pick-version">Pick a version</button>
               </li>
             ))}
           </ul>
@@ -31223,7 +31344,7 @@ import { Editor, type Requests, type Saving } from "@/components/Editor";
 import { resultNotices } from "@/components/SaveBar";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
-import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage } from "@/lib/draft";
+import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, followHeads, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage, trimSaved } from "@/lib/draft";
 import { randomHex } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { retranslateNotice } from "@/lib/retranslate";
@@ -31270,14 +31391,19 @@ export default function App() {
   // tab's draft for its heads. Restoring one replays it through the server's rules and clears it
   // only once every step was done again; otherwise it is kept and the editor says how many steps
   // failed. This tab's own draft starts again then, or when the person edits or discards instead
-  // of restoring. When a Save or a pick moves the heads, this tab's draft goes with them while
-  // edits are still unsaved (a pick keeps the other tracks' edits), and is cleared once
-  // everything is saved; no other tab's draft is ever touched by it.
+  // of restoring. When a Save or a pick moves the heads, this tab's draft always goes with them;
+  // a Save then takes out the steps it wrote (a pick writes none, and keeps the other tracks'
+  // edits). A draft on offer is the exception: a Save that moves the heads clears it (it was made
+  // on versions that are gone), a Save that changed nothing leaves it on offer (Q&A item 51). No
+  // other tab's draft is ever touched by it.
   const tab = useMemo(() => tabId(tabStorage()), []);
   const [offers, setOffers] = useState<Offer[]>([]);
   const offering = useRef(false); // offers are up and this tab's old draft not yet dropped
   const drafted = useRef<{ id: string; key: string; heads: Record<string, string> } | null>(null);
   const replaying = useRef<Replay | null>(null);
+  const saveSent = useRef<number | null>(null); // the count of the Save in flight
+  const saveInFlight = useRef(false); // a Save was sent and its result is not yet acted on
+  const saved = useRef(0); // the count of the last Save heard to have written (steps up to it are in a version)
   useEffect(() => {
     if (!episode) {
       drafted.current = null;
@@ -31287,8 +31413,23 @@ export default function App() {
     const was = drafted.current;
     const store = draftStorage();
     if (was?.id === episode.id && was.key !== key) {
-      if (episode.dirty) moveDraft(store, was.key, key);
-      else clearDraft(store, was.key);
+      // A Save or a pick moved the heads: this tab's draft goes with them, less what a Save has
+      // written (a Save's own result trims it too, whichever arrives first), and what is on offer
+      // is worked out again for the new heads (the Spec review's C-2, C-3).
+      if (offering.current) {
+        // A draft on offer is from an earlier page, whose request counts mean nothing here, so
+        // no Save's count trims it. A Save that moved the heads under it clears it (it was made
+        // on versions that are gone); a pick carries it.
+        if (saveInFlight.current) clearDraft(store, was.key);
+        else moveDraft(store, was.key, key);
+      } else {
+        followHeads(store, was.key, key, saved.current);
+      }
+      if (offering.current) {
+        const found = offersFor(store, episode.heads);
+        offering.current = found.length > 0;
+        setOffers(found);
+      }
     }
     if (was?.id !== episode.id) {
       const found = offersFor(store, episode.heads);
@@ -31329,8 +31470,19 @@ export default function App() {
       edit: (op) => { dropOffers(); steps({ edit: op }); },
       undo: () => { dropOffers(); steps({ undo: true }); },
       redo: () => { dropOffers(); steps({ redo: true }); },
-      save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
-      resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
+      save: (formats) => {
+        const a = ask();
+        if (a) {
+          saveSent.current = a.n;
+          saveInFlight.current = true;
+        }
+        send(setSave, a && { ...a, formats });
+      },
+      resolve: (track, rendition) => {
+        saveInFlight.current = false; // a pick is not a Save's heads
+        const a = ask();
+        send(setResolve, a && { ...a, track, rendition });
+      },
       retranslate: (track, ids, allowCloud) => {
         const a = ask();
         if (!a) return;
@@ -31364,15 +31516,31 @@ export default function App() {
   });
 
   const [conflictsFound, setConflictsFound] = useState(0);
+  const [savesHeard, setSavesHeard] = useState(0);
+  const [typing, setTyping] = useState(false); // a box open whose text isn't committed (C-1)
   useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
     if (!episode || data.episode !== episode.id) return;
     for (const n of resultNotices(data, episode.tracks, episode.video.name)) setNotices((shown) => addNotice(shown, n, nextId.current++));
     if (data.conflicts.length) setConflictsFound((k) => k + 1);
+    const at = drafted.current;
+    if (data.kind !== "save" || !at) return;
+    // What this Save wrote is no longer unsaved: the steps up to its count leave the draft, and
+    // the ones sent behind it stay. A draft on offer holds steps from an earlier page, not this
+    // Save's: it is left alone here (the effect on the heads clears it if they moved).
+    saved.current = Math.max(saved.current, saveSent.current ?? 0);
+    if (!offering.current) trimSaved(draftStorage(), at.key, saved.current);
+    setSavesHeard((k) => k + 1);
   });
+  // Declared after the effect on the episode, so that once the episode this Save made has been
+  // seen (it is published before the result is sent), the Save no longer counts as in flight.
+  useEffect(() => {
+    if (savesHeard > 0) saveInFlight.current = false;
+  }, [savesHeard]);
   const saving: Saving = {
     // the steps Restore would send, for each draft that has any
     drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps).length })).filter((d) => d.steps > 0),
     conflictsFound,
+    onTyping: setTyping,
     onRestore: (key) => {
       const at = drafted.current;
       const store = draftStorage();
@@ -31401,7 +31569,7 @@ export default function App() {
 
   // Closing the tab with unsaved edits warns first (S34): listened for only while there are
   // some, as MDN advises; preventDefault, and returnValue for older browsers.
-  const dirty = episode?.dirty ?? false;
+  const dirty = (episode?.dirty ?? false) || typing;
   useEffect(() => {
     if (!dirty) return;
     const warn = (e: BeforeUnloadEvent) => {
@@ -31414,6 +31582,8 @@ export default function App() {
   const [notices, setNotices] = useState<Shown[]>([]);
   const nextId = useRef(1);
   useShinyMessageHandler("notice", (data: unknown) => {
+    // A refused Save sends no result, only a notice: it no longer moves the heads.
+    if ((data as { kind?: unknown } | null)?.kind === "error") saveInFlight.current = false;
     setNotices((shown) => addNotice(shown, data, nextId.current++));
   });
 
@@ -31546,8 +31716,9 @@ Co-Authored-By: <the model's own line>
 The Tier 1 review (Step 16's reviewer, run before the close) found one Critical, one Important and
 two Minor findings in this task as built on Decision 31's draft; this round fixes three,
 test-first, and the fourth (a draft holding only markers is never offered and never cleared) goes
-on the Phase-end list, with the reviewer's Task 16 note (an edit sent while a Save runs is
-recorded under the old heads, which the Save's clean publish clears).
+on the Phase-end list. (Task 16's review found the matching problem for a Save, an edit sent while
+it runs being cleared with the old heads, and round 16d fixed it; its I-2, a no-op undo after a
+pick, is closed here.)
 
 - [ ] **Step 11: Write the failing tests.**   In `tests/test_web_server.py`, replace
 
@@ -31751,6 +31922,40 @@ def test_a_step_that_changed_nothing_never_makes_restore_take_back_the_wrong_one
     expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
     expect(b.get_by_test_id("draft")).to_have_count(0)
     assert notices(b) == [] and second.errors == [] and second.violations() == []
+
+
+def test_an_undo_with_nothing_to_undo_after_a_pick_never_makes_restore_take_back_a_real_edit(
+        open_page, server):
+    # Task 16's Spec review, I-2: a pick starts the undo history again, so Ctrl+Z then has nothing
+    # to undo; kept in the draft as made, Restore would apply the edit and then undo it.
+    first, second = open_page(server), open_page(server)
+    a, b = first.page, second.page
+    rows_a, rows_b = open_demo(a, server), open_demo(b, server)
+    for page, rows, text in ((a, rows_a, "訳A"), (b, rows_b, "訳B")):  # two Saves from one version
+        edit(page, rows.nth(0).get_by_test_id("cue-translation-line").first, text)
+        page.get_by_test_id("save").click()
+        if page is a:
+            expect(a.get_by_test_id("save-state")).to_have_text("All changes saved")
+    expect(b.locator("dialog[open]")).to_be_visible()  # the Japanese track is in conflict
+    b.keyboard.press("Escape")
+    edit(b, rows_b.nth(1).get_by_test_id("cue-text"), "source edit before the pick")
+    b.get_by_test_id("pick-version").click()
+    b.get_by_test_id("version").first.check()
+    b.get_by_test_id("keep-ja").click()
+    expect(b.get_by_test_id("pick-version")).to_have_count(0)
+    b.get_by_test_id("cue-list").focus()
+    b.keyboard.press("ControlOrMeta+z")  # nothing to undo
+    b.wait_for_timeout(400)
+    expect(b.get_by_test_id("save-state")).to_have_text("Unsaved changes")
+    b.close()  # a crash
+    third = open_page(server)
+    c = third.page
+    rows_c = open_demo(c, server)
+    expect(c.get_by_test_id("draft")).to_have_count(1)
+    c.get_by_test_id("draft-restore").click()
+    expect(rows_c.nth(1).get_by_test_id("cue-text")).to_have_text("source edit before the pick")
+    expect(c.get_by_test_id("save-state")).to_have_text("Unsaved changes")
+    assert third.errors == [] and third.violations() == []
 ```
 
 - [ ] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q -k
@@ -31762,9 +31967,11 @@ def test_a_step_that_changed_nothing_never_makes_restore_take_back_the_wrong_one
   src/lib/retranslate.test.ts`. Expected: `Tests  3 failed | 14 passed (17)`: `follows the
   server's undo history only as far back as it keeps, 200 steps` (`expected [ { undo: true, n:
   400 }, …(199) ] to have a length of 199 but got 200`), and both of `what a retranslation says`.
-  `make build && uv run pytest -m e2e tests/e2e/test_retranslate.py -q -k changed_nothing`.
-  Expected: `AssertionError: Locator expected to have text 'occasion!'`, `Actual value:
-  occasion.` (Restore undid the edit that redo had brought back).
+  `make build && uv run pytest -m e2e tests/e2e/test_retranslate.py -q -k 'changed_nothing or
+  after_a_pick'`. Expected: `2 failed`: `AssertionError: Locator expected to have text
+  'occasion!'`, `Actual value: occasion.` (Restore undid the edit that redo had brought back), and
+  `Locator expected to have text 'source edit before the pick'`, `Actual value: occasion.` (Task
+  16's I-2: Restore applied the edit and then the undo that had nothing to undo).
 - [ ] **Step 13: Write the code.**   In `src/vid2sub/web/server.py`, replace
 
 ```python
@@ -32097,9 +32304,10 @@ export function replayable(steps: readonly DraftStep[]): DraftStep[] {
   changes_nothing` fails; in `App.tsx`'s `applied` handler, change `if (!(data.ok && data.changed)
   && drafted.current)` to `if (!data.ok && drafted.current)`, `make build`, and `uv run pytest -m
   e2e tests/e2e/test_retranslate.py -q -k changed_nothing` fails `Locator expected to have text
-  'occasion!'`; put both back and `make build`. `make check`. Expected: `993 passed, 2 skipped, 35
+  'occasion!'` and the pick test fails `Locator expected to have text 'source edit before the
+  pick'`; put both back and `make build`. `make check`. Expected: `993 passed, 2 skipped, 36
   deselected` (twice), `Test Files  16 passed (16)`, `Tests  82 passed (82)`, `All checks
-  passed!`, `no leaks found`. Then `make e2e`. Expected: `31 passed`.
+  passed!`, `no leaks found`. Then `make e2e`. Expected: `32 passed`.
 - [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
@@ -32126,16 +32334,18 @@ the draft it shares with Decision 31) found:
   another track's Retranslate; each track's box now starts unticked
   (Decision 33) (Minor).
 A draft holding only retranslation markers, which Restore would never
-offer, is left in storage; and an edit sent while a Save runs is
-recorded under the old heads, which the Save's publish clears: both go
-on the Phase-end list (Minor).
+offer, is left in storage: it goes on the Phase-end list (Minor). A
+no-op undo after a pick (Task 16's I-2) is the same fix: the page drops
+a step that changed nothing, as it drops a refused one.
 
 The new tests failed first with: KeyError: 'changed' (the applied
 message had none), KeyError: 'ok' (nor had retranslate_result), Vitest's
 "expected [ { undo: true, n: 400 }, …(199) ] to have a length of 199 but
 got 200" and "expected { kind: 'info', …(1) } to be null"; and in
 Chromium, before the page dropped unchanged steps, the restored cue
-read "occasion." instead of "occasion!".
+read "occasion." instead of "occasion!", and after a pick and an undo
+with nothing to undo, "occasion." instead of "source edit before the
+pick".
 
 Docs read: shinyreact 0.1.0's useShinyMessageHandler (the latest handler
 is the one called); React 19's key (a new key mounts a new component,
@@ -34215,7 +34425,7 @@ import { resultNotices } from "@/components/SaveBar";
 import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
-import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage } from "@/lib/draft";
+import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, followHeads, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage, trimSaved } from "@/lib/draft";
 import { randomHex } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { retranslateNotice } from "@/lib/retranslate";
@@ -34266,14 +34476,19 @@ export default function App() {
   // tab's draft for its heads. Restoring one replays it through the server's rules and clears it
   // only once every step was done again; otherwise it is kept and the editor says how many steps
   // failed. This tab's own draft starts again then, or when the person edits or discards instead
-  // of restoring. When a Save or a pick moves the heads, this tab's draft goes with them while
-  // edits are still unsaved (a pick keeps the other tracks' edits), and is cleared once
-  // everything is saved; no other tab's draft is ever touched by it.
+  // of restoring. When a Save or a pick moves the heads, this tab's draft always goes with them;
+  // a Save then takes out the steps it wrote (a pick writes none, and keeps the other tracks'
+  // edits). A draft on offer is the exception: a Save that moves the heads clears it (it was made
+  // on versions that are gone), a Save that changed nothing leaves it on offer (Q&A item 51). No
+  // other tab's draft is ever touched by it.
   const tab = useMemo(() => tabId(tabStorage()), []);
   const [offers, setOffers] = useState<Offer[]>([]);
   const offering = useRef(false); // offers are up and this tab's old draft not yet dropped
   const drafted = useRef<{ id: string; key: string; heads: Record<string, string> } | null>(null);
   const replaying = useRef<Replay | null>(null);
+  const saveSent = useRef<number | null>(null); // the count of the Save in flight
+  const saveInFlight = useRef(false); // a Save was sent and its result is not yet acted on
+  const saved = useRef(0); // the count of the last Save heard to have written (steps up to it are in a version)
   useEffect(() => {
     if (!episode) {
       drafted.current = null;
@@ -34283,8 +34498,23 @@ export default function App() {
     const was = drafted.current;
     const store = draftStorage();
     if (was?.id === episode.id && was.key !== key) {
-      if (episode.dirty) moveDraft(store, was.key, key);
-      else clearDraft(store, was.key);
+      // A Save or a pick moved the heads: this tab's draft goes with them, less what a Save has
+      // written (a Save's own result trims it too, whichever arrives first), and what is on offer
+      // is worked out again for the new heads (the Spec review's C-2, C-3).
+      if (offering.current) {
+        // A draft on offer is from an earlier page, whose request counts mean nothing here, so
+        // no Save's count trims it. A Save that moved the heads under it clears it (it was made
+        // on versions that are gone); a pick carries it.
+        if (saveInFlight.current) clearDraft(store, was.key);
+        else moveDraft(store, was.key, key);
+      } else {
+        followHeads(store, was.key, key, saved.current);
+      }
+      if (offering.current) {
+        const found = offersFor(store, episode.heads);
+        offering.current = found.length > 0;
+        setOffers(found);
+      }
     }
     if (was?.id !== episode.id) {
       const found = offersFor(store, episode.heads);
@@ -34325,8 +34555,19 @@ export default function App() {
       edit: (op) => { dropOffers(); steps({ edit: op }); },
       undo: () => { dropOffers(); steps({ undo: true }); },
       redo: () => { dropOffers(); steps({ redo: true }); },
-      save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
-      resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
+      save: (formats) => {
+        const a = ask();
+        if (a) {
+          saveSent.current = a.n;
+          saveInFlight.current = true;
+        }
+        send(setSave, a && { ...a, formats });
+      },
+      resolve: (track, rendition) => {
+        saveInFlight.current = false; // a pick is not a Save's heads
+        const a = ask();
+        send(setResolve, a && { ...a, track, rendition });
+      },
       retranslate: (track, ids, allowCloud) => {
         const a = ask();
         if (!a) return;
@@ -34361,15 +34602,31 @@ export default function App() {
   });
 
   const [conflictsFound, setConflictsFound] = useState(0);
+  const [savesHeard, setSavesHeard] = useState(0);
+  const [typing, setTyping] = useState(false); // a box open whose text isn't committed (C-1)
   useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
     if (!episode || data.episode !== episode.id) return;
     for (const n of resultNotices(data, episode.tracks, episode.video.name)) setNotices((shown) => addNotice(shown, n, nextId.current++));
     if (data.conflicts.length) setConflictsFound((k) => k + 1);
+    const at = drafted.current;
+    if (data.kind !== "save" || !at) return;
+    // What this Save wrote is no longer unsaved: the steps up to its count leave the draft, and
+    // the ones sent behind it stay. A draft on offer holds steps from an earlier page, not this
+    // Save's: it is left alone here (the effect on the heads clears it if they moved).
+    saved.current = Math.max(saved.current, saveSent.current ?? 0);
+    if (!offering.current) trimSaved(draftStorage(), at.key, saved.current);
+    setSavesHeard((k) => k + 1);
   });
+  // Declared after the effect on the episode, so that once the episode this Save made has been
+  // seen (it is published before the result is sent), the Save no longer counts as in flight.
+  useEffect(() => {
+    if (savesHeard > 0) saveInFlight.current = false;
+  }, [savesHeard]);
   const saving: Saving = {
     // the steps Restore would send, for each draft that has any
     drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps).length })).filter((d) => d.steps > 0),
     conflictsFound,
+    onTyping: setTyping,
     onRestore: (key) => {
       const at = drafted.current;
       const store = draftStorage();
@@ -34422,7 +34679,7 @@ export default function App() {
 
   // Closing the tab with unsaved edits warns first (S34): listened for only while there are
   // some, as MDN advises; preventDefault, and returnValue for older browsers.
-  const dirty = episode?.dirty ?? false;
+  const dirty = (episode?.dirty ?? false) || typing;
   useEffect(() => {
     if (!dirty) return;
     const warn = (e: BeforeUnloadEvent) => {
@@ -34435,6 +34692,8 @@ export default function App() {
   const [notices, setNotices] = useState<Shown[]>([]);
   const nextId = useRef(1);
   useShinyMessageHandler("notice", (data: unknown) => {
+    // A refused Save sends no result, only a notice: it no longer moves the heads.
+    if ((data as { kind?: unknown } | null)?.kind === "error") saveInFlight.current = false;
     setNotices((shown) => addNotice(shown, data, nextId.current++));
   });
 
@@ -37395,7 +37654,7 @@ import { resultNotices } from "@/components/SaveBar";
 import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
-import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage } from "@/lib/draft";
+import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, followHeads, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage, trimSaved } from "@/lib/draft";
 import { randomHex } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { retranslateNotice } from "@/lib/retranslate";
@@ -37449,14 +37708,19 @@ export default function App() {
   // tab's draft for its heads. Restoring one replays it through the server's rules and clears it
   // only once every step was done again; otherwise it is kept and the editor says how many steps
   // failed. This tab's own draft starts again then, or when the person edits or discards instead
-  // of restoring. When a Save or a pick moves the heads, this tab's draft goes with them while
-  // edits are still unsaved (a pick keeps the other tracks' edits), and is cleared once
-  // everything is saved; no other tab's draft is ever touched by it.
+  // of restoring. When a Save or a pick moves the heads, this tab's draft always goes with them;
+  // a Save then takes out the steps it wrote (a pick writes none, and keeps the other tracks'
+  // edits). A draft on offer is the exception: a Save that moves the heads clears it (it was made
+  // on versions that are gone), a Save that changed nothing leaves it on offer (Q&A item 51). No
+  // other tab's draft is ever touched by it.
   const tab = useMemo(() => tabId(tabStorage()), []);
   const [offers, setOffers] = useState<Offer[]>([]);
   const offering = useRef(false); // offers are up and this tab's old draft not yet dropped
   const drafted = useRef<{ id: string; key: string; heads: Record<string, string> } | null>(null);
   const replaying = useRef<Replay | null>(null);
+  const saveSent = useRef<number | null>(null); // the count of the Save in flight
+  const saveInFlight = useRef(false); // a Save was sent and its result is not yet acted on
+  const saved = useRef(0); // the count of the last Save heard to have written (steps up to it are in a version)
   useEffect(() => {
     if (!episode) {
       drafted.current = null;
@@ -37466,8 +37730,23 @@ export default function App() {
     const was = drafted.current;
     const store = draftStorage();
     if (was?.id === episode.id && was.key !== key) {
-      if (episode.dirty) moveDraft(store, was.key, key);
-      else clearDraft(store, was.key);
+      // A Save or a pick moved the heads: this tab's draft goes with them, less what a Save has
+      // written (a Save's own result trims it too, whichever arrives first), and what is on offer
+      // is worked out again for the new heads (the Spec review's C-2, C-3).
+      if (offering.current) {
+        // A draft on offer is from an earlier page, whose request counts mean nothing here, so
+        // no Save's count trims it. A Save that moved the heads under it clears it (it was made
+        // on versions that are gone); a pick carries it.
+        if (saveInFlight.current) clearDraft(store, was.key);
+        else moveDraft(store, was.key, key);
+      } else {
+        followHeads(store, was.key, key, saved.current);
+      }
+      if (offering.current) {
+        const found = offersFor(store, episode.heads);
+        offering.current = found.length > 0;
+        setOffers(found);
+      }
     }
     if (was?.id !== episode.id) {
       const found = offersFor(store, episode.heads);
@@ -37508,8 +37787,19 @@ export default function App() {
       edit: (op) => { dropOffers(); steps({ edit: op }); },
       undo: () => { dropOffers(); steps({ undo: true }); },
       redo: () => { dropOffers(); steps({ redo: true }); },
-      save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
-      resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
+      save: (formats) => {
+        const a = ask();
+        if (a) {
+          saveSent.current = a.n;
+          saveInFlight.current = true;
+        }
+        send(setSave, a && { ...a, formats });
+      },
+      resolve: (track, rendition) => {
+        saveInFlight.current = false; // a pick is not a Save's heads
+        const a = ask();
+        send(setResolve, a && { ...a, track, rendition });
+      },
       retranslate: (track, ids, allowCloud) => {
         const a = ask();
         if (!a) return;
@@ -37544,15 +37834,31 @@ export default function App() {
   });
 
   const [conflictsFound, setConflictsFound] = useState(0);
+  const [savesHeard, setSavesHeard] = useState(0);
+  const [typing, setTyping] = useState(false); // a box open whose text isn't committed (C-1)
   useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
     if (!episode || data.episode !== episode.id) return;
     for (const n of resultNotices(data, episode.tracks, episode.video.name)) setNotices((shown) => addNotice(shown, n, nextId.current++));
     if (data.conflicts.length) setConflictsFound((k) => k + 1);
+    const at = drafted.current;
+    if (data.kind !== "save" || !at) return;
+    // What this Save wrote is no longer unsaved: the steps up to its count leave the draft, and
+    // the ones sent behind it stay. A draft on offer holds steps from an earlier page, not this
+    // Save's: it is left alone here (the effect on the heads clears it if they moved).
+    saved.current = Math.max(saved.current, saveSent.current ?? 0);
+    if (!offering.current) trimSaved(draftStorage(), at.key, saved.current);
+    setSavesHeard((k) => k + 1);
   });
+  // Declared after the effect on the episode, so that once the episode this Save made has been
+  // seen (it is published before the result is sent), the Save no longer counts as in flight.
+  useEffect(() => {
+    if (savesHeard > 0) saveInFlight.current = false;
+  }, [savesHeard]);
   const saving: Saving = {
     // the steps Restore would send, for each draft that has any
     drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps).length })).filter((d) => d.steps > 0),
     conflictsFound,
+    onTyping: setTyping,
     onRestore: (key) => {
       const at = drafted.current;
       const store = draftStorage();
@@ -37622,7 +37928,7 @@ export default function App() {
 
   // Closing the tab with unsaved edits warns first (S34): listened for only while there are
   // some, as MDN advises; preventDefault, and returnValue for older browsers.
-  const dirty = episode?.dirty ?? false;
+  const dirty = (episode?.dirty ?? false) || typing;
   useEffect(() => {
     if (!dirty) return;
     const warn = (e: BeforeUnloadEvent) => {
@@ -37635,6 +37941,8 @@ export default function App() {
   const [notices, setNotices] = useState<Shown[]>([]);
   const nextId = useRef(1);
   useShinyMessageHandler("notice", (data: unknown) => {
+    // A refused Save sends no result, only a notice: it no longer moves the heads.
+    if ((data as { kind?: unknown } | null)?.kind === "error") saveInFlight.current = false;
     setNotices((shown) => addNotice(shown, data, nextId.current++));
   });
 
@@ -40489,7 +40797,7 @@ fi
 | Task 17 (planning) | Minor | `src/vid2sub/web/server.py` | A whole-episode Retranslate holds the tab's queue, with no Cancel, so a slow Spark keeps edits and Save waiting for minutes; a Cancel checked between batches, or Save allowed past a running retranslation (reliability finding 15) | open |
 | Task 6 (planning) | Minor | `src/vid2sub/store.py` | The glossary file's write takes no `store.write_lock` (the build's Tier 1 review), and `_write_glossary`'s re-read is not passed to `safe_write` as `check`, so its window also covers the temporary write and the fsync (Standards Minor 1) | open |
 | Task 6 (planning) | Minor | `src/vid2sub/pipeline.py` | `pipeline._write` can fail an input with `StoreError` when one of its tracks went into conflict meanwhile, where it could write the others and report the conflict (the build's Tier 1 re-review) | open |
-| Task 16 (planning) | Minor | `frontend/src/App.tsx` | An edit sent while a Save runs is cleared from the draft by the Save's publish, so a crash right after loses it | open |
+| Task 16 (planning) | Minor | `frontend/src/App.tsx` | An edit sent while a Save runs is cleared from the draft by the Save's publish, so a crash right after loses it | fixed in round 16d (C-3) |
 | Task 16 (planning) | Minor | `frontend/src/lib/draft.ts` | A step still unanswered when the tab crashes stays in the draft and is replayed; comments in `App.tsx`, `draft.ts`, `server.py`'s docstring and `types.ts` still describe only refusals | open |
 | Task 17 (planning) | Minor | `frontend/src/lib/draft.ts` | A draft holding only retranslation markers lingers in storage, though restoring it does nothing (the build's Tier 1 review) | open |
 | Task 16 (planning) | Minor | `tests/e2e/` | The e2e helpers `seek`, `texts` and `open_demo` are copied into `test_editor_view.py`, `test_editing.py`, `test_saving.py` and `test_retranslate.py`, and `client_for` into the Task 18 and 19 test modules, which also import from each other's test files; move them to `tests/e2e/conftest.py` and `tests/helpers.py` (the pre-flight scan) | open |
@@ -40582,3 +40890,20 @@ fi
 | Task 15 (re-review) | Minor | `frontend/src/` | There is no error boundary, so any later render error still blanks the page (found by the re-review; Task 16's crash draft should allow for it) | open |
 | Task 14 (close) | Minor | `src/vid2sub/web/` (Phase 4) | Phase 4's `folder.opened` keeps `playable_audio=True`, so in Pages a file whose chosen track isn't its first still plays its first track, and Q&A item 48's rule has no playback audio to fall back on there; Phase 4's start decides | open |
 | Task 15 (review) | Minor | `tests/` | Couldn't verify: a real input method (macOS Japanese or Pinyin, Windows IMEs), Safari and Firefox (S33 is Chromium through CDP; whether Safari fires implicit form submission on an IME's Enter), ubuntu-24.04 and windows-2022 for the new tests until CI runs, and a real screen reader (a `textarea` inside `role="option"`, whose children ARIA calls presentational) | open |
+| Task 16 (review) | Minor | `frontend/src/lib/draft.ts` | Spec M-1: under a full quota (about 5.2 million characters) a large step fails quietly and a later small one fits, so the draft holds step 3 without step 2 and nothing says so; and nothing ever evicts a draft (a crashed tab's draft Discarded in another tab stays in `localStorage` for good); once a write fails stop adding and mark the draft, and evict old drafts by age | open |
+| Task 16 (review) | Minor | `frontend/src/lib/draft.ts` | Spec M-2: Chromium's Duplicate Tab copies `sessionStorage`, so two live tabs share one `vid2sub.tab` id and one draft key, against "never touched by another tab"; detect the copy (a `window.name` or a lock on the id) and draw a new id | open |
+| Task 16 (review) | Minor | `frontend/src/lib/notices.ts` | Spec M-4: `MAX_SHOWN = 3` can push "Left … alone", which spec §6.6 requires, out of view after a Save with several notes; raise the cap for a Save's result, or keep that notice | open |
+| Task 16 (review) | Minor | `frontend/src/components/ConflictPicker.tsx` | Spec M-6: the differences table shows one start time per cue, so two versions that differ only in time read as identical lines, and a changed end time can't be seen; show each version's times when they differ | open |
+| Task 16 (review) | Minor | `frontend/src/components/Editor.tsx` | Spec M-7: after a pick the opener (the conflict note's button) is gone with the conflict and focus lands on `<body>`, against §19.3's "every action reachable by keyboard"; focus the cue list | open |
+| Task 16 (review) | Minor | `tests/`, `frontend/src/` | Standards S-1, S-3, S-4, S-5 and S-8: "fastest of three" is written three ways in 9487800 (one `fastest(fn)` in `tests/helpers.py`); the button class strings are repeated (`control` and a `primary` into `components/ui/`); `ask` is defined twice in `App.tsx` and `onRestore`'s `sent` shadows the component's; `_save` and `_resolve` nearly duplicate each other and `"pick one of the track's versions"` is not a named constant; the differences table's row key can collide (use the index) and `resultNotices` belongs in `lib/notices.ts` | open |
+| Task 16 (re-review) | Minor | `frontend/src/components/Editor.tsx` | N-2: a commit the server refuses at Save (a draft over 2,000 characters) loses the box's text, with the notice "Saved" and the status "All changes saved"; every commit-on-leave route has done this since round 15d; keep the box until `applied` says ok | open |
+| Task 16 (re-review) | Minor | `frontend/src/components/Editor.tsx` | N-3: a box opened while a Save runs, when the Save tears the source, is lost (the rows empty and the box closes); the window is the Save's length | open |
+| Task 16 (re-review) | Minor | `frontend/src/App.tsx` | N-4: a Save that couldn't write the glossary (not UTF-8) still trims its step from the draft, so a crash then loses the term, against "a Save clears only what it wrote" | open |
+| Task 16 (re-review) | Minor | `frontend/src/App.tsx` | N-5: edit, undo, then a pick leaves a false offer (the two steps carried net to nothing); a pick could trim a draft whose steps cancel | open |
+| Task 16 (re-review) | Minor | `frontend/src/App.tsx` | N-6: two Saves in flight (a double click while the queue is held by a slow open) share one `saveSent` count, so the first result trims up to the second Save's; echo the Save's `n` in `save_result` | open |
+| Task 16 (re-review) | Minor | `frontend/src/`, `tests/e2e/test_saving.py` | N-7: four parts of round 16d have no guard test: `flushBox` taken out of "Pick a version", `typing` counting source boxes only, `SaveBar`'s `onClick` skipping `pressSave` (the wiring; Playwright's click waits out `aria-disabled`, so a browser guard must click from the page), and the Save-with-an-offer branch's every arrival order | open |
+| Task 16 (re-review) | Minor | `frontend/src/App.tsx` | For Dan: on a torn episode a pick drops another tab's draft from the offers (round 16d ruled that other tabs' drafts for the old heads drop off, and only this tab's own is carried), so a crashed tab's edits on another track can't then be reached | open |
+| Task 16 (re-review) | Minor | `tests/e2e/test_saving.py` | `test_two_tabs_on_one_episode_keep_separate_drafts` failed once in four full runs (`open_demo` saw 0 rows) and not in 27 later runs; `open_demo` now reports the notices and the server log's tail, scrubbed, if it recurs | open |
+| Task 16 (re-review) | Minor | `frontend/src/App.tsx` | `beforeunload` is added two renders after typing starts (4 to 10 ms, measured), so a close in that window is unwarned; the box is not in the draft until committed | open |
+| Task 16 (re-review) | Minor | `frontend/src/` | Couldn't verify: Windows until CI runs (the new tests write through `safe_write` and read with an explicit encoding), a real tab crash (Playwright's close stands in), Chromium's Duplicate Tab (`window.open` stands in) and browsers other than Chromium | open |
+| Task 17 (planning) | Minor | `frontend/src/components/Editor.tsx` | Retranslate with a box open doesn't commit it first, as Save and "Pick a version" now do (Task 16's C-1); the retranslation runs on the cue's old text | open |
