@@ -695,7 +695,7 @@ def test_an_insert_answered_late_does_not_replace_a_draft_opened_since(held_ffmp
     expect(page.get_by_test_id("busy-note")).to_have_count(0)
     expect(page.get_by_test_id("cue-editor")).to_have_value("a draft typed while waiting")
     page.keyboard.press("ControlOrMeta+Enter")
-    assert "a draft typed while waiting" in texts(page)
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("a draft typed while waiting")
     assert "…" in texts(page)  # the inserted cue is there too
 
 
