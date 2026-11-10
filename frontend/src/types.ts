@@ -62,6 +62,10 @@ export type SpokenWord = { start_ms: number; end_ms: number; text: string };
 /** One of a conflicted track's versions (spec §14.4). */
 export type Version = { rendition: string; by: string | null; at: string | null; cue_count: number };
 
+/** A cue where a conflicted track's versions differ: its time, and its text in each version (in
+ * `conflicts`' order), or null where a version lacks it (spec §14.4, S32). */
+export type Difference = { start_ms: number; end_ms: number; texts: (string | null)[] };
+
 /** The `episode` output: views.episode_view. `video.url` plays the video; `audio_url` the
  * playback audio when the browser can't play the video's audio (Decision 2), or the video itself
  * (spec §8.2: asked with canPlayType about ffprobe's container and codec names). No path, ever. */
@@ -86,6 +90,7 @@ export type EpisodeView = {
   can_redo: boolean;
   notes: string[];
   conflicts: Record<string, Version[]>;
+  differences: Record<string, { cues: Difference[]; more: number }>; // at most 50 per track
   glossary_adds: Record<string, string>;
   heads: Record<string, string>; // track → head rendition: the crash-recovery draft's key
   formats: ("srt" | "ass")[]; // what Save writes unless the person changes it

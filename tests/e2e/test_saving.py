@@ -159,8 +159,12 @@ def test_two_tabs_saving_one_episode_end_in_a_conflict_the_second_sees_and_picks
     b.get_by_test_id("pick-version").click()
     versions = b.get_by_test_id("version")
     expect(versions).to_have_count(2)
-    assert all(re.match(r"^Saved in the editor, .+: 4 cues$", v)
-               for v in versions.all_inner_texts())
+    assert [re.sub(r", .+:", ":", v) for v in versions.all_inner_texts()] == [
+        "Version 1: Saved in the editor: 4 cues", "Version 2: Saved in the editor: 4 cues"]
+    # §14.4, S32: the editor shows both: the cue they differ in, each version's text beside it.
+    difference = b.get_by_test_id("difference")
+    expect(difference).to_have_count(1)
+    expect(difference.locator("td")).to_have_text(["0:03.820", "occasion!", "occasion?"])
     versions.first.check()
     b.get_by_test_id("keep-en").click()
     expect(dialog).to_have_count(0)

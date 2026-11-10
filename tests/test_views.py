@@ -177,6 +177,45 @@ def test_each_version_of_a_track_in_conflict_says_who_made_it_when_and_how_many_
     assert "en" not in v["rows"][0]["tr"]
 
 
+def conflicted(mine_cues, theirs_cues, source=None) -> Episode:
+    """An episode whose English track has two versions: mine (the editor's) and theirs."""
+    source = source_cues(3) if source is None else source
+    mine = make_rendition([], "en", body(mine_cues, "en", "translation"))
+    theirs = make_rendition([], "en", body(theirs_cues, "en", "translation"))
+    ep = episode(source, records=(
+        mine, HeadRecord(track="en", rendition=mine.id, by="editor", at="2026-10-23T12:00:00Z"),
+        theirs,
+        HeadRecord(track="en", rendition=theirs.id, by="editor", at="2026-10-23T12:01:00Z")))
+    return dataclasses.replace(ep, conflicts={"en": (mine.id, theirs.id)},
+                               tracks=Tracks(ep.tracks.source, {}))
+
+
+def test_a_track_in_conflict_shows_the_cues_where_its_versions_differ():
+    # Spec §14.4, S32: "the editor shows both and the user picks". Texts are in the order of the
+    # versions in `conflicts`; a version without the cue has None.
+    en = translation_cues(source_cues(3))
+    mine = [en[0], en[1].model_copy(update={"text": "How are you doing?"})]
+    theirs = [en[0], en[1].model_copy(update={"text": "How's it going?"}), en[2]]
+    v = view(conflicted(mine, theirs))
+    assert v["differences"] == {"en": {"cues": [
+        {"start_ms": 3600, "end_ms": 6600, "texts": ["How are you doing?", "How's it going?"]},
+        {"start_ms": 7200, "end_ms": 10200, "texts": [None, ENGLISH[2]]},
+    ], "more": 0}}
+    assert view(episode())["differences"] == {}
+
+
+def test_a_cue_whose_time_alone_differs_is_listed_and_the_list_stops_at_fifty():
+    source = source_cues(60)
+    en = translation_cues(source)
+    moved = [en[0].model_copy(update={"end_ms": 2000})] + en[1:]
+    assert view(conflicted(en, moved, source))["differences"]["en"]["cues"] == [
+        {"start_ms": 0, "end_ms": 3000, "texts": ["Line 0", "Line 0"]}]
+    changed = [c.model_copy(update={"text": c.text + "!"}) for c in en]
+    found = view(conflicted(en, changed, source))["differences"]["en"]
+    assert len(found["cues"]) == 50 and found["more"] == 10
+    assert [c["texts"] for c in found["cues"][:2]] == [["Line 0", "Line 0!"], ["Line 1", "Line 1!"]]
+
+
 def test_dirty_undo_and_redo_follow_the_episode():
     ep = episode()
     assert (view(ep)["dirty"], view(ep)["can_undo"], view(ep)["can_redo"]) == (False, False, False)

@@ -12,10 +12,11 @@ covers; an imported line (no `src`) is never stale and covers the source cues it
 (Q&A item 45). The view never holds a path, only the video's bare file name (§6.8), and the
 probe's container and codec names, which the browser's canPlayType is asked about (§8.2). It
 names each track's head rendition, by which the tab keys its crash-recovery draft (§14.5, S34),
-and the formats Save writes: ASS too where one was written before (§15.2). The
-server runs in Pages too (§21), so this module imports only pure packages and `web.episode` at
-its top; the status views' config and keys are the local engine's, imported only where they are
-used (Task 14 round 14a).
+and the formats Save writes: ASS too where one was written before (§15.2). A track in conflict
+lists its versions, and the cues where they differ, so the person can tell which holds what
+(§14.4, S32). The server runs in Pages too (§21), so this module imports only pure packages and
+`web.episode` at its top; the status views' config and keys are the local engine's, imported only
+where they are used (Task 14 round 14a).
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 from vid2sub.subs import langs, naming
 from vid2sub.subs.lint import lint
 from vid2sub.subs.model import Cue
+from vid2sub.subs.rendition import cues_from_body
 from vid2sub.subs.rules import rules_for
 from vid2sub.subs.sidecar import HeadRecord
 from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
@@ -38,6 +40,7 @@ if TYPE_CHECKING:  # local only: the Pages bundle has neither (spec §21)
     from vid2sub.engines.clients import KeyRing
 
 _SCRIPTS = {"Hant": " (Traditional)", "Hans": " (Simplified)"}
+DIFFERENCES_SHOWN = 50  # cues where a conflicted track's versions differ, before "and N more"
 
 
 def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None) -> dict[str, Any]:
@@ -57,6 +60,7 @@ def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None) -
         "can_redo": bool(ep.redo),
         "notes": list(ep.notes),
         "conflicts": _conflicts(ep),
+        "differences": _differences(ep),
         "glossary_adds": dict(ep.glossary_adds),
         "heads": dict(ep.heads),
         "formats": _formats(ep),
@@ -151,6 +155,31 @@ def _conflicts(ep: Episode) -> dict[str, list[dict[str, Any]]]:
             out[track].append({
                 "rendition": rid, "by": head.by if head else None, "at": head.at if head else None,
                 "cue_count": len(rec.body.get("payload", {}).get("cues", [])) if rec else 0})
+    return out
+
+
+def _differences(ep: Episode) -> dict[str, dict[str, Any]]:
+    """For each track in conflict, the cues where its versions differ (spec §14.4, S32): each
+    cue's time (from the first version that has it) and its text in each version, in the order
+    `_conflicts` lists them, or None where a version lacks it; cues are matched by id, which a
+    text or time edit keeps. At most DIFFERENCES_SHOWN, in time order, with a count of the rest.
+    Worked out once per view, from the versions' cues."""
+    renditions = ep.sidecar.renditions()
+    out: dict[str, dict[str, Any]] = {}
+    for track, leaves in ep.conflicts.items():
+        versions = [{c.id: c for c in cues_from_body(renditions[rid].body)}
+                    if rid in renditions else {} for rid in leaves]
+        found = []
+        for cid in dict.fromkeys(cid for v in versions for cid in v):
+            cues = [v.get(cid) for v in versions]
+            if None not in cues and len({(c.start_ms, c.end_ms, c.text) for c in cues}) == 1:
+                continue
+            first = next(c for c in cues if c is not None)
+            found.append({"start_ms": first.start_ms, "end_ms": first.end_ms,
+                          "texts": [c.text if c is not None else None for c in cues]})
+        found.sort(key=lambda d: (d["start_ms"], d["end_ms"]))
+        out[track] = {"cues": found[:DIFFERENCES_SHOWN],
+                      "more": max(0, len(found) - DIFFERENCES_SHOWN)}
     return out
 
 
