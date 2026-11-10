@@ -27,8 +27,23 @@ def open_demo(page, server):
     page.get_by_test_id("open-path").fill(str(demo_copy(server) / "jfk.mp4"))
     page.get_by_test_id("open-button").click()
     rows = page.get_by_test_id("cue-row")
-    expect(rows).to_have_count(4)
+    try:
+        expect(rows).to_have_count(4)
+    except AssertionError as err:
+        # (the flake that failed once in four full runs: say why, with nothing private in it)
+        log = server.log.read_text(encoding="utf-8", errors="replace").splitlines()[-12:]
+        raise AssertionError(
+            f"the demo opened {rows.count()} rows, not 4: {str(err).splitlines()[0]}\n"
+            f"notices: {scrubbed(' | '.join(notices(page)))}\n"
+            f"server log, last lines: {scrubbed(chr(10).join(log))}") from None
     return rows
+
+
+def scrubbed(text: str) -> str:
+    """Text for an assertion message with no path, address or token in it."""
+    text = re.sub(r"[A-Za-z][A-Za-z0-9+.-]*://\S+", "<url>", text)
+    text = re.sub(r"(?<![\w<])(?:[A-Za-z]:)?[\\/][^\s'\"]+", "<path>", text)
+    return re.sub(r"\b[A-Za-z0-9_-]{24,}\b", "<token>", text)
 
 
 def edit_cue(page, rows, k: int, text: str) -> None:
@@ -285,6 +300,7 @@ def test_two_tabs_on_one_episode_keep_separate_drafts(open_page, server):
     assert drafts_kept(c) == {tab_of(a): 1, tab_of(c): 2}
     a.get_by_test_id("save").click()
     expect(a.get_by_test_id("save-state")).to_have_text("All changes saved")
+    expect(a.get_by_test_id("notice").first).to_contain_text("Saved")  # the trim lands with it
     assert drafts_kept(c) == {tab_of(c): 2}  # the first tab's Save cleared only its own
     for watched in (first, third):
         assert watched.errors == [] and watched.violations() == []
@@ -583,3 +599,67 @@ def test_discard_sets_the_offers_aside_but_leaves_another_tabs_draft_stored(open
     b.get_by_test_id("draft-discard").click()
     expect(b.get_by_test_id("draft")).to_have_count(0)
     assert len(drafts_kept(b)) == 1 and tab_of(b) not in drafts_kept(b)
+
+
+def test_a_save_that_changed_nothing_leaves_this_tabs_offered_draft_on_offer(open_page, server):
+    # Q&A item 51 (the re-review's N-1): the offer is still true, and the page said "Saved".
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit_cue(a, rows, 1, "unsaved, then a reload")
+    a.on("dialog", lambda d: d.accept())
+    a.reload()
+    open_demo(a, server)
+    expect(a.get_by_test_id("draft")).to_have_count(1)
+    a.get_by_test_id("save").click()
+    expect(a.get_by_test_id("notice").first).to_contain_text("Saved")
+    a.wait_for_timeout(300)
+    expect(a.get_by_test_id("draft")).to_have_count(1)
+    assert drafts_kept(a) == {tab_of(a): 1}
+    assert first.errors == [] and first.violations() == []
+
+
+def test_a_save_that_moves_the_heads_clears_this_tabs_offered_draft(open_page, server):
+    # The other half of N-1: the offered edit was made on versions the Save has since replaced.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit_cue(a, rows, 1, "unsaved, then a reload")
+    a.on("dialog", lambda d: d.accept())
+    a.reload()
+    rows = open_demo(a, server)
+    expect(a.get_by_test_id("draft")).to_have_count(1)
+    srt = demo_copy(server) / EN
+    srt.write_text(srt.read_text(encoding="utf-8").replace("occasion.", "occasion, outside."),
+                   encoding="utf-8")
+    a.get_by_test_id("save").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion, outside.")
+    expect(a.get_by_test_id("draft")).to_have_count(0)
+    assert drafts_kept(a) == {}
+    assert first.errors == [] and first.violations() == []
+
+
+def test_a_pick_after_a_save_that_changed_nothing_still_carries_the_offered_draft(
+        open_page, server):
+    # The offered draft's counts are from an earlier page: a Save's count must not trim them.
+    first, second, _, b, _, rows_b = tear_the_japanese_track(open_page, server)
+    edit_cue(b, rows_b, 1, "source edit, then reload")
+    b.on("dialog", lambda d: d.accept())
+    b.reload()
+    rows_b = open_demo(b, server)
+    expect(b.locator("dialog[open]")).to_be_visible()
+    b.keyboard.press("Escape")
+    for k in range(5):  # counts above the old page's: the track is still torn, so the picker
+        b.get_by_test_id("save").click()  # opens each time
+        expect(b.locator("dialog[open]")).to_be_visible()
+        if k < 4:
+            b.keyboard.press("Escape")
+            expect(b.locator("dialog[open]")).to_have_count(0)
+    b.get_by_test_id("version").first.check()
+    b.get_by_test_id("keep-ja").click()
+    expect(b.get_by_test_id("pick-version")).to_have_count(0)
+    expect(b.get_by_test_id("draft")).to_have_count(1)
+    b.get_by_test_id("draft-restore").click()
+    expect(rows_b.nth(1).get_by_test_id("cue-text")).to_have_text("source edit, then reload")
+    for watched in (first, second):
+        assert watched.errors == [] and watched.violations() == []

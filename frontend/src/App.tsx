@@ -48,15 +48,18 @@ export default function App() {
   // tab's draft for its heads. Restoring one replays it through the server's rules and clears it
   // only once every step was done again; otherwise it is kept and the editor says how many steps
   // failed. This tab's own draft starts again then, or when the person edits or discards instead
-  // of restoring. When a Save or a pick moves the heads, this tab's draft goes with them while
-  // edits are still unsaved (a pick keeps the other tracks' edits), and is cleared once
-  // everything is saved; no other tab's draft is ever touched by it.
+  // of restoring. When a Save or a pick moves the heads, this tab's draft always goes with them;
+  // a Save then takes out the steps it wrote (a pick writes none, and keeps the other tracks'
+  // edits). A draft on offer is the exception: a Save that moves the heads clears it (it was made
+  // on versions that are gone), a Save that changed nothing leaves it on offer (Q&A item 51). No
+  // other tab's draft is ever touched by it.
   const tab = useMemo(() => tabId(tabStorage()), []);
   const [offers, setOffers] = useState<Offer[]>([]);
   const offering = useRef(false); // offers are up and this tab's old draft not yet dropped
   const drafted = useRef<{ id: string; key: string; heads: Record<string, string> } | null>(null);
   const replaying = useRef<Replay | null>(null);
   const saveSent = useRef<number | null>(null); // the count of the Save in flight
+  const saveInFlight = useRef(false); // a Save was sent and its result is not yet acted on
   const saved = useRef(0); // the count of the last Save heard to have written (steps up to it are in a version)
   useEffect(() => {
     if (!episode) {
@@ -70,7 +73,15 @@ export default function App() {
       // A Save or a pick moved the heads: this tab's draft goes with them, less what a Save has
       // written (a Save's own result trims it too, whichever arrives first), and what is on offer
       // is worked out again for the new heads (the Spec review's C-2, C-3).
-      followHeads(store, was.key, key, saved.current);
+      if (offering.current) {
+        // A draft on offer is from an earlier page, whose request counts mean nothing here, so
+        // no Save's count trims it. A Save that moved the heads under it clears it (it was made
+        // on versions that are gone); a pick carries it.
+        if (saveInFlight.current) clearDraft(store, was.key);
+        else moveDraft(store, was.key, key);
+      } else {
+        followHeads(store, was.key, key, saved.current);
+      }
       if (offering.current) {
         const found = offersFor(store, episode.heads);
         offering.current = found.length > 0;
@@ -114,10 +125,17 @@ export default function App() {
       redo: () => { dropOffers(); steps({ redo: true }); },
       save: (formats) => {
         const a = ask();
-        if (a) saveSent.current = a.n;
+        if (a) {
+          saveSent.current = a.n;
+          saveInFlight.current = true;
+        }
         send(setSave, a && { ...a, formats });
       },
-      resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
+      resolve: (track, rendition) => {
+        saveInFlight.current = false; // a pick is not a Save's heads
+        const a = ask();
+        send(setResolve, a && { ...a, track, rendition });
+      },
     };
   }, [episodeId, pace, dropOffers, steps, setSave, setResolve]);
 
@@ -133,6 +151,7 @@ export default function App() {
   });
 
   const [conflictsFound, setConflictsFound] = useState(0);
+  const [savesHeard, setSavesHeard] = useState(0);
   const [typing, setTyping] = useState(false); // a box open whose text isn't committed (C-1)
   useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
     if (!episode || data.episode !== episode.id) return;
@@ -141,19 +160,17 @@ export default function App() {
     const at = drafted.current;
     if (data.kind !== "save" || !at) return;
     // What this Save wrote is no longer unsaved: the steps up to its count leave the draft, and
-    // the ones sent behind it stay. A draft on offer (nothing edited here yet) goes whole, as a
-    // Save instead of a Restore does (Decision 36).
-    const store = draftStorage();
+    // the ones sent behind it stay. A draft on offer holds steps from an earlier page, not this
+    // Save's: it is left alone here (the effect on the heads clears it if they moved).
     saved.current = Math.max(saved.current, saveSent.current ?? 0);
-    if (offering.current) {
-      clearDraft(store, at.key);
-      const found = offersFor(store, at.heads);
-      offering.current = found.length > 0;
-      setOffers(found);
-    } else {
-      trimSaved(store, at.key, saved.current);
-    }
+    if (!offering.current) trimSaved(draftStorage(), at.key, saved.current);
+    setSavesHeard((k) => k + 1);
   });
+  // Declared after the effect on the episode, so that once the episode this Save made has been
+  // seen (it is published before the result is sent), the Save no longer counts as in flight.
+  useEffect(() => {
+    if (savesHeard > 0) saveInFlight.current = false;
+  }, [savesHeard]);
   const saving: Saving = {
     drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: o.draft.steps.length })),
     conflictsFound,
@@ -199,6 +216,8 @@ export default function App() {
   const [notices, setNotices] = useState<Shown[]>([]);
   const nextId = useRef(1);
   useShinyMessageHandler("notice", (data: unknown) => {
+    // A refused Save sends no result, only a notice: it no longer moves the heads.
+    if ((data as { kind?: unknown } | null)?.kind === "error") saveInFlight.current = false;
     setNotices((shown) => addNotice(shown, data, nextId.current++));
   });
 
