@@ -969,3 +969,82 @@ def test_an_edit_holding_a_list_is_read_as_json_has_it_though_shiny_makes_lists_
             "op": "replace_all", "find": "元気", "replace": "げんき", "tracks": ["source", "en"]}})
         done = latest(t, lambda e: e["rows"][1]["text"] == "げんきですか")
         assert done["rows"][2]["text"] == "はい、げんきです" and t.notices() == []
+
+
+# ---- fix round 15d: found by Task 15's Spec review ----------------------------------------------
+
+
+def episodes_published(t: Tab) -> int:
+    return sum(1 for m in t.messages if (m.get("values") or {}).get("episode") is not None)
+
+
+@pytest.mark.media
+def test_edits_sent_while_the_sound_is_made_wait_for_it_and_land_in_the_order_sent(
+        media_client, media_rt, tmp_path):
+    # the queue's promise: an edit never runs ahead of the open it was sent behind
+    video = make_episode(tmp_path / "ep", audio_codec="ac3")
+    slow = slow_media_for(media_rt)
+    with tab(media_client) as t:
+        t.until(lambda t: t.has("episode"))
+        t.set(open={"path": str(video), "n": 1})
+        assert slow.started.wait(10)
+        ep = t.until(lambda t: t.has("busy") and t.value("busy") == "playback"
+                     and t.value("episode"))
+        cue = ep["rows"][0]["id"]
+        for n, text in enumerate(["first", "second"], start=2):
+            t.set(edit={"episode": ep["id"], "n": n,
+                        "op": {"op": "set_text", "cue": cue, "text": text}})
+        time.sleep(0.5)  # long enough for an edit that ran ahead to have been published
+        assert t.value("episode")["rows"][0]["text"] == ep["rows"][0]["text"]
+        assert not t.value("episode")["dirty"]
+        slow.release.set()
+        done = latest(t, lambda e: e["rows"][0]["text"] == "second")
+        assert done["dirty"] and done["can_undo"]
+        t.set(undo={"episode": ep["id"], "n": 4})
+        back = latest(t, lambda e: e["rows"][0]["text"] == "first")
+        assert back["can_undo"]  # two steps were made, in order, not one over the other
+
+
+@pytest.mark.media
+def test_an_undo_naming_an_episode_the_tab_has_moved_on_from_changes_nothing(
+        media_client, tmp_path):
+    first, second = make_episode(tmp_path / "one"), make_episode(tmp_path / "two")
+    with tab(media_client) as t:
+        one = opened_in(t, first)
+        t.set(open={"path": str(second), "n": 2})
+        two = t.until(lambda t: opened(t) and opened(t)["id"] != one["id"] and opened(t))
+        t.set(edit={"episode": two["id"], "n": 3,
+                    "op": {"op": "set_text", "cue": two["rows"][0]["id"], "text": "二"}})
+        latest(t, lambda e: e["rows"][0]["text"] == "二")
+        seen = episodes_published(t)
+        t.set(undo={"episode": one["id"], "n": 4})
+        t.set(redo={"episode": one["id"], "n": 5})
+        time.sleep(0.5)
+        assert episodes_published(t) == seen
+        now = t.value("episode")
+        assert now["rows"][0]["text"] == "二" and now["dirty"] and t.notices() == []
+
+
+@pytest.mark.media
+def test_an_undo_with_nothing_to_undo_publishes_nothing(media_client, tmp_path):
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        cue = ep["rows"][0]["id"]
+        for n, text in enumerate(["a", "b", "c"], start=1):
+            t.set(edit={"episode": ep["id"], "n": n,
+                        "op": {"op": "set_text", "cue": cue, "text": text}})
+        latest(t, lambda e: e["rows"][0]["text"] == "c")
+        seen = episodes_published(t)
+        for n in range(4, 8):  # four undos of three steps
+            t.set(undo={"episode": ep["id"], "n": n})
+        latest(t, lambda e: not e["can_undo"])
+        time.sleep(0.5)
+        assert episodes_published(t) - seen == 3
+
+
+def test_as_json_turns_tuples_into_lists_and_changes_nothing_else():
+    got = server.as_json({"a": True, "b": (False, 1, "1", (2.5, None)), "c": {"d": ("e",)}})
+    assert got == {"a": True, "b": [False, 1, "1", [2.5, None]], "c": {"d": ["e"]}}
+    assert json.dumps(got) == '{"a": true, "b": [false, 1, "1", [2.5, null]], "c": {"d": ["e"]}}'
+    assert got["a"] is True and got["b"][0] is False  # a bool never becomes 1 or 0
