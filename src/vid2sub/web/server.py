@@ -15,19 +15,25 @@ stays off: nothing here calls `session.allow_reconnect`, so a tab whose engine r
 the new link instead of retrying (Review Focus 5).
 
 The editor (spec §20): each tab holds at most one open episode, in an `Editor`. Every call that
-changes it (open, edits, undo and redo; Save and picks later) runs one at a time, in the order
-the tab sent them, in a task of the tab's own that holds no reactive lock while it waits on the
-disk or ffmpeg, so a slow open never freezes another tab and no edit is lost to a Save running at
-the same time. The backend returns a new frozen `Episode` each time, which the editor sets as the
-reactive value the `episode` output reads. The player gets the video by a media token, or the
-playback audio when the browser can't play the video's audio (Decision 2) or, as the page reports
-from canPlayType and the video's own errors, the video itself (`playback`, spec §8.2, §8.8); its
-tokens are revoked with the episode when the tab opens another or closes: the mount passes no
-lifespan events on, so that happens in `session.on_ended`. Requests come from the browser, so
-they are checked before use and never echoed (§6.3, §6.8). Edits go through the backend's
-`apply`, so the rules exist once (§20): an edit is checked at the door by `ops.parse_op`, and it,
-undo and redo run on the event loop (about 0.02 s for 2,000 cues, Task 6); a request naming an
-episode the tab has since moved on from (sent before an open finished) is dropped.
+changes it (open, edits, undo, redo, Save and picks) runs one at a time, in the order the tab sent
+them, in a task of the tab's own that holds no reactive lock while it waits on the disk or ffmpeg,
+so a slow open never freezes another tab and no edit is lost to a Save running at the same time. The
+backend returns a new frozen `Episode` each time, which the editor sets as the reactive value the
+`episode` output reads. The player gets the video by a media token, or the playback audio when the
+browser can't play the video's audio (Decision 2) or, as the page reports from canPlayType and the
+video's own errors, the video itself (`playback`, spec §8.2, §8.8); its tokens are revoked with the
+episode when the tab opens another or closes: the mount passes no lifespan events on, so that
+happens in `session.on_ended`. Requests come from the browser, so they are checked before use and
+never echoed (§6.3, §6.8). Edits go through the backend's `apply`, so the rules exist once (§20): an
+edit is checked at the door by `ops.parse_op`, and it, undo and redo run on the event loop (about
+0.02 s for 2,000 cues, Task 6); a request naming an episode the tab has since moved on from (sent
+before an open finished) is dropped. Each edit, undo and redo is answered with `applied`, so the
+tab's crash draft keeps only what was done and a Restore knows which steps were refused (Decision
+31). Save (§14.5) and a pick of a conflicted track's version (§14.4) block on the disk, so they run
+through `runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each
+sends `save_result`: what was written, what was left alone, which tracks are in conflict, and the
+notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save sees
+(Review Focus 4, S32).
 
 The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
 for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
@@ -40,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections import deque
 from pathlib import Path
 from typing import Any, Literal
@@ -52,7 +59,7 @@ from shinyreact import ReactApp, page_react, reactive_output
 
 from vid2sub.subs.edit import EditError
 from vid2sub.web import WWW, ops, runtime, views
-from vid2sub.web.episode import Episode, OpenError
+from vid2sub.web.episode import Episode, OpenError, SaveError, SaveResult
 
 # By name: a test may load this file as a module of another name.
 log = logging.getLogger("vid2sub.web.server")
@@ -60,6 +67,9 @@ log = logging.getLogger("vid2sub.web.server")
 STATUS_EVERY = 60  # seconds between checks of the local endpoints
 MAX_PATH = 4096  # characters in a typed path
 TYPE_A_PATH = "type the video's full path to open it"
+FORMATS = ("srt", "ass")
+BAD_FORMATS = "Save writes srt, and ass when asked for: nothing was saved"
+RENDITION = re.compile(r"r_[0-9a-f]{16}")  # sidecar.make_rendition's ids (spec §14.2)
 # htmltools keeps the highest version of a dependency per name. Shiny's own version with a local
 # label (1.8.0+vid2sub, which PEP 440 sorts above 1.8.0) makes this one replace Shiny's
 # shiny-busy-indicators: its stylesheet, without the inline script in its head. The second
@@ -184,18 +194,80 @@ class Editor:
             new = self.rt.backend.apply(ep, ops.parse_op(request.get("op")))
         except (ops.BadOp, EditError, OpenError) as err:  # each is fit to show, and echoes nothing
             await notice(self.session, "error", str(err))
+            await self._applied(request, ep, ok=False)
             return
         await self._show(new)
+        await self._applied(request, ep, ok=True)
 
     async def _undo(self, request: object) -> None:
         ep = self._named(request)
         if ep is not None:
             await self._show(self.rt.backend.undo(ep))
+            await self._applied(request, ep, ok=True)
 
     async def _redo(self, request: object) -> None:
         ep = self._named(request)
         if ep is not None:
             await self._show(self.rt.backend.redo(ep))
+            await self._applied(request, ep, ok=True)
+
+    async def _applied(self, request: object, ep: Episode, *, ok: bool) -> None:
+        """The `applied` message: whether the tab's edit, undo or redo `n` was made (an undo with
+        nothing to undo counts, as the server just ignores it), so its crash draft keeps only what
+        was done and a Restore knows which steps the server refused (Decision 31). `n` is the
+        page's own count, sent back only when it is an integer."""
+        n = request.get("n") if isinstance(request, dict) else None
+        if isinstance(n, int) and not isinstance(n, bool):
+            await shinyreact.send_message(self.session, "applied",
+                                          {"episode": ep.id, "n": n, "ok": ok})
+
+    async def _save(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is None or not isinstance(request, dict):
+            return
+        formats = request.get("formats")
+        if (not isinstance(formats, list) or not 0 < len(formats) <= len(FORMATS)
+                or any(f not in FORMATS for f in formats)):
+            await notice(self.session, "error", BAD_FORMATS)
+            return
+        await self._set_busy("saving")
+        try:
+            saved, result = await runtime.blocking(self.rt.backend.save, ep, formats=formats)
+        except (SaveError, OpenError) as err:
+            await self._set_busy(None)
+            await notice(self.session, "error", str(err))
+            return
+        self.ep = saved
+        await self._publish(busy=None)
+        await self._report("save", saved, result)
+
+    async def _resolve(self, request: object) -> None:
+        ep = self._named(request)
+        if ep is None or not isinstance(request, dict):
+            return
+        track, rendition = request.get("track"), request.get("rendition")
+        if not (isinstance(track, str) and isinstance(rendition, str)
+                and RENDITION.fullmatch(rendition)):
+            await notice(self.session, "error", "pick one of the track's versions")
+            return
+        await self._set_busy("picking")
+        try:
+            picked, result = await runtime.blocking(self.rt.backend.resolve, ep, track, rendition)
+        except (SaveError, OpenError) as err:  # never echoes the track or the rendition
+            await self._set_busy(None)
+            await notice(self.session, "error", str(err))
+            return
+        self.ep = picked
+        await self._publish(busy=None)
+        await self._report("pick", picked, result)
+
+    async def _report(self, kind: Literal["save", "pick"], ep: Episode,
+                      result: SaveResult) -> None:
+        """The `save_result` message: file names and track keys only, never a path (§6.8)."""
+        await shinyreact.send_message(self.session, "save_result", {
+            "episode": ep.id, "kind": kind, "written": list(result.written),
+            "foreign": list(result.foreign), "conflicts": list(result.conflicts),
+            "notes": list(result.notes)})
 
     async def _show(self, ep: Episode) -> None:
         if ep is not self.ep:  # the backend returns `ep` itself when nothing changed
@@ -299,6 +371,16 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @reactive.event(input.redo)
     def _redo() -> None:
         editor.submit("redo", input.redo())
+
+    @reactive.effect
+    @reactive.event(input.save)
+    def _save() -> None:
+        editor.submit("save", input.save())
+
+    @reactive.effect
+    @reactive.event(input.resolve)
+    def _resolve() -> None:
+        editor.submit("resolve", input.resolve())
 
     @reactive_output
     def episode():

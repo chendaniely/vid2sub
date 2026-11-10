@@ -10,7 +10,9 @@ source text a translation was made from, and on every cue of a track made with a
 or model (§13.4, `episode.all_stale`); `untranslated` for a source cue no translation in a track
 covers; an imported line (no `src`) is never stale and covers the source cues it overlaps in time
 (Q&A item 45). The view never holds a path, only the video's bare file name (§6.8), and the
-probe's container and codec names, which the browser's canPlayType is asked about (§8.2). The
+probe's container and codec names, which the browser's canPlayType is asked about (§8.2). It
+names each track's head rendition, by which the tab keys its crash-recovery draft (§14.5, S34),
+and the formats Save writes: ASS too where one was written before (§15.2). The
 server runs in Pages too (§21), so this module imports only pure packages and `web.episode` at
 its top; the status views' config and keys are the local engine's, imported only where they are
 used (Task 14 round 14a).
@@ -56,6 +58,8 @@ def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None) -
         "notes": list(ep.notes),
         "conflicts": _conflicts(ep),
         "glossary_adds": dict(ep.glossary_adds),
+        "heads": dict(ep.heads),
+        "formats": _formats(ep),
     }
 
 
@@ -148,6 +152,12 @@ def _conflicts(ep: Episode) -> dict[str, list[dict[str, Any]]]:
                 "rendition": rid, "by": head.by if head else None, "at": head.at if head else None,
                 "cue_count": len(rec.body.get("payload", {}).get("cues", [])) if rec else 0})
     return out
+
+
+def _formats(ep: Episode) -> list[str]:
+    """SRT, and ASS where vid2sub has written an ASS for this video before (spec §15.2)."""
+    written = {p.format for p in ep.sidecar.projections().values()}
+    return ["srt", "ass"] if "ass" in written else ["srt"]
 
 
 def _flags(stored: tuple[str, ...], computed: tuple[str, ...]) -> list[str]:

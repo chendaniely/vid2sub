@@ -23,7 +23,14 @@ from vid2sub.subs.edit import Tracks
 from vid2sub.subs.glossary import EMPTY_GLOSSARY, parse_glossary
 from vid2sub.subs.model import Cue, Word
 from vid2sub.subs.rendition import cues_body
-from vid2sub.subs.sidecar import Header, HeadRecord, Sidecar, VideoInfo, make_rendition
+from vid2sub.subs.sidecar import (
+    Header,
+    HeadRecord,
+    ProjectionRecord,
+    Sidecar,
+    VideoInfo,
+    make_rendition,
+)
 from vid2sub.web import views
 from vid2sub.web.backend import Episode, LocalBackend
 from vid2sub.web.episode import Streams
@@ -71,6 +78,18 @@ def test_each_source_cue_is_a_row_with_its_number_times_text_and_word_range():
     assert [(r["id"], r["n"], r["text"]) for r in rows] == [
         (sid(0), 1, LINES[0]), (sid(1), 2, LINES[1]), (sid(2), 3, LINES[2])]
     assert (rows[1]["start_ms"], rows[1]["end_ms"], rows[1]["w"]) == (3600, 6600, [2, 4])
+
+
+def test_the_view_names_each_tracks_head_and_the_formats_save_keeps_writing():
+    # The tab keys its crash-recovery draft by the heads (S34), and Save writes ASS again where
+    # an ASS was written before (spec §15.2).
+    ep = episode()
+    v = view(ep)
+    assert v["heads"] == ep.heads and v["formats"] == ["srt"]
+    ass = ProjectionRecord(path="Show - S01E01.en.ass", format="ass", track="en",
+                           rendition=ep.heads["en"], sha256="0" * 64, at=AT)
+    with_ass = dataclasses.replace(ep, sidecar=Sidecar(HEADER, ep.sidecar.records + (ass,)))
+    assert view(with_ass)["formats"] == ["srt", "ass"]
 
 
 def test_a_rows_flags_are_its_stored_flags_and_its_lint_flags():

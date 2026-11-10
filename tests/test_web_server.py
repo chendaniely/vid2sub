@@ -1049,3 +1049,119 @@ def test_as_json_turns_tuples_into_lists_and_changes_nothing_else():
     assert got == {"a": True, "b": [False, 1, "1", [2.5, None]], "c": {"d": ["e"]}}
     assert json.dumps(got) == '{"a": true, "b": [false, 1, "1", [2.5, null]], "c": {"d": ["e"]}}'
     assert got["a"] is True and got["b"][0] is False  # a bool never becomes 1 or 0
+
+
+# ---- the editor: Save and picking a version (Task 16) ------------------------------------------
+
+
+def results(t: Tab) -> list[dict]:
+    return [m["custom"]["shinyReactMessage"]["data"] for m in t.messages
+            if m.get("custom", {}).get("shinyReactMessage", {}).get("id") == "save_result"]
+
+
+def busy_seen(t: Tab) -> list:
+    return [m["values"]["busy"] for m in t.messages if "busy" in m.get("values", {})]
+
+
+@pytest.mark.media
+def test_save_writes_a_version_then_the_files_and_says_what_it_wrote(media_client, tmp_path):
+    # S29, spec §14.5.
+    video = make_episode(tmp_path / "ep")
+    srt = video.with_name("Show - S01E01.ja.srt")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"]}
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": ep["rows"][0]["id"],
+                                          "text": "おはようございます"}})
+        latest(t, lambda e: e["dirty"])
+        t.set(save={**ask, "n": 2, "formats": ["srt"]})
+        result = t.until(lambda t: results(t) and results(t)[0])
+        assert result == {"episode": ep["id"], "kind": "save", "written": [srt.name],
+                          "foreign": [], "conflicts": [], "notes": []}
+        saved = latest(t, lambda e: not e["dirty"])
+        assert saved["rows"][0]["text"] == "おはようございます" and not saved["can_undo"]
+        assert saved["heads"]["ja"] != ep["heads"]["ja"]
+        assert saved["heads"]["en"] == ep["heads"]["en"]
+        assert "saving" in busy_seen(t) and t.value("busy") is None
+        assert "おはようございます" in srt.read_text(encoding="utf-8")
+
+
+@pytest.mark.media
+def test_two_tabs_saving_one_episode_end_in_a_conflict_the_second_sees_and_a_pick_resolves(
+        media_client, tmp_path):
+    # Review Focus 4, S32: each Save is compare-and-swap on the version its tab opened.
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as a, tab(media_client) as b:
+        ep_a, ep_b = opened_in(a, video), opened_in(b, video)
+        cue = ep_a["rows"][1]["id"]
+        for t, ep, text in ((a, ep_a, "げんき？"), (b, ep_b, "元気？")):
+            t.set(edit={"episode": ep["id"], "n": 1,
+                        "op": {"op": "set_text", "cue": cue, "text": text}})
+            latest(t, lambda e: e["dirty"])
+            t.set(save={"episode": ep["id"], "n": 2, "formats": ["srt"]})
+            t.until(lambda t: results(t))
+        assert results(a)[0]["conflicts"] == [] and results(b)[0]["conflicts"] == ["ja"]
+        assert results(b)[0]["written"] == []  # a track in conflict is never written
+        torn = latest(b, lambda e: e["conflicts"])
+        assert [t["in_conflict"] for t in torn["tracks"] if t["key"] == "ja"] == [True]
+        versions = torn["conflicts"]["ja"]
+        assert len(versions) == 2 and {v["by"] for v in versions} == {"editor"}
+        # keep the second tab's own version: the file still holds the first's, so it is written
+        theirs = latest(a, lambda e: not e["dirty"])["heads"]["ja"]
+        mine = next(v["rendition"] for v in versions if v["rendition"] != theirs)
+        b.set(resolve={"episode": torn["id"], "n": 3, "track": "ja", "rendition": mine})
+        picked = b.until(lambda t: len(results(t)) == 2 and results(t)[1])
+        assert picked["kind"] == "pick" and picked["written"] == ["Show - S01E01.ja.srt"]
+        whole = latest(b, lambda e: not e["conflicts"])
+        assert whole["rows"][1]["text"] == "元気？"
+        assert "元気？" in video.with_name("Show - S01E01.ja.srt").read_text(encoding="utf-8")
+        assert "picking" in busy_seen(b)
+
+
+@pytest.mark.media
+def test_a_save_or_pick_that_isnt_well_formed_is_refused_without_echoing_it(media_client,
+                                                                            tmp_path):
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"]}
+        t.set(save={**ask, "n": 1, "formats": ["<mp4>"]})
+        t.set(save={**ask, "n": 2, "formats": "srt"})
+        t.set(resolve={**ask, "n": 3, "track": "ja", "rendition": "<script>"})
+        t.set(resolve={**ask, "n": 4, "track": "<b>", "rendition": "r_" + "0" * 16})
+        t.set(resolve={**ask, "n": 5, "track": "ja", "rendition": "r_" + "0" * 16})
+        t.until(lambda t: len(t.notices()) == 5)
+        assert [n["text"] for n in t.notices()] == [
+            "Save writes srt, and ass when asked for: nothing was saved",
+            "Save writes srt, and ass when asked for: nothing was saved",
+            "pick one of the track's versions",
+            "there's no such track",
+            "the ja track has only one version: there's nothing to pick",
+        ]
+        assert results(t) == [] and "<" not in json.dumps(t.notices())
+
+
+def applied(t: Tab) -> list[dict]:
+    return [m["custom"]["shinyReactMessage"]["data"] for m in t.messages
+            if m.get("custom", {}).get("shinyReactMessage", {}).get("id") == "applied"]
+
+
+@pytest.mark.media
+def test_each_edit_undo_and_redo_is_answered_with_whether_it_was_made(media_client, tmp_path):
+    # The crash draft keeps only what the server did, and a Restore counts what it refused
+    # (Decision 31).
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        ask, rows = {"episode": ep["id"]}, ep["rows"]
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": rows[0]["id"], "text": "やあ"}})
+        t.set(edit={**ask, "n": 2, "op": {"op": "merge_next", "cue": rows[-1]["id"],
+                                          "id": "cd0000001", "joined": {}}})  # the rules refuse it
+        t.set(undo={**ask, "n": 3})
+        t.set(redo={**ask, "n": 4})
+        t.set(edit={**ask, "n": 5, "op": {"op": "set_text", "cue": "<b>", "text": "x"}})
+        t.set(undo={**ask, "n": "6"})  # a count that isn't a number is never sent back
+        t.set(undo={**ask, "n": 7})  # answered after 6 was done: the queue keeps their order
+        t.until(lambda t: len(applied(t)) == 6)
+        assert applied(t) == [{"episode": ep["id"], "n": n, "ok": ok} for n, ok in
+                              ((1, True), (2, False), (3, True), (4, True), (5, False), (7, True))]
