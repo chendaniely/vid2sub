@@ -1,11 +1,12 @@
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
+import { canonicalOffset, indexAt, splitPoint, trackCues, wordAt } from "@/lib/cues";
 import { newCueIds, shownIds } from "@/lib/ids";
-import { type Action, type KeyLike, actionFor } from "@/lib/keys";
+import { type Action, BIG_NUDGE_MS, type KeyLike, NUDGE_MS, actionFor } from "@/lib/keys";
 import { captionLines, type Showing } from "@/lib/overlay";
 import type { Busy, EditOp, EpisodeView } from "@/types";
 
+import { BusyNote } from "./BusyNote";
 import { type Cell, type Editing } from "./CueRow";
 import { CueList } from "./CueList";
 import { FindReplace } from "./FindReplace";
@@ -82,6 +83,7 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
   const [trAt, setTrAt] = useState(-1);
   const [sel, setSel] = useState<{ index: number; id: string | null }>({ index: -1, id: null });
   const [cell, setCell] = useState<Cell>("source");
+  const [trId, setTrId] = useState<string | null>(null); // the chosen translation cue of the row
   const [editing, setEditing] = useState<Editing | null>(null);
   const [finding, setFinding] = useState(false);
   const media = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
@@ -93,18 +95,19 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
   const shownTrack = track && episode.tracks.some((t) => t.key === track) ? track : null;
   const trCues = useMemo(() => trackCues(rows, shownTrack), [rows, shownTrack]);
   const selected = sel.index;
-  const row = selected >= 0 ? rows[selected] : undefined;
+  const row = selected >= 0 && selected < rows.length ? rows[selected] : undefined;
 
   // The rows change with every edit: the selection follows its cue, else stays at its place (a
   // split or merge replaces the cue's id); an inserted cue is selected and edited.
   useEffect(() => {
     if (pending.current) {
       const at = rows.findIndex((r) => r.id === pending.current);
-      pending.current = null;
-      if (at >= 0) {
+      if (at >= 0) { // (until it shows: a draft's own edit can come back first)
+        pending.current = null;
         setSel({ index: at, id: rows[at].id });
         setCell("source");
-        setEditing({ id: rows[at].id, cell: "source", trId: null, text: rows[at].text });
+        setTrId(null);
+        setEditing({ id: rows[at].id, cell: "source", trId: null, track: null, text: rows[at].text });
         return;
       }
     }
@@ -134,33 +137,58 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
     setTrAt(indexAt(trCues, ms));
   }, [loop, rows, trCues, episode.words]);
 
+  // The rows or the translation's cues changed (an edit, undo or redo): current, word and trAt
+  // are indexes into them, so they are found again from the playhead. Until this runs, the render
+  // below reads them safely (the Spec review's S-1: a delete once blanked the page).
+  const seen = useRef({ rows, trCues });
+  useEffect(() => {
+    if (seen.current.rows === rows && seen.current.trCues === trCues) return;
+    seen.current = { rows, trCues };
+    onTime(Math.round((media.current?.currentTime ?? 0) * 1000));
+  }, [rows, trCues, onTime]);
+
   const playhead = () => Math.round((media.current?.currentTime ?? 0) * 1000);
   const seekTo = (ms: number) => {
     if (media.current) media.current.currentTime = ms / 1000;
   };
-  const select = (index: number, which: Cell = cell) => {
+  const select = (index: number, which: Cell = cell, chosen: string | null = null) => {
     if (index < 0 || index >= rows.length) return;
+    // Moving off the cell being edited commits its draft: Esc is the only way out that discards.
+    if (editing && !(rows[index].id === editing.id && which === editing.cell && (chosen ?? editing.trId) === editing.trId)) {
+      commit();
+      setEditing(null);
+    }
     setSel({ index, id: rows[index].id });
     setCell(which);
+    setTrId(chosen);
     seekTo(rows[index].start_ms + 1);
   };
   const focusList = () => list.current?.focus();
 
   const startEditing = (which: Cell) => {
     if (!row) return;
-    if (which === "source") {
-      setEditing({ id: row.id, cell: "source", trId: null, text: row.text });
-      return;
+    const open = which === "source" ? { cell: which, trId: null as string | null }
+      : shownTrack ? { cell: which, trId: row.tr[shownTrack]?.cues.find((c) => c.id === trId)?.id ?? row.tr[shownTrack]?.cues[0]?.id ?? null } : null;
+    if (!open || (which === "translation" && !open.trId)) return;
+    if (editing) {
+      if (editing.id === row.id && editing.cell === open.cell && editing.trId === open.trId) {
+        editor.current?.focus(); // already open: its draft stays
+        return;
+      }
+      commit(); // another cell: the draft is not thrown away
     }
-    const tr = shownTrack ? row.tr[shownTrack]?.cues[0] : undefined;
-    if (tr) setEditing({ id: row.id, cell: "translation", trId: tr.id, text: tr.text });
+    const text = which === "source" ? row.text : row.tr[shownTrack ?? ""]?.cues.find((c) => c.id === open.trId)?.text ?? "";
+    setEditing({ id: row.id, cell: which, trId: open.trId, track: which === "source" ? null : shownTrack, text });
   };
+  // The cue being edited, which is not always the selected one.
+  const editedRow = () => (editing ? rows.find((r) => r.id === editing.id) : undefined);
   const commit = (): boolean => {
-    if (!editing || !row) return false;
-    const before = editing.cell === "source" ? row.text : row.tr[shownTrack ?? ""]?.cues.find((c) => c.id === editing.trId)?.text;
+    const target = editedRow();
+    if (!editing || !target) return false;
+    const before = editing.cell === "source" ? target.text : target.tr[editing.track ?? ""]?.cues.find((c) => c.id === editing.trId)?.text;
     if (editing.text === before) return false;
     if (editing.cell === "source") requests.edit({ op: "set_text", cue: editing.id, text: editing.text });
-    else if (shownTrack && editing.trId) requests.edit({ op: "set_translation_text", track: shownTrack, cue: editing.trId, text: editing.text });
+    else if (editing.track && editing.trId) requests.edit({ op: "set_translation_text", track: editing.track, cue: editing.trId, text: editing.text });
     return true;
   };
   const stopEditing = () => {
@@ -169,29 +197,36 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
   };
   // Split at the caret in edit mode (committing the text first), else at the space nearest the
   // playhead's share of the cue; at the playhead when it is inside the cue, else at the caret's
-  // share of the cue's time.
+  // share of the cue's time. Always the cue being edited, and counted as the server counts.
   const split = () => {
-    if (!row) return;
+    const target = editedRow() ?? row;
+    if (!target) return;
     const ph = playhead();
-    const inside = row.start_ms < ph && ph < row.end_ms;
-    let text = row.text;
+    const inside = target.start_ms < ph && ph < target.end_ms;
+    let length = Array.from(target.text).length;
     let at: number;
     if (editing?.cell === "source") {
+      const caret = editor.current?.selectionStart ?? Math.floor(editing.text.length / 2);
+      at = canonicalOffset(editing.text, caret);
+      length = canonicalOffset(editing.text, editing.text.length);
       commit();
-      text = editing.text;
-      at = editor.current?.selectionStart ?? Math.floor(text.length / 2);
       stopEditing();
     } else {
-      at = splitPoint(text, inside ? (ph - row.start_ms) / (row.end_ms - row.start_ms) : 0.5);
+      if (editing) {
+        commit();
+        stopEditing();
+      }
+      at = splitPoint(target.text, inside ? (ph - target.start_ms) / (target.end_ms - target.start_ms) : 0.5);
     }
-    const share = text.length ? at / text.length : 0.5;
+    const share = length ? at / length : 0.5;
     const at_ms = inside ? ph
-      : Math.min(row.end_ms - 1, Math.max(row.start_ms + 1, Math.round(row.start_ms + (row.end_ms - row.start_ms) * share)));
+      : Math.min(target.end_ms - 1, Math.max(target.start_ms + 1, Math.round(target.start_ms + (target.end_ms - target.start_ms) * share)));
     const [a, b] = newCueIds(2, shownIds(rows));
-    requests.edit({ op: "split", cue: row.id, at_char: at, at_ms, ids: [a, b] });
+    requests.edit({ op: "split", cue: target.id, at_char: at, at_ms, ids: [a, b] });
   };
   const merge = () => {
-    if (!row) return;
+    const target = editedRow() ?? row;
+    if (!target) return;
     if (editing) {
       commit();
       stopEditing();
@@ -199,9 +234,13 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
     // the merged cue's id, and one for each translation track, in case its two parts' cues join
     const tracks = episode.tracks.filter((t) => t.role !== "source").map((t) => t.key);
     const [id, ...joined] = newCueIds(1 + tracks.length, shownIds(rows));
-    requests.edit({ op: "merge_next", cue: row.id, id, joined: Object.fromEntries(tracks.map((k, i) => [k, joined[i]])) });
+    requests.edit({ op: "merge_next", cue: target.id, id, joined: Object.fromEntries(tracks.map((k, i) => [k, joined[i]])) });
   };
   const insert = () => {
+    if (editing) {
+      commit(); // a draft is committed, never replaced by the new cue's box
+      setEditing(null);
+    }
     const ph = playhead();
     let start = ph;
     if (indexAt(rows, ph) >= 0 && row) start = row.end_ms;
@@ -212,6 +251,23 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
     requests.edit({ op: "insert", start_ms: start, end_ms: end, text: "…", id });
   };
 
+  // ←/→ choose the source or the translation cell; on a translation cell holding several cues,
+  // → moves to the next one and ← back to the one before (the Spec review's S-8).
+  const chooseCell = (which: Cell) => {
+    const cues = shownTrack && row ? row.tr[shownTrack]?.cues ?? [] : [];
+    if (which === "translation" && !shownTrack) return;
+    if (cell === "translation" && cues.length > 1) {
+      const at = Math.max(0, cues.findIndex((c) => c.id === (trId ?? cues[0].id)));
+      const to = at + (which === "translation" ? 1 : -1);
+      if (to >= 0 && to < cues.length) {
+        setTrId(cues[to].id);
+        return;
+      }
+      if (which === "translation") return;
+    }
+    setCell(which);
+    setTrId(null);
+  };
   const act = (a: Action) => {
     const m = media.current;
     switch (a.kind) {
@@ -221,7 +277,7 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
       case "play": if (m) void m.play().catch(() => undefined); return;
       case "previous": select(Math.max(0, selected - 1)); return;
       case "next": select(Math.min(rows.length - 1, selected + 1)); return;
-      case "cell": if (a.cell === "source" || shownTrack) setCell(a.cell); return;
+      case "cell": chooseCell(a.cell); return;
       case "set-start": if (row) requests.edit({ op: "set_times", cue: row.id, start_ms: playhead() }); return;
       case "set-end": if (row) requests.edit({ op: "set_times", cue: row.id, end_ms: playhead() }); return;
       case "nudge": if (row) requests.edit({ op: "nudge", cue: row.id, delta_ms: a.delta_ms, edge: "both" }); return;
@@ -254,14 +310,15 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
 
   const toggleLoop = () => {
     const at = current >= 0 ? current : selected;
-    setLoop(loop || at < 0 ? null : { start_ms: rows[at].start_ms, end_ms: rows[at].end_ms });
+    setLoop(loop || at < 0 || at >= rows.length ? null : { start_ms: rows[at].start_ms, end_ms: rows[at].end_ms });
   };
   const changeRate = (value: number) => {
     setRate(value);
     if (media.current) media.current.playbackRate = value;
   };
 
-  const lines = captionLines(showing, current >= 0 ? rows[current].text : null, trAt >= 0 ? trCues[trAt].text : null);
+  // (current and trAt can name a cue an edit has just removed, until the effect above runs)
+  const lines = captionLines(showing, rows[current]?.text ?? null, trCues[trAt]?.text ?? null);
   const stale = translations.filter((t) => t.all_stale);
   const conflicted = episode.tracks.filter((t) => t.in_conflict);
   const noRow = !row;
@@ -286,6 +343,7 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
             ))}
           </ul>
         )}
+        <BusyNote busy={busy} />
       </header>
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]">
         <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
@@ -326,10 +384,14 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
         <section aria-label="Cue list" className="flex min-h-0 flex-col gap-2">
           <div role="toolbar" aria-label="Edit the selected cue" className="flex flex-wrap gap-1" data-testid="edit-bar">
             {tool("Edit", "Enter", () => startEditing(cell), "tool-edit")}
+            {editing && tool("Commit", "Meta+Enter", () => act({ kind: "commit" }), "tool-commit", false)}
+            {editing && tool("Cancel", "Escape", () => act({ kind: "cancel" }), "tool-cancel", false)}
             {tool("Start to playhead", "[", () => act({ kind: "set-start" }), "tool-start")}
             {tool("End to playhead", "]", () => act({ kind: "set-end" }), "tool-end")}
-            {tool("−100 ms", "Alt+ArrowLeft", () => act({ kind: "nudge", delta_ms: -100 }), "tool-earlier")}
-            {tool("+100 ms", "Alt+ArrowRight", () => act({ kind: "nudge", delta_ms: 100 }), "tool-later")}
+            {tool("−500 ms", "Alt+Shift+ArrowLeft", () => act({ kind: "nudge", delta_ms: -BIG_NUDGE_MS }), "tool-earlier-500")}
+            {tool("−100 ms", "Alt+ArrowLeft", () => act({ kind: "nudge", delta_ms: -NUDGE_MS }), "tool-earlier")}
+            {tool("+100 ms", "Alt+ArrowRight", () => act({ kind: "nudge", delta_ms: NUDGE_MS }), "tool-later")}
+            {tool("+500 ms", "Alt+Shift+ArrowRight", () => act({ kind: "nudge", delta_ms: BIG_NUDGE_MS }), "tool-later-500")}
             {tool("Split", "Meta+Shift+S", split, "tool-split")}
             {tool("Merge with next", "Meta+M", merge, "tool-merge", noRow || selected >= rows.length - 1)}
             {tool("Insert", "", insert, "tool-insert", false)}
@@ -348,9 +410,10 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
               word={word}
               selected={selected}
               cell={cell}
+              trId={trId}
               editing={editing}
               follow={follow}
-              onPick={(index, which) => select(index, which)}
+              onPick={(index, which, id) => select(index, which, id ?? null)}
               onKeyDown={onListKey}
               onDraft={(text) => setEditing((e) => (e ? { ...e, text } : e))}
               onEditKey={onEditKey}

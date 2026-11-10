@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Row } from "@/types";
 
-import { activeDescendant, countMatches, formatTime, indexAt, splitPoint, trackCues, wordAt, wordSpans } from "./cues";
+import { activeDescendant, canonicalOffset, countMatches, formatTime, indexAt, splitPoint, trackCues, wordAt, wordSpans } from "./cues";
 
 const cues = [
   { start_ms: 0, end_ms: 1000 },
@@ -111,5 +111,43 @@ describe("the cue list's active descendant (S-13)", () => {
     expect(activeDescendant(rows, 2, [0, 1])).toBeUndefined(); // scrolled away: virtualised out
     expect(activeDescendant(rows, -1, [0, 1, 2])).toBeUndefined();
     expect(activeDescendant(rows, 3, [0, 1, 2, 3])).toBeUndefined();
+  });
+});
+
+describe("a caret in the draft, as the server's split counts it (S-5)", () => {
+  it("counts code points, not UTF-16 units, when astral characters come before the caret", () => {
+    const draft = "🙂𠮷野家🙂に行く今日は牛丼を食べる";
+    const caret = draft.indexOf("今"); // a UTF-16 index: the three astral characters count twice
+    expect(caret).toBe(11);
+    expect(canonicalOffset(draft, caret)).toBe(8);
+    expect([...draft].slice(0, 8).join("")).toBe("🙂𠮷野家🙂に行く");
+  });
+
+  it("counts in the text the server will hold, where runs of spaces are one space", () => {
+    const draft = "We    meet    at a college noted for knowledge,";
+    const caret = draft.indexOf(" noted");
+    expect(canonicalOffset(draft, caret)).toBe("We meet at a college".length);
+    expect(canonicalOffset("a \t b\n\n  c d", "a \t b\n\n  c".length)).toBe("a b\nc".length);
+    expect(canonicalOffset("{a}\\", 3)).toBe(3);
+  });
+
+  it("puts a split point without a caret in code points too", () => {
+    expect(splitPoint("🙂🙂🙂🙂 ああ", 0.5)).toBe(4);
+    expect(splitPoint("𠮷𠮷𠮷𠮷", 0.5)).toBe(2);
+  });
+});
+
+describe("counting is plain text, never a pattern (S-11)", () => {
+  const one = (text: string): Row[] => [{ id: "a", n: 1, start_ms: 0, end_ms: 1, text, w: null, flags: [], tr: {} }];
+
+  it("reads regular-expression characters as themselves", () => {
+    expect(countMatches(one("(です) です"), "ja", ["ja"], "(です)")).toBe(1);
+    expect(countMatches(one("a.b a.c axb"), "ja", ["ja"], ".")).toBe(2);
+    expect(countMatches(one("[x] x"), "ja", ["ja"], "[x]")).toBe(1);
+  });
+
+  it("counts non-overlapping matches, as replace does", () => {
+    expect(countMatches(one("aaa"), "ja", ["ja"], "aa")).toBe(1);
+    expect(countMatches(one("你好吗，你好"), "ja", ["ja"], "你好")).toBe(2);
   });
 });

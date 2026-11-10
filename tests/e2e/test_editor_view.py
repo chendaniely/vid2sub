@@ -110,7 +110,10 @@ def test_hostile_subtitles_show_as_plain_text_and_the_overlay_renders_only_itali
     assert line.evaluate("e => e.children.length") == 0
     translations = page.get_by_test_id("cue-translation")
     assert "red bold <i>italic</i>" in translations.all_inner_texts()
-    assert page.locator("[data-testid=cue-translation] *").count() == 0  # text, never markup
+    # text, never markup: the only elements are the lines the view itself makes (round 15d, S-8)
+    assert page.locator("[data-testid=cue-translation] *:not([data-testid=cue-translation-line])"
+                        ).count() == 0
+    assert page.locator("[data-testid=cue-translation-line] *").count() == 0
     page.get_by_test_id("showing").select_option("translation")
     seek(page, 3.0)  # the translation's cue 2 in the overlay: <i> only
     expect(line).to_have_text("red bold italic")

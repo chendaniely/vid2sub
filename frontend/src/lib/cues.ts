@@ -79,13 +79,30 @@ export function formatTime(ms: number): string {
   return h ? `${h}:${String(m).padStart(2, "0")}:${ss}.${frac}` : `${m}:${ss}.${frac}`;
 }
 
+/** The server's `canonical` (spec §15.2), mirrored only so a caret can be counted in the text the
+ * server will hold: full-width braces and backslash, `\n` breaks, single spaces, trimmed lines, no
+ * blank ones. It is never what is sent. */
+function canonicalText(text: string): string {
+  return text.replace(/\{/g, "｛").replace(/\}/g, "｝").replace(/\\/g, "＼").replace(/\r\n?/g, "\n")
+    .split("\n").map((line) => line.replace(/[ \t]+/g, " ").trim()).filter(Boolean).join("\n");
+}
+
+/** Where a caret in a draft falls in the text the server will hold once the draft is committed,
+ * in code points, which is how `split`'s `at_char` is counted (`selectionStart` counts UTF-16
+ * units in the draft, as typed). */
+export function canonicalOffset(draft: string, caret: number): number {
+  return Array.from(canonicalText(draft.slice(0, caret))).length;
+}
+
 /** Where to split a text at `share` (0 to 1) of its length when there is no caret: the space
- * nearest that point, else the point itself, never at either end (spec §20's split). */
+ * nearest that point, else the point itself, never at either end (spec §20's split), in code
+ * points as the server counts. */
 export function splitPoint(text: string, share: number): number {
-  const target = Math.min(text.length - 1, Math.max(1, Math.round(text.length * share)));
+  const chars = Array.from(text);
+  const target = Math.min(chars.length - 1, Math.max(1, Math.round(chars.length * share)));
   let best = -1;
-  for (let k = 1; k < text.length; k++) {
-    if (/\s/.test(text[k]) && (best < 0 || Math.abs(k - target) < Math.abs(best - target))) best = k;
+  for (let k = 1; k < chars.length; k++) {
+    if (/\s/.test(chars[k]) && (best < 0 || Math.abs(k - target) < Math.abs(best - target))) best = k;
   }
   return best > 0 ? best : target;
 }

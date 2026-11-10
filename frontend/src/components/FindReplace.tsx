@@ -25,8 +25,9 @@ export function FindReplace({ episode, onEdit, onClose }: {
   const count = find ? countMatches(episode.rows, episode.source, chosen, find) : 0;
   const adds = Object.entries(episode.glossary_adds);
 
-  const replaceAll = (e: FormEvent) => {
-    e.preventDefault();
+  // Replace all is a button, never the form's submit: Enter in a field must not run it, and with
+  // Replace empty it deletes every match across the episode (the Spec review's S-6).
+  const replaceAll = () => {
     if (find && names.length) onEdit({ op: "replace_all", find, replace, tracks: names });
   };
   const addTerm = (e: FormEvent) => {
@@ -39,7 +40,7 @@ export function FindReplace({ episode, onEdit, onClose }: {
   };
   return (
     <section aria-label="Find and replace" className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3 text-sm" data-testid="find-replace">
-      <form className="flex flex-col gap-2" onSubmit={replaceAll}>
+      <form className="flex flex-col gap-2" onSubmit={(e) => e.preventDefault()}>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1">Find <input className={field} value={find} onChange={(e) => setFind(e.target.value)} data-testid="find" /></label>
           <label className="flex items-center gap-1">Replace with <input className={field} value={replace} onChange={(e) => setReplace(e.target.value)} data-testid="replace" /></label>
@@ -54,7 +55,7 @@ export function FindReplace({ episode, onEdit, onClose }: {
               {t.label}
             </label>
           ))}
-          <button type="submit" className={button} disabled={!find || !names.length || !count} data-testid="replace-all">Replace all</button>
+          <button type="button" className={button} onClick={replaceAll} disabled={!find || !names.length || !count} data-testid="replace-all">Replace all</button>
           <button type="button" className={button} onClick={onClose}>Close</button>
         </fieldset>
       </form>

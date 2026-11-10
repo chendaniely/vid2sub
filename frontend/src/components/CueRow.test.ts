@@ -12,7 +12,7 @@ const row: Row = {
 };
 
 describe("a cue's text, edited or not (spec §6.3)", () => {
-  const props = { row, track: "en", current: false, selected: true, cell: "source" as const, word: -1, words: [], total: 1, onPick: () => undefined, onDraft: () => undefined, onEditKey: () => undefined, editorRef: { current: null } };
+  const props = { row, track: "en", current: false, selected: true, cell: "source" as const, trId: null, word: -1, words: [], total: 1, onPick: () => undefined, onDraft: () => undefined, onEditKey: () => undefined, editorRef: { current: null } };
 
   it("shows a cue and its translation as text, never as markup", () => {
     const html = renderToStaticMarkup(createElement(CueRow, { ...props, editing: null }));
@@ -23,7 +23,7 @@ describe("a cue's text, edited or not (spec §6.3)", () => {
   });
 
   it("holds the text being edited as a text box's value", () => {
-    const editing = { id: row.id, cell: "source" as const, trId: null, text: "<b>draft</b>" };
+    const editing = { id: row.id, cell: "source" as const, trId: null, track: null, text: "<b>draft</b>" };
     const html = renderToStaticMarkup(createElement(CueRow, { ...props, editing }));
     expect(html).not.toContain("<b>draft");
     expect(html).toContain("&lt;b&gt;draft&lt;/b&gt;</textarea>");

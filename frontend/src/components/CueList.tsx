@@ -12,7 +12,7 @@ import { type Cell, CueRow, type Editing } from "./CueRow";
  * since a row's height follows its text; @tanstack/react-virtual places them, through React's
  * style props (the CSSOM, which the CSP allows), never a style attribute in the markup. The
  * selected row is scrolled into view, and while playback is followed so is the current one. */
-export function CueList({ listRef, rows, words, track, current, word, selected, cell, editing, follow, onPick, onKeyDown, onDraft, onEditKey, editorRef }: {
+export function CueList({ listRef, rows, words, track, current, word, selected, cell, trId, editing, follow, onPick, onKeyDown, onDraft, onEditKey, editorRef }: {
   listRef: RefObject<HTMLDivElement | null>;
   rows: readonly Row[];
   words: readonly SpokenWord[];
@@ -21,9 +21,10 @@ export function CueList({ listRef, rows, words, track, current, word, selected, 
   word: number;
   selected: number;
   cell: Cell;
+  trId: string | null;
   editing: Editing | null;
   follow: boolean;
-  onPick: (index: number, cell: Cell) => void;
+  onPick: (index: number, cell: Cell, trId?: string) => void;
   onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
   onDraft: (text: string) => void;
   onEditKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -69,11 +70,12 @@ export function CueList({ listRef, rows, words, track, current, word, selected, 
                   current={item.index === current}
                   selected={item.index === selected}
                   cell={cell}
+                  trId={trId}
                   editing={editing?.id === row.id ? editing : null}
                   word={word}
                   words={words}
                   total={rows.length}
-                  onPick={(which) => onPick(item.index, which)}
+                  onPick={(which, id) => onPick(item.index, which, id)}
                   onDraft={onDraft}
                   onEditKey={onEditKey}
                   editorRef={editorRef}
