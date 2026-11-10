@@ -51,9 +51,9 @@ export function SaveBar({ dirty, busy, formats, drafts, onSave, onRestore, onDis
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <button
           type="button"
-          className="rounded-md bg-primary px-3 py-1 font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
-          onClick={() => onSave(ass ? ["srt", "ass"] : ["srt"])}
-          disabled={saving}
+          className="rounded-md bg-primary px-3 py-1 font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring aria-disabled:opacity-50"
+          onClick={() => { if (!saving) onSave(ass ? ["srt", "ass"] : ["srt"]); }}
+          aria-disabled={saving}
           data-testid="save"
         >
           {busy === "saving" ? "Saving…" : "Save"}
