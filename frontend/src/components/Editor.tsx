@@ -7,10 +7,12 @@ import { captionLines, type Showing } from "@/lib/overlay";
 import type { Busy, EditOp, EpisodeView } from "@/types";
 
 import { BusyNote } from "./BusyNote";
+import { ConflictPicker } from "./ConflictPicker";
 import { type Cell, type Editing } from "./CueRow";
 import { CueList } from "./CueList";
 import { FindReplace } from "./FindReplace";
 import { Player } from "./Player";
+import { SaveBar } from "./SaveBar";
 
 const SPEEDS = [0.75, 1, 1.25] as const; // the practice aids' playback rates (spec §20)
 const INSERT_MS = 2000; // a new cue's length, where the gap allows
@@ -21,23 +23,36 @@ export type Requests = {
   edit: (op: EditOp) => void;
   undo: () => void;
   redo: () => void;
+  save: (formats: ("srt" | "ass")[]) => void;
+  resolve: (track: string, rendition: string) => void;
+};
+
+/** Saving's state, from App: the drafts tabs left for these versions (S34, Decision 31), and a
+ * count that goes up each time a Save or a pick finds a track in conflict, which opens the
+ * picker. */
+export type Saving = {
+  drafts: { key: string; at: string; steps: number }[];
+  conflictsFound: number;
+  onRestore: (key: string) => void;
+  onDiscard: () => void;
 };
 
 /** The editor (spec §20): the path box, then, once an episode is open, the player on the left
  * and the cue list on the right, with the edit bar and find and replace. */
-export function Editor({ episode, busy, pathInput, onOpen, onCantPlay, requests }: {
+export function Editor({ episode, busy, pathInput, onOpen, onCantPlay, requests, saving }: {
   episode: EpisodeView | null;
   busy: Busy;
   pathInput: boolean;
   onOpen: (path: string) => void;
   onCantPlay: () => void;
   requests: Requests;
+  saving: Saving;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-4" data-testid="editor">
       {pathInput && <OpenForm busy={busy} onOpen={onOpen} />}
       {episode ? (
-        <EpisodeEditor key={episode.id} episode={episode} busy={busy} requests={requests} onCantPlay={onCantPlay} />
+        <EpisodeEditor key={episode.id} episode={episode} busy={busy} requests={requests} saving={saving} onCantPlay={onCantPlay} />
       ) : (
         <p className="m-auto text-muted-foreground">Type the full path of a video vid2sub has made subtitles for, then Open.</p>
       )}
@@ -66,10 +81,11 @@ function keyOf(e: KeyboardEvent): KeyLike {
   return { key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey };
 }
 
-function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
+function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
   episode: EpisodeView;
   busy: Busy;
   requests: Requests;
+  saving: Saving;
   onCantPlay: () => void;
 }) {
   const translations = episode.tracks.filter((t) => t.role === "translation" && !t.in_conflict);
@@ -86,6 +102,8 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
   const [trId, setTrId] = useState<string | null>(null); // the chosen translation cue of the row
   const [editing, setEditing] = useState<Editing | null>(null);
   const [finding, setFinding] = useState(false);
+  const conflicted = episode.tracks.filter((t) => t.in_conflict);
+  const [picking, setPicking] = useState(conflicted.length > 0); // open at once on a torn episode
   const media = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
@@ -130,6 +148,10 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
     if (editing) editor.current?.focus();
   }, [editing?.id, editing?.cell]);
 
+  useEffect(() => {
+    if (saving.conflictsFound > 0) setPicking(true);
+  }, [saving.conflictsFound]);
+
   // Called every frame while playing: state changes only when the cue, the word or the
   // translation playing changes, so the list re-renders a few times a second at most.
   const onTime = useCallback((ms: number) => {
@@ -145,7 +167,7 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
 
   // The rows or the translation's cues changed (an edit, undo or redo): current, word and trAt
   // are indexes into them, so they are found again from the playhead. Until this runs, the render
-  // below reads them safely (the Spec review's S-1: a delete once blanked the page).
+  // below reads them safely (the Spec review's S-1: a delete once blanked the page). Also after a Save or a pick.
   const seen = useRef({ rows, trCues });
   useEffect(() => {
     if (seen.current.rows === rows && seen.current.trCues === trCues) return;
@@ -315,18 +337,17 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
   };
 
   const toggleLoop = () => {
-    const at = current >= 0 ? current : selected;
-    setLoop(loop || at < 0 || at >= rows.length ? null : { start_ms: rows[at].start_ms, end_ms: rows[at].end_ms });
+    const at = rows[current] ? current : selected;
+    setLoop(loop || !rows[at] ? null : { start_ms: rows[at].start_ms, end_ms: rows[at].end_ms });
   };
   const changeRate = (value: number) => {
     setRate(value);
     if (media.current) media.current.playbackRate = value;
   };
 
-  // (current and trAt can name a cue an edit has just removed, until the effect above runs)
+  // (current and trAt can name a cue an edit has just removed, until the effect above runs) Also a track gone into conflict.
   const lines = captionLines(showing, rows[current]?.text ?? null, trCues[trAt]?.text ?? null);
   const stale = translations.filter((t) => t.all_stale);
-  const conflicted = episode.tracks.filter((t) => t.in_conflict);
   const noRow = !row;
   const tool = (label: string, keys: string, onClick: () => void, testid: string, disabled = noRow) => (
     <button type="button" className={control} onClick={onClick} disabled={disabled} aria-keyshortcuts={keys || undefined} title={keys ? `${label} (${keys})` : label} data-testid={testid}>
@@ -337,7 +358,11 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <header className="flex flex-col gap-1">
-        <h1 className="truncate text-lg font-bold" data-testid="episode-name">{episode.video.name}</h1>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <h1 className="truncate text-lg font-bold" data-testid="episode-name">{episode.video.name}</h1>
+          <SaveBar dirty={episode.dirty} busy={busy} formats={episode.formats} drafts={saving.drafts}
+            onSave={requests.save} onRestore={saving.onRestore} onDiscard={saving.onDiscard} />
+        </div>
         {(episode.notes.length > 0 || stale.length > 0 || conflicted.length > 0) && (
           <ul role="status" className="flex flex-col gap-0.5 text-sm" data-testid="episode-notes">
             {episode.notes.map((note, k) => <li key={k}>{note}</li>)}
@@ -345,7 +370,10 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
               <li key={`stale-${t.key}`}>Every {t.label} cue is stale: the glossary or the translation model changed since it was made, or a glossary term is waiting for Save.</li>
             ))}
             {conflicted.map((t) => (
-              <li key={`conflict-${t.key}`} className="text-destructive">The {t.label} track has two versions: pick one before editing it.</li>
+              <li key={`conflict-${t.key}`} className="flex flex-wrap items-center gap-2 text-destructive">
+                The {t.label} track has two versions: pick one before editing it.
+                <button type="button" className={control} onClick={() => setPicking(true)} data-testid="pick-version">Pick a version</button>
+              </li>
             ))}
           </ul>
         )}
@@ -386,6 +414,8 @@ function EpisodeEditor({ episode, busy, requests, onCantPlay }: {
             </label>
           </div>
           {finding && <FindReplace episode={episode} onEdit={requests.edit} onClose={() => setFinding(false)} />}
+          <ConflictPicker episode={episode} open={picking && conflicted.length > 0} onClose={() => setPicking(false)}
+            onPick={(track, rendition) => { requests.resolve(track, rendition); setPicking(false); }} />
         </section>
         <section aria-label="Cue list" className="flex min-h-0 flex-col gap-2">
           <div role="toolbar" aria-label="Edit the selected cue" className="flex flex-wrap gap-1" data-testid="edit-bar">

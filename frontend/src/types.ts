@@ -87,10 +87,12 @@ export type EpisodeView = {
   notes: string[];
   conflicts: Record<string, Version[]>;
   glossary_adds: Record<string, string>;
+  heads: Record<string, string>; // track → head rendition: the crash-recovery draft's key
+  formats: ("srt" | "ass")[]; // what Save writes unless the person changes it
 };
 
 /** The `busy` output: what the tab's editor is doing, or null. */
-export type Busy = "opening" | "playback" | null;
+export type Busy = "opening" | "playback" | "saving" | "picking" | null;
 
 /** An edit, as `vid2sub.web.ops` takes it: every edit goes through the server's `apply`. */
 export type EditOp =
@@ -105,3 +107,16 @@ export type EditOp =
   | { op: "detach"; track: string; cue: string; detached: boolean }
   | { op: "replace_all"; find: string; replace: string; tracks: string[] }
   | { op: "glossary_add"; term: string; translation: string };
+
+/** The `save_result` message: what a Save or a pick wrote, left alone or found in conflict. */
+export type SaveResultMessage = {
+  episode: string;
+  kind: "save" | "pick";
+  written: string[];
+  foreign: string[];
+  conflicts: string[];
+  notes: string[];
+};
+
+/** The `applied` message: whether the edit, undo or redo with this count was made. */
+export type AppliedMessage = { episode: string; n: number; ok: boolean };

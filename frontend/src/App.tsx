@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Editor, type Requests } from "@/components/Editor";
+import { Editor, type Requests, type Saving } from "@/components/Editor";
+import { resultNotices } from "@/components/SaveBar";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
+import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, heard, loadDraft, moveDraft, offersFor, tabId, tabStorage } from "@/lib/draft";
+import { randomHex } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { pacer } from "@/lib/sends";
 import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
-import type { Busy, Capabilities, EditOp, EpisodeView, Status } from "@/types";
+import type { AppliedMessage, Busy, Capabilities, EditOp, EpisodeView, SaveResultMessage, Status } from "@/types";
 
 type Ask = { episode: string; n: number };
+type Step = { edit: EditOp } | { undo: true } | { redo: true };
 
 type JQueryLike = (target: Document) => {
   on(event: string, handler: () => void): unknown;
@@ -32,19 +36,136 @@ export default function App() {
   const setEdit = useSetShinyInput<(Ask & { op: EditOp }) | null>("edit", null, { priority: "event", debounceMs: 0 });
   const setUndo = useSetShinyInput<Ask | null>("undo", null, { priority: "event", debounceMs: 0 });
   const setRedo = useSetShinyInput<Ask | null>("redo", null, { priority: "event", debounceMs: 0 });
+  const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
+  const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
   const sent = useRef(0);
   // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
   const pace = useMemo(() => pacer(), []);
+
+  // The crash-recovery draft (spec §14.5, S34; Decision 31): every edit, undo and redo is also
+  // written to localStorage as sent, under the heads the episode was opened at and this tab's id,
+  // and the server's word that it refused one takes it out again. Opening an episode offers every
+  // tab's draft for its heads. Restoring one replays it through the server's rules and clears it
+  // only once every step was done again; otherwise it is kept and the editor says how many steps
+  // failed. This tab's own draft starts again then, or when the person edits or discards instead
+  // of restoring. When a Save or a pick moves the heads, this tab's draft goes with them while
+  // edits are still unsaved (a pick keeps the other tracks' edits), and is cleared once
+  // everything is saved; no other tab's draft is ever touched by it.
+  const tab = useMemo(() => tabId(tabStorage()), []);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const offering = useRef(false); // offers are up and this tab's old draft not yet dropped
+  const drafted = useRef<{ id: string; key: string; heads: Record<string, string> } | null>(null);
+  const replaying = useRef<Replay | null>(null);
+  useEffect(() => {
+    if (!episode) {
+      drafted.current = null;
+      return;
+    }
+    const key = draftKey(episode.heads, tab);
+    const was = drafted.current;
+    const store = draftStorage();
+    if (was?.id === episode.id && was.key !== key) {
+      if (episode.dirty) moveDraft(store, was.key, key);
+      else clearDraft(store, was.key);
+    }
+    if (was?.id !== episode.id) {
+      const found = offersFor(store, episode.heads);
+      offering.current = found.length > 0;
+      setOffers(found);
+    }
+    drafted.current = { id: episode.id, key, heads: episode.heads };
+  }, [episode, tab]);
+  const dropOffers = useCallback(() => { // editing or discarding instead: this tab starts afresh
+    if (!offering.current) return;
+    offering.current = false;
+    setOffers([]);
+    if (drafted.current) clearDraft(draftStorage(), drafted.current.key);
+  }, []);
+
   const episodeId = episode?.id ?? null;
+  const steps = useMemo(() => {
+    const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
+    // Sends one edit, undo or redo, and keeps it in the draft as sent; returns its request's count.
+    return (step: Step): number | null => {
+      const a = ask();
+      if (!a) return null;
+      if (drafted.current) addStep(draftStorage(), drafted.current.key, { ...step, n: a.n } as DraftStep);
+      if ("edit" in step) pace(() => setEdit({ ...a, op: step.edit }));
+      else if ("undo" in step) pace(() => setUndo(a));
+      else pace(() => setRedo(a));
+      return a.n;
+    };
+  }, [episodeId, pace, setEdit, setUndo, setRedo]);
   const requests = useMemo<Requests>(() => {
     const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
     const send = <T,>(set: (v: T) => void, value: T | null) => value && pace(() => set(value));
     return {
-      edit: (op) => { const a = ask(); send(setEdit, a && { ...a, op }); },
-      undo: () => send(setUndo, ask()),
-      redo: () => send(setRedo, ask()),
+      edit: (op) => { dropOffers(); steps({ edit: op }); },
+      undo: () => { dropOffers(); steps({ undo: true }); },
+      redo: () => { dropOffers(); steps({ redo: true }); },
+      save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
+      resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
     };
-  }, [episodeId, pace, setEdit, setUndo, setRedo]);
+  }, [episodeId, pace, dropOffers, steps, setSave, setResolve]);
+
+  useShinyMessageHandler("applied", (data: AppliedMessage) => {
+    if (!episode || data.episode !== episode.id) return;
+    if (!data.ok && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    const now = replaying.current && heard(replaying.current, data.n, data.ok);
+    if (!now) return;
+    replaying.current = now.waiting.length ? now : null;
+    if (now.waiting.length) return;
+    if (!now.refused) clearDraft(draftStorage(), now.from);
+    else setNotices((shown) => addNotice(shown, { kind: "error", text: `${now.refused} restored ${now.refused === 1 ? "step" : "steps"} of ${now.total} couldn't be replayed: the draft is kept` }, nextId.current++));
+  });
+
+  const [conflictsFound, setConflictsFound] = useState(0);
+  useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
+    if (!episode || data.episode !== episode.id) return;
+    for (const n of resultNotices(data, episode.tracks, episode.video.name)) setNotices((shown) => addNotice(shown, n, nextId.current++));
+    if (data.conflicts.length) setConflictsFound((k) => k + 1);
+  });
+  const saving: Saving = {
+    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: o.draft.steps.length })),
+    conflictsFound,
+    onRestore: (key) => {
+      const at = drafted.current;
+      const store = draftStorage();
+      const draft = loadDraft(store, key);
+      if (!at || !draft) return;
+      offering.current = false;
+      setOffers([]);
+      let from = key;
+      if (key === at.key) { // this tab's own (a reload): set aside until the server has redone it
+        from = draftKey(at.heads, `t${randomHex(4)}`);
+        moveDraft(store, key, from);
+      } else {
+        clearDraft(store, at.key);
+      }
+      const sent: number[] = [];
+      for (const step of draft.steps) {
+        const { n: _, ...asSent } = step;
+        const n = steps(asSent as Step);
+        if (n !== null) sent.push(n);
+      }
+      if (sent.length) replaying.current = { from, waiting: sent, refused: 0, total: sent.length };
+      else clearDraft(store, from);
+    },
+    onDiscard: dropOffers,
+  };
+
+  // Closing the tab with unsaved edits warns first (S34): listened for only while there are
+  // some, as MDN advises; preventDefault, and returnValue for older browsers.
+  const dirty = episode?.dirty ?? false;
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = true;
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
   const [notices, setNotices] = useState<Shown[]>([]);
   const nextId = useRef(1);
   useShinyMessageHandler("notice", (data: unknown) => {
@@ -88,6 +209,7 @@ export default function App() {
           onOpen={(path) => setOpen({ path, n: ++sent.current })}
           onCantPlay={() => episode && setPlayback({ episode: episode.id, n: ++sent.current })}
           requests={requests}
+          saving={saving}
         />
       </main>
       <section aria-label="Notices" className="fixed right-4 bottom-4 z-[99999] flex w-80 flex-col gap-2">

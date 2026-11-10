@@ -138,3 +138,9 @@
     @apply font-sans;
     }
 }
+
+/* Scroll lock while a modal <dialog> is open (components/ui/dialog.tsx): a class, which the CSP
+   allows, where Radix's injected <style> is blocked (the Phase 2 plan's Decision 13). */
+html.dialog-open {
+  overflow: hidden;
+}
