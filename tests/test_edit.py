@@ -290,16 +290,23 @@ def test_every_edit_on_a_two_hour_episode_takes_well_under_a_second():
                    for i in range(2000))
     en = tuple(cue(f"t{i}", i * 3600, i * 3600 + 3000, f"Line {i}", src=(f"s{i}",))
                for i in range(2000))
-    t = Tracks(source, {"en": en})
-    taken = {c.id for c in source + en}
-    began = time.perf_counter()
-    t = edit.set_text(t, "s1000", "changed")
-    t = edit.nudge(t, "s1000", 100)
-    t, _ = edit.split(t, "s10", at_char=2, at_ms=36_100, ids=(A, B), taken=taken)
-    t, _ = edit.merge_next(t, "s20", new_id=M, joined_ids={"en": J}, taken=taken)
-    t = edit.delete(t, "s30")
-    t, _ = edit.replace_all(t, "line", "Line", tracks=["source"])
-    assert time.perf_counter() - began < 1.0
+    start = Tracks(source, {"en": en})
+    ids = {c.id for c in source + en}
+
+    def every_edit() -> float:
+        t, taken = start, set(ids)  # the edits add to `taken`
+        began = time.perf_counter()
+        t = edit.set_text(t, "s1000", "changed")
+        t = edit.nudge(t, "s1000", 100)
+        t, _ = edit.split(t, "s10", at_char=2, at_ms=36_100, ids=(A, B), taken=taken)
+        t, _ = edit.merge_next(t, "s20", new_id=M, joined_ids={"en": J}, taken=taken)
+        t = edit.delete(t, "s30")
+        t, _ = edit.replace_all(t, "line", "Line", tracks=["source"])
+        return time.perf_counter() - began
+
+    # The fastest of three, each from the same start: a busy machine (three suites at once)
+    # slows a run without it being a slow edit, and a real slowdown is slow in all three.
+    assert min(every_edit() for _ in range(3)) < 1.0
 
 
 OP_NAMES = ["set_text", "set_translation_text", "set_times", "nudge", "split", "merge_next",

@@ -205,9 +205,15 @@ def test_each_edit_on_a_two_hour_episode_and_its_new_view_take_well_under_a_seco
              {"op": "replace_all", "find": "台詞", "replace": "セリフ", "tracks": ["source"]},
              {"op": "set_translation_text", "track": "en", "cue": tid(5), "text": "x"}]
     for data in edits:
-        began = time.perf_counter()
-        ep = backend.apply(ep, parse_op(data))
-        views.episode_view(ep, video_url=None, audio_url=None)
-        elapsed = time.perf_counter() - began
+        # Each edit changes the episode, so the fastest of three is taken by applying it to the
+        # episode as it stood, three times (it is frozen): a busy machine (three suites at once)
+        # slows a run without it being a slow edit, and a real slowdown is slow in all three.
+        before, runs = ep, []
+        for _ in range(3):
+            began = time.perf_counter()
+            ep = backend.apply(before, parse_op(data))
+            views.episode_view(ep, video_url=None, audio_url=None)
+            runs.append(time.perf_counter() - began)
+        elapsed = min(runs)
         # Review Focus 3: about 0.02 s each where this was built; 1 s leaves CI room
         assert elapsed < 1.0, f"{data['op']}: {elapsed:.2f} s"
