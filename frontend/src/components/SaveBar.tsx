@@ -30,6 +30,13 @@ export function resultNotices(r: SaveResultMessage, tracks: readonly TrackInfo[]
   return out;
 }
 
+/** What pressing Save does: nothing while a Save or a pick is under way (the button stays
+ * focusable, so it can't be disabled), else asks for SRT, and ASS too when ticked. */
+export function pressSave(busy: Busy, ass: boolean, onSave: (formats: ("srt" | "ass")[]) => void): void {
+  if (busy === "saving" || busy === "picking") return;
+  onSave(ass ? ["srt", "ass"] : ["srt"]);
+}
+
 /** Save (spec §14.5) and the drafts a crashed tab left (S34). Save writes a version of each
  * changed track and then the subtitle files: SRT always, ASS too when ticked, as the episode was
  * written before unless the person changes it. Every tab's draft found for the versions this
@@ -52,7 +59,9 @@ export function SaveBar({ dirty, busy, formats, drafts, onSave, onRestore, onDis
         <button
           type="button"
           className="rounded-md bg-primary px-3 py-1 font-bold text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring aria-disabled:opacity-50"
-          onClick={() => { if (!saving) onSave(ass ? ["srt", "ass"] : ["srt"]); }}
+          onClick={() => pressSave(busy, ass, onSave)}
+          // aria-disabled, not disabled: a disabled button loses focus, and the conflict picker a
+          // Save opens then has nothing to give focus back to when it closes (0993b01)
           aria-disabled={saving}
           data-testid="save"
         >

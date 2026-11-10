@@ -491,3 +491,95 @@ def test_this_tabs_offered_draft_comes_across_a_pick_and_can_still_be_restored(o
     expect(b.get_by_test_id("save-state")).to_have_text("Unsaved changes")
     for watched in (first, second):
         assert watched.errors == [] and watched.violations() == []
+
+
+def test_a_saved_episode_closes_without_a_warning(open_page, server):
+    # Task 16's Spec review, I-3: beforeunload is listened for only while there are unsaved edits,
+    # and the listener goes when they are saved.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit_cue(a, rows, 1, "occasion!")
+    a.get_by_test_id("save").click()
+    expect(a.get_by_test_id("notice").first).to_contain_text("wrote jfk.en.srt")
+    expect(a.get_by_test_id("save-state")).to_have_text("All changes saved")
+    a.evaluate("() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))")
+    warned = []
+    a.on("dialog", lambda d: (warned.append(d.type), d.dismiss()))
+    a.close(run_before_unload=True)
+    other = a.context.new_page()  # a closed page can't wait; this one lets the events through
+    other.wait_for_timeout(500)
+    assert warned == [] and a.is_closed()
+
+
+def test_a_reloaded_tabs_own_draft_is_restored_and_set_aside_while_it_replays(open_page, server):
+    # I-3 (P15): Restore of this tab's own draft moves it aside first, so the steps it replays
+    # are written fresh and the old copy is dropped once they were all made.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit_cue(a, rows, 1, "own edit")
+    a.on("dialog", lambda d: d.accept())
+    a.reload()
+    rows = open_demo(a, server)
+    expect(a.get_by_test_id("draft")).to_have_count(1)
+    a.get_by_test_id("draft-restore").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("own edit")
+    expect(a.get_by_test_id("draft")).to_have_count(0)
+    a.wait_for_timeout(300)
+    assert drafts_kept(a) == {tab_of(a): 1}
+
+
+def test_editing_instead_of_restoring_starts_this_tabs_draft_afresh(open_page, server):
+    # I-3 (Decision 18): the old draft is not carried under the new edits.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit_cue(a, rows, 1, "before the reload")
+    a.on("dialog", lambda d: d.accept())
+    a.reload()
+    rows = open_demo(a, server)
+    expect(a.get_by_test_id("draft")).to_have_count(1)
+    edit_cue(a, rows, 2, "after it")
+    expect(a.get_by_test_id("draft")).to_have_count(0)
+    assert drafts_kept(a) == {tab_of(a): 1}
+
+
+def test_restoring_another_tabs_draft_drops_this_tabs_own(open_page, server):
+    # I-3 (the brief's App Restore): this tab's old draft goes when another's is restored, so only
+    # the steps it replays are left.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit_cue(a, rows, 1, "from the crashed tab")
+    a.close()
+    second = open_page(server)
+    b = second.page
+    rows = open_demo(b, server)
+    edit_cue(b, rows, 2, "this tab's own edit")
+    b.on("dialog", lambda d: d.accept())
+    b.reload()
+    rows = open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_have_count(2)  # the crashed tab's, then this tab's own
+    b.get_by_test_id("draft-restore").first.click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("from the crashed tab")
+    expect(b.get_by_test_id("draft")).to_have_count(0)
+    b.wait_for_timeout(300)
+    assert drafts_kept(b) == {tab_of(b): 1}
+    assert texts(b)[2] == "We meet at a college noted for knowledge,"  # its own edit was not made
+
+
+def test_discard_sets_the_offers_aside_but_leaves_another_tabs_draft_stored(open_page, server):
+    # I-3 (Decision 36): Discard hides what is on offer here and drops this tab's own draft only.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit_cue(a, rows, 1, "crashed")
+    a.close()
+    second = open_page(server)
+    b = second.page
+    open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_have_count(1)
+    b.get_by_test_id("draft-discard").click()
+    expect(b.get_by_test_id("draft")).to_have_count(0)
+    assert len(drafts_kept(b)) == 1 and tab_of(b) not in drafts_kept(b)

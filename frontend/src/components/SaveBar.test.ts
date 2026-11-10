@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { SaveResultMessage, TrackInfo } from "@/types";
 
-import { OVERWRITE_COMMAND, resultNotices } from "./SaveBar";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { OVERWRITE_COMMAND, pressSave, resultNotices, SaveBar } from "./SaveBar";
 
 const TRACKS: TrackInfo[] = [
   { key: "en", label: "English", role: "source", head_by: "editor", in_conflict: false, all_stale: false },
@@ -55,5 +58,31 @@ describe("what a Save says (spec §14.5, §15.3)", () => {
       notes: ["another version of the ja track arrived: pick again"] }, TRACKS, VIDEO)).toEqual([
       { kind: "info", text: "Another version of the ja track arrived: pick again" },
       { kind: "error", text: "Japanese has two versions: pick the one to keep" }]);
+  });
+});
+
+describe("the Save button (Task 16's Spec review, I-3)", () => {
+  const bar = (busy: "saving" | "picking" | null) =>
+    renderToStaticMarkup(createElement(SaveBar, { dirty: true, busy, formats: ["srt"], drafts: [], onSave: () => {}, onRestore: () => {}, onDiscard: () => {} }));
+
+  it("stays focusable while it works, and says it is unavailable with aria-disabled", () => {
+    // a `disabled` button loses focus, so the picker a Save opens couldn't give it back
+    for (const busy of ["saving", "picking"] as const) {
+      const html = bar(busy);
+      expect(html).toContain('aria-disabled="true"');
+      expect(html).not.toMatch(/\sdisabled(=|\s|>)/);
+    }
+    expect(bar(null)).toContain('aria-disabled="false"');
+  });
+
+  it("asks for nothing while a Save or a pick is under way, else for SRT and, ticked, ASS", () => {
+    const asked: string[][] = [];
+    const onSave = (f: string[]) => asked.push(f);
+    pressSave("saving", false, onSave);
+    pressSave("picking", true, onSave);
+    expect(asked).toEqual([]);
+    pressSave(null, false, onSave);
+    pressSave("opening", true, onSave);
+    expect(asked).toEqual([["srt"], ["srt", "ass"]]);
   });
 });
