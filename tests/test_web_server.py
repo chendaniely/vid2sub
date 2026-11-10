@@ -1305,6 +1305,12 @@ class Translating(LocalBackend):
         self.policies: list = []
         self.gate: threading.Event | None = None
         self.fail: Exception | None = None
+        self.on_batch = None  # the last retranslation's, to call late
+
+    def retranslate(self, ep, track, *, ids, model=None, allow_cloud=False, on_batch=None):
+        self.on_batch = on_batch
+        return super().retranslate(ep, track, ids=ids, model=model, allow_cloud=allow_cloud,
+                                   on_batch=on_batch)
 
     def _translator(self, lang, model, allow_cloud):
         if self.fail is not None:
@@ -1375,7 +1381,7 @@ def test_retranslating_stale_redoes_only_the_changed_cue_and_shows_that_it_is_wo
         latest(t, lambda e: e["dirty"])
         t.set(retranslate={**ask, "n": 2, "track": "en", "ids": None, "allow_cloud": False})
         assert t.until(lambda t: retranslated(t)) == [
-            {"episode": ep["id"], "n": 2, "ok": True, "changed": 1}]
+            {"episode": ep["id"], "n": 2, "ok": True, "changed": 1, "added": 1}]
         done = latest(t, lambda e: en_texts(e)[1].startswith("EN "))
         assert en_texts(done) == [ENGLISH[0], f"EN {ep['rows'][1]['id']}", ENGLISH[2]]
         assert "stale" not in done["rows"][1]["tr"]["en"]["cues"][0]["flags"]
@@ -1426,7 +1432,7 @@ def test_a_retranslation_that_only_drops_a_translation_counts_it_as_changed(tr_c
         t.set(retranslate={"episode": ep["id"], "n": 1, "track": "en", "ids": None,
                            "allow_cloud": False})
         assert t.until(lambda t: retranslated(t)) == [
-            {"episode": ep["id"], "n": 1, "ok": True, "changed": 1}]
+            {"episode": ep["id"], "n": 1, "ok": True, "changed": 1, "added": 0}]  # a drop only
         assert tr_rt.backend.batches == [] and tr_rt.backend.policies == []
         assert en_texts(t.value("episode")) == list(ENGLISH[:2])
 
@@ -1508,6 +1514,7 @@ def test_a_retranslation_that_cant_run_is_a_notice_with_the_fix_and_changes_noth
             hint="is it running? For the Spark: is `make tunnel` running?")
         t.set(retranslate={**ask, "n": 1})
         t.until(lambda t: len(retranslated(t)) == 1)
+        assert t.value("busy") is None  # a refusal that is a RetranslateError frees the tab too
         tr_rt.backend.fail = EngineError("cloud_not_allowed", "cloud is a cloud model, and this "
                                          "run doesn't allow cloud models",
                                          hint="add --allow-cloud to send audio or text to it")
@@ -1543,3 +1550,44 @@ def test_a_retranslation_that_cant_run_is_a_notice_with_the_fix_and_changes_noth
         # failed, so the page never says "nothing was stale" (Task 17's review)
         assert [(r["ok"], r["changed"]) for r in retranslated(t)] == [(False, 0)] * 6
         assert not t.value("episode")["dirty"] and t.value("busy") is None
+
+
+@pytest.mark.media
+def test_a_server_error_or_timeout_never_says_the_editor_retries_but_says_what_to_do(
+        tr_client, tr_rt, tmp_path):
+    # Task 17's Spec review (I-3): the CLI retries twice; the editor never does, so a hint that
+    # says so would have the person wait for a retry that doesn't come.
+    video = make_episode(tmp_path / "ep")
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"], "track": "en", "ids": [ep["rows"][0]["id"]],
+               "allow_cloud": False}
+        tr_rt.backend.fail = EngineError("server", "the server failed (503)",
+                                         hint="vid2sub retries twice")
+        t.set(retranslate={**ask, "n": 1})
+        t.until(lambda t: len(retranslated(t)) == 1)
+        tr_rt.backend.fail = EngineError("server", "the server took too long to answer",
+                                         hint="it may be busy; vid2sub retries twice")
+        t.set(retranslate={**ask, "n": 2})
+        t.until(lambda t: len(retranslated(t)) == 2)
+        assert [n["text"] for n in t.notices()] == [
+            "couldn't retranslate: the server failed (503) → retranslate again",
+            "couldn't retranslate: the server took too long to answer → it may be busy"]
+
+
+@pytest.mark.media
+def test_a_batch_heard_after_its_retranslation_ended_never_shows_as_progress(
+        tr_client, tr_rt, tmp_path):
+    # Task 17's Spec review (M-1): the token check in `_progress` and its reset, once the
+    # retranslation ends, are what keep a late batch (run_coroutine_threadsafe can land after
+    # the result) from showing "9 of 9" on an idle tab.
+    video = make_episode(tmp_path / "ep")
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        t.set(retranslate={"episode": ep["id"], "n": 1, "track": "en",
+                           "ids": [ep["rows"][0]["id"]], "allow_cloud": False})
+        t.until(lambda t: retranslated(t))
+        assert t.value("busy") is None and t.value("progress") is None
+        tr_rt.backend.on_batch(9, 9)  # late: from the thread the batch ran on
+        time.sleep(0.5)
+        assert {"done": 9, "of": 9} not in progress_seen(t) and t.value("progress") is None

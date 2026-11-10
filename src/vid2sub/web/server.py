@@ -282,14 +282,15 @@ class Editor:
         episode, so it runs through `runtime.blocking`, and each batch's progress hops back to
         this loop from the thread it runs on. Edits sent meanwhile wait their turn in this tab's
         queue and land on the retranslated episode. `allow_cloud` is the request's own, true or
-        false, never a setting (§7.2). Whatever happens, `retranslate_result` says whether it ran
-        and how many translation cues changed (added, replaced or dropped), so the tab's draft
+        false, never a setting (§7.2). Whatever happens, `retranslate_result` says whether it ran,
+        how many translation cues changed (added, replaced or dropped) and how many were added
+        (none: it only dropped), so the tab's draft
         keeps only what changed the episode and a failed "Retranslate stale" is never taken for
         one with nothing stale."""
         ep = self._named(request)
         if ep is None or not isinstance(request, dict):
             return
-        ok, changed = False, 0
+        ok, changed, added = False, 0, 0
         try:
             track, ids = request.get("track"), request.get("ids")
             allow_cloud = request.get("allow_cloud")
@@ -319,7 +320,8 @@ class Editor:
                 self._retranslating = None
             before = {c.id for c in ep.tracks.translations.get(track, ())}
             after = {c.id for c in new.tracks.translations.get(track, ())}
-            changed = max(len(after - before), len(before - after))  # a drop alone counts (7a, I2)
+            added = len(after - before)  # none: a drop alone (Task 7 round 7a, I2), said so
+            changed = max(added, len(before - after))
             self.ep = new
             await self._publish(busy=None)
             ok = True
@@ -327,7 +329,7 @@ class Editor:
             n = request.get("n")
             await shinyreact.send_message(self.session, "retranslate_result", {
                 "episode": ep.id, "n": n if type(n) is int else None, "ok": ok,
-                "changed": changed})
+                "changed": changed, "added": added})
 
     async def _progress(self, job: object, done: int, of: int) -> None:
         """A batch finished (`on_batch`): shown while that retranslation still runs, so a late
