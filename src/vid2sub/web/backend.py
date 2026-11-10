@@ -80,7 +80,7 @@ from vid2sub import __version__, store
 from vid2sub import detect as detecting
 from vid2sub.cache import Cache
 from vid2sub.catalog import suggest
-from vid2sub.config import Config
+from vid2sub.config import Config, ModelEntry
 from vid2sub.engines.base import EngineError
 from vid2sub.engines.clients import KeyRing, RunPolicy, check_allowed
 from vid2sub.media.identity import identify
@@ -109,7 +109,7 @@ from vid2sub.subs.sidecar import (
     make_rendition,
 )
 from vid2sub.subs.translate_shape import stale_linked_ids, uncovered_ids
-from vid2sub.translate.run import make_ask, translate_cues
+from vid2sub.translate.run import AskFn, make_ask, translate_cues
 from vid2sub.web import ops
 from vid2sub.web.episode import (
     Capabilities,
@@ -341,8 +341,7 @@ class LocalBackend:
             return ep
         source, cues = ep.tracks.source, ep.tracks.translations[track]
         lang = _lang(ep.source_key)
-        name = self._translator(lang, model, allow_cloud)
-        entry = self.config.models[name]
+        name, entry = self._translator(lang, model, allow_cloud)
         glossary = glossary_with(read_glossary(ep.video), ep.glossary_adds)
         everything = ids is None and setup_changed(track_setup(ep, track), glossary.sha(),
                                                    entry.model)
@@ -352,9 +351,7 @@ class LocalBackend:
         taken = set(ep.taken)
         new: list[Cue] = []
         if wanted:  # else only translations of deleted cues are dropped: nothing to ask
-            policy = RunPolicy(allow_cloud)
-            check_allowed(name, entry, self.config, policy)
-            ask = make_ask(name, entry, self.config, policy, self.keys)
+            ask = self._ask(name, entry, RunPolicy(allow_cloud))
             new = translate_cues(source, source_lang=lang, target_track=track,
                                  glossary=glossary, ask=ask, only=wanted, taken=taken,
                                  on_batch=on_batch)
@@ -370,16 +367,18 @@ class LocalBackend:
         return replace(ep, tracks=tracks, taken=taken, made_with=made_with, redo=[],
                        undo=[*ep.undo, _snapshot(ep)][-UNDO_STEPS:])
 
-    def _translator(self, lang: str, model: str | None, allow_cloud: bool) -> str:
-        """The named model, else the catalog route's pick, as M1's pipeline picks (§11.2). A route
-        whose model's server isn't serving it (down, erroring, or not listing it) stops here
-        rather than taking the next model or the cloud (§17.4)."""
+    def _translator(self, lang: str, model: str | None, allow_cloud: bool
+                    ) -> tuple[str, ModelEntry]:
+        """The named model, else the catalog route's pick, as M1's pipeline picks (§11.2), with
+        its entry. A route whose model's server isn't serving it (down, erroring, or not listing
+        it) stops here rather than taking the next model or the cloud (§17.4). The demo's
+        backend answers with its canned model instead."""
         if model is not None:
             entry = self.config.models.get(model)
             if entry is None or entry.task != "translate":
                 raise EngineError("unavailable", "that isn't a translation model in vid2sub.toml",
                                   hint="`vid2sub models` lists them")
-            return model
+            return model, entry
         # The pick with every local server taken to answer: the model the route wants. If the
         # probed route picks another, the wanted one errored or lacks the model, and §17.4 says
         # never to fall back to another model or the cloud.
@@ -402,7 +401,13 @@ class LocalBackend:
             raise EngineError("unavailable", "no usable translation model",
                               hint="; ".join(f"{n}: {r}" for n, r in s.considered)
                               or "add one to vid2sub.toml (`vid2sub config init`)")
-        return s.model
+        return s.model, self.config.models[s.model]
+
+    def _ask(self, name: str, entry: ModelEntry, policy: RunPolicy) -> AskFn:
+        """The model's ask function, once this call may use it: a cloud model only when the call
+        allows it (spec §7.2), checked here, before anything is sent."""
+        check_allowed(name, entry, self.config, policy)
+        return make_ask(name, entry, self.config, policy, self.keys)
 
     def _check_open(self, ep: Episode) -> None:
         if not self.is_open(ep.id):

@@ -45,9 +45,9 @@ from pathlib import Path
 
 import vid2sub
 from vid2sub.cache import Cache
-from vid2sub.config import Config
-from vid2sub.engines.base import ChunkResult, ModelStamp
-from vid2sub.engines.clients import KeyRing
+from vid2sub.config import Config, ModelEntry
+from vid2sub.engines.base import ChunkResult, EngineError, ModelStamp
+from vid2sub.engines.clients import KeyRing, RunPolicy
 from vid2sub.media.identity import full_sha256, identify
 from vid2sub.media.probe import probe
 from vid2sub.media.tools import Tools, input_args, run_tool
@@ -56,6 +56,7 @@ from vid2sub.security import safe_write
 from vid2sub.store import header_for, now, sidecar_path
 from vid2sub.subs.model import Segment, Word
 from vid2sub.subs.sidecar import IdentityRecord, Sidecar, parse_sidecar, serialize
+from vid2sub.translate.run import AskFn
 from vid2sub.web import runtime
 from vid2sub.web.backend import Episode, LocalBackend, OpenError
 
@@ -93,6 +94,10 @@ JAPANESE: tuple[tuple[tuple[str, ...], str], ...] = (
      "進歩で知られる都市、力強さで知られる州です。"),
 )
 NO_TRANSLATION = "（訳はありません）"
+# The model the canned sidecar's Japanese was made with (scripts/demo_sidecar.py), so the demo's
+# own track isn't stale for want of the model (spec §13.4); it is in no vid2sub.toml.
+CANNED_JA = "canned-ja"
+CANNED_ENTRY = ModelEntry(model=CANNED_JA, task="translate", local=True)
 
 
 class DemoMissing(Exception):
@@ -184,11 +189,22 @@ def prepare(tools: Tools) -> Path:
 
 
 class DemoBackend(LocalBackend):
-    """LocalBackend, opening only episodes in the demo's copy."""
+    """LocalBackend, opening only episodes in the demo's copy, and retranslating with the canned
+    translation (`CANNED_JA`, the model the demo's sidecar was made with), which sends nothing
+    anywhere: the demo has no vid2sub.toml, so no endpoint or model of its own (Task 17)."""
 
     def __init__(self, copy: Path, tools: Tools, cache: Cache):
         super().__init__(Config(), tools, KeyRing(environ={}), cache)
         self.copy = copy.resolve()
+
+    def _translator(self, lang: str, model: str | None, allow_cloud: bool
+                    ) -> tuple[str, ModelEntry]:
+        if model not in (None, CANNED_JA):
+            raise EngineError("unavailable", "the demo translates only with its canned model")
+        return CANNED_JA, CANNED_ENTRY
+
+    def _ask(self, name: str, entry: ModelEntry, policy: RunPolicy) -> AskFn:
+        return canned_ask
 
     def open(self, path: str) -> Episode:
         try:

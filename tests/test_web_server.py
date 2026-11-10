@@ -6,6 +6,7 @@ runs them, are here too (spec §19.1, §20, §8.2, §8.8)."""
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import logging
 import re
@@ -18,11 +19,12 @@ from starlette.testclient import TestClient
 from test_web_app import get_paths, read_only_violations
 
 from vid2sub.cache import Cache
-from vid2sub.config import Config
+from vid2sub.config import Config, ModelEntry
 from vid2sub.engines import clients
 from vid2sub.engines.base import EngineError
 from vid2sub.engines.clients import KeyRing
 from vid2sub.media.tools import Tools
+from vid2sub.translate.run import TranslationFailed
 from vid2sub.web import runtime, server, views
 from vid2sub.web.app import create_app
 from vid2sub.web.backend import LocalBackend
@@ -1264,3 +1266,253 @@ def test_an_edit_sent_during_a_slow_save_waits_for_it_and_lands_on_the_saved_epi
         assert index_of(t, lambda m: custom_id(m) == "save_result") < third
         srt = video.with_name("Show - S01E01.ja.srt")
         assert "元気？" not in srt.read_text(encoding="utf-8")  # the Save wrote without it
+
+
+# ---- the editor: retranslating (Task 17) -------------------------------------------------------
+
+
+class Translating(LocalBackend):
+    """The backend with a model that answers "EN <id>" for each cue it is asked, keeping each
+    batch and each call's cloud policy; `gate`, once set, holds every batch until it opens, and
+    `fail` is raised where the model would be picked."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.batches: list[list[str]] = []
+        self.policies: list = []
+        self.gate: threading.Event | None = None
+        self.fail: Exception | None = None
+
+    def _translator(self, lang, model, allow_cloud):
+        if self.fail is not None:
+            raise self.fail
+        return "gemma", ModelEntry(endpoint="spark", model="gemma", task="translate", local=True)
+
+    def _ask(self, name, entry, policy):
+        self.policies.append(policy)
+
+        def ask(system, prompt, data_model):
+            if self.gate is not None:
+                assert self.gate.wait(20)
+            ids = re.findall(r"^\[(\S+)\] \(max", prompt, flags=re.MULTILINE)
+            self.batches.append(ids)
+            return data_model.model_validate(
+                {"items": [{"src": [i], "text": f"EN {i}"} for i in ids]})
+
+        return ask
+
+
+@pytest.fixture
+def tr_rt(tmp_path):
+    made = runtime.build(Config(), tools=Tools.find(), keys=KeyRing(environ={}),
+                         cache=Cache(tmp_path / "cache", max_bytes=10**9))
+    made = dataclasses.replace(made, backend=Translating(made.config, made.backend.tools,
+                                                         made.keys, made.backend.cache))
+    runtime.configure(made)
+    yield made
+    runtime.configure(None)
+    made.queue.close()
+
+
+@pytest.fixture
+def tr_client(tr_rt):
+    with TestClient(create_app(tr_rt, token=TOKEN, port=PORT, shiny_app=server.app),
+                    base_url=BASE) as c:
+        r = c.post("/auth", content=json.dumps({"token": TOKEN}), headers={**JSON, **PAGE})
+        assert r.status_code == 204
+        yield c
+
+
+def retranslated(t: Tab) -> list[dict]:
+    return [m["custom"]["shinyReactMessage"]["data"] for m in t.messages
+            if m.get("custom", {}).get("shinyReactMessage", {}).get("id") == "retranslate_result"]
+
+
+def progress_seen(t: Tab) -> list:
+    return [m["values"]["progress"] for m in t.messages if "progress" in m.get("values", {})]
+
+
+def en_texts(ep: dict) -> list[str]:
+    return [c["text"] for row in ep["rows"] for c in row["tr"]["en"]["cues"]]
+
+
+RETRANSLATE_OUTPUTS = {"episode", "busy", "progress"}
+
+
+@pytest.mark.media
+def test_retranslating_stale_redoes_only_the_changed_cue_and_shows_that_it_is_working(
+        tr_client, tr_rt, tmp_path):
+    # S30, spec §13.4: only the stale cue changes; busy and each batch's progress are shown.
+    video = make_episode(tmp_path / "ep")
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"]}
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": ep["rows"][1]["id"],
+                                          "text": "お元気ですか"}})
+        latest(t, lambda e: e["dirty"])
+        t.set(retranslate={**ask, "n": 2, "track": "en", "ids": None, "allow_cloud": False})
+        assert t.until(lambda t: retranslated(t)) == [
+            {"episode": ep["id"], "n": 2, "changed": 1}]
+        done = latest(t, lambda e: en_texts(e)[1].startswith("EN "))
+        assert en_texts(done) == [ENGLISH[0], f"EN {ep['rows'][1]['id']}", ENGLISH[2]]
+        assert "stale" not in done["rows"][1]["tr"]["en"]["cues"][0]["flags"]
+        assert tr_rt.backend.batches == [[ep["rows"][1]["id"]]]
+        assert [p.allow_cloud for p in tr_rt.backend.policies] == [False]
+        assert "retranslating" in busy_seen(t) and t.value("busy") is None
+        assert {"done": 1, "of": 1} in progress_seen(t) and t.value("progress") is None
+        t.set(undo={**ask, "n": 3})  # one undo step
+        back = latest(t, lambda e: not en_texts(e)[1].startswith("EN "))
+        assert en_texts(back) == list(ENGLISH)
+
+
+@pytest.mark.media
+def test_named_cues_are_retranslated_even_where_a_translation_was_edited(tr_client, tr_rt,
+                                                                       tmp_path):
+    # Decision 8: the person asked, so an edited translation is replaced.
+    video = make_episode(tmp_path / "ep")
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"]}
+        first = ep["rows"][0]
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_translation_text", "track": "en",
+                                          "cue": first["tr"]["en"]["cues"][0]["id"],
+                                          "text": "Morning!"}})
+        latest(t, lambda e: en_texts(e)[0] == "Morning!")
+        t.set(retranslate={**ask, "n": 2, "track": "en", "ids": [first["id"]],
+                           "allow_cloud": False})
+        t.set(retranslate={**ask, "n": 3, "track": "en", "ids": None, "allow_cloud": False})
+        t.until(lambda t: len(retranslated(t)) == 2)
+        assert [r["changed"] for r in retranslated(t)] == [1, 0]  # then nothing is stale
+        assert en_texts(t.value("episode"))[0] == f"EN {first['id']}"
+
+
+@pytest.mark.media
+def test_a_retranslation_that_only_drops_a_translation_counts_it_as_changed(tr_client, tr_rt,
+                                                                           tmp_path):
+    # Task 7 round 7a (I2): a source line deleted in another program leaves its translation
+    # nothing to translate from; Retranslate stale drops it, asks no model, and says it changed.
+    from episodes import source_cues, write_track
+
+    from vid2sub import store
+
+    video = make_episode(tmp_path / "ep")
+    head = store.load(video)[0].head("ja").rendition
+    write_track(video, "ja", source_cues(3)[:2], role="source", replaces=head)
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        t.set(retranslate={"episode": ep["id"], "n": 1, "track": "en", "ids": None,
+                           "allow_cloud": False})
+        assert t.until(lambda t: retranslated(t)) == [
+            {"episode": ep["id"], "n": 1, "changed": 1}]
+        assert tr_rt.backend.batches == [] and tr_rt.backend.policies == []
+        assert en_texts(t.value("episode")) == list(ENGLISH[:2])
+
+
+@pytest.mark.media
+def test_an_edit_sent_while_retranslating_waits_its_turn_and_lands_on_the_new_episode(
+        tr_client, tr_rt, tmp_path):
+    video = make_episode(tmp_path / "ep")
+    tr_rt.backend.gate = gate = threading.Event()
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"]}
+        t.set(retranslate={**ask, "n": 1, "track": "en", "ids": [ep["rows"][0]["id"]],
+                           "allow_cloud": False})
+        t.until(lambda t: t.value("busy") == "retranslating")
+        t.set(edit={**ask, "n": 2, "op": {"op": "set_text", "cue": ep["rows"][2]["id"],
+                                          "text": "はい"}})
+        time.sleep(0.5)
+        assert not t.value("episode")["dirty"]  # the edit waits for the retranslation
+        gate.set()
+        done = latest(t, lambda e: e["rows"][2]["text"] == "はい")
+        assert en_texts(done)[0] == f"EN {ep['rows'][0]['id']}"
+        t.set(undo={**ask, "n": 3})  # the edit came after the retranslation: undone first
+        back = latest(t, lambda e: e["rows"][2]["text"] != "はい")
+        assert en_texts(back)[0] == f"EN {ep['rows'][0]['id']}"
+
+
+@pytest.mark.media
+def test_allow_cloud_is_the_requests_own_true_or_false_and_anything_else_is_refused(
+        tr_client, tr_rt, tmp_path):
+    # Spec §7.2: the editor's box, unticked every time; nothing presets it, so a request that
+    # doesn't say true or false (missing, "true", 1) asks no model.
+    video = make_episode(tmp_path / "ep")
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        cue = ep["rows"][0]["id"]
+        ask = {"episode": ep["id"], "track": "en", "ids": [cue]}
+        t.set(retranslate={**ask, "n": 1})
+        t.set(retranslate={**ask, "n": 2, "allow_cloud": "true"})
+        t.set(retranslate={**ask, "n": 3, "allow_cloud": 1})
+        t.until(lambda t: len(retranslated(t)) == 3)
+        assert [n["text"] for n in t.notices()] == ["pick the cues to retranslate"] * 3
+        assert tr_rt.backend.policies == []
+        t.set(retranslate={**ask, "n": 4, "allow_cloud": True})
+        t.until(lambda t: len(retranslated(t)) == 4)
+        assert [p.allow_cloud for p in tr_rt.backend.policies] == [True]
+
+
+@pytest.mark.media
+def test_cues_that_arent_cue_ids_or_a_track_that_isnt_one_are_refused_without_echoing_them(
+        tr_client, tr_rt, tmp_path):
+    video = make_episode(tmp_path / "ep")
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"], "allow_cloud": False}
+        t.set(retranslate={**ask, "n": 1, "track": "en", "ids": ["<script>"]})
+        t.set(retranslate={**ask, "n": 2, "track": "en", "ids": []})
+        t.set(retranslate={**ask, "n": 3, "track": "<b>en</b>", "ids": None})
+        t.set(retranslate={**ask, "n": 4, "track": "en", "ids": ["c" + "0" * 8]})
+        t.until(lambda t: len(retranslated(t)) == 4)
+        assert [n["text"] for n in t.notices()] == [
+            "pick the cues to retranslate", "pick the cues to retranslate",
+            "there's no such track", "one of those cues isn't in the source track"]
+        assert "<" not in json.dumps(t.notices()) and tr_rt.backend.batches == []
+        assert [r["changed"] for r in retranslated(t)] == [0, 0, 0, 0]
+
+
+@pytest.mark.media
+def test_a_retranslation_that_cant_run_is_a_notice_with_the_fix_and_changes_nothing(
+        tr_client, tr_rt, tmp_path):
+    # Spec §17.3: each error with the hint that names its fix.
+    video = make_episode(tmp_path / "ep")
+    with tab(tr_client, RETRANSLATE_OUTPUTS) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"], "track": "en", "ids": [ep["rows"][0]["id"]],
+               "allow_cloud": False}
+        tr_rt.backend.fail = EngineError(
+            "connection", "the translation model's server isn't reachable",
+            hint="is it running? For the Spark: is `make tunnel` running?")
+        t.set(retranslate={**ask, "n": 1})
+        t.until(lambda t: len(retranslated(t)) == 1)
+        tr_rt.backend.fail = EngineError("cloud_not_allowed", "cloud is a cloud model, and this "
+                                         "run doesn't allow cloud models",
+                                         hint="add --allow-cloud to send audio or text to it")
+        t.set(retranslate={**ask, "n": 2})
+        t.until(lambda t: len(retranslated(t)) == 2)
+        tr_rt.backend.fail = TranslationFailed("the model couldn't translate cue ca0000000 in "
+                                               "the required shape")
+        t.set(retranslate={**ask, "n": 3})
+        t.until(lambda t: len(retranslated(t)) == 3)
+        tr_rt.backend.fail = EngineError(
+            "unavailable", "no usable translation model",
+            hint="cloud: a cloud model: needs --allow-cloud; gemma: not in the translate route "
+                 "for ja; choose it with --model")
+        t.set(retranslate={**ask, "n": 4})
+        t.until(lambda t: len(retranslated(t)) == 4)
+        video.with_name("vid2sub.glossary.toml").write_bytes(b"\xff\xfe not utf-8")
+        tr_rt.backend.fail = None
+        t.set(retranslate={**ask, "n": 5})
+        t.until(lambda t: len(retranslated(t)) == 5)
+        assert [n["text"] for n in t.notices()] == [
+            ("couldn't retranslate: the translation model's server isn't reachable → is it "
+             "running? For the Spark: is `make tunnel` running?"),
+            ("couldn't retranslate: cloud is a cloud model, and this run doesn't allow cloud "
+             "models → tick Allow cloud models, then retranslate again"),
+            ("couldn't retranslate: the model couldn't translate cue ca0000000 in the required "
+             "shape → retranslate again, or pick fewer cues"),
+            ("couldn't retranslate: no usable translation model → cloud: a cloud model: needs "
+             "Allow cloud models ticked; gemma: not in the translate route for ja"),
+            "the glossary isn't UTF-8; save it as UTF-8"]
+        assert [r["changed"] for r in retranslated(t)] == [0] * 5
+        assert not t.value("episode")["dirty"] and t.value("busy") is None

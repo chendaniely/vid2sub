@@ -12,16 +12,16 @@ pipeline (S36), a job that somehow reaches it fails without running anything.
 The server runs in Pages too (spec §3.3, §21), so this module imports nothing the Pages bundle
 lacks at its top: `build()` imports the local parts (the backend, the queue, ffmpeg's tools, the
 cache, the network client) when it runs, and the server reaches local-only work through the
-`Runtime` (`reachable`, `media_for`). Every call that blocks goes through `blocking`, never a
-thread or an executor of the server's own: a worker thread here, inline in Pyodide, which has no
-threads (Task 14 round 14a, decided with the coordinator 2026-10-24).
+`Runtime` (`reachable`, `media_for`, `retranslate`). Every call that blocks goes through
+`blocking`, never a thread or an executor of the server's own: a worker thread here, inline in
+Pyodide, which has no threads (Task 14 round 14a, decided with the coordinator 2026-10-24).
 """
 
 from __future__ import annotations
 
 import asyncio
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -36,8 +36,17 @@ if TYPE_CHECKING:
     from vid2sub.web.episode import Episode
     from vid2sub.web.media import MediaTokens
 
+ALLOW_CLOUD = "tick Allow cloud models, then retranslate again"
 PLAYBACK_TIMEOUT = 3600.0  # seconds: a two-hour episode's audio, read from a slow network share
 INLINE = sys.platform == "emscripten"  # Pyodide: no threads, so a blocking call runs inline
+
+
+def _editor_words(hint: str) -> str:
+    """The catalog's reasons in a "no usable translation model" hint name the CLI's flags
+    (`catalog.suggest`); the editor has no `--model` and no `--allow-cloud`, but a box (Task 7
+    re-review, M2)."""
+    return (hint.replace("; choose it with --model", "")
+            .replace("needs --allow-cloud", "needs Allow cloud models ticked"))
 
 
 async def blocking[**P, R](fn: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:
@@ -81,6 +90,28 @@ class Runtime:
             except EngineError:
                 found[name] = False
         return found
+
+    def retranslate(self, ep: Episode, track: str, *, ids: Sequence[str] | None,
+                    allow_cloud: bool, on_batch: Callable[[int, int], None] | None = None
+                    ) -> Episode:
+        """The backend's retranslate, with the engine's errors (`EngineError`, and
+        `TranslationFailed` for an answer in the wrong shape) made the pure `RetranslateError`,
+        message and hint, so the server catches it without importing them (Pages has neither).
+        `EditError`, `OpenError` and `GlossaryError` pass through: they are pure already. Blocks
+        on the model's server: call it through `blocking`; `on_batch` runs on that thread. A
+        cloud model this call doesn't allow says to tick the editor's box (spec §7.2)."""
+        from vid2sub.engines.base import EngineError
+        from vid2sub.translate.run import TranslationFailed
+        from vid2sub.web.episode import RetranslateError
+
+        try:
+            return self.backend.retranslate(ep, track, ids=ids, allow_cloud=allow_cloud,
+                                            on_batch=on_batch)
+        except EngineError as err:  # the CLI's hint names a flag; the editor has a box
+            hint = ALLOW_CLOUD if err.kind == "cloud_not_allowed" else _editor_words(err.hint)
+            raise RetranslateError(str(err), hint) from None
+        except TranslationFailed as err:
+            raise RetranslateError(str(err), "retranslate again, or pick fewer cues") from None
 
     def media_for(self, ep: Episode, *, audio_only: bool = False) -> Media:
         """The video by a media token when the browser can play its audio; else, or with

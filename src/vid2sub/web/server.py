@@ -6,8 +6,8 @@ server holds only reactive computation and returns JSON (the shinyreact-build-ap
 `ReactApp(...)` is called in this file. It reads the launch's parts from `runtime.current()`,
 which `vid2sub serve` sets before importing this module. An unset input is a silent exception the
 client treats as pending; an explicit null clears a pane (§19.1). Work that blocks (the endpoint
-check here; opening, saving and retranslating later) runs off the event loop, through
-`runtime.blocking` only. The server runs in Pages too (spec §3.3, §21), so this module imports,
+check, opening, saving and retranslating) runs off the event loop, through `runtime.blocking`
+only. The server runs in Pages too (spec §3.3, §21), so this module imports,
 at its top, only the pure packages, shiny, shinyreact, htmltools, pydantic and
 `vid2sub.web.{episode, views, runtime, ops}`, and reaches local-only work through the configured
 `Runtime` (Task 14 round 14a; `tests/test_pages_imports.py`). Shiny's reconnect
@@ -34,7 +34,13 @@ a pick of a conflicted track's version (§14.4) block on the disk, so they run t
 `runtime.blocking`; edits sent meanwhile wait their turn and land on the saved episode. Each
 sends `save_result`: what was written, what was left alone, which tracks are in conflict, and
 the notes. Two tabs, or a tab and a CLI run, saving one episode end in a conflict the later Save
-sees (Review Focus 4, S32).
+sees (Review Focus 4, S32). Retranslate (§13.4, §20; S30) names source cues, or none for every
+stale one; it waits on the model's server, so it too runs through `runtime.blocking`, with
+`busy` at "retranslating" from the start (with no model named, the route's servers are asked
+first) and `progress` after each batch, handed back to the loop from the worker thread. It is
+reached through the runtime, whose `retranslate` turns the engine's errors into the pure
+`RetranslateError`, so nothing here imports them. Cloud models only when the request itself says
+`allow_cloud: true` (§7.2): the editor's box, unticked every time.
 
 The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
 for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
@@ -59,8 +65,9 @@ from shiny import Inputs, Outputs, Session, reactive
 from shinyreact import ReactApp, page_react, reactive_output
 
 from vid2sub.subs.edit import EditError
+from vid2sub.subs.glossary import GlossaryError
 from vid2sub.web import WWW, ops, runtime, views
-from vid2sub.web.episode import Episode, OpenError, SaveError, SaveResult
+from vid2sub.web.episode import Episode, OpenError, RetranslateError, SaveError, SaveResult
 
 # By name: a test may load this file as a module of another name.
 log = logging.getLogger("vid2sub.web.server")
@@ -71,6 +78,9 @@ TYPE_A_PATH = "type the video's full path to open it"
 FORMATS = (["srt"], ["srt", "ass"])  # exactly these two, as the page sends them
 BAD_FORMATS = "Save writes srt, and ass when asked for: nothing was saved"
 RENDITION = re.compile(r"r_[0-9a-f]{16}")  # sidecar.make_rendition's ids (spec §14.2)
+CUE_ID = re.compile(r"c[0-9a-f]{8}")  # model.new_cue_id's ids, as ops.CueId checks them
+MAX_IDS = 10_000  # source cues one retranslation may name: every cue of a long episode
+PICK_CUES = "pick the cues to retranslate"
 # htmltools keeps the highest version of a dependency per name. Shiny's own version with a local
 # label (1.8.0+vid2sub, which PEP 440 sorts above 1.8.0) makes this one replace Shiny's
 # shiny-busy-indicators: its stylesheet, without the inline script in its head. The second
@@ -127,6 +137,8 @@ class Editor:
         self.media = runtime.Media(None, None)
         self.shown: reactive.Value[tuple[Episode, runtime.Media] | None] = reactive.value(None)
         self.busy: reactive.Value[str | None] = reactive.value(None)
+        self.progress: reactive.Value[dict[str, int] | None] = reactive.value(None)
+        self._retranslating: object | None = None  # the running retranslation's token
         self._todo: deque[tuple[str, object]] = deque()
         self._worker: asyncio.Task | None = None
         self._ended = False
@@ -261,6 +273,64 @@ class Editor:
         await self._publish(busy=None)
         await self._report("pick", picked, result)
 
+    async def _retranslate(self, request: object) -> None:
+        """Retranslate (spec §13.4, §20): the source cues the request names, else (`ids` null)
+        every stale or untranslated one. It blocks on the model's server, for minutes on a whole
+        episode, so it runs through `runtime.blocking`, and each batch's progress hops back to
+        this loop from the thread it runs on. Edits sent meanwhile wait their turn in this tab's
+        queue and land on the retranslated episode. `allow_cloud` is the request's own, true or
+        false, never a setting (§7.2). Whatever happens, `retranslate_result` says how many
+        translation cues changed, so the tab's draft keeps only what changed the episode."""
+        ep = self._named(request)
+        if ep is None or not isinstance(request, dict):
+            return
+        changed = 0
+        try:
+            track, ids = request.get("track"), request.get("ids")
+            allow_cloud = request.get("allow_cloud")
+            if not (isinstance(track, str) and isinstance(allow_cloud, bool) and _cue_ids(ids)):
+                await notice(self.session, "error", PICK_CUES)
+                return
+            loop = asyncio.get_running_loop()
+            job = self._retranslating = object()
+
+            def on_batch(done: int, of: int) -> None:  # on the thread `blocking` runs it on
+                asyncio.run_coroutine_threadsafe(self._progress(job, done, of), loop)
+
+            await self._set_busy("retranslating")
+            try:
+                new = await runtime.blocking(self.rt.retranslate, ep, track, ids=ids,
+                                             allow_cloud=allow_cloud, on_batch=on_batch)
+            except (EditError, OpenError, GlossaryError) as err:  # fit to show, echoing nothing
+                await self._set_busy(None)
+                await notice(self.session, "error", str(err))
+                return
+            except RetranslateError as err:
+                await self._set_busy(None)
+                await notice(self.session, "error", f"couldn't retranslate: {err}"
+                             + (f" → {err.hint}" if err.hint else ""))
+                return
+            finally:
+                self._retranslating = None
+            before = {c.id for c in ep.tracks.translations.get(track, ())}
+            after = {c.id for c in new.tracks.translations.get(track, ())}
+            changed = max(len(after - before), len(before - after))  # a drop alone counts (7a, I2)
+            self.ep = new
+            await self._publish(busy=None)
+        finally:
+            n = request.get("n")
+            await shinyreact.send_message(self.session, "retranslate_result", {
+                "episode": ep.id, "n": n if type(n) is int else None, "changed": changed})
+
+    async def _progress(self, job: object, done: int, of: int) -> None:
+        """A batch finished (`on_batch`): shown while that retranslation still runs, so a late
+        one never shows after it ended."""
+        if self._retranslating is not job:
+            return
+        async with reactive.lock():
+            self.progress.set({"done": done, "of": of})
+            await reactive.flush()
+
     async def _report(self, kind: Literal["save", "pick"], ep: Episode,
                       result: SaveResult) -> None:
         """The `save_result` message: file names and track keys only, never a path (§6.8)."""
@@ -305,12 +375,20 @@ class Editor:
         async with reactive.lock():
             self.shown.set(None if self.ep is None else (self.ep, self.media))
             self.busy.set(busy)
+            self.progress.set(None)
             await reactive.flush()
 
     async def _set_busy(self, busy: str | None) -> None:
         async with reactive.lock():
             self.busy.set(busy)
+            self.progress.set(None)
             await reactive.flush()
+
+
+def _cue_ids(ids: object) -> bool:
+    """None (every stale or untranslated cue), or 1 to MAX_IDS cue ids of new_cue_id's shape."""
+    return ids is None or (isinstance(ids, list) and 0 < len(ids) <= MAX_IDS
+                           and all(isinstance(i, str) and CUE_ID.fullmatch(i) for i in ids))
 
 
 def server(input: Inputs, output: Outputs, session: Session) -> None:
@@ -382,6 +460,11 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     def _resolve() -> None:
         editor.submit("resolve", input.resolve())
 
+    @reactive.effect
+    @reactive.event(input.retranslate)
+    def _retranslate() -> None:
+        editor.submit("retranslate", input.retranslate())
+
     @reactive_output
     def episode():
         shown = editor.shown()
@@ -393,6 +476,10 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @reactive_output
     def busy():
         return editor.busy()
+
+    @reactive_output
+    def progress():
+        return editor.progress()
 
 
 # bookmark_store="disable" is Shiny's default, said here so that no session state is written to

@@ -32,6 +32,17 @@ class SaveError(Exception):
     """Nothing was saved; the reason is fit to show."""
 
 
+class RetranslateError(Exception):
+    """A retranslation that couldn't run (no usable model, a cloud model this one doesn't allow,
+    the server down or refusing, an answer in the wrong shape): the reason and its fix (`hint`,
+    spec §17.3) are fit to show. The local runtime makes it from the engine's own errors, which
+    the server can't import in Pages (Task 17)."""
+
+    def __init__(self, message: str, hint: str = ""):
+        super().__init__(message)
+        self.hint = hint
+
+
 @dataclass(frozen=True)
 class SaveResult:
     written: tuple[str, ...]  # file names written

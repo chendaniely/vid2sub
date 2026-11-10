@@ -19,7 +19,7 @@ from vid2sub.subs.glossary import GlossaryError, parse_glossary
 from vid2sub.subs.model import Cue, check_track
 from vid2sub.subs.translate_shape import src_sha
 from vid2sub.web import backend as web_backend
-from vid2sub.web import views
+from vid2sub.web import demo, views
 from vid2sub.web.backend import LocalBackend
 from vid2sub.web.episode import all_stale
 from vid2sub.web.ops import parse_op
@@ -546,3 +546,22 @@ def test_a_retranslation_never_overlaps_never_covers_a_cue_twice_and_keeps_edits
         assert not {c.id for c in cues if "edited" in c.flags} & replaced
     else:
         assert set(ids) <= set(wanted)  # a named cue is always translated
+
+
+# The demo retranslates with its canned translation, sending nothing anywhere (Task 17)
+
+
+def test_the_demo_retranslates_with_its_canned_model_and_no_other(tmp_path):
+    tools = Tools.find()
+    copy = demo.prepare(tools)
+    backend = demo.DemoBackend(copy, tools, Cache(tmp_path / "cache", max_bytes=10**9))
+    ep = backend.open(str(copy / demo.VIDEO))
+    assert backend.retranslate(ep, "ja", ids=None) is ep  # made with canned-ja: nothing stale
+    college = ep.tracks.source[2]  # "We meet at a college noted for knowledge,"
+    (mine,) = [c for c in ep.tracks.translations["ja"] if college.id in c.src]
+    ep = edit(backend, ep, op="set_translation_text", track="ja", cue=mine.id, text="大学")
+    out = backend.retranslate(ep, "ja", ids=[college.id])
+    (new,) = [c for c in out.tracks.translations["ja"] if college.id in c.src]
+    assert new.id != mine.id and new.text.replace("\n", "") == demo.JAPANESE[1][1]
+    with pytest.raises(EngineError, match="only with its canned model"):
+        backend.retranslate(ep, "ja", ids=[college.id], model="gemma")
