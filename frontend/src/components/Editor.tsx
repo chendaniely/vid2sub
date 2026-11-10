@@ -33,6 +33,7 @@ export type Requests = {
 export type Saving = {
   drafts: { key: string; at: string; steps: number }[];
   conflictsFound: number;
+  onTyping: (typing: boolean) => void;
   onRestore: (key: string) => void;
   onDiscard: () => void;
 };
@@ -167,7 +168,8 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
 
   // The rows or the translation's cues changed (an edit, undo or redo): current, word and trAt
   // are indexes into them, so they are found again from the playhead. Until this runs, the render
-  // below reads them safely (the Spec review's S-1: a delete once blanked the page). Also after a Save or a pick.
+  // below reads them safely (the Spec review's S-1: a delete once blanked the page). The same
+  // holds after a Save or a pick, which replace the rows.
   const seen = useRef({ rows, trCues });
   useEffect(() => {
     if (seen.current.rows === rows && seen.current.trCues === trCues) return;
@@ -218,6 +220,25 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
     if (editing.cell === "source") requests.edit({ op: "set_text", cue: editing.id, text: editing.text });
     else if (editing.track && editing.trId) requests.edit({ op: "set_translation_text", track: editing.track, cue: editing.trId, text: editing.text });
     return true;
+  };
+  // A box whose text differs from its cue is an unsaved edit the server has not seen (the Spec
+  // review's C-1): Save counts it, commits it first, and closing the tab warns of it.
+  const boxText = (() => {
+    const target = editedRow();
+    if (!editing || !target) return undefined;
+    return editing.cell === "source" ? target.text : target.tr[editing.track ?? ""]?.cues.find((c) => c.id === editing.trId)?.text;
+  })();
+  const typing = editing !== null && boxText !== undefined && editing.text !== boxText;
+  const { onTyping } = saving;
+  useEffect(() => {
+    onTyping(typing);
+    return () => onTyping(false);
+  }, [typing, onTyping]);
+  // Moving off the box to Save or to the picker commits its draft, as moving to another cell does.
+  const flushBox = () => {
+    if (!editing) return;
+    commit();
+    setEditing(null);
   };
   const stopEditing = () => {
     setEditing(null);
@@ -345,7 +366,8 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
     if (media.current) media.current.playbackRate = value;
   };
 
-  // (current and trAt can name a cue an edit has just removed, until the effect above runs) Also a track gone into conflict.
+  // (current and trAt can name a cue an edit has just removed, until the effect above runs; a
+  // track gone into conflict has no cues until it is picked, which reads the same way)
   const lines = captionLines(showing, rows[current]?.text ?? null, trCues[trAt]?.text ?? null);
   const stale = translations.filter((t) => t.all_stale);
   const noRow = !row;
@@ -360,8 +382,8 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
       <header className="flex flex-col gap-1">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <h1 className="truncate text-lg font-bold" data-testid="episode-name">{episode.video.name}</h1>
-          <SaveBar dirty={episode.dirty} busy={busy} formats={episode.formats} drafts={saving.drafts}
-            onSave={requests.save} onRestore={saving.onRestore} onDiscard={saving.onDiscard} />
+          <SaveBar dirty={episode.dirty || typing} busy={busy} formats={episode.formats} drafts={saving.drafts}
+            onSave={(formats) => { flushBox(); requests.save(formats); }} onRestore={saving.onRestore} onDiscard={saving.onDiscard} />
         </div>
         {(episode.notes.length > 0 || stale.length > 0 || conflicted.length > 0) && (
           <ul role="status" className="flex flex-col gap-0.5 text-sm" data-testid="episode-notes">
@@ -372,7 +394,7 @@ function EpisodeEditor({ episode, busy, requests, saving, onCantPlay }: {
             {conflicted.map((t) => (
               <li key={`conflict-${t.key}`} className="flex flex-wrap items-center gap-2 text-destructive">
                 The {t.label} track has two versions: pick one before editing it.
-                <button type="button" className={control} onClick={() => setPicking(true)} data-testid="pick-version">Pick a version</button>
+                <button type="button" className={control} onClick={() => { flushBox(); setPicking(true); }} data-testid="pick-version">Pick a version</button>
               </li>
             ))}
           </ul>

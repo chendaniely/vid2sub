@@ -315,3 +315,52 @@ def test_a_restore_the_server_refuses_a_step_of_keeps_the_draft_and_says_how_man
     b.reload()
     open_demo(b, server)
     expect(b.get_by_test_id("draft")).to_have_count(2)
+
+
+def type_box(page, rows, k: int, text: str) -> None:
+    """Opens cue k's box and types its line, without committing it."""
+    rows.nth(k).get_by_test_id("cue-text").click()
+    page.keyboard.press("Enter")
+    page.get_by_test_id("cue-editor").fill(text)
+
+
+def test_save_includes_the_line_being_typed_and_closing_warns_of_it(open_page, server):
+    # Task 16's Spec review, C-1: pressing Save with a box open commits it first (round 15d: only
+    # Esc discards), the status counts the box, and closing warns while its text differs.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    type_box(a, rows, 1, "typed, never committed")
+    expect(a.get_by_test_id("save-state")).to_have_text("Unsaved changes")
+    # (the listener is added by an effect two renders later: let them paint)
+    a.evaluate("() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))")
+    warned = []
+    a.on("dialog", lambda d: (warned.append(d.type), d.dismiss()))
+    a.close(run_before_unload=True)
+    a.wait_for_timeout(500)
+    assert warned == ["beforeunload"] and not a.is_closed()
+    a.get_by_test_id("save").click()
+    expect(a.get_by_test_id("notice").first).to_contain_text("wrote jfk.en.srt")
+    expect(a.get_by_test_id("save-state")).to_have_text("All changes saved")
+    assert "typed, never committed" in (demo_copy(server) / EN).read_text(encoding="utf-8")
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("typed, never committed")
+    assert first.errors == [] and first.violations() == []
+
+
+def test_a_save_that_ends_in_a_conflict_keeps_the_line_being_typed(open_page, server):
+    # C-1 (the reviewer's P2c): the conflict empties the rows and closes the box, so the text has
+    # to be in the version Save wrote.
+    first, second = open_page(server), open_page(server)
+    a, b = first.page, second.page
+    rows_a, rows_b = open_demo(a, server), open_demo(b, server)
+    edit_cue(a, rows_a, 1, "occasion!")
+    a.get_by_test_id("save").click()
+    expect(a.get_by_test_id("save-state")).to_have_text("All changes saved")
+    edit_cue(b, rows_b, 2, "b's own edit")
+    type_box(b, rows_b, 3, "typed in b, box open")
+    b.get_by_test_id("save").click()
+    expect(b.locator("dialog[open]")).to_be_visible()
+    sidecar = demo_copy(server) / "jfk.vid2sub.jsonl"
+    assert "typed in b, box open" in sidecar.read_text(encoding="utf-8")
+    for watched in (first, second):
+        assert watched.errors == [] and watched.violations() == []

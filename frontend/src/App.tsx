@@ -120,6 +120,7 @@ export default function App() {
   });
 
   const [conflictsFound, setConflictsFound] = useState(0);
+  const [typing, setTyping] = useState(false); // a box open whose text isn't committed (C-1)
   useShinyMessageHandler("save_result", (data: SaveResultMessage) => {
     if (!episode || data.episode !== episode.id) return;
     for (const n of resultNotices(data, episode.tracks, episode.video.name)) setNotices((shown) => addNotice(shown, n, nextId.current++));
@@ -128,6 +129,7 @@ export default function App() {
   const saving: Saving = {
     drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: o.draft.steps.length })),
     conflictsFound,
+    onTyping: setTyping,
     onRestore: (key) => {
       const at = drafted.current;
       const store = draftStorage();
@@ -156,7 +158,7 @@ export default function App() {
 
   // Closing the tab with unsaved edits warns first (S34): listened for only while there are
   // some, as MDN advises; preventDefault, and returnValue for older browsers.
-  const dirty = episode?.dirty ?? false;
+  const dirty = (episode?.dirty ?? false) || typing;
   useEffect(() => {
     if (!dirty) return;
     const warn = (e: BeforeUnloadEvent) => {
