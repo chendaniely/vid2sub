@@ -24,13 +24,18 @@ describe("what Retranslate names (spec §20)", () => {
 
 describe("what a retranslation says", () => {
   it("counts the cues it changed, or says nothing was stale", () => {
-    expect(retranslateNotice({ ok: true, changed: 2 }, "Japanese", true)).toEqual({ kind: "info", text: "Retranslated 2 Japanese cues" });
-    expect(retranslateNotice({ ok: true, changed: 1 }, "Japanese", false)).toEqual({ kind: "info", text: "Retranslated 1 Japanese cue" });
-    expect(retranslateNotice({ ok: true, changed: 0 }, "Japanese", true)).toEqual({ kind: "info", text: "Nothing to retranslate: no Japanese cue is stale or untranslated, apart from those you edited" });
+    expect(retranslateNotice({ ok: true, changed: 2, added: 2 }, "Japanese", true)).toEqual({ kind: "info", text: "Retranslated 2 Japanese cues" });
+    expect(retranslateNotice({ ok: true, changed: 1, added: 1 }, "Japanese", false)).toEqual({ kind: "info", text: "Retranslated 1 Japanese cue" });
+    expect(retranslateNotice({ ok: true, changed: 0, added: 0 }, "Japanese", true)).toEqual({ kind: "info", text: "Nothing to retranslate: no Japanese cue is stale or untranslated, apart from those you edited" });
+  });
+
+  it("says a request that only dropped translations dropped them, not that it retranslated (M-2)", () => {
+    expect(retranslateNotice({ ok: true, changed: 1, added: 0 }, "Japanese", true)).toEqual({ kind: "info", text: "Dropped 1 Japanese cue: its source cue is gone" });
+    expect(retranslateNotice({ ok: true, changed: 2, added: 0 }, "Japanese", true)).toEqual({ kind: "info", text: "Dropped 2 Japanese cues: their source cues are gone" });
   });
 
   it("leaves a failed request to the server's own notice, a stale one too", () => {
-    expect(retranslateNotice({ ok: false, changed: 0 }, "Japanese", false)).toBeNull();
-    expect(retranslateNotice({ ok: false, changed: 0 }, "Japanese", true)).toBeNull();
+    expect(retranslateNotice({ ok: false, changed: 0, added: 0 }, "Japanese", false)).toBeNull();
+    expect(retranslateNotice({ ok: false, changed: 0, added: 0 }, "Japanese", true)).toBeNull();
   });
 });

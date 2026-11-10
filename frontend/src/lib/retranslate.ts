@@ -21,8 +21,9 @@ export function selectedIds(rows: readonly Row[], range: [number, number] | null
 }
 
 /** The notice for a retranslation that came back, or null when the server's error says it. */
-export function retranslateNotice({ ok, changed }: { ok: boolean; changed: number }, label: string, stale: boolean): Notice | null {
+export function retranslateNotice({ ok, changed, added }: { ok: boolean; changed: number; added: number }, label: string, stale: boolean): Notice | null {
   if (!ok) return null;
+  if (changed > 0 && added === 0) return { kind: "info", text: `Dropped ${changed} ${label} ${changed === 1 ? "cue: its source cue is" : "cues: their source cues are"} gone` };
   if (changed > 0) return { kind: "info", text: `Retranslated ${changed} ${label} ${changed === 1 ? "cue" : "cues"}` };
   if (stale) return { kind: "info", text: `Nothing to retranslate: no ${label} cue is stale or untranslated, apart from those you edited` };
   return null;

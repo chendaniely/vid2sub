@@ -372,3 +372,49 @@ def test_a_double_click_on_retranslate_sends_one_request(open_page, held):
     expect(page.get_by_test_id("retranslate-stale")).to_be_enabled()
     assert page.evaluate("() => window.__sent") == 1
     assert len([r for r in held.fake.requests if r.path.endswith("/chat/completions")]) == 1
+
+
+def test_each_translation_tracks_cloud_box_starts_unticked(open_page, held):
+    # Task 17's Spec review (M-1), Decision 33: another track's box is its own.
+    page, _rows = open_held(open_page, held)
+    page.get_by_test_id("allow-cloud").check()
+    page.get_by_test_id("track").select_option("ko")
+    expect(page.get_by_test_id("allow-cloud")).not_to_be_checked()
+
+
+def test_an_offered_draft_goes_when_the_person_retranslates_instead(open_page, server):
+    # Decision 18, and the Spec review's M-1: editing (a retranslation too) instead of restoring
+    # starts this tab afresh.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit(a, rows.nth(0).get_by_test_id("cue-translation"), "訳A")
+    a.close()
+    second = open_page(server)
+    b = second.page
+    rows = open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_have_count(1)
+    b.get_by_test_id("retranslate-stale").click()
+    expect(b.get_by_test_id("draft")).to_have_count(0)
+
+
+def test_a_retranslation_that_changed_nothing_leaves_no_marker_to_swallow_an_undo(
+        open_page, server):
+    # The Spec review's M-1: a marker kept for a retranslation that changed nothing would take the
+    # next undo on Restore and bring back an edit the person had undone.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit(a, rows.nth(0).get_by_test_id("cue-translation"), "訳A")
+    a.get_by_test_id("retranslate-stale").click()  # nothing is stale: it changes nothing
+    expect(a.get_by_test_id("notice")).to_have_count(1)
+    a.get_by_test_id("tool-undo").click()  # takes back 訳A
+    expect(rows.nth(0).get_by_test_id("cue-translation")).not_to_have_text("訳A")
+    a.close()
+    second = open_page(server)
+    b = second.page
+    rows = open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_contain_text("2 unsaved edits from")
+    b.get_by_test_id("draft-restore").click()
+    expect(b.get_by_test_id("draft")).to_have_count(0)
+    expect(rows.nth(0).get_by_test_id("cue-translation")).not_to_have_text("訳A")

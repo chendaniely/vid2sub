@@ -103,8 +103,9 @@ export type Busy = "opening" | "playback" | "saving" | "picking" | "retranslatin
 export type Progress = { done: number; of: number } | null;
 
 /** The `retranslate_result` message: how many translation cues request `n` changed (0: nothing
- * was stale, or it failed, which a notice says). */
-export type RetranslateResultMessage = { episode: string; n: number | null; ok: boolean; changed: number };
+ * was stale, or it failed, which a notice says) and how many it added (0 with some changed: it
+ * only dropped translations whose source cues are gone). */
+export type RetranslateResultMessage = { episode: string; n: number | null; ok: boolean; changed: number; added: number };
 
 /** An edit, as `vid2sub.web.ops` takes it: every edit goes through the server's `apply`. */
 export type EditOp =
