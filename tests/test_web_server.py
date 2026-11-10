@@ -25,6 +25,8 @@ from vid2sub.engines.clients import KeyRing
 from vid2sub.media.tools import Tools
 from vid2sub.web import runtime, server, views
 from vid2sub.web.app import create_app
+from vid2sub.web.backend import LocalBackend
+from vid2sub.web.episode import SaveError
 from vid2sub.web.guards import CSP
 
 PORT = 8765
@@ -1127,11 +1129,15 @@ def test_a_save_or_pick_that_isnt_well_formed_is_refused_without_echoing_it(medi
         ask = {"episode": ep["id"]}
         t.set(save={**ask, "n": 1, "formats": ["<mp4>"]})
         t.set(save={**ask, "n": 2, "formats": "srt"})
+        t.set(save={**ask, "n": 6, "formats": ["ass"]})  # exactly srt, or srt and ass
+        t.set(save={**ask, "n": 7, "formats": ["srt", "srt"]})
         t.set(resolve={**ask, "n": 3, "track": "ja", "rendition": "<script>"})
         t.set(resolve={**ask, "n": 4, "track": "<b>", "rendition": "r_" + "0" * 16})
         t.set(resolve={**ask, "n": 5, "track": "ja", "rendition": "r_" + "0" * 16})
-        t.until(lambda t: len(t.notices()) == 5)
+        t.until(lambda t: len(t.notices()) == 7)
         assert [n["text"] for n in t.notices()] == [
+            "Save writes srt, and ass when asked for: nothing was saved",
+            "Save writes srt, and ass when asked for: nothing was saved",
             "Save writes srt, and ass when asked for: nothing was saved",
             "Save writes srt, and ass when asked for: nothing was saved",
             "pick one of the track's versions",
@@ -1165,3 +1171,94 @@ def test_each_edit_undo_and_redo_is_answered_with_whether_it_was_made(media_clie
         t.until(lambda t: len(applied(t)) == 6)
         assert applied(t) == [{"episode": ep["id"], "n": n, "ok": ok} for n, ok in
                               ((1, True), (2, False), (3, True), (4, True), (5, False), (7, True))]
+
+
+def index_of(t: Tab, check) -> int:
+    """Where in what the tab received the first message satisfying `check` came."""
+    return next(i for i, m in enumerate(t.messages) if check(m))
+
+
+def custom_id(m: dict) -> str | None:
+    return m.get("custom", {}).get("shinyReactMessage", {}).get("id")
+
+
+@pytest.mark.media
+def test_save_result_comes_after_the_saved_episode_and_applied_after_the_edit_is_shown(
+        media_client, tmp_path):
+    # Brief: `save_result` is "sent after the new episode is published"; the same goes for
+    # `applied`, so a tab hearing either finds the episode it speaks of already there.
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"]}
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": ep["rows"][0]["id"],
+                                          "text": "おはよう！"}})
+        t.until(lambda t: applied(t))
+        shown = index_of(t, lambda m: (e := m.get("values", {}).get("episode"))
+                         and e["rows"][0]["text"] == "おはよう！")
+        assert shown < index_of(t, lambda m: custom_id(m) == "applied")
+        t.set(save={**ask, "n": 2, "formats": ["srt"]})
+        t.until(lambda t: results(t))
+        saved = index_of(t, lambda m: (e := m.get("values", {}).get("episode"))
+                         and e["heads"]["ja"] != ep["heads"]["ja"])
+        assert saved < index_of(t, lambda m: custom_id(m) == "save_result")
+
+
+@pytest.mark.media
+def test_a_refused_save_or_pick_leaves_nothing_busy(media_client, tmp_path, monkeypatch):
+    # A busy that stayed "saving" or "picking" would keep Save disabled for good.
+    video = make_episode(tmp_path / "ep")
+
+    def refuse(self, ep, *, formats):
+        raise SaveError("nothing was saved: the disk said no")
+
+    monkeypatch.setattr(LocalBackend, "save", refuse)
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        ask = {"episode": ep["id"]}
+        t.set(save={**ask, "n": 1, "formats": ["srt"]})
+        t.until(lambda t: len(t.notices()) == 1)
+        t.until(lambda t: t.value("busy") is None)  # the Save's own, before the pick is sent
+        t.set(resolve={**ask, "n": 2, "track": "ja", "rendition": "r_" + "0" * 16})
+        t.until(lambda t: len(t.notices()) == 2)
+        t.until(lambda t: t.value("busy") is None)
+        assert {"saving", "picking"} <= set(busy_seen(t))
+        assert [n["text"] for n in t.notices()][0] == "nothing was saved: the disk said no"
+
+
+@pytest.mark.media
+def test_an_edit_sent_during_a_slow_save_waits_for_it_and_lands_on_the_saved_episode(
+        media_client, tmp_path, monkeypatch):
+    # Review Focus 4: "no edit is lost to a Save running at the same time". The Save is held open
+    # in the backend (the thread blocking on the disk); the edit behind it must not run until it
+    # ends, and then lands on the episode the Save returned.
+    video = make_episode(tmp_path / "ep")
+    started, release = threading.Event(), threading.Event()
+    real = LocalBackend.save
+
+    def slow(self, ep, *, formats):
+        started.set()
+        assert release.wait(20)
+        return real(self, ep, formats=formats)
+
+    monkeypatch.setattr(LocalBackend, "save", slow)
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        ask, rows = {"episode": ep["id"]}, ep["rows"]
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": rows[0]["id"],
+                                          "text": "おはよう！"}})
+        latest(t, lambda e: e["dirty"])
+        t.set(save={**ask, "n": 2, "formats": ["srt"]})
+        assert started.wait(20)
+        t.set(edit={**ask, "n": 3, "op": {"op": "set_text", "cue": rows[1]["id"],
+                                          "text": "元気？"}})
+        time.sleep(0.5)  # long enough for a Save that didn't hold the queue to be passed
+        assert [a["n"] for a in applied(t)] == [1] and t.value("busy") == "saving"
+        release.set()
+        t.until(lambda t: len(applied(t)) == 2)
+        final = latest(t, lambda e: e["rows"][1]["text"] == "元気？")
+        assert final["dirty"] and final["rows"][0]["text"] == "おはよう！"
+        assert index_of(t, lambda m: custom_id(m) == "save_result") < index_of(
+            t, lambda m: custom_id(m) == "applied" and m["custom"]["shinyReactMessage"]["data"][
+                "n"] == 3)
+        assert "元気？" not in (video.with_name("Show - S01E01.ja.srt")).read_text(encoding="utf-8")

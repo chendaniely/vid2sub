@@ -473,7 +473,7 @@ def test_an_offer_for_old_versions_goes_when_a_save_moves_the_heads(open_page, s
 def test_this_tabs_offered_draft_comes_across_a_pick_and_can_still_be_restored(open_page, server):
     # C-2 (P8b): reloaded onto a torn episode, the picker covers the offer; the pick moves the
     # heads, and the draft goes with them instead of being deleted under its Restore button.
-    first, second, a, b, rows_a, rows_b = tear_the_japanese_track(open_page, server)
+    first, second, _, b, _, rows_b = tear_the_japanese_track(open_page, server)
     edit_cue(b, rows_b, 1, "source edit, then reload")
     b.on("dialog", lambda d: d.accept())
     b.reload()

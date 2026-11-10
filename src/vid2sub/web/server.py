@@ -67,7 +67,7 @@ log = logging.getLogger("vid2sub.web.server")
 STATUS_EVERY = 60  # seconds between checks of the local endpoints
 MAX_PATH = 4096  # characters in a typed path
 TYPE_A_PATH = "type the video's full path to open it"
-FORMATS = ("srt", "ass")
+FORMATS = (["srt"], ["srt", "ass"])  # exactly these two, as the page sends them
 BAD_FORMATS = "Save writes srt, and ass when asked for: nothing was saved"
 RENDITION = re.compile(r"r_[0-9a-f]{16}")  # sidecar.make_rendition's ids (spec §14.2)
 # htmltools keeps the highest version of a dependency per name. Shiny's own version with a local
@@ -226,8 +226,7 @@ class Editor:
         if ep is None or not isinstance(request, dict):
             return
         formats = request.get("formats")
-        if (not isinstance(formats, list) or not 0 < len(formats) <= len(FORMATS)
-                or any(f not in FORMATS for f in formats)):
+        if not isinstance(formats, list) or formats not in FORMATS:
             await notice(self.session, "error", BAD_FORMATS)
             return
         await self._set_busy("saving")

@@ -204,6 +204,17 @@ def test_a_track_in_conflict_shows_the_cues_where_its_versions_differ():
     assert view(episode())["differences"] == {}
 
 
+def test_the_versions_cues_are_matched_by_id_and_listed_in_time_order():
+    # Review of Task 16 (I-3): a cue only the second version has, earlier in time, still comes
+    # first; and the versions' cues are paired by id, whatever their places in each list.
+    en = translation_cues(source_cues(3))
+    mine = [en[2], en[1].model_copy(update={"text": "mine"})]
+    theirs = [en[0], en[1].model_copy(update={"text": "theirs"}), en[2]]
+    found = view(conflicted(mine, theirs))["differences"]["en"]["cues"]
+    assert [(d["start_ms"], d["texts"]) for d in found] == [
+        (0, [None, ENGLISH[0]]), (3600, ["mine", "theirs"])]
+
+
 def test_a_cue_whose_time_alone_differs_is_listed_and_the_list_stops_at_fifty():
     source = source_cues(60)
     en = translation_cues(source)
