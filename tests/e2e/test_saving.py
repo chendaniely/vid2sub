@@ -364,3 +364,130 @@ def test_a_save_that_ends_in_a_conflict_keeps_the_line_being_typed(open_page, se
     assert "typed in b, box open" in sidecar.read_text(encoding="utf-8")
     for watched in (first, second):
         assert watched.errors == [] and watched.violations() == []
+
+
+def edit_translation(page, rows, text: str) -> None:
+    rows.nth(0).get_by_test_id("cue-translation-line").first.click()
+    page.keyboard.press("Enter")
+    page.get_by_test_id("cue-editor").fill(text)
+    page.keyboard.press("ControlOrMeta+Enter")
+    expect(rows.nth(0).get_by_test_id("cue-translation-line").first).to_have_text(text)
+
+
+def tear_the_japanese_track(open_page, server):
+    """Two tabs save a Japanese edit from one version: the second sees the track in conflict. The
+    second tab comes back with its picker closed (Esc)."""
+    first, second = open_page(server), open_page(server)
+    a, b = first.page, second.page
+    rows_a, rows_b = open_demo(a, server), open_demo(b, server)
+    edit_translation(a, rows_a, "訳A")
+    a.get_by_test_id("save").click()
+    expect(a.get_by_test_id("save-state")).to_have_text("All changes saved")
+    edit_translation(b, rows_b, "訳B")
+    b.get_by_test_id("save").click()
+    expect(b.locator("dialog[open]")).to_be_visible()
+    b.keyboard.press("Escape")
+    return first, second, a, b, rows_a, rows_b
+
+
+def test_an_edit_sent_while_a_save_runs_stays_in_the_draft(open_page, server):
+    # Task 16's Spec review, C-3: the Save moves the heads, and the edit sent behind it (the page
+    # has not heard back yet) was cleared with the old key's draft.
+    a = open_page(server).page
+    rows = open_demo(a, server)
+    edit_cue(a, rows, 1, "occasion!")
+    a.evaluate("""() => {  // one task: the page hears nothing between the two requests
+        document.querySelector('[data-testid="save"]').click();
+        document.querySelector('[data-testid="tool-later"]').click();
+    }""")
+    expect(a.get_by_test_id("notice").first).to_contain_text("Saved: wrote jfk.en.srt")
+    expect(a.get_by_test_id("save-state")).to_have_text("Unsaved changes")  # the nudge landed
+    assert drafts_kept(a) == {tab_of(a): 1}  # the nudge, not the edit the Save wrote
+    a.close()  # a crash
+    second = open_page(server)
+    b = second.page
+    open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_have_count(1)
+    expect(b.get_by_test_id("draft")).to_contain_text("1 unsaved edit from")
+    assert second.errors == [] and second.violations() == []
+
+
+def test_a_glossary_term_that_was_saved_leaves_no_draft(open_page, server):
+    # Task 16's Spec review, I-1 (P5): a Save moves no head for a glossary term, and the draft
+    # stayed, offering a term that was already written.
+    first = open_page(server)
+    a = first.page
+    open_demo(a, server)
+    a.get_by_test_id("tool-find").click()
+    a.get_by_test_id("glossary-term").fill("Kennedy")
+    a.get_by_test_id("glossary-translation").fill("ケネディ")
+    a.get_by_test_id("glossary-add").click()
+    expect(a.get_by_test_id("save-state")).to_have_text("Unsaved changes")
+    assert drafts_kept(a) == {tab_of(a): 1}
+    a.get_by_test_id("save").click()
+    expect(a.get_by_test_id("save-state")).to_have_text("All changes saved")
+    expect(a.get_by_test_id("notice").first).to_be_visible()
+    assert drafts_kept(a) == {}
+    a.on("dialog", lambda d: d.accept())
+    a.reload()
+    open_demo(a, server)
+    a.wait_for_timeout(300)
+    expect(a.get_by_test_id("draft")).to_have_count(0)
+
+
+def test_an_edit_that_was_undone_leaves_no_draft_once_saved(open_page, server):
+    # I-1 (P6): edit, undo, Save: the changes net to nothing, and no later open offers them.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit_cue(a, rows, 1, "occasion!")
+    a.get_by_test_id("tool-undo").click()
+    expect(a.get_by_test_id("save-state")).to_have_text("All changes saved")
+    assert drafts_kept(a) == {tab_of(a): 2}
+    a.get_by_test_id("save").click()
+    expect(a.get_by_test_id("notice").first).to_be_visible()
+    assert drafts_kept(a) == {}
+
+
+def test_an_offer_for_old_versions_goes_when_a_save_moves_the_heads(open_page, server):
+    # Task 16's Spec review, C-2 (P7): a crashed tab's draft is on offer; the SRT is edited
+    # outside and Save records that, so the heads move. The draft was made on the old versions.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit_cue(a, rows, 1, "crashed edit")
+    a.close()
+    second = open_page(server)
+    b = second.page
+    rows = open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_have_count(1)
+    srt = demo_copy(server) / EN
+    srt.write_text(srt.read_text(encoding="utf-8").replace("occasion.", "occasion, outside."),
+                   encoding="utf-8")
+    b.get_by_test_id("save").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion, outside.")
+    expect(b.get_by_test_id("draft")).to_have_count(0)
+    assert second.errors == [] and second.violations() == []
+
+
+def test_this_tabs_offered_draft_comes_across_a_pick_and_can_still_be_restored(open_page, server):
+    # C-2 (P8b): reloaded onto a torn episode, the picker covers the offer; the pick moves the
+    # heads, and the draft goes with them instead of being deleted under its Restore button.
+    first, second, a, b, rows_a, rows_b = tear_the_japanese_track(open_page, server)
+    edit_cue(b, rows_b, 1, "source edit, then reload")
+    b.on("dialog", lambda d: d.accept())
+    b.reload()
+    rows_b = open_demo(b, server)
+    expect(b.locator("dialog[open]")).to_be_visible()  # a torn episode opens the picker at once
+    expect(b.get_by_test_id("draft")).to_have_count(1)
+    b.get_by_test_id("version").first.check()
+    b.get_by_test_id("keep-ja").click()
+    expect(b.get_by_test_id("pick-version")).to_have_count(0)
+    expect(b.get_by_test_id("draft")).to_have_count(1)
+    assert list(drafts_kept(b).values()) == [1]
+    b.get_by_test_id("draft-restore").click()
+    expect(rows_b.nth(1).get_by_test_id("cue-text")).to_have_text("source edit, then reload")
+    expect(b.get_by_test_id("draft")).to_have_count(0)
+    expect(b.get_by_test_id("save-state")).to_have_text("Unsaved changes")
+    for watched in (first, second):
+        assert watched.errors == [] and watched.violations() == []

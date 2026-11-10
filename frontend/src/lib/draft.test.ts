@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addStep, clearDraft, draftKey, type DraftStorage, dropStep, headsKey, heard, loadDraft, moveDraft, offersFor, tabId } from "./draft";
+import { addStep, clearDraft, draftKey, type DraftStorage, dropStep, followHeads, headsKey, heard, loadDraft, moveDraft, offersFor, tabId, trimSaved } from "./draft";
 
 function memory(): DraftStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -117,5 +117,58 @@ describe("the crash-recovery draft (spec §14.5, S34)", () => {
     expect(() => clearDraft(throwing, "k")).not.toThrow();
     expect(loadDraft(null, "k")).toBeNull();
     expect(() => addStep(null, "k", EDIT)).not.toThrow();
+  });
+});
+
+describe("the draft across a Save or a pick (the Task 16 Spec review's C-3, I-1)", () => {
+  const OLD = draftKey(HEADS, "t0000000a");
+  const NEW = draftKey({ en: "r_1", ja: "r_3" }, "t0000000a");
+  const NUDGE = { edit: { op: "nudge", cue: "c0000000a", delta_ms: 100, edge: "both" }, n: 7 } as const;
+
+  it("takes out the steps a Save wrote and keeps the ones sent behind it", () => {
+    const s = memory();
+    addStep(s, OLD, EDIT, AT); // n 4
+    addStep(s, OLD, { undo: true, n: 6 }, AT);
+    addStep(s, OLD, NUDGE, AT); // sent after the Save, n 7
+    trimSaved(s, OLD, 6);
+    expect(loadDraft(s, OLD)?.steps).toEqual([NUDGE]);
+    trimSaved(s, OLD, 6);
+    expect(loadDraft(s, OLD)?.steps).toEqual([NUDGE]);
+    trimSaved(s, OLD, 7);
+    expect(s.data.has(OLD)).toBe(false);
+  });
+
+  it("carries an edit sent while the Save ran to the new heads, whichever of the two news came first", () => {
+    // the episode first (the Save's result not heard yet): everything comes across, then the
+    // result trims what the Save wrote
+    const first = memory();
+    addStep(first, OLD, EDIT, AT);
+    addStep(first, OLD, NUDGE, AT);
+    followHeads(first, OLD, NEW, 0);
+    expect(first.data.has(OLD)).toBe(false);
+    expect(loadDraft(first, NEW)?.steps).toEqual([EDIT, NUDGE]);
+    trimSaved(first, NEW, 6);
+    expect(loadDraft(first, NEW)?.steps).toEqual([NUDGE]);
+    // the result first, then the episode (both in one batch is this order too): the Save's steps
+    // are gone before the draft moves, so a nudge it wrote is not applied a second time
+    const second = memory();
+    addStep(second, OLD, EDIT, AT);
+    addStep(second, OLD, NUDGE, AT);
+    trimSaved(second, OLD, 6);
+    followHeads(second, OLD, NEW, 6);
+    expect(loadDraft(second, NEW)?.steps).toEqual([NUDGE]);
+  });
+
+  it("leaves nothing under either key once everything was written", () => {
+    const s = memory();
+    addStep(s, OLD, EDIT, AT);
+    followHeads(s, OLD, NEW, 4);
+    expect(s.data.size).toBe(0);
+  });
+
+  it("never throws where storage is forbidden", () => {
+    expect(() => trimSaved(throwing, "k", 3)).not.toThrow();
+    expect(() => followHeads(throwing, "k", "j", 3)).not.toThrow();
+    expect(() => followHeads(null, "k", "j", 3)).not.toThrow();
   });
 });

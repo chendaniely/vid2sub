@@ -7,10 +7,13 @@
 // to them land too; a step the server refused is dropped, so the draft holds only what was done,
 // and a restored draft is cleared only once the server has done every step of it again. Each tab
 // keeps its own draft, keyed by the heads the episode was opened at and the tab's id, held in
-// sessionStorage: two tabs on one episode never write or clear each other's, and opening an
-// episode offers every tab's draft for its heads. A Save moves the heads, so a draft is only ever
-// offered on the versions its edits were made against. Every storage call is wrapped in
-// try/catch: a private window or blocked site data throws, and the editor must work without it.
+// sessionStorage: two tabs on one episode never write each other's, and opening an episode
+// offers every tab's draft for its heads; restoring another tab's draft clears it (Decision 36).
+// A Save or a pick moves the heads: the offers are worked out again for the new heads, so a draft
+// is only ever offered on the versions its edits were made against, and this tab's own draft
+// comes across (followHeads), less the steps a Save wrote (trimSaved). Every storage call is
+// wrapped in try/catch: a private window or blocked site data throws, and the editor must work
+// without it.
 
 import { randomHex } from "@/lib/ids";
 import type { EditOp } from "@/types";
@@ -144,6 +147,29 @@ export function clearDraft(storage: DraftStorage | null, key: string): void {
   } catch {
     /* nothing to clear where storage is forbidden */
   }
+}
+
+/** Takes out the steps with request count `upTo` or below: a Save wrote them. A draft with
+ * nothing left is removed. Steps sent behind the Save (a higher count) stay (Decision 31). */
+export function trimSaved(storage: DraftStorage | null, key: string, upTo: number): void {
+  try {
+    const draft = loadDraft(storage, key);
+    if (!draft) return;
+    const steps = draft.steps.filter((s) => s.n > upTo);
+    if (steps.length === draft.steps.length) return;
+    if (steps.length) storage?.setItem(key, JSON.stringify({ ...draft, steps }));
+    else storage?.removeItem(key);
+  } catch {
+    /* forbidden: there is no draft to trim */
+  }
+}
+
+/** The heads moved (a Save or a pick) from the key `from` to `to`: this tab's draft goes with
+ * them, whole, then less what a Save has written (`savedUpTo`, 0 while none has been heard of).
+ * An edit sent while the Save ran is in the draft by then and stays in it. */
+export function followHeads(storage: DraftStorage | null, from: string, to: string, savedUpTo: number): void {
+  if (from !== to) moveDraft(storage, from, to);
+  trimSaved(storage, to, savedUpTo);
 }
 
 /** The Restore after the server's answer to request `n`, or null when `n` isn't one of its

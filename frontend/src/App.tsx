@@ -4,7 +4,7 @@ import { Editor, type Requests, type Saving } from "@/components/Editor";
 import { resultNotices } from "@/components/SaveBar";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
-import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, heard, loadDraft, moveDraft, offersFor, tabId, tabStorage } from "@/lib/draft";
+import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, followHeads, heard, loadDraft, moveDraft, offersFor, tabId, tabStorage, trimSaved } from "@/lib/draft";
 import { randomHex } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { pacer } from "@/lib/sends";
@@ -56,6 +56,8 @@ export default function App() {
   const offering = useRef(false); // offers are up and this tab's old draft not yet dropped
   const drafted = useRef<{ id: string; key: string; heads: Record<string, string> } | null>(null);
   const replaying = useRef<Replay | null>(null);
+  const saveSent = useRef<number | null>(null); // the count of the Save in flight
+  const saved = useRef(0); // the count of the last Save heard to have written (steps up to it are in a version)
   useEffect(() => {
     if (!episode) {
       drafted.current = null;
@@ -65,8 +67,15 @@ export default function App() {
     const was = drafted.current;
     const store = draftStorage();
     if (was?.id === episode.id && was.key !== key) {
-      if (episode.dirty) moveDraft(store, was.key, key);
-      else clearDraft(store, was.key);
+      // A Save or a pick moved the heads: this tab's draft goes with them, less what a Save has
+      // written (a Save's own result trims it too, whichever arrives first), and what is on offer
+      // is worked out again for the new heads (the Spec review's C-2, C-3).
+      followHeads(store, was.key, key, saved.current);
+      if (offering.current) {
+        const found = offersFor(store, episode.heads);
+        offering.current = found.length > 0;
+        setOffers(found);
+      }
     }
     if (was?.id !== episode.id) {
       const found = offersFor(store, episode.heads);
@@ -103,7 +112,11 @@ export default function App() {
       edit: (op) => { dropOffers(); steps({ edit: op }); },
       undo: () => { dropOffers(); steps({ undo: true }); },
       redo: () => { dropOffers(); steps({ redo: true }); },
-      save: (formats) => { const a = ask(); send(setSave, a && { ...a, formats }); },
+      save: (formats) => {
+        const a = ask();
+        if (a) saveSent.current = a.n;
+        send(setSave, a && { ...a, formats });
+      },
       resolve: (track, rendition) => { const a = ask(); send(setResolve, a && { ...a, track, rendition }); },
     };
   }, [episodeId, pace, dropOffers, steps, setSave, setResolve]);
@@ -125,6 +138,21 @@ export default function App() {
     if (!episode || data.episode !== episode.id) return;
     for (const n of resultNotices(data, episode.tracks, episode.video.name)) setNotices((shown) => addNotice(shown, n, nextId.current++));
     if (data.conflicts.length) setConflictsFound((k) => k + 1);
+    const at = drafted.current;
+    if (data.kind !== "save" || !at) return;
+    // What this Save wrote is no longer unsaved: the steps up to its count leave the draft, and
+    // the ones sent behind it stay. A draft on offer (nothing edited here yet) goes whole, as a
+    // Save instead of a Restore does (Decision 36).
+    const store = draftStorage();
+    saved.current = Math.max(saved.current, saveSent.current ?? 0);
+    if (offering.current) {
+      clearDraft(store, at.key);
+      const found = offersFor(store, at.heads);
+      offering.current = found.length > 0;
+      setOffers(found);
+    } else {
+      trimSaved(store, at.key, saved.current);
+    }
   });
   const saving: Saving = {
     drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: o.draft.steps.length })),
