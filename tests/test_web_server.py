@@ -1172,8 +1172,31 @@ def test_each_edit_undo_and_redo_is_answered_with_whether_it_was_made(media_clie
         t.set(undo={**ask, "n": "6"})  # a count that isn't a number is never sent back
         t.set(undo={**ask, "n": 7})  # answered after 6 was done: the queue keeps their order
         t.until(lambda t: len(applied(t)) == 6)
-        assert applied(t) == [{"episode": ep["id"], "n": n, "ok": ok} for n, ok in
-                              ((1, True), (2, False), (3, True), (4, True), (5, False), (7, True))]
+        assert applied(t) == [
+            {"episode": ep["id"], "n": n, "ok": ok, "changed": changed} for n, ok, changed in
+            ((1, True, True), (2, False, False), (3, True, True), (4, True, True),
+             (5, False, False), (7, True, False))]  # 7: nothing left to undo
+
+
+@pytest.mark.media
+def test_an_edit_undo_or_redo_that_changes_nothing_is_answered_as_made_but_unchanged(
+        media_client, tmp_path):
+    # Restore follows the server's undo history, so the draft keeps only the steps that moved it
+    # (Task 17's review: an edit that changed nothing pushes no undo step).
+    video = make_episode(tmp_path / "ep")
+    with tab(media_client) as t:
+        ep = opened_in(t, video)
+        ask, first = {"episode": ep["id"]}, ep["rows"][0]
+        t.set(edit={**ask, "n": 1, "op": {"op": "set_text", "cue": first["id"],
+                                          "text": first["text"]}})  # the text it has
+        t.set(redo={**ask, "n": 2})  # nothing to redo
+        t.set(edit={**ask, "n": 3, "op": {"op": "set_text", "cue": first["id"], "text": "やあ"}})
+        t.set(undo={**ask, "n": 4})
+        t.set(redo={**ask, "n": 5})
+        t.until(lambda t: len(applied(t)) == 5)
+        assert [(a["n"], a["ok"], a["changed"]) for a in applied(t)] == [
+            (1, True, False), (2, True, False), (3, True, True), (4, True, True),
+            (5, True, True)]
 
 
 def index_of(t: Tab, check) -> int:
@@ -1352,7 +1375,7 @@ def test_retranslating_stale_redoes_only_the_changed_cue_and_shows_that_it_is_wo
         latest(t, lambda e: e["dirty"])
         t.set(retranslate={**ask, "n": 2, "track": "en", "ids": None, "allow_cloud": False})
         assert t.until(lambda t: retranslated(t)) == [
-            {"episode": ep["id"], "n": 2, "changed": 1}]
+            {"episode": ep["id"], "n": 2, "ok": True, "changed": 1}]
         done = latest(t, lambda e: en_texts(e)[1].startswith("EN "))
         assert en_texts(done) == [ENGLISH[0], f"EN {ep['rows'][1]['id']}", ENGLISH[2]]
         assert "stale" not in done["rows"][1]["tr"]["en"]["cues"][0]["flags"]
@@ -1403,7 +1426,7 @@ def test_a_retranslation_that_only_drops_a_translation_counts_it_as_changed(tr_c
         t.set(retranslate={"episode": ep["id"], "n": 1, "track": "en", "ids": None,
                            "allow_cloud": False})
         assert t.until(lambda t: retranslated(t)) == [
-            {"episode": ep["id"], "n": 1, "changed": 1}]
+            {"episode": ep["id"], "n": 1, "ok": True, "changed": 1}]
         assert tr_rt.backend.batches == [] and tr_rt.backend.policies == []
         assert en_texts(t.value("episode")) == list(ENGLISH[:2])
 
@@ -1504,6 +1527,8 @@ def test_a_retranslation_that_cant_run_is_a_notice_with_the_fix_and_changes_noth
         tr_rt.backend.fail = None
         t.set(retranslate={**ask, "n": 5})
         t.until(lambda t: len(retranslated(t)) == 5)
+        t.set(retranslate={**ask, "n": 6, "ids": None})  # "Retranslate stale" fails the same way
+        t.until(lambda t: len(retranslated(t)) == 6)
         assert [n["text"] for n in t.notices()] == [
             ("couldn't retranslate: the translation model's server isn't reachable → is it "
              "running? For the Spark: is `make tunnel` running?"),
@@ -1513,6 +1538,8 @@ def test_a_retranslation_that_cant_run_is_a_notice_with_the_fix_and_changes_noth
              "shape → retranslate again, or pick fewer cues"),
             ("couldn't retranslate: no usable translation model → cloud: a cloud model: needs "
              "Allow cloud models ticked; gemma: not in the translate route for ja"),
+            "the glossary isn't UTF-8; save it as UTF-8",
             "the glossary isn't UTF-8; save it as UTF-8"]
-        assert [r["changed"] for r in retranslated(t)] == [0] * 5
+        # failed, so the page never says "nothing was stale" (Task 17's review)
+        assert [(r["ok"], r["changed"]) for r in retranslated(t)] == [(False, 0)] * 6
         assert not t.value("episode")["dirty"] and t.value("busy") is None

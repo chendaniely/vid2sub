@@ -457,6 +457,7 @@ function EpisodeEditor({ episode, busy, progress, generate, requests, saving, on
         <section aria-label="Cue list" className="flex min-h-0 flex-col gap-2">
           {generate && shownTrack && (
             <Retranslate
+              key={shownTrack} // another track's box starts unticked too (Decision 33)
               label={translations.find((t) => t.key === shownTrack)?.label ?? shownTrack}
               selected={range ? range[1] - range[0] + 1 : 0}
               busy={busy}

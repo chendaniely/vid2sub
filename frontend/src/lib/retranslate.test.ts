@@ -24,12 +24,13 @@ describe("what Retranslate names (spec §20)", () => {
 
 describe("what a retranslation says", () => {
   it("counts the cues it changed, or says nothing was stale", () => {
-    expect(retranslateNotice(2, "Japanese", true)).toEqual({ kind: "info", text: "Retranslated 2 Japanese cues" });
-    expect(retranslateNotice(1, "Japanese", false)).toEqual({ kind: "info", text: "Retranslated 1 Japanese cue" });
-    expect(retranslateNotice(0, "Japanese", true)).toEqual({ kind: "info", text: "Nothing to retranslate: no Japanese cue is stale or untranslated, apart from those you edited" });
+    expect(retranslateNotice({ ok: true, changed: 2 }, "Japanese", true)).toEqual({ kind: "info", text: "Retranslated 2 Japanese cues" });
+    expect(retranslateNotice({ ok: true, changed: 1 }, "Japanese", false)).toEqual({ kind: "info", text: "Retranslated 1 Japanese cue" });
+    expect(retranslateNotice({ ok: true, changed: 0 }, "Japanese", true)).toEqual({ kind: "info", text: "Nothing to retranslate: no Japanese cue is stale or untranslated, apart from those you edited" });
   });
 
-  it("leaves a failed request to the server's own notice", () => {
-    expect(retranslateNotice(0, "Japanese", false)).toBeNull();
+  it("leaves a failed request to the server's own notice, a stale one too", () => {
+    expect(retranslateNotice({ ok: false, changed: 0 }, "Japanese", false)).toBeNull();
+    expect(retranslateNotice({ ok: false, changed: 0 }, "Japanese", true)).toBeNull();
   });
 });

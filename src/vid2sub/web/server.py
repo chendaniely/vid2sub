@@ -207,32 +207,35 @@ class Editor:
             new = self.rt.backend.apply(ep, ops.parse_op(request.get("op")))
         except (ops.BadOp, EditError, OpenError) as err:  # each is fit to show, and echoes nothing
             await notice(self.session, "error", str(err))
-            await self._applied(request, ep, ok=False)
+            await self._applied(request, ep, ok=False, changed=False)
             return
         await self._show(new)
-        await self._applied(request, ep, ok=True)
+        await self._applied(request, ep, ok=True, changed=new is not ep)
 
     async def _undo(self, request: object) -> None:
         ep = self._named(request)
         if ep is not None:
-            await self._show(self.rt.backend.undo(ep))
-            await self._applied(request, ep, ok=True)
+            new = self.rt.backend.undo(ep)
+            await self._show(new)
+            await self._applied(request, ep, ok=True, changed=new is not ep)
 
     async def _redo(self, request: object) -> None:
         ep = self._named(request)
         if ep is not None:
-            await self._show(self.rt.backend.redo(ep))
-            await self._applied(request, ep, ok=True)
+            new = self.rt.backend.redo(ep)
+            await self._show(new)
+            await self._applied(request, ep, ok=True, changed=new is not ep)
 
-    async def _applied(self, request: object, ep: Episode, *, ok: bool) -> None:
-        """The `applied` message: whether the tab's edit, undo or redo `n` was made (an undo with
-        nothing to undo counts, as the server just ignores it), so its crash draft keeps only what
-        was done and a Restore knows which steps the server refused (Decision 31). `n` is the
-        page's own count, sent back only when it is an integer."""
+    async def _applied(self, request: object, ep: Episode, *, ok: bool, changed: bool) -> None:
+        """The `applied` message: whether the tab's edit, undo or redo `n` was made, and whether
+        it changed the episode (an edit that changes nothing, or an undo with nothing to undo,
+        pushes no undo step), so its crash draft keeps only the steps that moved the undo history
+        and a Restore knows which steps didn't take (Decision 31; Task 17). `n` is the page's own
+        count, sent back only when it is an integer."""
         n = request.get("n") if isinstance(request, dict) else None
         if isinstance(n, int) and not isinstance(n, bool):
             await shinyreact.send_message(self.session, "applied",
-                                          {"episode": ep.id, "n": n, "ok": ok})
+                                          {"episode": ep.id, "n": n, "ok": ok, "changed": changed})
 
     async def _save(self, request: object) -> None:
         ep = self._named(request)
@@ -279,12 +282,14 @@ class Editor:
         episode, so it runs through `runtime.blocking`, and each batch's progress hops back to
         this loop from the thread it runs on. Edits sent meanwhile wait their turn in this tab's
         queue and land on the retranslated episode. `allow_cloud` is the request's own, true or
-        false, never a setting (§7.2). Whatever happens, `retranslate_result` says how many
-        translation cues changed, so the tab's draft keeps only what changed the episode."""
+        false, never a setting (§7.2). Whatever happens, `retranslate_result` says whether it ran
+        and how many translation cues changed (added, replaced or dropped), so the tab's draft
+        keeps only what changed the episode and a failed "Retranslate stale" is never taken for
+        one with nothing stale."""
         ep = self._named(request)
         if ep is None or not isinstance(request, dict):
             return
-        changed = 0
+        ok, changed = False, 0
         try:
             track, ids = request.get("track"), request.get("ids")
             allow_cloud = request.get("allow_cloud")
@@ -317,10 +322,12 @@ class Editor:
             changed = max(len(after - before), len(before - after))  # a drop alone counts (7a, I2)
             self.ep = new
             await self._publish(busy=None)
+            ok = True
         finally:
             n = request.get("n")
             await shinyreact.send_message(self.session, "retranslate_result", {
-                "episode": ep.id, "n": n if type(n) is int else None, "changed": changed})
+                "episode": ep.id, "n": n if type(n) is int else None, "ok": ok,
+                "changed": changed})
 
     async def _progress(self, job: object, done: int, of: int) -> None:
         """A batch finished (`on_batch`): shown while that retranslation still runs, so a late

@@ -157,17 +157,18 @@ export default function App() {
     if (!episode || data.episode !== episode.id || data.n === null) return;
     const asked = asking.current.get(data.n);
     asking.current.delete(data.n);
-    if (data.changed === 0 && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    if (!(data.ok && data.changed > 0) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
     if (!asked) return;
     const label = episode.tracks.find((t) => t.key === asked.track)?.label ?? asked.track;
-    const n = retranslateNotice(data.changed, label, asked.stale);
+    const n = retranslateNotice(data, label, asked.stale);
     if (n) setNotices((shown) => addNotice(shown, n, nextId.current++));
   });
 
   useShinyMessageHandler("applied", (data: AppliedMessage) => {
     if (!episode || data.episode !== episode.id) return;
-    if (!data.ok && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
-    const now = replaying.current && heard(replaying.current, data.n, data.ok);
+    // refused, or changed nothing (it pushed no undo step): either way it replays to nothing
+    if (!(data.ok && data.changed) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
+    const now = replaying.current && heard(replaying.current, data.n, data.ok && data.changed);
     if (!now) return;
     replaying.current = now.waiting.length ? now : null;
     if (now.waiting.length) return;

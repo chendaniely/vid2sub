@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addStep, clearDraft, draftKey, type DraftStep, type DraftStorage, dropStep, followHeads, headsKey, heard, loadDraft, moveDraft, offersFor, replayable, tabId, trimSaved } from "./draft";
+import { addStep, clearDraft, draftKey, type DraftStep, type DraftStorage, dropStep, followHeads, headsKey, heard, loadDraft, moveDraft, offersFor, replayable, tabId, trimSaved, UNDO_STEPS } from "./draft";
 
 function memory(): DraftStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -191,6 +191,17 @@ describe("a retranslation in the draft (Task 17)", () => {
     expect(replayable([EDIT, UNDO, REDO])).toEqual([EDIT, UNDO, REDO]);
     // a new edit clears what redo could bring back, on the server as here
     expect(replayable([RT, UNDO, EDIT2, REDO])).toEqual([EDIT2]);
+  });
+
+  it("follows the server's undo history only as far back as it keeps, 200 steps", () => {
+    // E0, a retranslation, then E1 to E199, then 201 undos: the server keeps 200 steps, so E0
+    // can't be undone and stays; Restore must keep it too (Task 17's review).
+    const edits = Array.from({ length: 199 }, (_, i) => ({ edit: { op: "set_text", cue: "c0000000a", text: `${i + 1}` }, n: 100 + i }) as DraftStep);
+    const undos = Array.from({ length: 201 }, (_, i) => ({ undo: true, n: 400 + i }) as DraftStep);
+    const sent = replayable([EDIT, RT, ...edits, ...undos]);
+    expect(sent.filter((s) => "edit" in s)).toHaveLength(200);
+    expect(sent.filter((s) => "undo" in s)).toHaveLength(199); // E199 to E1; never E0
+    expect(UNDO_STEPS).toBe(200);
   });
 
   it("is dropped when the server says it changed nothing, and only that one", () => {

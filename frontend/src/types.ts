@@ -104,7 +104,7 @@ export type Progress = { done: number; of: number } | null;
 
 /** The `retranslate_result` message: how many translation cues request `n` changed (0: nothing
  * was stale, or it failed, which a notice says). */
-export type RetranslateResultMessage = { episode: string; n: number | null; changed: number };
+export type RetranslateResultMessage = { episode: string; n: number | null; ok: boolean; changed: number };
 
 /** An edit, as `vid2sub.web.ops` takes it: every edit goes through the server's `apply`. */
 export type EditOp =
@@ -131,4 +131,4 @@ export type SaveResultMessage = {
 };
 
 /** The `applied` message: whether the edit, undo or redo with this count was made. */
-export type AppliedMessage = { episode: string; n: number; ok: boolean };
+export type AppliedMessage = { episode: string; n: number; ok: boolean; changed: boolean };

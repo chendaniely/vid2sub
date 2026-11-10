@@ -28,6 +28,7 @@ export type TabStorage = Pick<Storage, "getItem" | "setItem">;
 /** A Restore under way: the draft it replays, and the requests whose answers are still due. */
 export type Replay = { from: string; waiting: number[]; refused: number; total: number };
 
+export const UNDO_STEPS = 200; // backend.UNDO_STEPS: how far back the server keeps its undo history
 const PREFIX = "vid2sub.draft.";
 const TAB = "vid2sub.tab";
 const TAB_ID = /^t[0-9a-f]{8}$/;
@@ -182,8 +183,9 @@ export function heard(replay: Replay, n: number, ok: boolean): Replay | null {
 }
 
 /** The steps Restore sends: the edits, undos and redos, without the retranslations. The undo
- * history is followed as the server keeps it, so an undo or a redo that took back or brought back
- * a retranslation is left out too, rather than landing on an edit. */
+ * history is followed as the server keeps it (every step in the draft moved it, since a step that
+ * changed nothing is dropped, and only the last 200 can be undone), so an undo or a redo that
+ * took back or brought back a retranslation is left out too, rather than landing on an edit. */
 export function replayable(steps: readonly DraftStep[]): DraftStep[] {
   const out: DraftStep[] = [];
   const done: boolean[] = []; // the undo history: true for an edit, false for a retranslation
@@ -191,6 +193,7 @@ export function replayable(steps: readonly DraftStep[]): DraftStep[] {
   for (const step of steps) {
     if ("edit" in step || "retranslate" in step) {
       done.push("edit" in step);
+      if (done.length > UNDO_STEPS) done.shift(); // the server forgets its oldest step too
       undone.length = 0;
       if ("edit" in step) out.push(step);
       continue;

@@ -122,3 +122,62 @@ def test_a_crashed_tabs_draft_never_replays_a_retranslation_or_the_undo_that_und
     expect(rows.nth(2).get_by_test_id("cue-translation")).to_have_text("大学。")
     assert notices(b) == []  # nothing replayed failed, and no model was asked
     assert first.errors == [] and second.errors == [] and second.violations() == []
+
+
+def test_a_step_that_changed_nothing_never_makes_restore_take_back_the_wrong_one(open_page,
+                                                                                server):
+    # Task 17's review: a nudge with nowhere to go pushes no undo step on the server, so the
+    # draft drops it; kept, Restore would follow the wrong undo history and lose the redone edit.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit(a, rows.nth(1).get_by_test_id("cue-text"), "occasion!")
+    a.get_by_test_id("tool-undo").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion.")
+    rows.nth(0).get_by_test_id("cue-text").click()
+    a.keyboard.press("Alt+ArrowLeft")  # the first cue starts at 0: the nudge changes nothing
+    a.get_by_test_id("tool-redo").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
+    a.close()
+    second = open_page(server)
+    b = second.page
+    rows = open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_contain_text("3 unsaved edits from")
+    b.get_by_test_id("draft-restore").click()
+    expect(rows.nth(1).get_by_test_id("cue-text")).to_have_text("occasion!")
+    expect(b.get_by_test_id("draft")).to_have_count(0)
+    assert notices(b) == [] and second.errors == [] and second.violations() == []
+
+
+def test_an_undo_with_nothing_to_undo_after_a_pick_never_makes_restore_take_back_a_real_edit(
+        open_page, server):
+    # Task 16's Spec review, I-2: a pick starts the undo history again, so Ctrl+Z then has nothing
+    # to undo; kept in the draft as made, Restore would apply the edit and then undo it.
+    first, second = open_page(server), open_page(server)
+    a, b = first.page, second.page
+    rows_a, rows_b = open_demo(a, server), open_demo(b, server)
+    for page, rows, text in ((a, rows_a, "訳A"), (b, rows_b, "訳B")):  # two Saves from one version
+        edit(page, rows.nth(0).get_by_test_id("cue-translation-line").first, text)
+        page.get_by_test_id("save").click()
+        if page is a:
+            expect(a.get_by_test_id("save-state")).to_have_text("All changes saved")
+    expect(b.locator("dialog[open]")).to_be_visible()  # the Japanese track is in conflict
+    b.keyboard.press("Escape")
+    edit(b, rows_b.nth(1).get_by_test_id("cue-text"), "source edit before the pick")
+    b.get_by_test_id("pick-version").click()
+    b.get_by_test_id("version").first.check()
+    b.get_by_test_id("keep-ja").click()
+    expect(b.get_by_test_id("pick-version")).to_have_count(0)
+    b.get_by_test_id("cue-list").focus()
+    b.keyboard.press("ControlOrMeta+z")  # nothing to undo
+    b.wait_for_timeout(400)
+    expect(b.get_by_test_id("save-state")).to_have_text("Unsaved changes")
+    b.close()  # a crash
+    third = open_page(server)
+    c = third.page
+    rows_c = open_demo(c, server)
+    expect(c.get_by_test_id("draft")).to_have_count(1)
+    c.get_by_test_id("draft-restore").click()
+    expect(rows_c.nth(1).get_by_test_id("cue-text")).to_have_text("source edit before the pick")
+    expect(c.get_by_test_id("save-state")).to_have_text("Unsaved changes")
+    assert third.errors == [] and third.violations() == []
