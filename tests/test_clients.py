@@ -72,7 +72,7 @@ def test_a_model_stamp_labels_the_model_and_revision():
 
 # --- cleartext key transport (spec §5.2) ---
 
-LAN = "http://192.168.1.50:9100/v1"
+LAN = "http://192.0.2.50:9100/v1"
 
 
 def lan_config(**endpoint):

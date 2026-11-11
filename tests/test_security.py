@@ -110,9 +110,9 @@ def test_child_processes_never_inherit_keys():
     ("https://api.openai.com/v1", True),
     ("http://127.0.0.1:9100/v1", True),
     ("http://localhost:9100/v1", True),
-    ("http://brightroar.tail1234.ts.net:9100/v1", True),
+    ("http://spark.tail1234.ts.net:9100/v1", True),
     ("http://100.101.102.103:9100/v1", True),
-    ("http://192.168.1.50:9100/v1", False),
+    ("http://192.0.2.50:9100/v1", False),
     ("http://evil.example/v1", False),
 ])
 def test_keys_travel_over_plain_http_only_to_this_machine_or_the_tailnet(url, ok):
