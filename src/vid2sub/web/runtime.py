@@ -45,12 +45,12 @@ def _editor_words(hint: str) -> str:
     """The catalog's reasons in a "no usable translation model" hint name the CLI's flags
     (`catalog.suggest`); the editor has no `--model` and no `--allow-cloud`, but a box (Task 7
     re-review, M2). The CLI's hints for a timeout or a 5xx say "vid2sub retries twice"; the
-    editor never retries, so those words go, and a hint with nothing left is "retranslate
-    again" (Task 17's Spec review, I-3)."""
+    editor never retries, so those words go, and a hint they leave empty is "retranslate
+    again"; one that was empty stays so (Task 17's Spec review, I-3; its re-review, N-3)."""
     words = (hint.replace("; choose it with --model", "")
              .replace("needs --allow-cloud", "needs Allow cloud models ticked")
              .replace("; vid2sub retries twice", "").replace("vid2sub retries twice", ""))
-    return words.strip() or "retranslate again"
+    return words.strip() or ("retranslate again" if hint else "")
 
 
 async def blocking[**P, R](fn: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:

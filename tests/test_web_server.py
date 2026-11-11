@@ -1570,9 +1570,13 @@ def test_a_server_error_or_timeout_never_says_the_editor_retries_but_says_what_t
                                          hint="it may be busy; vid2sub retries twice")
         t.set(retranslate={**ask, "n": 2})
         t.until(lambda t: len(retranslated(t)) == 2)
+        tr_rt.backend.fail = EngineError("bad_response", "the server answered 404: no such model")
+        t.set(retranslate={**ask, "n": 3})  # no hint to begin with: none is made up (N-3)
+        t.until(lambda t: len(retranslated(t)) == 3)
         assert [n["text"] for n in t.notices()] == [
             "couldn't retranslate: the server failed (503) → retranslate again",
-            "couldn't retranslate: the server took too long to answer → it may be busy"]
+            "couldn't retranslate: the server took too long to answer → it may be busy",
+            "couldn't retranslate: the server answered 404: no such model"]
 
 
 @pytest.mark.media
