@@ -358,15 +358,15 @@ def test_a_double_click_on_retranslate_sends_one_request(open_page, held):
         };
     }""")
     rows.nth(0).get_by_test_id("cue-text").click()
-    page.get_by_test_id("retranslate-selected").dblclick()
+    # two clicks in one task, so that a button moving under the pointer can't decide it
+    page.get_by_test_id("retranslate-selected").evaluate("(b) => { b.click(); b.click(); }")
     expect(page.get_by_test_id("retranslate-progress")).to_have_text("Waiting to retranslate…")
     expect(page.get_by_test_id("retranslating-note")).to_be_visible()  # pending counts too
     expect(page.get_by_test_id("retranslate-stale")).to_be_disabled()
     held.gate.set()
     expect(page.get_by_test_id("notice")).to_have_text(re.compile("^Retranslated 1 English cue"))
-    # (a second click lands within Shiny's input debounce and would replace the first request,
-    # which then never answers: its pending state would never end, so the track would stay
-    # locked and its note shown)
+    # (without the guards the second click is a second request, which the pacer sends in a task
+    # of its own: two frames, two model calls)
     expect(page.get_by_test_id("retranslating-note")).to_have_count(0)
     expect(page.get_by_test_id("retranslate-selected")).to_be_enabled()
     expect(page.get_by_test_id("retranslate-stale")).to_be_enabled()
@@ -458,3 +458,20 @@ def test_restore_stops_at_a_step_that_no_longer_does_what_it_did_and_keeps_the_d
     expect(rows.nth(2).get_by_test_id("cue-text")).to_have_text(
         "We meet at a college known for knowledge,")
 
+
+def test_the_lock_ends_when_another_episode_opens(open_page, held):
+    # Task 17's re-review, N-2: a Retranslate sent after an Open names the old episode, so the
+    # server drops it and sends no result; the new episode's track must not stay locked.
+    page, rows = open_held(open_page, held)
+    rows.nth(0).get_by_test_id("cue-text").click()
+    page.evaluate("""() => {
+        document.querySelector('[data-testid=open-button]').click();
+        document.querySelector('[data-testid=retranslate-stale]').click();
+    }""")
+    expect(page.get_by_test_id("retranslate-stale")).to_be_enabled()
+    expect(page.get_by_test_id("retranslating-note")).to_have_count(0)
+    rows = page.get_by_test_id("cue-row")
+    rows.nth(1).get_by_test_id("cue-translation").click()
+    page.keyboard.press("Enter")
+    expect(page.get_by_test_id("cue-editor")).to_have_count(1)
+    assert [r for r in held.fake.requests if r.path.endswith("/chat/completions")] == []

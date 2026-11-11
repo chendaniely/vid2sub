@@ -20,6 +20,8 @@ describe("what an edit made while the sound is being made does (S-7)", () => {
       expect(html).toContain('data-testid="retranslating-note"');
     }
     expect(renderToStaticMarkup(createElement(BusyNote, { busy: "retranslating", retranslating: null }))).toContain("other edits apply when it finishes");
+    // while another episode opens an edit is dropped, not applied: no such promise (N-4)
+    expect(renderToStaticMarkup(createElement(BusyNote, { busy: "opening", retranslating: "Japanese" }))).toBe("");
   });
 
   it("says nothing when nothing is being made, or while another episode opens", () => {

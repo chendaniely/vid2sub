@@ -9,7 +9,8 @@ import type { Busy } from "@/types";
  * its text lost, and every other edit applies when it finishes (Task 17's Spec review, C-3, I-2).
  */
 export function BusyNote({ busy, retranslating }: { busy: Busy; retranslating?: string | null }) {
-  const waiting = retranslating !== undefined && retranslating !== null;
+  // not while another episode opens: an edit made then names the old one and is dropped
+  const waiting = retranslating !== undefined && retranslating !== null && busy !== "opening";
   return (
     <>
       {busy === "playback" && (
