@@ -25,8 +25,9 @@ export type Draft = { v: 1; at: string; steps: DraftStep[] };
 export type Offer = { key: string; draft: Draft };
 export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
 export type TabStorage = Pick<Storage, "getItem" | "setItem">;
-/** A Restore under way: the draft it replays, and the requests whose answers are still due. */
-export type Replay = { from: string; waiting: number[]; refused: number; total: number };
+/** A Restore under way: the draft it replays, the steps still to send, the request whose answer
+ * is due (null between an answer and the next send), and how many steps took so far. */
+export type Replay = { from: string; next: DraftStep[]; waiting: number | null; done: number; total: number };
 
 export const UNDO_STEPS = 200; // backend.UNDO_STEPS: how far back the server keeps its undo history
 const PREFIX = "vid2sub.draft.";
@@ -175,11 +176,19 @@ export function followHeads(storage: DraftStorage | null, from: string, to: stri
   trimSaved(storage, to, savedUpTo);
 }
 
-/** The Restore after the server's answer to request `n`, or null when `n` isn't one of its
- * steps. It is over once nothing is waiting: clean if nothing was refused. */
-export function heard(replay: Replay, n: number, ok: boolean): Replay | null {
-  if (!replay.waiting.includes(n)) return null;
-  return { ...replay, waiting: replay.waiting.filter((w) => w !== n), refused: replay.refused + (ok ? 0 : 1) };
+/** What a Restore does on the server's answer to request `n` (null when `n` isn't the one it
+ * waits for): `took` is whether the step was made and changed something. Steps go one at a time,
+ * each after the one before took. Every step kept in a draft changed something when it was made,
+ * so one that is refused or changes nothing on replay means the draft and the episode have
+ * parted: Restore stops there, with the steps before it applied, and the draft is kept (Q&A item
+ * 54). `end` is "clean" after the last step took, "stopped" at a step that didn't; else `send` is
+ * the next step. */
+export function heard(replay: Replay, n: number, took: boolean): { replay: Replay; send: DraftStep | null; end: "clean" | "stopped" | null } | null {
+  if (replay.waiting !== n) return null;
+  if (!took) return { replay: { ...replay, waiting: null }, send: null, end: "stopped" };
+  const done = replay.done + 1;
+  const [send = null, ...next] = replay.next;
+  return { replay: { ...replay, next, waiting: null, done }, send, end: send ? null : "clean" };
 }
 
 /** The cue an edit names, and the cues it makes (Decision 31's ids). */

@@ -182,10 +182,22 @@ export default function App() {
     if (!(data.ok && data.changed) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
     const now = replaying.current && heard(replaying.current, data.n, data.ok && data.changed);
     if (!now) return;
-    replaying.current = now.waiting.length ? now : null;
-    if (now.waiting.length) return;
-    if (!now.refused) clearDraft(draftStorage(), now.from);
-    else setNotices((shown) => addNotice(shown, { kind: "error", text: `${now.refused} restored ${now.refused === 1 ? "step" : "steps"} of ${now.total} couldn't be replayed: the draft is kept` }, nextId.current++));
+    let { replay, end } = now;
+    if (now.send) { // the next step, now that this one took
+      const { n: _, ...asSent } = now.send;
+      const n = steps(asSent as Step);
+      if (n !== null) {
+        replaying.current = { ...replay, waiting: n };
+        return;
+      }
+      end = "stopped";
+    }
+    replaying.current = null;
+    if (end === "clean") clearDraft(draftStorage(), replay.from);
+    else {
+      const rest = replay.total - replay.done;
+      setNotices((shown) => addNotice(shown, { kind: "error", text: `${rest} restored ${rest === 1 ? "step" : "steps"} of ${replay.total} couldn't be replayed: the draft is kept. ${replay.done} ${replay.done === 1 ? "step was" : "steps were"} restored, and Restore stopped at the next because it no longer fits this episode.` }, nextId.current++));
+    }
   });
 
   const [conflictsFound, setConflictsFound] = useState(0);
@@ -230,14 +242,12 @@ export default function App() {
       } else {
         clearDraft(store, at.key);
       }
-      const sent: number[] = [];
-      for (const step of replayable(draft.steps, known)) {
-        const { n: _, ...asSent } = step;
-        const n = steps(asSent as Step);
-        if (n !== null) sent.push(n);
-      }
-      if (sent.length) replaying.current = { from, waiting: sent, refused: 0, total: sent.length };
-      else clearDraft(store, from);
+      // One step at a time: each is sent once the one before took (the `applied` handler)
+      const [first, ...next] = replayable(draft.steps, known);
+      const { n: _, ...asSent } = first ?? { n: 0 };
+      const n = first ? steps(asSent as Step) : null;
+      if (n !== null) replaying.current = { from, next, waiting: n, done: 0, total: next.length + 1 };
+      else if (!first) clearDraft(store, from);
     },
     onDiscard: dropOffers,
   };

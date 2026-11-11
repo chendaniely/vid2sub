@@ -91,13 +91,27 @@ describe("the crash-recovery draft (spec §14.5, S34)", () => {
     expect(tabId(null)).toBe(tabId(throwing)); // forbidden: one id for the page
   });
 
-  it("says when a Restore is over, and how many of its steps the server refused", () => {
-    const start = { from: "k", waiting: [7, 8, 9], refused: 0, total: 3 };
-    expect(heard(start, 3, true)).toBeNull(); // not one of its steps
-    const one = heard(start, 7, true);
-    const two = one && heard(one, 8, false);
-    expect(two).toEqual({ from: "k", waiting: [9], refused: 1, total: 3 });
-    expect(two && heard(two, 9, true)).toEqual({ from: "k", waiting: [], refused: 1, total: 3 });
+  describe("a Restore, one step at a time, stopping at the first that no longer does what it did (Q&A item 54)", () => {
+    const [a, b, c] = [EDIT, INSERT, { undo: true, n: 6 } as const] as DraftStep[];
+    const start = { from: "k", next: [b, c], waiting: 7, done: 0, total: 3 };
+
+    it("sends the next step once the one waited for took, and is clean after the last", () => {
+      expect(heard(start, 3, true)).toBeNull(); // not the step it waits for
+      const one = heard(start, 7, true);
+      expect(one).toEqual({ replay: { from: "k", next: [c], waiting: null, done: 1, total: 3 }, send: b, end: null });
+      const two = one && heard({ ...one.replay, waiting: 8 }, 8, true);
+      expect(two).toEqual({ replay: { from: "k", next: [], waiting: null, done: 2, total: 3 }, send: c, end: null });
+      const last = two && heard({ ...two.replay, waiting: 9 }, 9, true);
+      expect(last).toEqual({ replay: { from: "k", next: [], waiting: null, done: 3, total: 3 }, send: null, end: "clean" });
+    });
+
+    it("stops at a step the server refused or that changed nothing, sending no more", () => {
+      // `took` is false for both: the page passes ok && changed
+      expect(heard(start, 7, false)).toEqual({ replay: { from: "k", next: [b, c], waiting: null, done: 0, total: 3 }, send: null, end: "stopped" });
+      const later = heard({ ...start, next: [c], waiting: 8, done: 1 }, 8, false);
+      expect(later).toEqual({ replay: { from: "k", next: [c], waiting: null, done: 1, total: 3 }, send: null, end: "stopped" });
+      expect(a).toBe(EDIT);
+    });
   });
 
   it("ignores junk and an empty draft", () => {

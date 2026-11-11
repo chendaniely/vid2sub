@@ -418,3 +418,43 @@ def test_a_retranslation_that_changed_nothing_leaves_no_marker_to_swallow_an_und
     b.get_by_test_id("draft-restore").click()
     expect(b.get_by_test_id("draft")).to_have_count(0)
     expect(rows.nth(0).get_by_test_id("cue-translation")).not_to_have_text("訳A")
+
+
+def test_restore_stops_at_a_step_that_no_longer_does_what_it_did_and_keeps_the_draft(
+        open_page, server):
+    # Task 17's re-review (C-2 by Find and replace) and Q&A item 54: a Replace all whose only match
+    # was in the line a retranslation made changes nothing on Restore, and its undo would take back
+    # the first edit. Restore applies the steps before it, stops, keeps the draft and says so.
+    first = open_page(server)
+    a = first.page
+    rows = open_demo(a, server)
+    edit(a, rows.nth(2).get_by_test_id("cue-text"), "We meet at a college known for knowledge,")
+    a.get_by_test_id("retranslate-stale").click()
+    expect(a.get_by_test_id("notice")).to_have_count(1)
+    assert translation(rows, 2) == NO_TRANSLATION
+    a.get_by_test_id("tool-find").click()
+    a.get_by_test_id("find").fill("ありません")
+    expect(a.get_by_test_id("match-count")).to_have_text("1 match")
+    a.get_by_test_id("replace").fill("なし")
+    a.get_by_test_id("replace-all").click()
+    expect(rows.nth(2).get_by_test_id("cue-translation")).to_have_text("（訳はなし）")
+    a.get_by_test_id("tool-undo").click()
+    expect(rows.nth(2).get_by_test_id("cue-translation")).to_have_text(NO_TRANSLATION)
+    a.close()
+    second = open_page(server)
+    b = second.page
+    rows = open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_contain_text("3 unsaved edits from")
+    b.get_by_test_id("draft-restore").click()
+    expect(b.get_by_test_id("notice").filter(has_text="couldn't be replayed")).to_have_text(
+        re.compile(r"^2 restored steps of 3 couldn.t be replayed: the draft is kept"))
+    expect(rows.nth(2).get_by_test_id("cue-text")).to_have_text(
+        "We meet at a college known for knowledge,")  # the first edit is still there
+    b.reload()
+    rows = open_demo(b, server)
+    expect(b.get_by_test_id("draft")).to_have_count(2)  # this tab's step, and the draft kept
+    b.get_by_test_id("draft-restore").first.click()  # the kept one again: it stops at the same step
+    expect(b.get_by_test_id("notice").filter(has_text="couldn't be replayed")).to_have_count(1)
+    expect(rows.nth(2).get_by_test_id("cue-text")).to_have_text(
+        "We meet at a college known for knowledge,")
+
