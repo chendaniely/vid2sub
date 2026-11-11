@@ -22,7 +22,8 @@ pytestmark = [pytest.mark.live, pytest.mark.skipif(os.environ.get("VID2SUB_LIVE_
 CONFIG = Config(
     endpoints={"spark": Endpoint(base_url="http://127.0.0.1:9100/v1", key_env="SPARK_API_KEY")},
     models={"turbo": ModelEntry(catalog="whisper-large-v3-turbo", endpoint="spark",
-                                model="whisper-large-v3-turbo", parser="whisper.cpp", local=True),
+                                model="whisper-large-v3-turbo", parser="whisper.cpp", local=True,
+                                request_extra={"max_context": 0}),
             "gemma": ModelEntry(catalog="gemma-4-26b-a4b", endpoint="spark",
                                 model="gemma-4-26b-a4b", task="translate", local=True,
                                 request_extra={"chat_template_kwargs":

@@ -26,8 +26,9 @@ endpoint = "spark"
 model = "whisper-large-v3-turbo"
 parser = "whisper.cpp"
 local = true
-# Each 30 s window without the text before it: with it, a long chunk of TV drama looped. It also
-# means whisper.cpp ignores the prompt, so a glossary doesn't reach it.
+# whisper.cpp's max_context: 0 starts each 30 s window without the text before it; with that
+# text, long chunks of TV drama looped. whisper.cpp then ignores the prompt, so a glossary
+# doesn't reach this model.
 request_extra = { max_context = 0 }
 
 [models.spark-gemma]

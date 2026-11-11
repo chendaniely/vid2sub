@@ -2,7 +2,8 @@
 
 The Spark's whisper.cpp behind llama-swap, OpenAI, or a local whisper.cpp server. The entry's
 `parser` picks the response shape. Requests ask for `verbose_json`, send the language and prompt
-when given, the entry's `request_extra` fields, and the chunk as `chunk-NNNN.flac`. If the server
+when given, the entry's `request_extra` as further form fields (spec §9.3; Dan, Q&A item 52: the
+Spark's whisper.cpp gets `max_context = 0`), and the chunk as `chunk-NNNN.flac`. If the server
 says which model answered (local-ai Phase 3's `x-spark-model`), a different model from the one
 asked for fails the chunk: vid2sub never accepts a substitute (spec §9.6, §17.4). The Spark
 reports no model revision today, so stamps say `unknown`.
@@ -41,8 +42,7 @@ class EndpointEngine:
         if self.entry.parser == "openai":
             params["timestamp_granularities"] = ["word", "segment"]
         if self.entry.request_extra:
-            # Sent as form fields, as translation sends them as JSON: for the Spark's whisper.cpp,
-            # max_context = 0 stops a long chunk looping on its own earlier text.
+            # Form fields here; translation sends the same table as JSON.
             params["extra_body"] = dict(self.entry.request_extra)
         data, headers = clients.call_transcription(
             self._client, key_env=self._key_env, secrets=self._secrets,

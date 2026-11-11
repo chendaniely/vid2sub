@@ -20,6 +20,7 @@ def test_the_example_file_is_the_starter_and_is_valid(tmp_path):
     assert set(cfg.models) == {"spark-turbo", "spark-gemma", "mac-qwen", "openai-whisper",
                                "openai-gpt"}
     assert c.is_local(cfg.models["spark-turbo"], cfg)
+    assert cfg.models["spark-turbo"].request_extra == {"max_context": 0}
     assert c.is_local(cfg.models["mac-qwen"], cfg)
     assert not c.is_local(cfg.models["openai-whisper"], cfg)
 

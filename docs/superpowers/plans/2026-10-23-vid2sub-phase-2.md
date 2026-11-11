@@ -38942,13 +38942,13 @@ def test_an_unreachable_spark_qwen_never_falls_back_to_the_macs_qwen_or_the_clou
 The Spark's whisper.cpp behind llama-swap, OpenAI, a local whisper.cpp server, or a Qwen3-ASR
 server (`mlx-qwen3-asr serve`, or the Spark once local-ai serves Qwen3-ASR with its aligner). The
 entry's `parser` picks the response shape. Requests ask for `verbose_json`, send the language and
-prompt when given, the entry's `request_extra` fields, and the chunk as `chunk-NNNN.flac`. A
-Qwen3-ASR server gets Qwen's language
-names ("Cantonese"): mlx-qwen3-asr 0.4.4 maps en, zh, ja and ko to them but passes `yue` through
-unchanged (Phase 2 plan, Task 20). If the server says which model answered (local-ai Phase 3's
-`x-spark-model`), a different model from the one asked for fails the chunk: vid2sub never accepts
-a substitute (spec §9.6, §17.4). The Spark reports no model revision today, so stamps say
-`unknown`.
+prompt when given, the entry's `request_extra` as further form fields (spec §9.3; Dan, Q&A item
+52: the Spark's whisper.cpp gets `max_context = 0`), and the chunk as `chunk-NNNN.flac`. A
+Qwen3-ASR server gets Qwen's language names ("Cantonese"): mlx-qwen3-asr 0.4.4 maps en, zh, ja
+and ko to them but passes `yue` through unchanged (Phase 2 plan, Task 20). If the server says
+which model answered (local-ai Phase 3's `x-spark-model`), a different model from the one asked
+for fails the chunk: vid2sub never accepts a substitute (spec §9.6, §17.4). The Spark reports no
+model revision today, so stamps say `unknown`.
 """
 
 from __future__ import annotations
@@ -39007,8 +39007,7 @@ class EndpointEngine:
         if self.entry.parser in GRANULARITIES:
             params["timestamp_granularities"] = GRANULARITIES[self.entry.parser]
         if self.entry.request_extra:
-            # Sent as form fields, as translation sends them as JSON: for the Spark's whisper.cpp,
-            # max_context = 0 stops a long chunk looping on its own earlier text.
+            # Form fields here; translation sends the same table as JSON.
             params["extra_body"] = dict(self.entry.request_extra)
         data, headers = clients.call_transcription(
             self._client, key_env=self._key_env, secrets=self._secrets,
@@ -39247,7 +39246,8 @@ pytestmark = [pytest.mark.live, pytest.mark.skipif(os.environ.get("VID2SUB_LIVE_
 CONFIG = Config(
     endpoints={"spark": Endpoint(base_url="http://127.0.0.1:9100/v1", key_env="SPARK_API_KEY")},
     models={"turbo": ModelEntry(catalog="whisper-large-v3-turbo", endpoint="spark",
-                                model="whisper-large-v3-turbo", parser="whisper.cpp", local=True),
+                                model="whisper-large-v3-turbo", parser="whisper.cpp", local=True,
+                                request_extra={"max_context": 0}),
             "qwen": ModelEntry(catalog="qwen3-asr-1.7b", endpoint="spark", model="qwen3-asr-1.7b",
                                parser="qwen3-asr", local=True),
             "gemma": ModelEntry(catalog="gemma-4-26b-a4b", endpoint="spark",
@@ -39334,8 +39334,12 @@ Co-Authored-By: <the model's own line>
 ```markdown
 (through llama-swap), OpenAI, a local whisper.cpp server, or `mlx-qwen3-asr serve`. The `parser`
 field (§5.1) picks the response parser. Requests send `language`, `prompt`,
-`response_format=verbose_json` and, for OpenAI, `timestamp_granularities[]`. Responses' model
-headers are recorded (§9.6).
+`response_format=verbose_json`, for OpenAI `timestamp_granularities[]`, and the model entry's
+`request_extra` as further form fields. The Spark's whisper.cpp gets `max_context = 0` that way,
+which stops a long chunk looping on its own earlier text and also makes it ignore the prompt, so a
+glossary doesn't reach it ([Q&A item 52](2026-10-14-vid2sub-qa.md)). A `vid2sub.toml` made before
+2026-11-10 gets it by adding `request_extra = { max_context = 0 }` under `[models.spark-turbo]`.
+Responses' model headers are recorded (§9.6).
 ```
 
   with
@@ -39343,10 +39347,14 @@ headers are recorded (§9.6).
 ```markdown
 (through llama-swap), OpenAI, a local whisper.cpp server, `mlx-qwen3-asr serve`, or the Spark's
 Qwen3-ASR once local-ai serves it. The `parser` field (§5.1) picks the response parser. Requests
-send `language`, `prompt`, `response_format=verbose_json` and, for OpenAI and Qwen3-ASR,
-`timestamp_granularities[]`; a Qwen3-ASR server gets Qwen's language name (`Cantonese`), since
-mlx-qwen3-asr passes `yue` through unrecognised. Qwen3-ASR's chunks are at most 180 s (§9.4).
-Responses' model headers are recorded (§9.6).
+send `language`, `prompt`, `response_format=verbose_json`, for OpenAI and Qwen3-ASR
+`timestamp_granularities[]`, and the model entry's `request_extra` as further form fields. The
+Spark's whisper.cpp gets `max_context = 0` that way, which stops a long chunk looping on its own
+earlier text and also makes it ignore the prompt, so a glossary doesn't reach it
+([Q&A item 52](2026-10-14-vid2sub-qa.md)). A `vid2sub.toml` made before 2026-11-10 gets it by
+adding `request_extra = { max_context = 0 }` under `[models.spark-turbo]`. A Qwen3-ASR server gets
+Qwen's language name (`Cantonese`), since mlx-qwen3-asr passes `yue` through unrecognised.
+Qwen3-ASR's chunks are at most 180 s (§9.4). Responses' model headers are recorded (§9.6).
 ```
 
   insert after the §29 line that ends `isn't used in M1 (vid2sub runs it in-process).`:
@@ -39410,7 +39418,8 @@ docs: 🤖 the spec, README and tests README say how vid2sub reads a Qwen3-ASR s
 Spec §9.2: the Qwen parser covers the Spark's Qwen3-ASR in mlx-qwen3-asr serve's shape, the
 aligner's units carry no punctuation (no longer "assumed"), inner punctuation included, and
 `segments` are ignored. §9.3: the endpoint engine's servers include the Spark's Qwen3-ASR, which
-gets word timestamps and Qwen's language names, in chunks of at most 180 s. §29: what
+gets word timestamps and Qwen's language names, in chunks of at most 180 s; its request_extra
+sentence (Q&A item 52) stays. §29: what
 mlx-qwen3-asr 0.4.4's source showed. Open items: vid2sub has its Qwen parser now; S22 waits on
 local-ai and a recording. README: uncomment `[models.spark-qwen]` once local-ai serves
 Qwen3-ASR. tests/README.md: the live Spark test now covers Qwen3-ASR too.
@@ -40798,6 +40807,10 @@ fi
 | Task 18 (planning) | Minor | `src/vid2sub/engines/clients.py` | The drawer's Test has httpx's per-read timeout but no overall deadline or size cap, so a server that trickles its `/v1/models` answer holds that Test open (found by the security review of Task 18's listing) | open |
 | Task 22 (planning) | Minor | `AGENTS.md` | Missing docs: Layout names neither `src/vid2sub/web/` nor `frontend/`; Commands name none of `make build`, `test-js`, `e2e` or `demo`; the check-the-docs table lacks FastAPI, shiny, shinyreact, Playwright, React, Vite, Tailwind and shadcn (spec §24). `AGENTS.md` is the workflow's own file, so its change waits for the phase end (found writing Task 22) | open |
 | Task 20 (planning) | Minor | `tests/test_live_spark.py` | If local-ai doesn't serve Qwen3-ASR by Task 20's Step 21, its recording, live test and Cantonese run (Steps 21–23) wait; they run once it does, in whichever phase that is, and S22 becomes `verified` then (the kickoff council's goal fit finding 1) | open |
+| One-off, 2026-11-10 (review) | Minor | `src/vid2sub/engines/endpoint.py` | Standards 2: a `request_extra` key overrides a field vid2sub sets (`model`, `language`, `prompt`, `response_format`: the openai SDK's extra wins), as translation's has since M1; refuse reserved keys in `config._validate`, naming the key, with a test | open |
+| One-off, 2026-11-10 (review) | Minor | `src/vid2sub/pipeline.py` | Spec 6 and Standards 3: the transcript's version leaves out `request_extra`, so a `spark-turbo` transcript made with and without `max_context = 0` share one, and `+v<prompt_sha8>` hashes a glossary the server ignores; decide whether it belongs in the stamp and say so in §9.6 | open |
+| One-off, 2026-11-10 (review) | Minor | `docs/superpowers/specs/2026-10-14-vid2sub-design.md` | Spec 12, for Dan: no Scenarios row says a long drama chunk through `spark-turbo` doesn't loop; S70 would be built until Dan's run through his own vid2sub, then verified | open |
+| One-off, 2026-11-10 (review) | Minor | `AGENTS.md` | Standards 8, for Dan: *Commits* has no row for a one-off request outside the plan's tasks (who asked, in the body; no `Plan:` trailer) | open |
 | Task 16 (planning) | Minor | `tests/e2e/test_saving.py` | The close-warning test waits a fixed 500 ms before checking for the `beforeunload` dialog, and some server tests sleep, then assert nothing happened, so a slow runner flakes the first and passes the others without their fix; wait on `page.expect_event("dialog")`, and send a later request through the same queue before asserting (reliability finding 13) | open |
 | Task 17 (planning) | Minor | `src/vid2sub/web/server.py` | A whole-episode Retranslate holds the tab's queue, with no Cancel, so a slow Spark keeps edits and Save waiting for minutes; a Cancel checked between batches, or Save allowed past a running retranslation (reliability finding 15) | open |
 | Task 6 (planning) | Minor | `src/vid2sub/store.py` | The glossary file's write takes no `store.write_lock` (the build's Tier 1 review), and `_write_glossary`'s re-read is not passed to `safe_write` as `check`, so its window also covers the temporary write and the fsync (Standards Minor 1) | open |

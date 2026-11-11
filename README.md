@@ -62,7 +62,9 @@ your shell sources; on Windows, `setx NAME value` and a new terminal).
 
 - **The DGX Spark:** start local-ai's tunnel (`make tunnel`, see local-ai's
   `website/how-to/pi.md`) and export `SPARK_API_KEY`. The starter config points at
-  `http://127.0.0.1:9100/v1`.
+  `http://127.0.0.1:9100/v1`. In a `vid2sub.toml` made before 2026-11-10, add
+  `request_extra = { max_context = 0 }` under `[models.spark-turbo]`: without it the Spark's
+  Whisper can repeat one line over and over on long dialogue.
 - **OpenAI:** export `OPENAI_API_KEY`. Cloud models are used only on runs with `--allow-cloud`.
 - **LM Studio or Ollama** (for translation): add an endpoint with its OpenAI-compatible URL.
 
@@ -82,7 +84,8 @@ vid2sub models                                        # what can run on this mac
 
 Add `--dry-run` to `run` to see what would happen without writing anything.
 
-A `vid2sub.glossary.toml` in a show's folder helps with names:
+A `vid2sub.glossary.toml` in a show's folder helps with names (in translation everywhere, and in
+transcription except on the Spark's Whisper, which ignores the prompt):
 
 ```toml
 description = "Detective Conan, a Japanese anime"
