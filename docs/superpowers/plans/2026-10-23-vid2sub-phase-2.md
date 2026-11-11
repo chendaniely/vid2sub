@@ -38942,7 +38942,8 @@ def test_an_unreachable_spark_qwen_never_falls_back_to_the_macs_qwen_or_the_clou
 The Spark's whisper.cpp behind llama-swap, OpenAI, a local whisper.cpp server, or a Qwen3-ASR
 server (`mlx-qwen3-asr serve`, or the Spark once local-ai serves Qwen3-ASR with its aligner). The
 entry's `parser` picks the response shape. Requests ask for `verbose_json`, send the language and
-prompt when given, and the chunk as `chunk-NNNN.flac`. A Qwen3-ASR server gets Qwen's language
+prompt when given, the entry's `request_extra` fields, and the chunk as `chunk-NNNN.flac`. A
+Qwen3-ASR server gets Qwen's language
 names ("Cantonese"): mlx-qwen3-asr 0.4.4 maps en, zh, ja and ko to them but passes `yue` through
 unchanged (Phase 2 plan, Task 20). If the server says which model answered (local-ai Phase 3's
 `x-spark-model`), a different model from the one asked for fails the chunk: vid2sub never accepts
@@ -39005,6 +39006,10 @@ class EndpointEngine:
             params["prompt"] = prompt
         if self.entry.parser in GRANULARITIES:
             params["timestamp_granularities"] = GRANULARITIES[self.entry.parser]
+        if self.entry.request_extra:
+            # Sent as form fields, as translation sends them as JSON: for the Spark's whisper.cpp,
+            # max_context = 0 stops a long chunk looping on its own earlier text.
+            params["extra_body"] = dict(self.entry.request_extra)
         data, headers = clients.call_transcription(
             self._client, key_env=self._key_env, secrets=self._secrets,
             file=(chunk.upload_name, chunk.flac(), "audio/flac"), **params)

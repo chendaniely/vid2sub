@@ -164,6 +164,9 @@ test names.
   replacement) (Phase 2, Task 6).
 - 2026-11-04: §13.4 says an imported line (no `src`) is never stale and Retranslate stale never
   replaces it ([Q&A item 45](2026-10-14-vid2sub-qa.md)) (Phase 2, Task 7).
+- 2026-11-10: §9.3 sends a transcription model's `request_extra` with each chunk, and §5's
+  `spark-turbo` sets `max_context = 0`, since whisper.cpp otherwise loops on long chunks of TV
+  drama ([Q&A item 52](2026-10-14-vid2sub-qa.md)); §26.1 gains local-ai's status.
 
 ## Contents
 
@@ -413,6 +416,7 @@ endpoint = "spark"
 model = "whisper-large-v3-turbo"          # the name the server knows
 parser = "whisper.cpp"                    # response shape (§9.2)
 local = true                              # valid only because spark's host is in local_hosts
+request_extra = { max_context = 0 }       # form fields sent with each chunk (§9.3)
 
 [models.spark-gemma]
 catalog = "gemma-4-26b-a4b"
@@ -801,8 +805,10 @@ Parsers, each with recorded fixtures (§22.3):
 One engine for every OpenAI-shaped `/v1/audio/transcriptions` server: the Spark's whisper.cpp
 (through llama-swap), OpenAI, a local whisper.cpp server, or `mlx-qwen3-asr serve`. The `parser`
 field (§5.1) picks the response parser. Requests send `language`, `prompt`,
-`response_format=verbose_json` and, for OpenAI, `timestamp_granularities[]`. Responses' model
-headers are recorded (§9.6).
+`response_format=verbose_json`, for OpenAI `timestamp_granularities[]`, and the model entry's
+`request_extra` as further form fields: the Spark's whisper.cpp gets `max_context = 0` that way,
+which stops a long chunk looping on its own earlier text and also makes it ignore the prompt
+([Q&A item 52](2026-10-14-vid2sub-qa.md)). Responses' model headers are recorded (§9.6).
 
 ### 9.4 `mlx-qwen3-asr` in-process (Mac)
 
@@ -1597,6 +1603,14 @@ Parakeet and local Qwen3-ASR on CUDA; embedded MKV subtitle tracks; YouTube's pl
 ### 26.1 For local-ai's plan (paste-ready; Dan decides)
 
 *From vid2sub's design (2026-10-14), relevant to the Backlog's "subtitles and translation".*
+
+*(2026-11-10, local-ai's status, on its `phase-2a` branch: item 5, DTW, is still open. Item 7 is
+built as a by-hand speech service outside local-ai's gate, not an engine kind, and on a Mandarin
+TV drama Qwen3-ASR looped and missed dialogue, so it isn't relied on. Item 8, Whisper large-v3, is
+in local-ai's registry on demand from its next deploy, for Japanese and Korean. Item 9: Qwen3.6
+becomes local-ai's always-loaded chat model at that deploy, with two slots, and Gemma goes on
+demand. New: from that deploy, whisper-server runs with `--max-context 0` for every client,
+the other half of [Q&A item 52](2026-10-14-vid2sub-qa.md).)*
 
 1. **Batch whisper (Phase 3):** give it a role of its own (`stt-batch`), and have render pick
    Open WebUI's speech model by the `stt` role rather than "exactly one transcription model"

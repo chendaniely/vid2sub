@@ -26,6 +26,9 @@ endpoint = "spark"
 model = "whisper-large-v3-turbo"
 parser = "whisper.cpp"
 local = true
+# Each 30 s window without the text before it: with it, a long chunk of TV drama looped. It also
+# means whisper.cpp ignores the prompt, so a glossary doesn't reach it.
+request_extra = { max_context = 0 }
 
 [models.spark-gemma]
 catalog = "gemma-4-26b-a4b"
