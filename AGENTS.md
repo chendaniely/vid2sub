@@ -44,6 +44,18 @@ plan is `docs/superpowers/plans/2026-10-23-vid2sub-phase-N.md`.
 - **No titles, paths, tokens or keys in logs or `--json` output** (spec §6.8).
 - **Everything runs through uv** (`uv run …`); never `pip install`.
 
+**Uses the Spark (local-ai).** The `spark` endpoint is Dan's local-AI stack,
+[local-ai](https://github.com/chendaniely/local-ai). vid2sub uses its front through `make tunnel`
+(transcription and translation) and its refusals, and reaches the speech service through Dan's own
+config. Other projects rely on the same stack, and it changes in parallel with them. So before
+changing how vid2sub calls the Spark, read vid2sub's row and notices on local-ai's *Projects that
+use the stack* (`website/reference/projects.md`, on local-ai's `phase-2a` until Phase 2a merges).
+They give the contract and the changes vid2sub still owes. A local-ai session marks a notice done
+once vid2sub has handled it. It runs the other way too: local-ai's tests copy vid2sub's subtitle
+parser (its `spark/tests/vid2sub_parser.py` names the commit). A change to those functions, or
+something new vid2sub needs from the stack, goes to Dan for local-ai to record. That page is public,
+so it holds contract facts only.
+
 **Layout:**
 
 - `src/vid2sub/subs/`, `parse/`, `catalog.py`: pure (they run in the browser from Phase 4).
