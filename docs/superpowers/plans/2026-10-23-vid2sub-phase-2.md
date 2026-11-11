@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 17: Retranslating, open.
+**Now:** Task 18: The settings drawer, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower. Task 13's drift test and fix round 13c added 24 more (its listed 960 is 1143 in fact, 183 above the listing: the 159 and 24 more, 17 in `tests/test_demo_guard.py` and 7 parser cases in `tests/test_formats.py`): from Task 13's close on, every later listed count is 183 lower than the real one (Task 14's listings count from 960). Task 14's second hostile browser test adds one e2e test, which Task 14's own listings count. Task 14's fix round 14e and direct fix add 33 more full-suite tests and one e2e test (the AVI fallback) (its listed 974 is 1190 in fact, 216 above the listing: the 183 and 33 more, among them 19 snippets of the thread and process check in `tests/test_pages_imports.py`): from Task 14's close on, every later listed full-suite count is 216 lower than the real one (Task 15's listings count from 974), and every later listed `deselected` count and `make e2e` count is 2 lower than the real one (the raw file-name case and the AVI test; Task 14's end is `21 deselected` and `17 passed` in fact). Vitest is as Task 14 listed it (9 files, 44 tests). A later listing that counts a run of `tests/test_demo_guard.py` (24 tests, not 7) or `tests/test_formats.py` (7 more than before) is that many lower, and one of `tests/test_web_server.py` is 12 lower (34 tests, not 22), `tests/test_pages_imports.py` 20 lower (25, not 5), `tests/test_backend_open.py` 1 lower, and `tests/e2e/test_editor_view.py` 2 lower (11 tests in fact, counting the raw file-name case as one, against 9 listed). Task 15's fix rounds and direct fixes add 4 server tests (round 15d's) to the full suite: its listed 978 is 1198 in fact, 220 above the listing (the 216 and 4 more): from Task 15's close on, every later listed full-suite count is 220 lower than the real one (Task 16's listings count from 978). The offset for `deselected` and `make e2e` that Task 14's close gave as 2 is **3**, since Task 13's close added a test to Task 14 that Task 15's listing wasn't rewritten for; Task 15 adds 25 more e2e tests beyond its listing (3 in round 15c's drift, 20 in round 15d and 2 in the direct fixes), so from Task 15's close on every later listed `deselected` count and `make e2e` count is **28** lower than the real one (the 3 and 25 more; Task 15's end is `52 deselected` and `48 passed` in fact, against the listed 24 and 20). Vitest: Task 15 listed 12 files and 58 tests and has 14 files and 68 tests in fact (`CueRow.test.ts`, `BusyNote.test.ts`, `activeDescendant`'s test and the round 15d cases), so from Task 15's close on every later listed Vitest file count is 2 lower and test count 10 lower (Task 16's listings count from 12 and 58). A later listing that counts a run of `tests/test_web_server.py` is 21 lower (42 tests in fact after Task 15, against the 21 its listing ends on), and `tests/e2e/test_editor_view.py` has 13 tests in fact and `tests/e2e/test_editing.py` 29 (6 listed). Task 16's fix round 16d and its direct fixes add 4 full-suite tests (3 server tests and one view test), 15 e2e tests and 6 Vitest tests beyond its listing: its listed 985 is 1209 in fact, 224 above the listing (the 220 and 4 more): from Task 16's close on, every later listed full-suite count is 224 lower than the real one (Task 17's listings count from 985), every later listed `deselected` count and `make e2e` count is 43 lower (the 28 and 15 more; Task 16's end is `74 deselected` and `70 passed` in fact, against the listed 31 and 27), and Vitest is 2 files and 16 tests lower (17 files and 89 tests in fact, against the listed 15 and 73: Task 15's 2 files and 10 tests, and `draft.test.ts` 13 tests in fact against the 9 listed, `SaveBar.test.ts` 7 against 5). Task 17's round 17c gains one e2e test (Task 16's I-2) that its Step 14 counts (`36 deselected`, `32 passed`) but whose later listings do not: from Task 17's close on, every later listed `deselected` count and `make e2e` count is 44 lower than the real one. A later listing that counts a run of `tests/test_web_server.py` is 24 lower (49 tests in fact after Task 16, against the 25 its listing ends on), `tests/test_views.py` 3 lower (27 against 24), and `tests/e2e/test_saving.py` has 22 tests in fact against the 7 listed.
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower. Task 13's drift test and fix round 13c added 24 more (its listed 960 is 1143 in fact, 183 above the listing: the 159 and 24 more, 17 in `tests/test_demo_guard.py` and 7 parser cases in `tests/test_formats.py`): from Task 13's close on, every later listed count is 183 lower than the real one (Task 14's listings count from 960). Task 14's second hostile browser test adds one e2e test, which Task 14's own listings count. Task 14's fix round 14e and direct fix add 33 more full-suite tests and one e2e test (the AVI fallback) (its listed 974 is 1190 in fact, 216 above the listing: the 183 and 33 more, among them 19 snippets of the thread and process check in `tests/test_pages_imports.py`): from Task 14's close on, every later listed full-suite count is 216 lower than the real one (Task 15's listings count from 974), and every later listed `deselected` count and `make e2e` count is 2 lower than the real one (the raw file-name case and the AVI test; Task 14's end is `21 deselected` and `17 passed` in fact). Vitest is as Task 14 listed it (9 files, 44 tests). A later listing that counts a run of `tests/test_demo_guard.py` (24 tests, not 7) or `tests/test_formats.py` (7 more than before) is that many lower, and one of `tests/test_web_server.py` is 12 lower (34 tests, not 22), `tests/test_pages_imports.py` 20 lower (25, not 5), `tests/test_backend_open.py` 1 lower, and `tests/e2e/test_editor_view.py` 2 lower (11 tests in fact, counting the raw file-name case as one, against 9 listed). Task 15's fix rounds and direct fixes add 4 server tests (round 15d's) to the full suite: its listed 978 is 1198 in fact, 220 above the listing (the 216 and 4 more): from Task 15's close on, every later listed full-suite count is 220 lower than the real one (Task 16's listings count from 978). The offset for `deselected` and `make e2e` that Task 14's close gave as 2 is **3**, since Task 13's close added a test to Task 14 that Task 15's listing wasn't rewritten for; Task 15 adds 25 more e2e tests beyond its listing (3 in round 15c's drift, 20 in round 15d and 2 in the direct fixes), so from Task 15's close on every later listed `deselected` count and `make e2e` count is **28** lower than the real one (the 3 and 25 more; Task 15's end is `52 deselected` and `48 passed` in fact, against the listed 24 and 20). Vitest: Task 15 listed 12 files and 58 tests and has 14 files and 68 tests in fact (`CueRow.test.ts`, `BusyNote.test.ts`, `activeDescendant`'s test and the round 15d cases), so from Task 15's close on every later listed Vitest file count is 2 lower and test count 10 lower (Task 16's listings count from 12 and 58). A later listing that counts a run of `tests/test_web_server.py` is 21 lower (42 tests in fact after Task 15, against the 21 its listing ends on), and `tests/e2e/test_editor_view.py` has 13 tests in fact and `tests/e2e/test_editing.py` 29 (6 listed). Task 16's fix round 16d and its direct fixes add 4 full-suite tests (3 server tests and one view test), 15 e2e tests and 6 Vitest tests beyond its listing: its listed 985 is 1209 in fact, 224 above the listing (the 220 and 4 more): from Task 16's close on, every later listed full-suite count is 224 lower than the real one (Task 17's listings count from 985), every later listed `deselected` count and `make e2e` count is 43 lower (the 28 and 15 more; Task 16's end is `74 deselected` and `70 passed` in fact, against the listed 31 and 27), and Vitest is 2 files and 16 tests lower (17 files and 89 tests in fact, against the listed 15 and 73: Task 15's 2 files and 10 tests, and `draft.test.ts` 13 tests in fact against the 9 listed, `SaveBar.test.ts` 7 against 5). Task 17's round 17c gains one e2e test (Task 16's I-2) that its Step 14 counts (`36 deselected`, `32 passed`) but whose later listings do not: from Task 17's close on, every later listed `deselected` count and `make e2e` count is 44 lower than the real one. A later listing that counts a run of `tests/test_web_server.py` is 24 lower (49 tests in fact after Task 16, against the 25 its listing ends on), `tests/test_views.py` 3 lower (27 against 24), and `tests/e2e/test_saving.py` has 22 tests in fact against the 7 listed. Task 17's listing counted one test too few (it adds 8, not 7), and its round 17d and the direct fixes after its re-review add 2 server tests (I-3's hint and the late progress), 10 e2e tests and 8 Vitest tests, so its listed end of 993 is 1220 in fact, 227 above the listing (the 224, one from the miscount, and 2): from Task 17's close on, every later listed full-suite count is 227 lower than the real one (Task 18's listings count from 993), every later listed `deselected` count is 53 lower and every later `make e2e` count 53 lower (Task 17's end is `89 deselected` and `85 passed` in fact, against the listed 36 and 32), and Vitest is 3 files and 24 tests lower (19 files and 106 tests in fact, against the listed 16 and 82: the 2 files and 16 tests from before, `Retranslate.test.ts`, and 8 tests in `draft.test.ts`, `Retranslate.test.ts`, `BusyNote.test.ts` and `retranslate.test.ts`). A later listing that counts a run of `tests/test_web_server.py` is 26 lower (59 tests in fact after Task 17, against the 33 its listing ends on), `tests/test_backend_retranslate.py` is as it listed (34 tests), and `tests/e2e/test_retranslate.py` has 15 tests in fact against the 5 listed.
 
 ## Decisions made while planning (review these)
 
@@ -134,7 +134,9 @@ later listings were built without it. Task 5's fix round added 3 tests (the buil
     (spec §20 says which cues, not which model) (Task 17).
 27. **The crash draft keeps a retranslation as a marker, never its result:** restoring skips it,
     and also skips any undo or redo that took back or brought back a retranslation, so restoring
-    a draft never asks a model again (Task 17, with Decision 18).
+    a draft never asks a model again. It likewise skips an edit to a cue a retranslation made (the
+    restored episode never has it) and the undo or redo of that edit (Task 17, with Decision 18;
+    Dan, Q&A item 52).
 28. **The Jobs page takes full local paths only;** a link is refused, since adding a YouTube link
     is Phase 3's Add (spec §19.2, S36). Every tab on a launch sees the same jobs, with the paths
     typed (Task 19). Phase 3 removes the box once Add exists (Phase 3 Decision 28).
@@ -148,8 +150,10 @@ later listings were built without it. Task 5's fix round added 3 tests (the buil
 31. **A new cue takes the id the page proposes** (Tasks 2, 15 and 16; reliability finding 2, a
     Critical; Dan, Q&A item 19). Every edit that makes a cue (split, merge, insert, join) carries
     its new ids, `c` + 8 hex, drawn by the page; the server refuses one that is malformed or
-    taken. A crash draft therefore replays exactly, and it is cleared only after a replay with
-    no refused step. Each tab keeps its own draft, keyed by the heads and a tab id held in
+    taken. A crash draft therefore replays exactly, one step at a time: it stops at the first step
+    that no longer does what it did (refused, or changing nothing), keeps the draft and says how
+    many steps were restored, and it is cleared only after a replay that went to the end (Q&A item
+    54, Dan, 2026-11-10). Each tab keeps its own draft, keyed by the heads and a tab id held in
     `sessionStorage`, and a reopened episode offers every draft for its heads with its time
     (reliability finding 3). The server answers each edit, undo and redo with
     `applied {episode, n, ok, changed}`, so a Restore knows which steps were refused, and a step
@@ -25988,7 +25992,7 @@ Co-Authored-By: <the model's own line>
     `trimSaved(storage, key, upTo)` (takes out the steps a Save wrote: those with a request count at or
     below its own) and `followHeads(storage, from, to, savedUpTo)` (the draft moves with the heads, less
     what a Save wrote);
-    `heard(replay, n, ok) -> Replay | null`; none ever throws.
+    `heard(replay, n, took)` (Task 17, Q&A item 54: `-> {replay, send, end} | null`, Restore sends one step at a time and stops at the first that no longer does what it did); none ever throws.
   - `components/ui/dialog.tsx`: `Dialog({open, onClose, title, side?, children, className?})`,
     as Task 12's note gives it; `index.css` gains `html.dialog-open { overflow: hidden; }`.
   - `SaveBar({dirty, busy, formats, drafts, onSave, onRestore(key), onDiscard})` with `pressSave(busy,
@@ -28529,6 +28533,8 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 1 · **Scenarios:** S30
 
+**Built differently** (the listing's own steps stay as planned). (1) The listing's Step 4 count was one short: the listing adds 8 tests (7 server tests and the demo's), not 7, so every real count from here is one above the listed one (f6b695d). (2) Round 17c's two tests were built differently: the drop-only test also expects `"ok": true` (its result gains the field), and the failing-retranslation test's "Retranslate stale" is its 6th request, sent after the glossary one, so the glossary notice comes twice and the results read `[(False, 0)] * 6` (8ce3b14). (3) Round 17d after the Tier 1 review (Q&A items 52 and 53): C-1, Retranslate commits an open box first, and C-2, `replayable(steps, known)` leaves out an edit to a cue the restored episode doesn't have, with its undo or redo (d20483f); C-3, a track being retranslated opens no box and a line says why, I-1, one request per click, and I-2, the line for edits that wait (253993b); I-3, the editor's hints no longer promise a retry (51d30fd); M-1's tests and M-2's "Dropped N" wording, with `retranslate_result` gaining `added` (51d30fd, 5876cea); and Task 16's guard "a restore the server refuses a step of keeps the draft" re-pointed at a refused `merge_next` of the last cue, since a step naming an unknown cue is no longer sent (d20483f). (4) The direct fixes under the cap after the re-review, with Q&A item 54: Restore sends one step at a time and stops at the first that no longer does what it did, keeping the draft (615ec77); `_editor_words` makes up a hint only where its own wording emptied one (441907e); the retranslation line never shows while another episode opens, and the double-click and episode-change tests reach their races honestly (b1a5cb5).
+
 **Files:**
 - Modify: `src/vid2sub/web/server.py` (input `retranslate`, output `progress`, message
   `retranslate_result`), `src/vid2sub/web/runtime.py` (`Runtime.retranslate`),
@@ -28574,38 +28580,54 @@ Co-Authored-By: <the model's own line>
   - Output `progress`: `{"done": int, "of": int}` after each batch of the running retranslation
     (handed from the worker thread to the loop with `asyncio.run_coroutine_threadsafe`, and shown
     only while that retranslation runs), else `null`; `_publish` and `_set_busy` clear it.
-  - Message `retranslate_result`: `{"episode": str, "n": int | null, "ok": bool, "changed": int}`
-    (`ok` only once the retranslation ran, round 17c; `changed`: the translation cues the request
-    replaced, added or dropped (a translation whose source cues are all gone is dropped, Task 7
-    round 7a), 0 when nothing was stale or it failed), sent after every `retranslate` that
+  - Message `retranslate_result`: `{"episode": str, "n": int | null, "ok": bool, "changed": int,
+    "added": int}` (`ok` only once the retranslation ran, round 17c; `changed`: the translation
+    cues the request replaced, added or dropped (a translation whose source cues are all gone is
+    dropped, Task 7 round 7a), 0 when nothing was stale or it failed; `added`: of those, the
+    cues added, 0 where it only dropped, so the page says "Dropped N", round 17d), sent after every `retranslate` that
     names the open episode, after the episode is published. Round 17c: Task 16's `applied`
     message gains `"changed": bool` (the step moved the server's undo history).
   - `types.ts`: `Busy` gains `"retranslating"`; `Progress`; `RetranslateResultMessage`.
   - `lib/keys.ts`: `Action` gains `{kind: "extend"; by: -1 | 1}` (Shift+↑/↓ in navigate mode).
   - `lib/draft.ts`: `DraftStep` gains `{retranslate: true} & {n}` (a marker under its request's
     count, never replayed, dropped with Task 16's `dropStep` when the retranslation changed
-    nothing); `replayable(steps): DraftStep[]` (the edits, undos and redos Restore sends, leaving
-    out the markers and any undo or redo that took back or brought back a retranslation, and,
-    round 17c, following only the server's last `UNDO_STEPS` = 200 steps). Round 17c: the page
-    keeps a step in its draft only when `applied` says it was made and changed something.
+    nothing); `replayable(steps, known): DraftStep[]` (the edits, undos and redos Restore sends,
+    leaving out the markers and any undo or redo that took back or brought back a retranslation,
+    and, round 17c, following only the server's last `UNDO_STEPS` = 200 steps; round 17d: `known`
+    is the opened episode's cue ids, and an edit naming a cue not in it and not made by a step
+    sent is left out like a marker, with its undo or redo). Round 17c: the page keeps a step in
+    its draft only when `applied` says it was made and changed something. Q&A item 54: `Replay`
+    is `{from, next, waiting, done, total}` and `heard(replay, n, took) -> {replay, send, end} |
+    null`: Restore sends one step at a time, each once the one before took, and stops at the first
+    that was refused or changed nothing, keeping the draft and saying how many steps were
+    restored.
   - `lib/retranslate.ts`: `selectionRange(rows, selected, anchor: string | null): [number,
     number] | null`, `selectedIds(rows, range): string[]`, `retranslateNotice({ok, changed}, label,
-    stale): Notice | null` (null when not ok: the server's notice says why, round 17c).
-  - `Retranslate({label, selected, busy, progress, onSelected(allowCloud), onStale(allowCloud)})`:
-    test ids `retranslate`, `retranslate-selected` ("Retranslate this cue" / "Retranslate N
+    stale): Notice | null` (null when not ok: the server's notice says why, round 17c; "Dropped N
+    <label> cues" where `added` is 0, round 17d).
+  - `Retranslate({label, selected, busy, progress, pending, onSelected(allowCloud),
+    onStale(allowCloud)})` (round 17d: both buttons are disabled from the click until the
+    result, `pending`, and the status line says "Waiting to retranslate…" before `busy` arrives;
+    both handlers commit an open box first with `flushBox`): test ids `retranslate`, `retranslate-selected` ("Retranslate this cue" / "Retranslate N
     cues"), `retranslate-stale`, `allow-cloud` (unticked at first and after each request),
     `retranslate-progress` (a polite live region).
-  - `Editor({…, progress, generate})` and `Requests.retranslate(track, ids | null, allowCloud)`;
+  - `Editor({…, progress, retranslating, generate})` (`retranslating`: the tracks with a
+    retranslation sent whose result isn't back, which `App` keeps from the click until the result
+    or another episode opens; while a track is in it no translation box opens on its lines, and
+    `BusyNote({busy, retranslating?})` says "Retranslating the <track> translation: its lines
+    can be edited when it finishes; other edits apply then." (test id `retranslating-note`; not
+    while another episode opens), round 17d, Q&A item 53) and
+    `Requests.retranslate(track, ids | null, allowCloud)`;
     Retranslate shows above the edit bar where `capabilities.generate` and a translation track
     is shown. `CueList` takes `range` and is `aria-multiselectable`; `CueRow` takes `inRange`,
     and its `onPick(cell, extend)` says whether Shift was held. `App` subscribes `progress`, sets
     `retranslate` through the pacer, records the marker and handles `retranslate_result`.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
 #### Round 17a: the server and the demo's canned translator
 
-- [ ] **Step 1: Write the failing tests.** In `tests/test_web_server.py`:
+- [x] **Step 1: Write the failing tests.** In `tests/test_web_server.py`:
 
   Replace
 
@@ -28969,13 +28991,13 @@ def test_the_demo_retranslates_with_its_canned_model_and_no_other(tmp_path):
         backend.retranslate(ep, "ja", ids=[college.id], model="gemma")
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q -k
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q -k
   'retransl or allow_cloud or cue_ids or cant_run or named_cues'`. Expected (about two minutes:
   each test waits 20 s for a message that never comes): `E       AssertionError: timed out; the
   tab saw [...]` and `6 failed, 25 deselected`. `uv run pytest tests/test_backend_retranslate.py
   -q -k demo`. Expected: `E           vid2sub.engines.base.EngineError: no usable translation
   model` and `1 failed, 20 deselected`.
-- [ ] **Step 3: Write the code.** `src/vid2sub/web/episode.py`:
+- [x] **Step 3: Write the code.** `src/vid2sub/web/episode.py`:
 
   Replace
 
@@ -29725,11 +29747,11 @@ app = ReactApp(server, ui=page(), static_assets={"/": WWW}, bookmark_store="disa
 app.sanitize_errors = True  # an output's error text may hold a key or a path (spec §6.8)
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_server.py
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_server.py
   tests/test_backend_retranslate.py tests/test_pages_imports.py -q` first (`57 passed`), then
   `make check`. Expected: `992 passed, 2 skipped, 31 deselected` (twice), `Test Files  15 passed
   (15)`, `Tests  73 passed (73)`, `All checks passed!`, `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 a tab retranslates named or stale cues off the event loop, with progress, and the demo answers with its canned translation
@@ -29779,7 +29801,7 @@ Co-Authored-By: <the model's own line>
 
 #### Round 17b: Retranslate in the editor
 
-- [ ] **Step 6: Write the failing tests.** In `frontend/src/lib/keys.test.ts`:
+- [x] **Step 6: Write the failing tests.** In `frontend/src/lib/keys.test.ts`:
 
   Replace
 
@@ -30188,14 +30210,14 @@ def test_a_crashed_tabs_draft_never_replays_a_retranslation_or_the_undo_that_und
     assert first.errors == [] and second.errors == [] and second.violations() == []
 ```
 
-- [ ] **Step 7: Run them; watch them fail.** `cd frontend && npx vitest run src/lib`. Expected:
+- [x] **Step 7: Run them; watch them fail.** `cd frontend && npx vitest run src/lib`. Expected:
   `Error: Failed to resolve import "./retranslate" from "src/lib/retranslate.test.ts"`,
   `TypeError: replayable is not a function` (twice), `AssertionError: expected { kind:
   'previous' } to deeply equal { kind: 'extend', by: -1 }`, and `Test Files  3 failed | 8 passed
   (11)` (the marker is dropped by Task 16's `dropStep`, which exists already). `make build && uv run pytest -m e2e
   tests/e2e/test_retranslate.py -q`. Expected: `E       AssertionError: Locator expected not to
   be checked` with `waiting for get_by_test_id("allow-cloud")`, and `3 failed`.
-- [ ] **Step 8: Write the code.** `frontend/src/types.ts`:
+- [x] **Step 8: Write the code.** `frontend/src/types.ts`:
 
   Replace
 
@@ -31652,7 +31674,7 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
 }
 ```
 
-- [ ] **Step 9: Run the checks; they pass.** `cd frontend && npm run typecheck && npx vitest run`
+- [x] **Step 9: Run the checks; they pass.** `cd frontend && npm run typecheck && npx vitest run`
   first (`Test Files  16 passed (16)`, `Tests  81 passed (81)`), then `make build && uv run
   pytest -m e2e tests/e2e/test_retranslate.py tests/e2e/test_editing.py -q` (`9 passed`: the
   keyboard test of Task 15 walks the edit bar with Shift+Tab from the cue list, which is why
@@ -31663,7 +31685,7 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
   Then `make check`. Expected: `992 passed, 2 skipped, 34 deselected` (twice), `Test Files  16
   passed (16)`, `Tests  81 passed (81)`, `All checks passed!`, `no leaks found`. Then `make
   e2e`. Expected: `30 passed`.
-- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(frontend): 🤖 the editor retranslates the selected cues or every stale one, with the cloud box unticked every time, and a crashed tab's draft never asks a model again
@@ -31720,7 +31742,7 @@ on the Phase-end list. (Task 16's review found the matching problem for a Save, 
 it runs being cleared with the old heads, and round 16d fixed it; its I-2, a no-op undo after a
 pick, is closed here.)
 
-- [ ] **Step 11: Write the failing tests.**   In `tests/test_web_server.py`, replace
+- [x] **Step 11: Write the failing tests.**   In `tests/test_web_server.py`, replace
 
 ```python
         t.until(lambda t: len(applied(t)) == 6)
@@ -31958,7 +31980,7 @@ def test_an_undo_with_nothing_to_undo_after_a_pick_never_makes_restore_take_back
     assert third.errors == [] and third.violations() == []
 ```
 
-- [ ] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q -k
+- [x] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_web_server.py -q -k
   'answered or cant_run or stale_redoes'`. Expected: `4 failed, 28 deselected`: the two
   `applied` tests (`KeyError: 'changed'`, and `AssertionError: assert [{'episode': ..., 'ok':
   True}] == [{'episode': ...nged': False}]`), the stale test (`AssertionError: assert
@@ -31972,7 +31994,7 @@ def test_an_undo_with_nothing_to_undo_after_a_pick_never_makes_restore_take_back
   'occasion!'`, `Actual value: occasion.` (Restore undid the edit that redo had brought back), and
   `Locator expected to have text 'source edit before the pick'`, `Actual value: occasion.` (Task
   16's I-2: Restore applied the edit and then the undo that had nothing to undo).
-- [ ] **Step 13: Write the code.**   In `src/vid2sub/web/server.py`, replace
+- [x] **Step 13: Write the code.**   In `src/vid2sub/web/server.py`, replace
 
 ```python
             await notice(self.session, "error", str(err))
@@ -32299,7 +32321,7 @@ export function replayable(steps: readonly DraftStep[]): DraftStep[] {
               label={translations.find((t) => t.key === shownTrack)?.label ?? shownTrack}
 ```
 
-- [ ] **Step 14: Run the checks; they pass.** First the guards: in `server.py`'s `_edit`, change
+- [x] **Step 14: Run the checks; they pass.** First the guards: in `server.py`'s `_edit`, change
   `changed=new is not ep` to `changed=True`, and `uv run pytest tests/test_web_server.py -q -k
   changes_nothing` fails; in `App.tsx`'s `applied` handler, change `if (!(data.ok && data.changed)
   && drafted.current)` to `if (!data.ok && drafted.current)`, `make build`, and `uv run pytest -m
@@ -32308,7 +32330,7 @@ export function replayable(steps: readonly DraftStep[]): DraftStep[] {
   pick'`; put both back and `make build`. `make check`. Expected: `993 passed, 2 skipped, 36
   deselected` (twice), `Test Files  16 passed (16)`, `Tests  82 passed (82)`, `All checks
   passed!`, `no leaks found`. Then `make e2e`. Expected: `32 passed`.
-- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 fix(web): 🤖 the draft keeps only the steps that moved the undo history, Restore follows only the 200 the server keeps, and a failed Retranslate stale never says nothing was stale
@@ -32361,7 +32383,7 @@ Co-Authored-By: <the model's own line>
   tests/e2e/test_retranslate.py`, `git commit -F .git/COMMIT_MSG`, then
   `git log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*, with the security checklist; at most one re-review; Tier 1 since the
   kickoff council, because it builds the editor's Allow cloud models box (§7.2)). Worth the
   reviewers' time: that `allow_cloud` comes only from the request, true or false, and the box
@@ -34426,7 +34448,7 @@ import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
 import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, followHeads, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage, trimSaved } from "@/lib/draft";
-import { randomHex } from "@/lib/ids";
+import { randomHex, shownIds } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { retranslateNotice } from "@/lib/retranslate";
 import { pacer } from "@/lib/sends";
@@ -34535,6 +34557,15 @@ export default function App() {
   // "Retranslate stale", for the notice.
   const asking = useRef(new Map<number, { track: string; stale: boolean }>());
   const episodeId = episode?.id ?? null;
+  // The tracks with a retranslation sent whose result isn't back: from the click, not from when
+  // `busy` arrives (the request may wait in the queue behind a Save or the playback audio). The
+  // page opens no box on such a track and sends no second request (Task 17's Spec review, C-3,
+  // I-1). Another episode opened ends them: its results are for the old one.
+  const [pending, setPending] = useState<{ n: number; track: string }[]>([]);
+  useEffect(() => {
+    asking.current.clear();
+    setPending([]);
+  }, [episodeId]);
   const steps = useMemo(() => {
     const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
     // Sends one edit, undo or redo, and keeps it in the draft as sent; returns its request's count.
@@ -34569,8 +34600,10 @@ export default function App() {
         send(setResolve, a && { ...a, track, rendition });
       },
       retranslate: (track, ids, allowCloud) => {
+        if (asking.current.size > 0) return; // one at a time: its buttons are disabled too
         const a = ask();
         if (!a) return;
+        setPending((p) => [...p, { n: a.n, track }]);
         dropOffers();
         if (drafted.current) addStep(draftStorage(), drafted.current.key, { retranslate: true, n: a.n });
         asking.current.set(a.n, { track, stale: ids === null });
@@ -34582,6 +34615,7 @@ export default function App() {
     if (!episode || data.episode !== episode.id || data.n === null) return;
     const asked = asking.current.get(data.n);
     asking.current.delete(data.n);
+    setPending((p) => p.filter((r) => r.n !== data.n));
     if (!(data.ok && data.changed > 0) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
     if (!asked) return;
     const label = episode.tracks.find((t) => t.key === asked.track)?.label ?? asked.track;
@@ -34595,10 +34629,22 @@ export default function App() {
     if (!(data.ok && data.changed) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
     const now = replaying.current && heard(replaying.current, data.n, data.ok && data.changed);
     if (!now) return;
-    replaying.current = now.waiting.length ? now : null;
-    if (now.waiting.length) return;
-    if (!now.refused) clearDraft(draftStorage(), now.from);
-    else setNotices((shown) => addNotice(shown, { kind: "error", text: `${now.refused} restored ${now.refused === 1 ? "step" : "steps"} of ${now.total} couldn't be replayed: the draft is kept` }, nextId.current++));
+    let { replay, end } = now;
+    if (now.send) { // the next step, now that this one took
+      const { n: _, ...asSent } = now.send;
+      const n = steps(asSent as Step);
+      if (n !== null) {
+        replaying.current = { ...replay, waiting: n };
+        return;
+      }
+      end = "stopped";
+    }
+    replaying.current = null;
+    if (end === "clean") clearDraft(draftStorage(), replay.from);
+    else {
+      const rest = replay.total - replay.done;
+      setNotices((shown) => addNotice(shown, { kind: "error", text: `${rest} restored ${rest === 1 ? "step" : "steps"} of ${replay.total} couldn't be replayed: the draft is kept. ${replay.done} ${replay.done === 1 ? "step was" : "steps were"} restored, and Restore stopped at the next because it no longer fits this episode.` }, nextId.current++));
+    }
   });
 
   const [conflictsFound, setConflictsFound] = useState(0);
@@ -34622,9 +34668,11 @@ export default function App() {
   useEffect(() => {
     if (savesHeard > 0) saveInFlight.current = false;
   }, [savesHeard]);
+  // the cues the opened episode has: what a restored draft's edits can name (C-2)
+  const known = useMemo(() => (episode ? shownIds(episode.rows) : new Set<string>()), [episode]);
   const saving: Saving = {
     // the steps Restore would send, for each draft that has any
-    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps).length })).filter((d) => d.steps > 0),
+    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps, known).length })).filter((d) => d.steps > 0),
     conflictsFound,
     onTyping: setTyping,
     onRestore: (key) => {
@@ -34641,14 +34689,12 @@ export default function App() {
       } else {
         clearDraft(store, at.key);
       }
-      const sent: number[] = [];
-      for (const step of replayable(draft.steps)) {
-        const { n: _, ...asSent } = step;
-        const n = steps(asSent as Step);
-        if (n !== null) sent.push(n);
-      }
-      if (sent.length) replaying.current = { from, waiting: sent, refused: 0, total: sent.length };
-      else clearDraft(store, from);
+      // One step at a time: each is sent once the one before took (the `applied` handler)
+      const [first, ...next] = replayable(draft.steps, known);
+      const { n: _, ...asSent } = first ?? { n: 0 };
+      const n = first ? steps(asSent as Step) : null;
+      if (n !== null) replaying.current = { from, next, waiting: n, done: 0, total: next.length + 1 };
+      else if (!first) clearDraft(store, from);
     },
     onDiscard: dropOffers,
   };
@@ -34733,6 +34779,7 @@ export default function App() {
           episode={episode ?? null}
           busy={busy ?? null}
           progress={progress ?? null}
+          retranslating={pending.map((p) => p.track)}
           pathInput={capabilities?.path_input ?? false}
           generate={capabilities?.generate ?? false}
           onOpen={(path) => setOpen({ path, n: ++sent.current })}
@@ -37655,7 +37702,7 @@ import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
 import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, followHeads, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage, trimSaved } from "@/lib/draft";
-import { randomHex } from "@/lib/ids";
+import { randomHex, shownIds } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { retranslateNotice } from "@/lib/retranslate";
 import { pacer } from "@/lib/sends";
@@ -37767,6 +37814,15 @@ export default function App() {
   // "Retranslate stale", for the notice.
   const asking = useRef(new Map<number, { track: string; stale: boolean }>());
   const episodeId = episode?.id ?? null;
+  // The tracks with a retranslation sent whose result isn't back: from the click, not from when
+  // `busy` arrives (the request may wait in the queue behind a Save or the playback audio). The
+  // page opens no box on such a track and sends no second request (Task 17's Spec review, C-3,
+  // I-1). Another episode opened ends them: its results are for the old one.
+  const [pending, setPending] = useState<{ n: number; track: string }[]>([]);
+  useEffect(() => {
+    asking.current.clear();
+    setPending([]);
+  }, [episodeId]);
   const steps = useMemo(() => {
     const ask = (): Ask | null => (episodeId ? { episode: episodeId, n: ++sent.current } : null);
     // Sends one edit, undo or redo, and keeps it in the draft as sent; returns its request's count.
@@ -37801,8 +37857,10 @@ export default function App() {
         send(setResolve, a && { ...a, track, rendition });
       },
       retranslate: (track, ids, allowCloud) => {
+        if (asking.current.size > 0) return; // one at a time: its buttons are disabled too
         const a = ask();
         if (!a) return;
+        setPending((p) => [...p, { n: a.n, track }]);
         dropOffers();
         if (drafted.current) addStep(draftStorage(), drafted.current.key, { retranslate: true, n: a.n });
         asking.current.set(a.n, { track, stale: ids === null });
@@ -37814,6 +37872,7 @@ export default function App() {
     if (!episode || data.episode !== episode.id || data.n === null) return;
     const asked = asking.current.get(data.n);
     asking.current.delete(data.n);
+    setPending((p) => p.filter((r) => r.n !== data.n));
     if (!(data.ok && data.changed > 0) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
     if (!asked) return;
     const label = episode.tracks.find((t) => t.key === asked.track)?.label ?? asked.track;
@@ -37827,10 +37886,22 @@ export default function App() {
     if (!(data.ok && data.changed) && drafted.current) dropStep(draftStorage(), drafted.current.key, data.n);
     const now = replaying.current && heard(replaying.current, data.n, data.ok && data.changed);
     if (!now) return;
-    replaying.current = now.waiting.length ? now : null;
-    if (now.waiting.length) return;
-    if (!now.refused) clearDraft(draftStorage(), now.from);
-    else setNotices((shown) => addNotice(shown, { kind: "error", text: `${now.refused} restored ${now.refused === 1 ? "step" : "steps"} of ${now.total} couldn't be replayed: the draft is kept` }, nextId.current++));
+    let { replay, end } = now;
+    if (now.send) { // the next step, now that this one took
+      const { n: _, ...asSent } = now.send;
+      const n = steps(asSent as Step);
+      if (n !== null) {
+        replaying.current = { ...replay, waiting: n };
+        return;
+      }
+      end = "stopped";
+    }
+    replaying.current = null;
+    if (end === "clean") clearDraft(draftStorage(), replay.from);
+    else {
+      const rest = replay.total - replay.done;
+      setNotices((shown) => addNotice(shown, { kind: "error", text: `${rest} restored ${rest === 1 ? "step" : "steps"} of ${replay.total} couldn't be replayed: the draft is kept. ${replay.done} ${replay.done === 1 ? "step was" : "steps were"} restored, and Restore stopped at the next because it no longer fits this episode.` }, nextId.current++));
+    }
   });
 
   const [conflictsFound, setConflictsFound] = useState(0);
@@ -37854,9 +37925,11 @@ export default function App() {
   useEffect(() => {
     if (savesHeard > 0) saveInFlight.current = false;
   }, [savesHeard]);
+  // the cues the opened episode has: what a restored draft's edits can name (C-2)
+  const known = useMemo(() => (episode ? shownIds(episode.rows) : new Set<string>()), [episode]);
   const saving: Saving = {
     // the steps Restore would send, for each draft that has any
-    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps).length })).filter((d) => d.steps > 0),
+    drafts: offers.map((o) => ({ key: o.key, at: o.draft.at, steps: replayable(o.draft.steps, known).length })).filter((d) => d.steps > 0),
     conflictsFound,
     onTyping: setTyping,
     onRestore: (key) => {
@@ -37873,14 +37946,12 @@ export default function App() {
       } else {
         clearDraft(store, at.key);
       }
-      const sent: number[] = [];
-      for (const step of replayable(draft.steps)) {
-        const { n: _, ...asSent } = step;
-        const n = steps(asSent as Step);
-        if (n !== null) sent.push(n);
-      }
-      if (sent.length) replaying.current = { from, waiting: sent, refused: 0, total: sent.length };
-      else clearDraft(store, from);
+      // One step at a time: each is sent once the one before took (the `applied` handler)
+      const [first, ...next] = replayable(draft.steps, known);
+      const { n: _, ...asSent } = first ?? { n: 0 };
+      const n = first ? steps(asSent as Step) : null;
+      if (n !== null) replaying.current = { from, next, waiting: n, done: 0, total: next.length + 1 };
+      else if (!first) clearDraft(store, from);
     },
     onDiscard: dropOffers,
   };
@@ -37997,6 +38068,7 @@ export default function App() {
           episode={episode ?? null}
           busy={busy ?? null}
           progress={progress ?? null}
+          retranslating={pending.map((p) => p.track)}
           pathInput={capabilities?.path_input ?? false}
           generate={generate}
           onOpen={(path) => setOpen({ path, n: ++sent.current })}
@@ -40188,9 +40260,11 @@ tracks, with **Add to glossary**. Beside the player: which captions show, the sp
 1.25×), **Loop this cue** and **Follow playback**.
 
 **Retranslate** asks the translation model again. **Retranslate this cue**, or **Retranslate N
-cues** for a run selected with Shift+↑/↓, replaces those translations, even ones you edited;
-**Retranslate stale** redoes every stale or untranslated cue of the translation shown, and never
-one you edited. It uses the translation model your configuration's route picks. **Allow cloud
+cues** for a run selected with Shift+↑/↓ (the selected cue: "the current cue" is the one playing),
+replaces those translations, even ones you edited; **Retranslate stale** redoes every stale or
+untranslated cue of the translation shown, and never one you edited. While it runs, that
+translation's lines can't be edited and a line says so; other edits wait and apply when it
+finishes. A box open when you press it is saved first. It uses the translation model your configuration's route picks. **Allow cloud
 models** starts unticked and unticks itself after every request, so a cloud model is used only
 for the request you ticked it for.
 
@@ -40209,8 +40283,9 @@ the cue list stays empty until you pick. A subtitle file edited in another progr
 a version of its own when you open the episode again, and the editor says it kept your outside
 edit. Unsaved edits are kept in the browser too, each tab's on its own: after a crash, opening
 the episode offers every tab's, each with its time, to restore (**Restore them**) or set aside
-(**Discard**). A restored draft is cleared once every step of it was done again; otherwise the
-editor says how many steps couldn't be, and keeps it. Closing the tab with unsaved edits asks
+(**Discard**). A restored draft is replayed one step at a time, and cleared once every step of it was done
+again; at the first step that no longer fits the episode (a line a retranslation replaced, say)
+it stops, says how many steps were restored, and keeps the draft. Closing the tab with unsaved edits asks
 first.
 
 **Settings**, in the top bar, shows the endpoints and models `vid2sub.toml` declares, read-only
@@ -40618,7 +40693,9 @@ vid2sub serve
   corrected are kept. It uses your configured route's translation model (Decision 26); if that
   is a cloud model, tick **Allow cloud models** first, since the box unticks after every request.
   It asks the route's servers what they serve before it knows anything is stale, so
-  "retranslating" shows even when nothing is, and a server that's down gives an error here. Then
+  "retranslating" shows even when nothing is, and a server that's down gives an error here. While
+  it runs the English lines can't be edited (a line says so) and other edits wait; they apply
+  when it finishes. Then
   **Save**. Expected: the `.en.srt` now holds the new English, and reopening shows it.
 - [ ] **Step 6: [Dan] An outside edit (S31):** edit the episode's `.en.srt`, as Step 5 saved it,
   in another editor (change one line), save it, then reopen the episode in vid2sub. Expected: the
@@ -40906,4 +40983,8 @@ fi
 | Task 16 (re-review) | Minor | `tests/e2e/test_saving.py` | `test_two_tabs_on_one_episode_keep_separate_drafts` failed once in four full runs (`open_demo` saw 0 rows) and not in 27 later runs; `open_demo` now reports the notices and the server log's tail, scrubbed, if it recurs | open |
 | Task 16 (re-review) | Minor | `frontend/src/App.tsx` | `beforeunload` is added two renders after typing starts (4 to 10 ms, measured), so a close in that window is unwarned; the box is not in the draft until committed | open |
 | Task 16 (re-review) | Minor | `frontend/src/` | Couldn't verify: Windows until CI runs (the new tests write through `safe_write` and read with an explicit encoding), a real tab crash (Playwright's close stands in), Chromium's Duplicate Tab (`window.open` stands in) and browsers other than Chromium | open |
-| Task 17 (planning) | Minor | `frontend/src/components/Editor.tsx` | Retranslate with a box open doesn't commit it first, as Save and "Pick a version" now do (Task 16's C-1); the retranslation runs on the cue's old text | open |
+| Task 17 (review) | Minor | `src/vid2sub/web/`, `frontend/src/` | Standards S-1 to S-7: `UNDO_STEPS` is written in `draft.ts` and `backend.py` (each pinned by a test); `_retranslate` is a long method whose two `except` arms repeat `_set_busy(None)` and `notice` (one `except` over the four error types); `n`'s integer check is written two ways in `_retranslate` and `_applied` (one helper); `_editor_words` rewrites the catalog's hint by `str.replace` on its phrases (a reworded catalog hint would leave `--model`); `asking` keeps an entry until its result (a few bytes for a restarted engine); new TypeScript lines past 100 columns as the rest; the f6b695d body names `retranslate_result` without `ok` | open |
+| Task 17 (re-review) | Minor | `frontend/src/components/Editor.tsx`, `FindReplace.tsx` | N-5: a Replace all whose matches were only in the lines a running retranslation replaces silently does nothing when the run ends (`1 match` before, `0 matches` after, no notice) while the line says the track's lines can be edited when it finishes; disable the locked track's box in Find and replace, or say so in the line. Other changes to the locked track's lines (Delete, merge, split) apply after the run and join or drop the new line, as the brief says | open |
+| Task 17 (re-review) | Minor | `frontend/src/lib/retranslate.ts` | A "Retranslate stale" that replaces some lines and drops others says "Retranslated N" with N the larger of the two counts | open |
+| Task 17 (re-review) | Minor | `frontend/src/App.tsx` | An edit that Restore leaves out because a retranslation made its cue (Q&A item 52) is dropped without a word; the offer counts only what Restore sends. The ruled design, listed so a later note can say it | open |
+| Task 17 (close) | Minor | `tests/e2e/test_retranslate.py` | Couldn't verify: a real model endpoint (never contacted, only the loopback fake and the demo's canned translator), Windows, Linux and Python 3.12 until CI runs, and a screen reader on the polite status lines | open |

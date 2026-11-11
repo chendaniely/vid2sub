@@ -68,7 +68,7 @@ test names.
 | S27 | an M1 episode opened in the editor | the video plays with captions; the cue list follows playback; the spoken word is highlighted | Phase 2 | `tests/e2e/test_editor_view.py`; the exit test | built |
 | S28 | a source cue edited, split, merged, nudged, inserted or deleted, then undone | the pure `subs.edit` rules apply; translations re-point and are flagged (§13.5) | Phase 2 | `tests/test_edit.py; tests/e2e/test_editing.py` | built |
 | S29 | Save | an editor rendition, a head and projection records are appended, then only vid2sub's files are rewritten | Phase 2 | `tests/test_backend_save.py; tests/e2e/test_saving.py; the exit test` | built |
-| S30 | Retranslate stale, from the editor | only the stale cues change; edited translations are kept | Phase 2 | Playwright; the exit test | planned |
+| S30 | Retranslate stale, from the editor | only the stale cues change; edited translations are kept | Phase 2 | `tests/test_backend_retranslate.py; tests/e2e/test_retranslate.py; the exit test` | built |
 | S31 | the SRT edited in another editor, then the episode reopened | the change comes back as an `external` version and becomes the head, and the editor says so | Phase 2 | `tests/test_backend_open.py::test_an_outside_edit_comes_back_as_the_head_and_the_editor_says_so; tests/e2e/test_saving.py; the exit test` | built |
 | S32 | two tabs, or a tab and a CLI job, save the same episode | nothing is lost; a track that diverged shows both versions for the user to pick | Phase 2 | `tests/test_backend_save.py; tests/e2e/test_saving.py` | built |
 | S33 | Enter pressed to commit a Japanese or Chinese IME candidate | the candidate is committed and no editor action fires | Phase 2 | `tests/e2e/test_editing.py` (a composition through Chromium's CDP `Input.imeSetComposition`) | built |
@@ -636,8 +636,8 @@ persists folder handles, and touches no network beyond its own files.
   `privacy.local_hosts`, or it runs in-process (§5.2). llama-swap or Ollama can pass a request to
   a hosted model on `localhost`, which is why the flag is per model, as in `recordings`.
 - Everything else is cloud. A run may use a cloud model only when **that run** sets
-  `allow_cloud`: the `--allow-cloud` flag, or the checkbox on the Review screen, which starts
-  unticked every time. **No config key or environment variable can preset it** (audio-router's
+  `allow_cloud`: the `--allow-cloud` flag, the checkbox on the Review screen, or the editor's
+  Retranslate box, each starting unticked every time (Phase 2 Decision 33). **No config key or environment variable can preset it** (audio-router's
   rule: "no config key can make the exception a default").
 - `clients.make_client(model, run)` raises `CloudNotAllowed` otherwise. It is the only factory
   (§6.4), so the check can't be skipped.
@@ -1072,7 +1072,11 @@ Ln  {"type":"projection","path":"<basename>","format":"srt|ass","track","renditi
 One `cues` rendition per changed track (`engine: editor`, parent = the head its edits started from), a `head`
 record for each, then for each projected file a `projection` record (with the hash of the bytes
 about to be written), then the subtitle files (§15.2). Unsaved edits live in the tab, with a
-`localStorage` draft for crash recovery (wrapped in try/catch) and a warning on close.
+`localStorage` draft for crash recovery (wrapped in try/catch) and a warning on close. Restore
+replays the draft's steps through the server's rules one at a time, leaving out a retranslation,
+an edit to a cue the restored episode doesn't have and the undo or redo of either, and it stops
+at the first step that is refused or changes nothing, keeps the draft and says how many steps
+were restored (Dan, 2026-11-10; Phase 2 Decisions 27 and 31).
 
 ### 14.6 Write protocol
 
