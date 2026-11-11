@@ -1,12 +1,13 @@
 """A show's glossary: names and terms with their preferred translations (spec §16).
 
 `vid2sub.glossary.toml` sits in the show's folder. Its source terms become Whisper's prompt (a
-comma-joined list, never instructions, an audio-router lesson) or Qwen3-ASR's context; its
-description and pairs go into the translator's system prompt; its hash goes into translation
-versions so a glossary edit marks translations stale. The editor's Save adds terms to it by
-appending lines to its `[terms]`, never by writing it out again, so the person's comments and
-layout survive (it is their file, spec §16); the result must read back as the old glossary plus
-the new terms, or nothing is written (Phase 2 plan, Task 6).
+comma-joined list, never instructions, an audio-router lesson; the Spark's whisper.cpp ignores it
+under max_context = 0, spec §9.3) or Qwen3-ASR's context; its description and pairs go into the
+translator's system prompt; its hash goes into translation versions so a glossary edit marks
+translations stale. The editor's Save adds terms to it by appending lines to its `[terms]`, never
+by writing it out again, so the person's comments and layout survive (it is their file, spec
+§16); the result must read back as the old glossary plus the new terms, or nothing is written
+(Phase 2 plan, Task 6).
 
 A chunk prompt is the vocabulary first, then the previous chunk's last words (spec §8.7), within
 a character budget. Whisper's prompt window is 224 tokens and it keeps the end of a prompt:

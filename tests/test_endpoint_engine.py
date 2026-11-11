@@ -18,10 +18,11 @@ WHISPER = {"language": "japanese", "segments": [{"text": "こんにちは", "sta
            "language_probabilities": {"ja": 0.97, "zh": 0.02}}
 
 
-def engine(url, model="whisper-large-v3-turbo"):
+def engine(url, model="whisper-large-v3-turbo", extra=None):
     cfg = Config(endpoints={"spark": Endpoint(base_url=url, key_env="SPARK_API_KEY")},
                  models={"turbo": ModelEntry(catalog="whisper-large-v3-turbo", endpoint="spark",
-                                             model=model, parser="whisper.cpp", local=True)})
+                                             model=model, parser="whisper.cpp", local=True,
+                                             request_extra=extra or {})})
     return EndpointEngine("turbo", cfg.models["turbo"], cfg, RunPolicy(),
                           KeyRing(environ={"SPARK_API_KEY": SECRET}))
 
@@ -44,6 +45,21 @@ def test_a_chunk_is_uploaded_with_a_neutral_name_the_key_and_the_settings():
     assert form["prompt"][1] == "工藤新一.".encode()
     assert form["response_format"][1] == b"verbose_json"
     assert [w.text for w in result.parsed.segments[0].words] == ["こん", "にちは"]
+
+
+def test_the_entrys_request_extra_goes_with_each_chunk_beside_vid2subs_own_fields():
+    with FakeServer([(200, WHISPER, {})] * 3) as srv:
+        with_extra = engine(srv.url, extra={"max_context": 0})
+        with_extra.transcribe(chunk(), language="zh", prompt="")
+        with_extra.transcribe(chunk(), language="zh", prompt="")
+        engine(srv.url).transcribe(chunk(), language="zh", prompt="")
+    for req in srv.requests[:2]:
+        form = req.form()
+        assert form["max_context"][1] == b"0"
+        assert form["model"][1] == b"whisper-large-v3-turbo"
+        assert form["language"][1] == b"zh"
+        assert form["response_format"][1] == b"verbose_json"
+    assert "max_context" not in srv.requests[2].form()
 
 
 def test_language_detection_returns_the_servers_probabilities():

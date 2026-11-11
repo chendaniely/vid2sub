@@ -136,6 +136,15 @@ test names.
   a spec change, for Dan.
 - **local-ai's Phase 3** (§17.4): role aliases, `x-spark-model`, inline refusals. Until then a
   refused load is a plain error.
+- **whisper.cpp reports no compression ratio** (2026-11-10, found in the runs behind
+  [Q&A item 55](2026-10-14-vid2sub-qa.md)): §8.7's guard and §12's `halluc` check on it never fire
+  for whisper.cpp, so a looping chunk's text goes on as the next prompt. Harmless on the Spark
+  under `max_context = 0`; live for a local whisper.cpp server or an entry that sends
+  `max_context` above 0. vid2sub could compute the ratio itself.
+- **local-ai's next deploy** (its `phase-2a`, §26.1's note): Qwen3.6 becomes the always-loaded
+  model and Gemma goes on demand, so §11's Gemma rows, the README and the catalog (`make readme`)
+  need updating then; Whisper large-v3 arrives on demand, for the Japanese routing item; and the
+  Spark's Qwen3-ASR is a by-hand service that looped on TV drama, so S22 still waits.
 - **Open for Dan since 2026-10-14** (§28): no embedded YouTube player in v1; Intel Macs
   unsupported.
 - **The workflow's own gaps:** plan-driven-development hasn't built its git hooks, its leak check
@@ -164,6 +173,11 @@ test names.
   replacement) (Phase 2, Task 6).
 - 2026-11-04: §13.4 says an imported line (no `src`) is never stale and Retranslate stale never
   replaces it ([Q&A item 45](2026-10-14-vid2sub-qa.md)) (Phase 2, Task 7).
+- 2026-11-10: §9.3 sends a transcription model's `request_extra` with each chunk, and §5.1's
+  `spark-turbo` sets `max_context = 0`, since whisper.cpp otherwise loops on long chunks of TV
+  drama; the cost, accepted, is that the Spark's whisper.cpp ignores the prompt, so a glossary
+  helps only translation there (§8.7, §16) ([Q&A item 55](2026-10-14-vid2sub-qa.md)); §26.1 gains
+  local-ai's status.
 
 ## Contents
 
@@ -413,6 +427,7 @@ endpoint = "spark"
 model = "whisper-large-v3-turbo"          # the name the server knows
 parser = "whisper.cpp"                    # response shape (§9.2)
 local = true                              # valid only because spark's host is in local_hosts
+request_extra = { max_context = 0 }       # form fields sent with each chunk (§9.3)
 
 [models.spark-gemma]
 catalog = "gemma-4-26b-a4b"
@@ -727,7 +742,9 @@ threshold used, and finished chunks are cached per threshold (§8.9).
   chunk's detected language is recorded in `meta` only.
 - **Prompt per chunk:** the glossary's terms (§16), then the previous chunk's last ~200
   characters, unless that chunk was flagged as hallucinated. Whisper prompts are truncated to fit
-  its 224-token prompt window, glossary first.
+  its 224-token prompt window, glossary first. The Spark's whisper.cpp ignores it under
+  `max_context = 0` (§9.3). *(2026-11-10: "flagged" here is a compression ratio over 2.4, which
+  whisper.cpp never reports, so a whisper.cpp chunk's text always goes on; Open items.)*
 
 ### 8.8 Preview copy
 
@@ -801,8 +818,12 @@ Parsers, each with recorded fixtures (§22.3):
 One engine for every OpenAI-shaped `/v1/audio/transcriptions` server: the Spark's whisper.cpp
 (through llama-swap), OpenAI, a local whisper.cpp server, or `mlx-qwen3-asr serve`. The `parser`
 field (§5.1) picks the response parser. Requests send `language`, `prompt`,
-`response_format=verbose_json` and, for OpenAI, `timestamp_granularities[]`. Responses' model
-headers are recorded (§9.6).
+`response_format=verbose_json`, for OpenAI `timestamp_granularities[]`, and the model entry's
+`request_extra` as further form fields. The Spark's whisper.cpp gets `max_context = 0` that way,
+which stops a long chunk looping on its own earlier text and also makes it ignore the prompt, so a
+glossary doesn't reach it ([Q&A item 55](2026-10-14-vid2sub-qa.md)). A `vid2sub.toml` made before
+2026-11-10 gets it by adding `request_extra = { max_context = 0 }` under `[models.spark-turbo]`.
+Responses' model headers are recorded (§9.6).
 
 ### 9.4 `mlx-qwen3-asr` in-process (Mac)
 
@@ -863,7 +884,7 @@ vid2sub.toml".
 |---|---|---|---|
 | `qwen3-asr-1.7b` (+ ForcedAligner-0.6B) | Mandarin, Cantonese (Qwen's numbers: WenetSpeech-Yue long 8.85 vs Whisper large-v3's 46.64; Cantonese dialogue 4.12 vs 31.04); strong English; Hong Kong and Guangdong accents; vocabulary context | Japanese supported, no published benchmark | Mac (`mlx-qwen3-asr`); the Spark once local-ai serves it (§26.1) |
 | `qwen3-asr-0.6b` | the same, lighter | less accurate | Mac |
-| `whisper-large-v3` | Japanese (until compared with Qwen3-ASR), 99 languages, vocabulary prompt | slower than turbo; poor on Cantonese | Windows/Linux (`faster-whisper`); the Spark if local-ai adds it |
+| `whisper-large-v3` | Japanese (until compared with Qwen3-ASR), 99 languages, vocabulary prompt (not on the Spark's whisper.cpp under `max_context = 0`, §9.3) | slower than turbo; poor on Cantonese | Windows/Linux (`faster-whisper`); the Spark if local-ai adds it |
 | `whisper-large-v3-turbo` | English → English captions, quick drafts | weaker on Cantonese and tonal languages; no translate task | the Spark (resident); Windows/Linux |
 | `openai-whisper-1` | cloud fallback, any language | 25 MB per request (chunks fit); cloud opt-in | OpenAI |
 | `gemma-4-26b-a4b` (translation) | Japanese → English, general; always loaded on the Spark, two slots | | the Spark |
@@ -1155,7 +1176,9 @@ description = "Detective Conan, a Japanese anime about a teenage detective"
 ```
 
 - **Transcription:** the source-side terms become Whisper's prompt (a comma-joined list, never
-  instructions; `audio-router`'s lesson) or Qwen3-ASR's context.
+  instructions; `audio-router`'s lesson) or Qwen3-ASR's context. The Spark's whisper.cpp ignores
+  the prompt under `max_context = 0` (§9.3, [Q&A item 55](2026-10-14-vid2sub-qa.md)), so there the
+  glossary helps translation only.
 - **Translation:** the description and term pairs go into the system prompt.
 - Its hash goes into translation versions and staleness (§13.4).
 - It is user content, so editor saves write it with `safe_write()` and only in a folder the user
@@ -1601,6 +1624,14 @@ Parakeet and local Qwen3-ASR on CUDA; embedded MKV subtitle tracks; YouTube's pl
 ### 26.1 For local-ai's plan (paste-ready; Dan decides)
 
 *From vid2sub's design (2026-10-14), relevant to the Backlog's "subtitles and translation".*
+
+*(2026-11-10, local-ai's status, on its `phase-2a` branch: item 5, DTW, is still open. Item 7 is
+built as a by-hand speech service outside local-ai's gate, not an engine kind, and on a Mandarin
+TV drama Qwen3-ASR looped and missed dialogue, so it isn't relied on. Item 8, Whisper large-v3, is
+in local-ai's registry on demand from its next deploy, for Japanese and Korean. Item 9: Qwen3.6
+becomes local-ai's always-loaded chat model at that deploy, with two slots, and Gemma goes on
+demand. New: from that deploy, whisper-server runs with `--max-context 0` for every client,
+the other half of [Q&A item 55](2026-10-14-vid2sub-qa.md).)*
 
 1. **Batch whisper (Phase 3):** give it a role of its own (`stt-batch`), and have render pick
    Open WebUI's speech model by the `stt` role rather than "exactly one transcription model"
