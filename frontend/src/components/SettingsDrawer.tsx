@@ -17,11 +17,10 @@ export type DefaultsChange = { targets: string[] } | { formats: SessionDefaults[
  * field outside any form, which browsers and password managers are asked to leave alone (a
  * password manager may still offer to keep it); its text is the DOM's alone, never React state
  * or a value attribute, and is cleared once sent and when the drawer closes. Use waits for a
- * connection, since a message sent while there is none stays queued in the page. The session's
- * defaults (targets,
- * formats) are for this launch, never written (§5.4); the cue rules are shown as built, since
- * nothing can change them yet (Decision 21); Copy settings gives the [defaults] table as TOML,
- * never a key. Every name, address and server answer is plain text (§6.3). */
+ * connection, since a message sent while there is none stays queued in the page; so do Test and
+ * the defaults. The session's defaults (targets, formats) are for this launch, never written
+ * (§5.4); the cue rules are shown as built, since nothing can change them yet (Decision 21);
+ * Copy settings gives the [defaults] table as TOML, never a key. Every name, address and server answer is plain text (§6.3). */
 export function SettingsDrawer({ open, onClose, connected, settings, tests, onTest, onTypedKey, onDefaults }: {
   open: boolean;
   onClose: () => void;
@@ -56,7 +55,7 @@ export function SettingsDrawer({ open, onClose, connected, settings, tests, onTe
               ))}
             </ul>
           </section>
-          <Defaults settings={settings} onDefaults={onDefaults} />
+          <Defaults settings={settings} connected={connected} onDefaults={onDefaults} />
           <section aria-labelledby="settings-rules" className="flex flex-col gap-1">
             <h3 id="settings-rules" className="font-bold">Cue rules</h3>
             <p className="text-muted-foreground">Cue rules can't be changed yet.</p>
@@ -116,7 +115,7 @@ function Endpoint({ endpoint: e, open, connected, test, onTest, onTypedKey }: {
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-bold">{e.name}</span>
         <span className="text-muted-foreground">{e.local ? "local" : "cloud"}</span>
-        <button type="button" className={`${button} ml-auto`} onClick={() => onTest(e.name)} disabled={test === "testing"} data-testid={`test-${e.name}`}>
+        <button type="button" className={`${button} ml-auto`} onClick={() => onTest(e.name)} disabled={test === "testing" || !connected} data-testid={`test-${e.name}`}>
           {test === "testing" ? "Testing…" : "Test"}
         </button>
       </div>
@@ -151,7 +150,7 @@ function Endpoint({ endpoint: e, open, connected, test, onTest, onTypedKey }: {
   );
 }
 
-function Defaults({ settings, onDefaults }: { settings: SettingsView; onDefaults: (change: DefaultsChange) => void }) {
+function Defaults({ settings, connected, onDefaults }: { settings: SettingsView; connected: boolean; onDefaults: (change: DefaultsChange) => void }) {
   const { targets, formats } = settings.defaults;
   const order = settings.targets.map((t) => t.key);
   return (
@@ -163,14 +162,14 @@ function Defaults({ settings, onDefaults }: { settings: SettingsView; onDefaults
         {settings.targets.map((t) => (
           <label key={t.key} className="flex items-center gap-1">
             <input type="checkbox" className="size-4 accent-(--primary)" checked={targets.includes(t.key)}
-              disabled={targets.length === 1 && targets.includes(t.key)}
+              disabled={!connected || (targets.length === 1 && targets.includes(t.key))}
               onChange={(ev) => onDefaults({ targets: withTarget(targets, t.key, ev.target.checked, order) })} data-testid={`target-${t.key}`} />
             {t.label}
           </label>
         ))}
       </fieldset>
       <label className="flex items-center gap-1">
-        <input type="checkbox" className="size-4 accent-(--primary)" checked={formats.includes("ass")}
+        <input type="checkbox" className="size-4 accent-(--primary)" checked={formats.includes("ass")} disabled={!connected}
           onChange={(ev) => onDefaults({ formats: ev.target.checked ? ["srt", "ass"] : ["srt"] })} data-testid="default-ass" />
         ASS too (SRT is always written)
       </label>

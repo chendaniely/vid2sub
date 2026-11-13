@@ -18,9 +18,9 @@ const VIEW: SettingsView = {
   toml: '[defaults]\ntargets = ["en"]\nformats = ["srt"]\ncache_max_gb = 20.0\n',
 };
 
-function render(view: SettingsView = VIEW): string {
+function render(view: SettingsView = VIEW, connected = true): string {
   const noop = () => undefined;
-  return renderToStaticMarkup(createElement(SettingsDrawer, { open: true, onClose: noop, connected: true, settings: view, tests: { lan: { endpoint: "lan", n: 1, ok: true, models: ["<img src=x>"], more: 0, error: null } }, onTest: noop, onTypedKey: noop, onDefaults: noop }));
+  return renderToStaticMarkup(createElement(SettingsDrawer, { open: true, onClose: noop, connected, settings: view, tests: { lan: { endpoint: "lan", n: 1, ok: true, models: ["<img src=x>"], more: 0, error: null } }, onTest: noop, onTypedKey: noop, onDefaults: noop }));
 }
 
 describe("the settings drawer (spec §19.2, S35)", () => {
@@ -53,5 +53,14 @@ describe("the settings drawer (spec §19.2, S35)", () => {
     const html = render();
     expect(html).toContain("Cue rules can&#x27;t be changed yet.");
     expect(html).toContain("cache_max_gb = 20.0");
+  });
+
+  it("sends nothing while there is no connection: Test, the targets, ASS and the key's buttons wait", () => {
+    // Task 18 fix round 1, M-2: a message sent with no socket is queued and never answered.
+    const html = render(VIEW, false);
+    for (const id of ["test-lan", "target-ja", "default-ass", "use-key-lan", "forget-key-lan"]) {
+      expect(html).toMatch(new RegExp(`<[^>]*disabled=""[^>]*data-testid="${id}"|<[^>]*data-testid="${id}"[^>]*disabled=""`));
+    }
+    expect(render(VIEW, true)).not.toMatch(/disabled=""[^>]*data-testid="(test-lan|target-ja|default-ass)"/);
   });
 });

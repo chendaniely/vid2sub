@@ -13,11 +13,10 @@ covers; an imported line (no `src`) is never stale and covers the source cues it
 probe's container and codec names, which the browser's canPlayType is asked about (§8.2). It
 names each track's head rendition, by which the tab keys its crash-recovery draft (§14.5, S34),
 and the formats Save writes: ASS too where one was written before (§15.2) or the session's
-defaults ask. A track in conflict
-lists its versions, and the cues where they differ, so the person can tell which holds what
-(§14.4, S32). The server runs in Pages too (§21), so this module imports only pure packages and
-`web.episode` at its top; the status views' config and keys are the local engine's, imported only
-where they are used (Task 14 round 14a).
+defaults ask. A track in conflict lists its versions, and the cues where they differ, so the
+person can tell which holds what (§14.4, S32). The server runs in Pages too (§21), so this
+module imports only pure packages and `web.episode` at its top; the status views' config and
+keys are the local engine's, imported only where they are used (Task 14 round 14a).
 """
 
 from __future__ import annotations

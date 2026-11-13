@@ -59,7 +59,7 @@ def open_settings(page):
 
 
 def test_the_drawer_shows_the_toml_read_only_tests_endpoints_and_takes_a_typed_key(
-        launch, open_page, servers, tmp_path, context):
+        launch, open_page, servers, tmp_path):
     spark, lan = servers
     server = launch(tmp_path / "server", toml=toml(spark.url, lan.url))
     watched = open_page(server)
@@ -145,3 +145,28 @@ def test_the_sessions_defaults_reach_every_tab_and_copy_settings_holds_them(
     expect(b.get_by_test_id("default-ass")).to_be_checked()
     for watched in (first, second):
         assert watched.errors == [] and watched.violations() == []
+
+
+def test_a_key_used_as_the_connection_drops_is_queued_nowhere_in_the_page(
+        launch, open_page, servers, tmp_path):
+    # Task 18 fix round 1, I-2: shiny.js queues every message sent with no socket in
+    # $pendingMessages, and vid2sub never reconnects, so a key queued there stays in the page's
+    # heap. Use is clicked from the shiny:disconnected handler, 0 ms after the socket closes,
+    # before the page has even rendered the "lost" banner.
+    spark, lan = servers
+    server = launch(tmp_path / "server", toml=toml(spark.url, lan.url))
+    watched = open_page(server)
+    page = watched.page
+    open_settings(page)
+    page.get_by_test_id("typed-key-lan").fill(KEY)
+    page.evaluate("""() => {
+        window.jQuery(document).on("shiny:disconnected", () => {
+            document.querySelector('[data-testid="use-key-lan"]').click();
+        });
+        window.Shiny.shinyapp.$socket.close();
+    }""")
+    expect(page.get_by_test_id("lost")).to_be_visible()
+    page.wait_for_timeout(600)  # past the debounce and batch tasks that follow the click
+    queued = page.evaluate("() => JSON.stringify(window.Shiny.shinyapp.$pendingMessages)")
+    assert KEY not in queued and "typed_key" not in queued
+    assert lan.requests == []

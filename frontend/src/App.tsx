@@ -10,6 +10,7 @@ import { randomHex, shownIds } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { retranslateNotice } from "@/lib/retranslate";
 import { pacer } from "@/lib/sends";
+import { dropQueuedKeys, pageConnected } from "@/lib/shinyPage";
 import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
 import type { AppliedMessage, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
 
@@ -268,8 +269,12 @@ export default function App() {
   });
   const onTypedKey = (endpoint: string, key: string) => {
     const n = ++sent.current;
-    pace(() => setTypedKey({ endpoint, key, n }));
+    // With no socket the key is dropped, not queued: shiny.js would hold it in $pendingMessages
+    // for good (vid2sub never reconnects). A message set now reaches $sendMsg a debounce and a
+    // batch later, so the queue is scrubbed again after those, whenever the socket is gone.
+    pace(() => { if (pageConnected()) setTypedKey({ endpoint, key, n }); });
     pace(() => setTypedKey(null));
+    for (const ms of [0, 50, 250]) setTimeout(() => { if (!pageConnected()) dropQueuedKeys(); }, ms);
   };
   const onTest = (endpoint: string) => {
     setTests((t) => ({ ...t, [endpoint]: "testing" }));
@@ -303,7 +308,12 @@ export default function App() {
 
   // The websocket closed: ask the engine once why, and say so; never reconnect (Review Focus 5).
   const [lost, setLost] = useState<Lost | null>(null);
+  // Set the moment shiny.js says the socket closed, before `whyLost` has answered: the drawer
+  // sends nothing in that gap, and what shiny.js queued meanwhile goes (I-2).
+  const [disconnected, setDisconnected] = useState(false);
   const check = useCallback(() => {
+    setDisconnected(true);
+    dropQueuedKeys();
     void whyLost((input, init) => window.fetch(input, init)).then(setLost);
   }, []);
   useEffect(() => {
@@ -318,7 +328,7 @@ export default function App() {
   return (
     <div className="flex h-dvh flex-col" data-testid="app">
       <TopBar capabilities={capabilities} status={status} onSettings={capabilities?.generate ? () => setSettingsOpen(true) : undefined} />
-      <SettingsDrawer open={settingsOpen && Boolean(settings)} onClose={() => setSettingsOpen(false)} connected={lost === null} settings={settings ?? null}
+      <SettingsDrawer open={settingsOpen && Boolean(settings)} onClose={() => setSettingsOpen(false)} connected={!disconnected && lost === null} settings={settings ?? null}
         tests={tests} onTest={onTest} onTypedKey={onTypedKey} onDefaults={onDefaults} />
       {lost && (
         // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
