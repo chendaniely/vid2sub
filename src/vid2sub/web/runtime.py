@@ -28,7 +28,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from vid2sub.web.settings import Defaults, Session
+from vid2sub.web.settings import Defaults, EndpointError, Session
 
 if TYPE_CHECKING:
     from vid2sub.cache import Cache
@@ -133,7 +133,6 @@ class Runtime:
         from vid2sub.engines import clients
         from vid2sub.engines.base import EngineError
         from vid2sub.security import redact
-        from vid2sub.web.settings import EndpointError
 
         try:
             return clients.list_models(name, self.config.endpoints[name], self.keys,

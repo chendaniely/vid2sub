@@ -512,7 +512,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             await notice(session, "error", NO_ENDPOINT)  # never echoes the name sent
             return
         try:
-            found = await runtime.blocking(rt.endpoint_models, name)
+            listed = await runtime.blocking(rt.endpoint_models, name)
         except EndpointError as err:
             result = {"ok": False, "models": [], "more": 0,
                       "error": str(err) + (f" → {err.hint}" if err.hint else "")}
@@ -521,7 +521,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             result = {"ok": False, "models": [], "more": 0,
                       "error": "something went wrong; see the log"}
         else:
-            models, more = models_shown(found)
+            models, more = models_shown(listed)
             result = {"ok": True, "models": models, "more": more, "error": None}
         await shinyreact.send_message(session, "endpoint_test_result",
                                       {"endpoint": name, "n": n, **result})

@@ -126,10 +126,10 @@ def change_defaults(current: Defaults, request: object) -> Defaults:
 
 def enter_key(config: Config, keys: KeyRing, request: object) -> str:
     """Keeps a typed key for this run (§5.3), or with `"key": ""` forgets it: `{"endpoint":
-    name, "key": str, "n": int}`. Only for an endpoint that allows one; BadSetting otherwise,
-    and for a key that isn't one line of printable ASCII, up to MAX_KEY characters. Returns what
-    to tell the person, which never holds the key. A key is KEY_SHAPE: anything else, a space,
-    a quote or a backslash included, is refused, so it can't hide from redact() in an error."""
+    name, "key": str, "n": int}`. Only for an endpoint that allows one; BadSetting otherwise.
+    A key is KEY_SHAPE (8 to 1,024 of A-Z a-z 0-9 . _ ~ + / = : -): anything else, a space, a
+    quote or a backslash included, is refused, so it can't hide from redact() in an error.
+    Returns what to tell the person, which never holds the key."""
     if not isinstance(request, dict):
         raise BadSetting(NO_TYPED_KEY)
     name, key = request.get("endpoint"), request.get("key")
