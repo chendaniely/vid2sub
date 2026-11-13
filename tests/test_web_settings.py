@@ -108,6 +108,32 @@ def test_copy_settings_loads_back_with_m1s_config_giving_the_same_defaults_and_n
     assert settings.Defaults.from_config(back) == session
 
 
+# Task 18 fix round 1, I-1: every `[defaults]` key the file set survives Copy settings. A new
+# field of config.Defaults fails the first assert until it has a sample value here.
+SAMPLES = {"targets": ["en"], "formats": ["srt"], "youtube_dir": "D:\\clips", "cache_max_gb": 7.5,
+           "vad_threshold": 0.4}
+
+
+def test_copy_settings_keeps_every_defaults_key_the_file_set(tmp_path):
+    from vid2sub.config import Defaults as FileDefaults
+
+    assert set(SAMPLES) == set(FileDefaults.model_fields)
+    cfg = config(**SAMPLES)
+    session = Defaults(("ja",), ("srt", "ass"))
+    text = settings.settings_view(cfg, KeyRing(environ={}), session)["toml"]
+    path = tmp_path / "vid2sub.toml"
+    path.write_text(text, encoding="utf-8")
+    back = load_config(path).defaults
+    assert back.model_dump(exclude={"targets", "formats"}) == \
+        cfg.defaults.model_dump(exclude={"targets", "formats"})
+    assert (back.targets, back.formats) == (["ja"], ["srt", "ass"])
+
+
+def test_copy_settings_pins_no_default_the_file_never_set(tmp_path):
+    text = settings.settings_view(config(), KeyRing(environ={}), Defaults())["toml"]
+    assert "cache_max_gb" not in text and "vad_threshold" not in text and "youtube_dir" not in text
+
+
 def test_a_typed_key_is_kept_only_for_an_endpoint_that_allows_one_and_never_echoed():
     keys = KeyRing(environ={})
     assert settings.enter_key(config(), keys, {"endpoint": "lan", "key": KEY, "n": 1}) == \

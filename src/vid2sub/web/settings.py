@@ -187,15 +187,30 @@ def settings_view(config: Config, keys: KeyRing, defaults: Defaults) -> dict[str
 
 def settings_toml(config: Config, defaults: Defaults) -> str:
     """Copy settings (§5.4): vid2sub.toml's `[defaults]` table with the session's targets and
-    formats, and the file's other defaults as they are, so it can replace the table whole. It
-    holds no key: no endpoint is in it. Strings are written as TOML basic strings: JSON's
-    escapes are TOML's, for every control character but DEL, escaped here too (review 18c)."""
+    formats, and every other default the file set, as it set it, so the table can be replaced
+    whole (a default the file never set is left unwritten, so it isn't pinned). It holds no key:
+    no endpoint is in it. Strings are written as TOML basic strings: JSON's escapes are TOML's,
+    for every control character but DEL, escaped here too (review 18c). A field of a type this
+    can't write raises TypeError rather than being dropped (Task 18 fix round 1, I-1)."""
     lines = ["[defaults]", f"targets = {_array(defaults.targets)}",
              f"formats = {_array(defaults.formats)}"]
-    if config.defaults.youtube_dir is not None:
-        lines.append(f"youtube_dir = {_string(config.defaults.youtube_dir)}")
-    lines.append(f"cache_max_gb = {config.defaults.cache_max_gb!r}")
+    for name in type(config.defaults).model_fields:
+        value = getattr(config.defaults, name)
+        if name in ("targets", "formats") or name not in config.defaults.model_fields_set \
+                or value is None:
+            continue
+        lines.append(f"{name} = {_value(value)}")
     return "\n".join(lines) + "\n"
+
+
+def _value(value: object) -> str:
+    if isinstance(value, str):
+        return _string(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return repr(value)
+    if isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+        return _array(tuple(value))
+    raise TypeError(f"Copy settings can't write a {type(value).__name__}")
 
 
 def _string(value: str) -> str:
