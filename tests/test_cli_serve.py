@@ -455,6 +455,63 @@ def test_a_signal_before_uvicorns_own_handlers_still_stops_the_engine(tmp_path, 
     assert done.returncode == code, done.stdout + done.stderr
 
 
+# Task 18 fix round 1, I-3: once uvicorn has handed the signals back, asyncio.run waits for the
+# default executor's threads (shutdown_default_executor), and a further Ctrl-C must end that wait
+# (uvicorn's double-Ctrl-C contract). `runtime.blocking` runs every Test, retranslation batch and
+# playback audio on such a thread. This child holds one for 60 s.
+HELD_THREAD = r"""
+import asyncio
+import time
+
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+
+from vid2sub.commands import serve
+from vid2sub.commands._common import Output
+from vid2sub.web import auth
+
+
+async def hold(request):
+    await asyncio.to_thread(time.sleep, 60)
+    return PlainTextResponse("done")
+
+
+sock = serve.bind(0)
+print("PORT", sock.getsockname()[1], flush=True)
+raise SystemExit(serve.serve(Starlette(routes=[Route("/hold", hold)]), sock,
+                             token=auth.new_token(), open_browser=False, out=Output(False)))
+"""
+
+
+@POSIX
+def test_a_further_ctrl_c_ends_the_engine_while_a_worker_thread_still_runs(tmp_path):
+    proc = subprocess.Popen([sys.executable, "-c", HELD_THREAD], stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True,
+                            env={**os.environ, "TMPDIR": str(tmp_path)})
+    try:
+        port = int(next(line.split()[1] for line in proc.stdout if line.startswith("PORT")))
+        next(line for line in proc.stdout if "Ctrl-C stops" in line)
+        with socket.create_connection(("127.0.0.1", port), timeout=10) as held:
+            held.sendall(b"GET /hold HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            time.sleep(1)  # the route has its thread
+            began = time.monotonic()
+            proc.send_signal(signal.SIGINT)
+            time.sleep(serve.GRACE + 1)  # uvicorn gave up on the response; asyncio now waits
+            while proc.poll() is None and time.monotonic() - began < 10:
+                proc.send_signal(signal.SIGINT)
+                time.sleep(1)
+        code = proc.poll()
+        if code is None:
+            pytest.fail("a further Ctrl-C didn't end the engine while a worker thread ran")
+        assert code == exitcodes.OK
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        proc.stdout.close()
+
+
 @POSIX
 @pytest.mark.parametrize(("args", "toml"), [((), "[server]\nopen_browser = false\n"),
                                             (("--no-browser",), "")])

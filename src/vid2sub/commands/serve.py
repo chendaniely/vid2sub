@@ -11,13 +11,17 @@ false`, is opened on that redirect file (mode 0600 in a private folder), so `ps`
 path. A browser that doesn't come back doesn't hold up the engine: it is opened from a thread, as
 Jupyter does, and by a helper process with the §6.7 environment, so the opener never
 inherits the engine's keys. The folder goes when the engine stops, on Ctrl-C and SIGTERM too.
-From before the port is printed, those signals only note themselves and ask uvicorn to stop: a
-handler that raised (Python's own Ctrl-C handler, or `sys.exit`) could be dropped, since Python
-discards an exception raised inside a weakref callback or a `__del__`, and the engine then served
-on (CI, 2026-11-11; Task 18). uvicorn's own handlers take over while it serves and hand the
-signals back when it stops; SIGTERM then ends in a normal exit with status 143, so `finally` and
-atexit run (recordings' __main__ exits so too; Windows' Ctrl-Break likewise), and Ctrl-C in
-status 0. Shutdown waits at most 3 seconds for open responses, since a
+Until uvicorn's own handlers are in, those signals only note themselves and ask uvicorn to
+stop: a handler that raised (Python's own Ctrl-C handler, or `sys.exit`) could be dropped, since
+Python discards an exception raised inside a weakref callback or a `__del__`, and the engine then
+served on (CI, 2026-11-11; Task 18). uvicorn's handlers take over while it serves and hand the
+signals back when it stops; asyncio then waits for the worker threads a Test, a retranslation
+or the playback audio may hold (up to minutes), so from that point the signals raise again, as
+before: a further Ctrl-C ends the wait (Task 18 fix round 1, I-3; a raise lost to a weakref
+callback there costs only that one press). SIGTERM then ends in a normal exit with status 143,
+so `finally` and atexit run (recordings' __main__ exits so too; Windows' Ctrl-Break likewise),
+and Ctrl-C in status 0.
+Shutdown waits at most 3 seconds for open responses, since a
 paused video holds its stream open. uvicorn's access log is off and it trusts no proxy
 headers, since none is in front of it; the openai, httpx and chatlas loggers stay at WARNING,
 as for every command (§6.8, §6.2).
@@ -33,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import contextlib
 import os
 import shutil
 import signal
@@ -40,6 +45,7 @@ import socket
 import subprocess
 import sys
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -58,7 +64,7 @@ GRACE = 3  # seconds a shutdown waits for open responses before it cancels them
 # The signals that end in status 128 + the signal, through `finally` and atexit, where their
 # default action would skip both: SIGTERM everywhere, Ctrl-Break on Windows. Ctrl-C ends in 0.
 _EXIT_SIGNALS = [signal.SIGTERM] + ([signal.SIGBREAK] if hasattr(signal, "SIGBREAK") else [])
-_STOP_SIGNALS = [signal.SIGINT, *_EXIT_SIGNALS]  # noted, never raised: see the module docstring
+_STOP_SIGNALS = [signal.SIGINT, *_EXIT_SIGNALS]  # only noted until uvicorn hands them back
 # SIGHUP (the terminal window closing) has no handler in uvicorn; it is sent down SIGTERM's path,
 # unless it was ignored on entry: `nohup vid2sub serve &` asks to outlive its terminal.
 _HANGUP = getattr(signal, "SIGHUP", None)  # Windows has none
@@ -189,7 +195,20 @@ def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
     from vid2sub.web import auth
 
     port = sock.getsockname()[1]
-    server = uvicorn.Server(uvicorn_config(app))
+    class Server(uvicorn.Server):
+        @contextlib.contextmanager
+        def capture_signals(self) -> Iterator[None]:
+            """uvicorn's, and when it has handed the signals back (and replayed any it caught
+            to `note`), a further Ctrl-C or SIGTERM raises again, so it can end asyncio's wait
+            for worker threads (uvicorn 0.54 `serve`; Python 3.14 `Runner.close`)."""
+            with super().capture_signals():
+                yield
+            if threading.current_thread() is threading.main_thread():
+                signal.signal(signal.SIGINT, signal.default_int_handler)
+                for sig in _EXIT_SIGNALS:
+                    signal.signal(sig, _exit_on_signal)
+
+    server = Server(uvicorn_config(app))
     seen: list[int] = []
 
     def note(signum: int, frame: object) -> None:
@@ -219,7 +238,10 @@ def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
         if open_browser:
             threading.Thread(target=_open, args=(page, out), name="vid2sub-browser",
                              daemon=True).start()
-        server.run(sockets=[sock])  # its handlers hand each signal back to `note` as it ends
+        try:
+            server.run(sockets=[sock])  # its handlers hand each signal back to `note` as it ends
+        except KeyboardInterrupt:  # a further Ctrl-C while asyncio waited for worker threads
+            pass
         ended_by = next((sig for sig in seen if sig in _EXIT_SIGNALS), None)
         if ended_by is not None:
             raise SystemExit(128 + ended_by)
@@ -240,6 +262,10 @@ def uvicorn_config(app: ASGIApp) -> uvicorn.Config:
 
     return uvicorn.Config(app, access_log=False, proxy_headers=False, server_header=False,
                           log_level="warning", lifespan="on", timeout_graceful_shutdown=GRACE)
+
+
+def _exit_on_signal(signum: int, frame: object) -> None:
+    raise SystemExit(128 + signum)  # through `finally` and atexit, which the default action skips
 
 
 def _hangup_as_sigterm(signum: int, frame: object) -> None:
