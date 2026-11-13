@@ -16,6 +16,11 @@ describe("the top bar (spec §19.2)", () => {
     expect(renderToStaticMarkup(createElement(TopBar, { capabilities: browser }))).toContain("Browser editor");
   });
 
+  it("offers Settings only where the engine has settings", () => {
+    expect(renderToStaticMarkup(createElement(TopBar, {}))).not.toContain("open-settings");
+    expect(renderToStaticMarkup(createElement(TopBar, { onSettings: () => undefined }))).toContain('data-testid="open-settings"');
+  });
+
   it("names each endpoint's reach and key in words", () => {
     expect(endpointLabel({ name: "spark", local: true, key: "present", reachable: true })).toBe("spark: reachable, key set");
     expect(endpointLabel({ name: "spark", local: true, key: "missing", reachable: false })).toBe("spark: not reachable, key missing");

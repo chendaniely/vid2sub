@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Editor, type Requests, type Saving } from "@/components/Editor";
 import { resultNotices } from "@/components/SaveBar";
+import { type DefaultsChange, SettingsDrawer } from "@/components/SettingsDrawer";
 import { TopBar } from "@/components/TopBar";
 import { LOST_MESSAGES, type Lost, whyLost } from "@/lib/connection";
 import { type DraftStep, type Offer, type Replay, addStep, clearDraft, draftKey, draftStorage, dropStep, followHeads, heard, loadDraft, moveDraft, offersFor, replayable, tabId, tabStorage, trimSaved } from "@/lib/draft";
@@ -10,7 +11,7 @@ import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { retranslateNotice } from "@/lib/retranslate";
 import { pacer } from "@/lib/sends";
 import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
-import type { AppliedMessage, Busy, Capabilities, EditOp, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, Status } from "@/types";
+import type { AppliedMessage, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
 
 type Ask = { episode: string; n: number };
 type Step = { edit: EditOp } | { undo: true } | { redo: true };
@@ -30,6 +31,7 @@ export default function App() {
   const episode = useShinyOutputValue<EpisodeView | null>("episode");
   const busy = useShinyOutputValue<Busy>("busy");
   const progress = useShinyOutputValue<Progress>("progress");
+  const settings = useShinyOutputValue<SettingsView | null>("settings");
   // Every input is set from here too. Each request carries a count, so the same path asked for
   // twice is still two requests. `debounceMs: 0` is still a trailing timer: two values set in one
   // task send only the last.
@@ -41,6 +43,9 @@ export default function App() {
   const setSave = useSetShinyInput<(Ask & { formats: ("srt" | "ass")[] }) | null>("save", null, { priority: "event", debounceMs: 0 });
   const setResolve = useSetShinyInput<(Ask & { track: string; rendition: string }) | null>("resolve", null, { priority: "event", debounceMs: 0 });
   const setRetranslate = useSetShinyInput<(Ask & { track: string; ids: string[] | null; allow_cloud: boolean }) | null>("retranslate", null, { priority: "event", debounceMs: 0 });
+  const setTypedKey = useSetShinyInput<{ endpoint: string; key: string; n: number } | null>("typed_key", null, { priority: "event", debounceMs: 0 });
+  const setEndpointTest = useSetShinyInput<{ endpoint: string; n: number } | null>("endpoint_test", null, { priority: "event", debounceMs: 0 });
+  const setDefaults = useSetShinyInput<(DefaultsChange & { n: number }) | null>("session_defaults", null, { priority: "event", debounceMs: 0 });
   const sent = useRef(0);
   // One request per task, in order: shinyreact's debounce keeps only the last value set in a task.
   const pace = useMemo(() => pacer(), []);
@@ -252,6 +257,30 @@ export default function App() {
     onDiscard: dropOffers,
   };
 
+  // The settings drawer (spec §19.2, S35). A typed key is sent once, and null straight after, in
+  // a task of its own: Shiny's input map on the server, its copy in the page, and shinyreact's
+  // keep each input's last value, and the null replaces the key in all three (§5.3). It is never
+  // kept anywhere else in the page: not in state, storage, the draft or a notice.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tests, setTests] = useState<Record<string, EndpointTestResult | "testing">>({});
+  useShinyMessageHandler("endpoint_test_result", (r: EndpointTestResult) => {
+    if (typeof r?.endpoint === "string") setTests((t) => ({ ...t, [r.endpoint]: r }));
+  });
+  const onTypedKey = (endpoint: string, key: string) => {
+    const n = ++sent.current;
+    pace(() => setTypedKey({ endpoint, key, n }));
+    pace(() => setTypedKey(null));
+  };
+  const onTest = (endpoint: string) => {
+    setTests((t) => ({ ...t, [endpoint]: "testing" }));
+    const n = ++sent.current;
+    pace(() => setEndpointTest({ endpoint, n }));
+  };
+  const onDefaults = (change: DefaultsChange) => {
+    const n = ++sent.current;
+    pace(() => setDefaults({ ...change, n }));
+  };
+
   // Closing the tab with unsaved edits warns first (S34): listened for only while there are
   // some, as MDN advises; preventDefault, and returnValue for older browsers.
   const dirty = (episode?.dirty ?? false) || typing;
@@ -288,7 +317,9 @@ export default function App() {
   if (!initialized && lost === null) return null; // no flash of empty defaults while connecting
   return (
     <div className="flex h-dvh flex-col" data-testid="app">
-      <TopBar capabilities={capabilities} status={status} />
+      <TopBar capabilities={capabilities} status={status} onSettings={capabilities?.generate ? () => setSettingsOpen(true) : undefined} />
+      <SettingsDrawer open={settingsOpen && Boolean(settings)} onClose={() => setSettingsOpen(false)} settings={settings ?? null}
+        tests={tests} onTest={onTest} onTypedKey={onTypedKey} onDefaults={onDefaults} />
       {lost && (
         // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
         <div role="alert" data-testid="lost" className="relative z-[99999] flex items-center gap-3 border-b border-destructive bg-card px-4 py-2 text-destructive">

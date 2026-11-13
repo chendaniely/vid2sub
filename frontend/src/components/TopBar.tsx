@@ -1,3 +1,5 @@
+import { Settings } from "lucide-react";
+
 import type { Capabilities, EndpointStatus, Status } from "@/types";
 
 import { ThemeSwitch } from "./ThemeSwitch";
@@ -15,9 +17,10 @@ export function endpointLabel(e: EndpointStatus): string {
   return `${e.name}: ${reach}${key}`;
 }
 
-/** Which engine this is (from `capabilities`, not a toggle), the engine's status, and the theme
- * switch (spec §19.2). */
-export function TopBar({ capabilities, status }: { capabilities?: Capabilities; status?: Status }) {
+/** Which engine this is (from `capabilities`, not a toggle), the engine's status, the theme
+ * switch, and Settings where the engine has settings (`onSettings`: the local engine's; spec
+ * §19.2, §21). */
+export function TopBar({ capabilities, status, onSettings }: { capabilities?: Capabilities; status?: Status; onSettings?: () => void }) {
   return (
     <header className="flex items-center gap-4 border-b border-border bg-card px-4 py-2" data-testid="topbar">
       <span className="flex items-center gap-2 font-bold">
@@ -34,6 +37,12 @@ export function TopBar({ capabilities, status }: { capabilities?: Capabilities; 
         </ul>
       )}
       <ThemeSwitch />
+      {onSettings && (
+        <button type="button" className="flex items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" onClick={onSettings} aria-haspopup="dialog" data-testid="open-settings">
+          <Settings aria-hidden className="size-4" />
+          Settings
+        </button>
+      )}
     </header>
   );
 }

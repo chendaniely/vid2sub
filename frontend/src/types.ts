@@ -18,6 +18,47 @@ export type EndpointStatus = {
 
 export type Status = { endpoints: EndpointStatus[]; ffmpeg: boolean };
 
+/** One endpoint as vid2sub.toml declares it, for the settings drawer (spec §19.2): its key by
+ * presence only, and whether a key typed this session is in use (§5.3); never a key's value. */
+export type EndpointSetting = {
+  name: string;
+  base_url: string;
+  local: boolean;
+  key_env: string | null;
+  key: "present" | "missing" | "none";
+  allow_typed_key: boolean;
+  typed: boolean;
+};
+
+export type ModelSetting = {
+  name: string;
+  task: "transcribe" | "translate";
+  catalog: string | null;
+  endpoint: string | null;
+  engine: string | null;
+  model: string | null;
+  local: boolean;
+};
+
+/** A language's cue rules as built (spec §12.2), shown read-only (Phase 2 Decision 21). */
+export type CueRuleSetting = { lang: string; label: string; max_width: number; max_lines: number; cps: number; min_ms: number; max_ms: number };
+
+export type SessionDefaults = { targets: string[]; formats: ("srt" | "ass")[] };
+
+/** The `settings` output: web/settings.py's settings_view, or null where there are no endpoints
+ * (the Pages editor). `toml` is Copy settings: the [defaults] table, never a key. */
+export type SettingsView = {
+  endpoints: EndpointSetting[];
+  models: ModelSetting[];
+  defaults: SessionDefaults;
+  targets: { key: string; label: string }[];
+  rules: CueRuleSetting[];
+  toml: string;
+};
+
+/** The `endpoint_test_result` message: what an endpoint's /v1/models said, or why it failed. */
+export type EndpointTestResult = { endpoint: string; n: number | null; ok: boolean; models: string[]; more: number; error: string | null };
+
 /** The `notice` message: something to tell the person, as plain text. */
 export type Notice = { kind: "info" | "error"; text: string };
 
