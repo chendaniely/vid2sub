@@ -438,7 +438,9 @@ def _candidates_that_work(ctx: RunContext, pick: Callable[[list], str | None]) -
         ctx.candidates = fresh
         if _waits_for(fresh, pick):
             raise EngineError("connection", "the model server isn't reachable",
-                              hint="is it running? For the Spark: is `make tunnel` running?")
+                              hint="is it running? For the Spark: is `make tunnel` running? "
+                                   "Or choose another model with --model (`vid2sub models` "
+                                   "lists them)")
         return fresh
 
     return _retrying(look, ctx)

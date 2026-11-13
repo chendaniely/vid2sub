@@ -25,11 +25,11 @@ def test_cantonese_prefers_qwen_and_the_spark_before_the_mac():
 
 def test_an_unavailable_model_is_skipped_with_its_reason():
     candidates = [cand("spark-qwen", "qwen3-asr-1.7b", available=False,
-                       reason="Spark not reachable"),
+                       reason="the server doesn't list it"),
                   cand("spark-turbo", "whisper-large-v3-turbo")]
     s = suggest("yue", candidates, "transcribe", allow_cloud=False)
     assert s.model == "spark-turbo"
-    assert ("spark-qwen", "Spark not reachable") in s.considered
+    assert ("spark-qwen", "the server doesn't list it") in s.considered
     assert "weak" in s.warning
 
 
@@ -97,16 +97,16 @@ def test_a_weak_pairing_warns_that_the_model_is_weak():
 
 def test_an_unavailable_spark_qwen_falls_back_to_the_mac_qwen_for_cantonese():
     candidates = [cand("spark-qwen", "qwen3-asr-1.7b", available=False,
-                       reason="Spark not reachable"),
+                       reason="the server doesn't list it"),
                   cand("mac-qwen", "qwen3-asr-1.7b", kind="in-process")]
     assert suggest("yue", candidates, "transcribe", allow_cloud=False).model == "mac-qwen"
 
 
 def _mandarin_set(**down):
     return [cand("spark-large-v3", "whisper-large-v3", available="spark-large-v3" not in down,
-                 reason="Spark not reachable"),
+                 reason="the server doesn't list it"),
             cand("spark-turbo", "whisper-large-v3-turbo", available="spark-turbo" not in down,
-                 reason="Spark not reachable"),
+                 reason="the server doesn't list it"),
             cand("mac-qwen", "qwen3-asr-1.7b", kind="in-process"),
             cand("openai", "openai-whisper-1", cloud=True)]
 
@@ -131,6 +131,9 @@ def test_the_macs_local_model_comes_before_openai_even_with_allow_cloud():
     s = suggest("zh", _mandarin_set(**{"spark-large-v3": 1, "spark-turbo": 1}), "transcribe",
                 allow_cloud=True)
     assert s.model == "mac-qwen"
+
+
+def test_openai_alone_is_still_chosen_with_allow_cloud():
     only_cloud = [c for c in _mandarin_set() if c.name == "openai"]
     assert suggest("zh", only_cloud, "transcribe", allow_cloud=True).model == "openai"
 

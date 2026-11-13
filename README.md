@@ -67,7 +67,7 @@ your shell sources; on Windows, `setx NAME value` and a new terminal).
   Whisper can repeat one line over and over on long dialogue.
   In one made before 2026-11-13, add the `[models.spark-large-v3]` block from the starter file
   too: the Spark loads Whisper large-v3 on demand, and vid2sub tries it first for Mandarin,
-  Japanese and Korean there.
+  Japanese and Korean there, and for Cantonese (weak).
 - **OpenAI:** export `OPENAI_API_KEY`. Cloud models are used only on runs with `--allow-cloud`.
 - **LM Studio or Ollama** (for translation): add an endpoint with its OpenAI-compatible URL.
 
@@ -86,6 +86,12 @@ vid2sub models                                        # what can run on this mac
 ```
 
 Add `--dry-run` to `run` to see what would happen without writing anything.
+
+With no `--from`, vid2sub detects each file's language with the first model that can: the Spark's
+Whisper, else the Mac's Qwen3-ASR (the Spark's models come first, Dan's decision of 2026-11-13).
+Whisper can't tell Mandarin from Cantonese, so a Chinese file it hears is marked uncertain and
+skipped by default. For a folder in one Chinese language, pass `--from zh` (or `--from yue`), on a
+Mac as on the Spark; or pass `--on-uncertain proceed` to carry on with the guess.
 
 A `vid2sub.glossary.toml` in a show's folder helps with names (in translation everywhere, and in
 transcription except on the Spark's Whisper, which ignores the prompt):
@@ -116,17 +122,23 @@ no tunnel:
 3. Export `SPARK_API_KEY` where a non-interactive shell reads it (a service or a cron job doesn't
    source your interactive shell's startup files). `vid2sub config path` and `vid2sub models` show
    what vid2sub sees.
-4. Run a batch over the mounted folder, and rerun the same command to carry on after a stop:
+4. Run a batch over the mounted folder, and rerun the same command to carry on after a stop. For
+   a folder in one Chinese language, say which with `--from zh` or `--from yue`, as the note
+   under *Use* explains:
 
 ```bash
-vid2sub run --recursive --skip-existing <folder>
+vid2sub run --recursive --skip-existing --from zh <folder>   # Mandarin; `--from yue` for Cantonese
+vid2sub run --recursive --skip-existing <folder>             # other languages: detected
 ```
 
-The Spark's models come first: Mandarin goes to Whisper large-v3, then turbo, and the Mac's
-Qwen3-ASR only when neither answers. vid2sub waits out the front's refusals (a model loading,
-`no_fit`, a restart or a deploy) for as long as the front says. Not there yet: Cantonese is weak
-until the Spark's Qwen3-ASR arrives (Task 20, through the speech service), and the speech service
-isn't reachable from vid2sub yet.
+The Spark's models come first, for transcription and for detecting the language: Mandarin goes to
+Whisper large-v3, then turbo, and the Mac's Qwen3-ASR only when the Spark answers but serves
+neither. When the Spark doesn't answer, vid2sub waits for it, up to `--wait-on-connection` (10
+minutes by default), then stops with exit 75; rerun the same command to carry on, or pick another
+model with `--model` (`vid2sub models` lists them). It also waits out the front's refusals (a
+model loading, `no_fit`, a restart or a deploy) for as long as the front says, within that same
+limit. Not there yet: Cantonese is weak until the Spark's Qwen3-ASR arrives (Task 20, through the
+speech service), and the speech service isn't reachable from vid2sub yet.
 
 ## Models
 

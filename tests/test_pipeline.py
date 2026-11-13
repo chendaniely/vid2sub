@@ -740,3 +740,40 @@ def test_a_cancel_stops_a_run_that_is_waiting_for_its_server(clip):
     with pytest.raises(pipeline.Cancelled):
         pipeline.run_one(str(clip), ctx)
     assert len(ctx.sleeps) == 1 and len(engine.calls) == 1
+
+
+def test_a_mandarin_run_with_the_spark_unreachable_waits_and_pauses_never_taking_the_mac(
+        clip, monkeypatch):
+    # Q&A item 60: the Mac's Qwen3-ASR is for a Spark that answers without the model, never
+    # for one that doesn't answer (spec 17.4: never fall back to another model).
+    found = [Candidate("spark-large-v3", "whisper-large-v3", "endpoint", False, "down",
+                       unreachable=True),
+             Candidate("mac-qwen", "qwen3-asr-1.7b", "in-process", True)]
+    monkeypatch.setattr(detecting, "candidates", probes(found))
+    ctx = make_ctx(FakeEngine(), source_lang="zh", model=None, wait_on_connection_s=10)
+    ctx.candidates = list(found)
+    with pytest.raises(pipeline.Paused) as caught:
+        pipeline.run_one(str(clip), ctx)
+    assert caught.value.error.kind == "connection"
+    assert ctx.sleeps and "mac-qwen" not in ctx.engines
+    assert "--model" in caught.value.error.hint
+
+
+def test_a_refusal_is_waited_out_for_the_length_the_front_names(clip):
+    refusal = EngineError("refused", "the Spark refused the request: restarting",
+                          retry_after=60.0)
+    events: list = []
+    ctx = make_ctx(FakeEngine(fail=[refusal]))
+    ctx.events = lambda kind, data=None: events.append((kind, data))
+    assert pipeline.run_one(str(clip), ctx).status == "done"
+    assert 60.0 in ctx.sleeps
+    assert ("waiting", {"kind": "refused", "seconds": 60}) in events
+
+
+def test_a_refusal_longer_than_the_wait_budget_pauses_without_sleeping(clip):
+    refusal = EngineError("refused", "the Spark refused the request: held_by_brake",
+                          retry_after=300.0)
+    ctx = make_ctx(FakeEngine(fail=[refusal]), wait_on_connection_s=120)
+    with pytest.raises(pipeline.Paused) as caught:
+        pipeline.run_one(str(clip), ctx)
+    assert caught.value.error.kind == "refused" and ctx.sleeps == []

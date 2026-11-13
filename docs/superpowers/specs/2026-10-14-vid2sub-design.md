@@ -906,7 +906,10 @@ Spark, a local server), **(2)** in-process models (the Mac's Qwen3-ASR), **(3)**
 only with `--allow-cloud`. This is Dan's "Spark models first" of 2026-11-11, for all transcription
 and translation (Q&A items 57 and 59): Mandarin with `spark-large-v3`, `spark-turbo` and the Mac's
 Qwen3-ASR configured goes to large-v3, then turbo (warned weak), then the Mac; Cantonese goes to
-the Spark's Whisper (warned weak) before the Mac's Qwen3-ASR. The table gives each language's
+the Spark's Whisper (warned weak) before the Mac's Qwen3-ASR. Language detection follows the same
+groups (§10, Q&A item 61). The Mac's models are the fallback when the Spark answers without the
+model, never when it doesn't answer: an unreachable Spark is waited for (`--wait-on-connection`),
+then the run stops and a rerun carries on, as S08 and §17.4 say (Q&A item 60). The table gives each language's
 order within the groups. A Spark Qwen3-ASR, once configured (Task 20, through the speech
 service), is still first.
 
@@ -1237,8 +1240,8 @@ chunk has finished.
 - Accept a model's name or its role alias; record `x-spark-model` (§9.6).
 - On a refusal (a 409, or a 503 `gate_down`, with `error.code`): `loading`, `no_fit`,
   `held_by_brake`, `gate_down`, `restarting`, `draining` and `llama_swap_down` are waited out like
-  a dropped connection, and the queue pauses with the refusal text once `wait_on_connection_s` is
-  spent (local-ai #41; a deploy is when the last three fire). The wait is the body's top-level
+  a dropped connection, and the queue pauses, showing the refusal's code, once
+  `wait_on_connection_s` is spent (local-ai #41; a deploy is when the last three fire). The wait is the body's top-level
   `retry_after_s`, else the `Retry-After` header, else vid2sub's own backoff (local-ai #42).
   `footprint_suspect`, `load_failed` and `not_downloaded` stay failures: waiting won't fix them.
 - 429 from per-key concurrency → honour `Retry-After`.
