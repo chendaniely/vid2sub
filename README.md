@@ -104,6 +104,30 @@ Exit codes: 0 done; 1 an input failed (including a missing tool during `run`); 6
 69 `vid2sub doctor` found an essential tool missing; 75 interrupted or a connection dropped
 (run the same command with `--skip-existing`); 78 a settings problem.
 
+### On the Spark, over a folder
+
+vid2sub also runs on the DGX Spark itself (Linux, aarch64), over a mounted folder of videos, with
+no tunnel:
+
+1. Install as in *Install*: uv, then ffmpeg 6 or later from your package manager, then
+   `uv tool install --editable .` from a clone. `vid2sub doctor` checks them.
+2. Save the starter config as in *Configure*. Its `spark` endpoint already points at the front on
+   loopback, `http://127.0.0.1:9100/v1`, so nothing else changes.
+3. Export `SPARK_API_KEY` where a non-interactive shell reads it (a service or a cron job doesn't
+   source your interactive shell's startup files). `vid2sub config path` and `vid2sub models` show
+   what vid2sub sees.
+4. Run a batch over the mounted folder, and rerun the same command to carry on after a stop:
+
+```bash
+vid2sub run --recursive --skip-existing <folder>
+```
+
+The Spark's models come first: Mandarin goes to Whisper large-v3, then turbo, and the Mac's
+Qwen3-ASR only when neither answers. vid2sub waits out the front's refusals (a model loading,
+`no_fit`, a restart or a deploy) for as long as the front says. Not there yet: Cantonese is weak
+until the Spark's Qwen3-ASR arrives (Task 20, through the speech service), and the speech service
+isn't reachable from vid2sub yet.
+
 ## Models
 
 <!-- models:start -->
