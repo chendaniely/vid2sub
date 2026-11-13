@@ -93,8 +93,9 @@ def test_the_cue_rules_are_shown_as_built_and_nothing_can_change_them():
 
 
 def test_copy_settings_loads_back_with_m1s_config_giving_the_same_defaults_and_no_key(tmp_path):
-    # §5.4: the session's settings as TOML to paste into the file, never including a key.
-    cfg = config(youtube_dir='C:\\Users\\"Dan"\\動画\tclips', cache_max_gb=7.5)
+    # §5.4: the session's settings as TOML to paste into the file, never including a key. TOML
+    # allows no raw control character in a string, DEL included (review round 18c).
+    cfg = config(youtube_dir='C:\\Users\\"Dan"\\動画\tclips\x7f\x01', cache_max_gb=7.5)
     keys = KeyRing(typed={"lan": KEY}, environ={"SPARK_TEST_KEY": ENV_KEY})
     session = Defaults(("ja", "zh-Hant"), ("srt", "ass"))
     text = settings.settings_view(cfg, keys, session)["toml"]
@@ -117,7 +118,10 @@ def test_a_typed_key_is_kept_only_for_an_endpoint_that_allows_one_and_never_echo
         with pytest.raises(settings.BadSetting) as err:
             settings.enter_key(config(), keys, request)
         assert str(err.value) == settings.NO_TYPED_KEY
-    for bad in (KEY + " ", KEY + "\n", "ключ" * 10, "k" * 1025, 42, None):
+    # Review round 18c: only a key's own characters, and 8 or more of them, so redact() always
+    # finds it in an error, in any quoting a server or the SDK gives it (§6.8).
+    for bad in (KEY + " ", KEY + "\n", "ключ" * 10, "k" * 1025, 42, None, "k" * 7,
+                "k" * 20 + "\\" + "k" * 20, "k" * 20 + '"' + "k" * 20, "k" * 20 + "'"):
         with pytest.raises(settings.BadSetting) as err:
             settings.enter_key(config(), keys, {"endpoint": "lan", "key": bad})
         assert str(err.value) == settings.BAD_KEY
@@ -125,6 +129,24 @@ def test_a_typed_key_is_kept_only_for_an_endpoint_that_allows_one_and_never_echo
     assert settings.enter_key(config(), keys, {"endpoint": "lan", "key": ""}) == \
         "the typed key is forgotten"
     assert keys.typed == {}
+
+
+def test_the_sessions_defaults_start_from_the_files_targets_as_vid2sub_names_them():
+    # Review round 18c: vid2sub.toml takes a target's other names and cases (naming.target_track).
+    cfg = config(targets=["EN", "jpn", "en", "zh"], formats=["srt", "ass"])
+    assert Defaults.from_config(cfg.defaults) == Defaults(("en", "ja", "zh-Hans"), ("srt", "ass"))
+
+
+def test_no_key_is_in_a_keyrings_or_a_runtimes_repr(tmp_path):
+    # Review round 18c: a traceback or a %r would otherwise carry every key.
+    keys = KeyRing(typed={"lan": KEY}, environ={"SPARK_TEST_KEY": ENV_KEY})
+    rt = runtime.build(config(), tools=Tools(None, None, None), keys=keys,
+                       cache=Cache(tmp_path / "cache", max_bytes=0))
+    try:
+        assert KEY not in repr(keys) and ENV_KEY not in repr(keys)
+        assert KEY not in repr(rt) and ENV_KEY not in repr(rt)
+    finally:
+        rt.queue.close()
 
 
 def test_defaults_change_one_at_a_time_and_only_to_what_vid2sub_knows():
@@ -185,13 +207,15 @@ def test_test_asks_only_the_endpoints_own_origin_with_its_own_key(tmp_path):
     assert [r.headers.get("authorization") for r in spark.requests] == [f"Bearer {ENV_KEY}"]
 
 
-def test_a_test_that_fails_names_the_fix_and_never_holds_a_key(tmp_path):
+@pytest.mark.parametrize("typed", [KEY, "ab+/=:~.-_" * 4])  # the second: every symbol allowed
+def test_a_test_that_fails_names_the_fix_and_never_holds_a_key(tmp_path, typed):
     def echo(req):  # a server that puts what it was sent in its error
         return 400, {"error": {"message": f"bad request with {req.headers['authorization']}"}}, {}
 
+    keys = KeyRing(environ={})
+    settings.enter_key(config(), keys, {"endpoint": "lan", "key": typed, "n": 1})
     with FakeServer(responder=echo) as lan:
-        rt = runtime.build(config(lan=lan.url), tools=Tools(None, None, None),
-                           keys=KeyRing(typed={"lan": KEY}, environ={}),
+        rt = runtime.build(config(lan=lan.url), tools=Tools(None, None, None), keys=keys,
                            cache=Cache(tmp_path / "cache", max_bytes=0))
         try:
             with pytest.raises(settings.EndpointError) as err:
@@ -201,7 +225,7 @@ def test_a_test_that_fails_names_the_fix_and_never_holds_a_key(tmp_path):
                 rt2.endpoint_models("lan")
         finally:
             rt.queue.close()
-    assert KEY not in str(err.value) and "400" in str(err.value)
+    assert typed not in str(err.value) and "400" in str(err.value)
     assert str(down.value) == "couldn't reach the server" and "make tunnel" in down.value.hint
 
 

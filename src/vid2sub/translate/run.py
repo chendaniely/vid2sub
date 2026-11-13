@@ -93,13 +93,13 @@ def batch_prompt(batch: Batch, cues: Mapping[str, Cue], limits: Mapping[str, int
 def make_ask(name: str, entry: ModelEntry, config: Config, policy: clients.RunPolicy,
              keys: clients.KeyRing) -> AskFn:
     key_env = config.endpoints[entry.endpoint].key_env
-    secrets = keys.secrets(config)
 
     def ask(system: str, prompt: str, data_model: type[BaseModel]) -> BaseModel:
+        # The keys as they are now: a typed key can change between two batches (Phase 2 Task 18).
         chat = clients.chat(name, entry, config, policy, keys, system_prompt=system)
         return clients.call_structured(chat, prompt, data_model,
                                        extra_body=entry.request_extra or None,
-                                       key_env=key_env, secrets=secrets)
+                                       key_env=key_env, secrets=keys.secrets(config))
 
     return ask
 

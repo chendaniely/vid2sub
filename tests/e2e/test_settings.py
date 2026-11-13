@@ -80,6 +80,14 @@ def test_the_drawer_shows_the_toml_read_only_tests_endpoints_and_takes_a_typed_k
     box = page.get_by_test_id("typed-key-lan")
     expect(box).to_have_attribute("type", "password")
     expect(box).to_have_attribute("autocomplete", "off")
+    # typed but not sent, then the drawer closed: the key goes with it (review round 18c)
+    box.fill(KEY)
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    page.wait_for_function("key => !document.documentElement.outerHTML.includes(key)"
+                           " && !document.querySelector('[data-testid=typed-key-lan]').value"
+                           ".includes(key)", arg=KEY, timeout=5_000)
+    opener, dialog = open_settings(page)
     box.fill(KEY)
     page.get_by_test_id("use-key-lan").click()
     expect(box).to_have_value("")

@@ -21,6 +21,7 @@ server offers none of this there.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
@@ -35,12 +36,16 @@ if TYPE_CHECKING:  # local only: the Pages bundle has neither (spec §21)
 
 FORMATS = ("srt", "ass")
 MAX_KEY = 1024  # characters in a typed key
+# A key's own characters, 8 or more: redact() finds every value of 6 or more, and none of these
+# is quoted or escaped in an error's text (a repr, JSON), so it is found there too (review 18c).
+KEY_SHAPE = re.compile(rf"[A-Za-z0-9._~+/=:-]{{8,{MAX_KEY}}}")
 MODELS_SHOWN = 100  # model names an endpoint's Test lists, before "and N more"
 MAX_MODEL_NAME = 200  # characters of each, as a hostile server could send anything
 KEY_ENTERED = "key entered for this session"
 KEY_FORGOTTEN = "the typed key is forgotten"
 NO_TYPED_KEY = "that endpoint doesn't take a typed key: set allow_typed_key for it in vid2sub.toml"
-BAD_KEY = "a key is letters, digits and punctuation, with no spaces: nothing was kept"
+BAD_KEY = ("a key is 8 or more letters, digits and . _ ~ + / = : -, with no spaces: nothing "
+           "was kept")
 NO_ENDPOINT = "there's no such endpoint in vid2sub.toml"
 BAD_TARGETS = "pick one or more of the targets vid2sub knows"
 BAD_FORMATS = "subtitles are srt, and ass too when asked for"
@@ -69,8 +74,10 @@ class Defaults:
 
     @classmethod
     def from_config(cls, defaults: ConfigDefaults) -> Defaults:
-        return cls(tuple(defaults.targets), ("srt", "ass") if "ass" in defaults.formats
-                   else ("srt",))
+        """The file's targets by vid2sub's names for them, each once (vid2sub.toml takes other
+        names and cases: `naming.target_track`), and its formats."""
+        targets = tuple(dict.fromkeys(naming.target_track(t) for t in defaults.targets))
+        return cls(targets, ("srt", "ass") if "ass" in defaults.formats else ("srt",))
 
 
 class Session:
@@ -121,7 +128,8 @@ def enter_key(config: Config, keys: KeyRing, request: object) -> str:
     """Keeps a typed key for this run (§5.3), or with `"key": ""` forgets it: `{"endpoint":
     name, "key": str, "n": int}`. Only for an endpoint that allows one; BadSetting otherwise,
     and for a key that isn't one line of printable ASCII, up to MAX_KEY characters. Returns what
-    to tell the person, which never holds the key."""
+    to tell the person, which never holds the key. A key is KEY_SHAPE: anything else, a space,
+    a quote or a backslash included, is refused, so it can't hide from redact() in an error."""
     if not isinstance(request, dict):
         raise BadSetting(NO_TYPED_KEY)
     name, key = request.get("endpoint"), request.get("key")
@@ -131,8 +139,7 @@ def enter_key(config: Config, keys: KeyRing, request: object) -> str:
     if key == "":
         keys.typed.pop(name, None)
         return KEY_FORGOTTEN
-    if (not isinstance(key, str) or len(key) > MAX_KEY
-            or any(not "\x21" <= ch <= "\x7e" for ch in key)):
+    if not isinstance(key, str) or not KEY_SHAPE.fullmatch(key):
         raise BadSetting(BAD_KEY)
     keys.typed[name] = key
     return KEY_ENTERED
@@ -181,15 +188,19 @@ def settings_view(config: Config, keys: KeyRing, defaults: Defaults) -> dict[str
 def settings_toml(config: Config, defaults: Defaults) -> str:
     """Copy settings (§5.4): vid2sub.toml's `[defaults]` table with the session's targets and
     formats, and the file's other defaults as they are, so it can replace the table whole. It
-    holds no key: no endpoint is in it. Strings are written as TOML basic strings, which JSON's
-    escapes are (every control character escaped, non-ASCII as it is)."""
+    holds no key: no endpoint is in it. Strings are written as TOML basic strings: JSON's
+    escapes are TOML's, for every control character but DEL, escaped here too (review 18c)."""
     lines = ["[defaults]", f"targets = {_array(defaults.targets)}",
              f"formats = {_array(defaults.formats)}"]
     if config.defaults.youtube_dir is not None:
-        lines.append(f"youtube_dir = {json.dumps(config.defaults.youtube_dir, ensure_ascii=False)}")
+        lines.append(f"youtube_dir = {_string(config.defaults.youtube_dir)}")
     lines.append(f"cache_max_gb = {config.defaults.cache_max_gb!r}")
     return "\n".join(lines) + "\n"
 
 
+def _string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
 def _array(values: tuple[str, ...]) -> str:
-    return "[" + ", ".join(json.dumps(v, ensure_ascii=False) for v in values) + "]"
+    return "[" + ", ".join(_string(v) for v in values) + "]"

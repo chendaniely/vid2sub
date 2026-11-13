@@ -95,6 +95,27 @@ def test_translation_goes_through_chatlas_with_a_schema_and_thinking_off():
     assert body["messages"][0]["role"] == "system"
 
 
+def test_a_typed_key_entered_after_the_translator_was_made_is_still_redacted():
+    # Phase 2 Task 18, review round 18c: the settings drawer can change a typed key between two
+    # batches of one retranslation; the key the next batch uses is the one redacted (§6.8).
+    def echo(req):
+        return 400, {"error": {"message": f"bad request with {req.headers['authorization']}"}}, {}
+
+    new_key = "n" * 40
+    with FakeServer(responder=echo) as srv:
+        cfg = Config(endpoints={"lan": Endpoint(base_url=srv.url, allow_typed_key=True)},
+                     models={"gemma": ModelEntry(endpoint="lan", model="g", task="translate",
+                                                 local=True)})
+        keys = KeyRing(typed={"lan": "o" * 40}, environ={})
+        ask = make_ask("gemma", cfg.models["gemma"], cfg, RunPolicy(), keys)
+        keys.typed["lan"] = new_key
+        with pytest.raises(EngineError) as err:
+            translate_cues(SOURCE[:1], source_lang="ja", target_track="en",
+                           glossary=EMPTY_GLOSSARY, ask=ask)
+        assert srv.requests[0].headers["authorization"] == f"Bearer {new_key}"
+    assert new_key not in str(err.value) and "400" in str(err.value)
+
+
 def test_a_connection_or_key_error_stops_translation_at_once():
     calls = []
 

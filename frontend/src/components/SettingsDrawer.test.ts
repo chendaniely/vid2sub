@@ -20,7 +20,7 @@ const VIEW: SettingsView = {
 
 function render(view: SettingsView = VIEW): string {
   const noop = () => undefined;
-  return renderToStaticMarkup(createElement(SettingsDrawer, { open: true, onClose: noop, settings: view, tests: { lan: { endpoint: "lan", n: 1, ok: true, models: ["<img src=x>"], more: 0, error: null } }, onTest: noop, onTypedKey: noop, onDefaults: noop }));
+  return renderToStaticMarkup(createElement(SettingsDrawer, { open: true, onClose: noop, connected: true, settings: view, tests: { lan: { endpoint: "lan", n: 1, ok: true, models: ["<img src=x>"], more: 0, error: null } }, onTest: noop, onTypedKey: noop, onDefaults: noop }));
 }
 
 describe("the settings drawer (spec §19.2, S35)", () => {
@@ -41,6 +41,10 @@ describe("the settings drawer (spec §19.2, S35)", () => {
     expect(html.match(/type="password"/g)).toHaveLength(1);
     expect(html).toMatch(/<input[^>]*type="password"[^>]*autoComplete="off"|<input[^>]*autoComplete="off"[^>]*type="password"/i);
     expect(html).toContain("key entered for this session");
+    // review round 18c: no form to submit, password managers asked to leave it, no value attribute
+    expect(html).not.toContain("<form");
+    expect(html).toMatch(/<input[^>]*data-1p-ignore=""[^>]*data-lpignore="true"[^>]*data-bwignore=""/);
+    expect(html).not.toMatch(/<input[^>]*type="password"[^>]*value=/);
     expect(html).toContain('data-testid="typed-key-lan"');
     expect(html).not.toContain('data-testid="typed-key-&lt;b&gt;spark&lt;/b&gt;"');
   });

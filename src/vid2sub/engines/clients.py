@@ -47,8 +47,9 @@ class RunPolicy:
 
 @dataclass
 class KeyRing:
-    typed: dict[str, str] = field(default_factory=dict)
-    environ: Mapping[str, str] = field(default_factory=lambda: os.environ)
+    # Never in a repr: a traceback or a %r would carry every key (Phase 2 Task 18, review 18c).
+    typed: dict[str, str] = field(default_factory=dict, repr=False)
+    environ: Mapping[str, str] = field(default_factory=lambda: os.environ, repr=False)
 
     def key_for(self, endpoint_name: str, endpoint: Endpoint) -> str | None:
         if endpoint.allow_typed_key and self.typed.get(endpoint_name):

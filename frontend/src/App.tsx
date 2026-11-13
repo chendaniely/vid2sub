@@ -318,7 +318,7 @@ export default function App() {
   return (
     <div className="flex h-dvh flex-col" data-testid="app">
       <TopBar capabilities={capabilities} status={status} onSettings={capabilities?.generate ? () => setSettingsOpen(true) : undefined} />
-      <SettingsDrawer open={settingsOpen && Boolean(settings)} onClose={() => setSettingsOpen(false)} settings={settings ?? null}
+      <SettingsDrawer open={settingsOpen && Boolean(settings)} onClose={() => setSettingsOpen(false)} connected={lost === null} settings={settings ?? null}
         tests={tests} onTest={onTest} onTypedKey={onTypedKey} onDefaults={onDefaults} />
       {lost && (
         // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.

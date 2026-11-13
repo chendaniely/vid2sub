@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { keyLabel, testSummary, withTarget } from "@/lib/settings";
 import type { EndpointSetting, EndpointTestResult, SessionDefaults, SettingsView } from "@/types";
@@ -6,21 +6,26 @@ import type { EndpointSetting, EndpointTestResult, SessionDefaults, SettingsView
 import { Dialog } from "./ui/dialog";
 
 const button = "rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:opacity-50";
-const field = "min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 font-mono text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring";
+const keyField = "min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 font-mono text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring";
 
 export type DefaultsChange = { targets: string[] } | { formats: SessionDefaults["formats"] };
 
 /** The settings drawer (spec §19.2, S35): the native <dialog> at the right edge (Decision 13).
  * Endpoints and models as vid2sub.toml has them, read-only, each endpoint with **Test** (its
  * /v1/models, asked by the engine) and its key by presence only; a typed key only where the file
- * allows one (§5.3), in a password field the browser is asked not to fill or keep, cleared once
- * sent, and shown back only as "key entered for this session". The session's defaults (targets,
+ * allows one (§5.3), shown back only as "key entered for this session". Its field is a password
+ * field outside any form, which browsers and password managers are asked to leave alone (a
+ * password manager may still offer to keep it); its text is the DOM's alone, never React state
+ * or a value attribute, and is cleared once sent and when the drawer closes. Use waits for a
+ * connection, since a message sent while there is none stays queued in the page. The session's
+ * defaults (targets,
  * formats) are for this launch, never written (§5.4); the cue rules are shown as built, since
  * nothing can change them yet (Decision 21); Copy settings gives the [defaults] table as TOML,
  * never a key. Every name, address and server answer is plain text (§6.3). */
-export function SettingsDrawer({ open, onClose, settings, tests, onTest, onTypedKey, onDefaults }: {
+export function SettingsDrawer({ open, onClose, connected, settings, tests, onTest, onTypedKey, onDefaults }: {
   open: boolean;
   onClose: () => void;
+  connected: boolean; // the engine is there to send a key to
   settings: SettingsView | null;
   tests: Record<string, EndpointTestResult | "testing">;
   onTest: (endpoint: string) => void;
@@ -36,7 +41,7 @@ export function SettingsDrawer({ open, onClose, settings, tests, onTest, onTyped
             <p className="text-muted-foreground">As vid2sub.toml declares them: change them there.</p>
             {settings.endpoints.length === 0 && <p>None: vid2sub.toml declares no endpoint.</p>}
             {settings.endpoints.map((e) => (
-              <Endpoint key={e.name} endpoint={e} test={tests[e.name]} onTest={onTest} onTypedKey={onTypedKey} />
+              <Endpoint key={e.name} endpoint={e} open={open} connected={connected} test={tests[e.name]} onTest={onTest} onTypedKey={onTypedKey} />
             ))}
           </section>
           <section aria-labelledby="settings-models" className="flex flex-col gap-1">
@@ -77,18 +82,34 @@ export function SettingsDrawer({ open, onClose, settings, tests, onTest, onTyped
   );
 }
 
-function Endpoint({ endpoint: e, test, onTest, onTypedKey }: {
+function Endpoint({ endpoint: e, open, connected, test, onTest, onTypedKey }: {
   endpoint: EndpointSetting;
+  open: boolean;
+  connected: boolean;
   test: EndpointTestResult | "testing" | undefined;
   onTest: (endpoint: string) => void;
   onTypedKey: (endpoint: string, key: string) => void;
 }) {
-  const [key, setKey] = useState("");
-  const submit = (ev: FormEvent) => {
-    ev.preventDefault();
-    if (!key) return;
+  const field = useRef<HTMLInputElement>(null);
+  const [filled, setFilled] = useState(false); // whether there is a key to send, never the key
+  const clear = () => {
+    if (field.current) field.current.value = "";
+    setFilled(false);
+  };
+  useEffect(() => {
+    if (!open) clear(); // closed with a key typed but not sent: it goes
+  }, [open]);
+  const use = () => {
+    const key = field.current?.value ?? "";
+    if (!key || !connected) return;
     onTypedKey(e.name, key);
-    setKey(""); // out of the page as soon as it is sent
+    clear(); // out of the page as soon as it is sent
+  };
+  const onKey = (ev: KeyboardEvent<HTMLInputElement>) => {
+    if (ev.key === "Enter" && !ev.nativeEvent.isComposing) {
+      ev.preventDefault();
+      use();
+    }
   };
   return (
     <div className="flex flex-col gap-1 rounded-md border border-border p-2" data-testid={`endpoint-${e.name}`}>
@@ -105,22 +126,26 @@ function Endpoint({ endpoint: e, test, onTest, onTypedKey }: {
         {test && test !== "testing" ? testSummary(test) : ""}
       </span>
       {e.allow_typed_key && (
-        <form className="flex items-center gap-2" onSubmit={submit}>
+        <div className="flex items-center gap-2">
           <label htmlFor={`typed-key-${e.name}`} className="sr-only">Key for {e.name}, for this session only</label>
           <input
+            ref={field}
             id={`typed-key-${e.name}`}
             type="password"
             autoComplete="off"
             spellCheck={false}
-            className={field}
-            value={key}
-            onChange={(ev) => setKey(ev.target.value)}
+            data-1p-ignore=""
+            data-lpignore="true"
+            data-bwignore=""
+            className={keyField}
+            onInput={(ev) => setFilled(ev.currentTarget.value.length > 0)}
+            onKeyDown={onKey}
             placeholder="key for this session only"
             data-testid={`typed-key-${e.name}`}
           />
-          <button type="submit" className={button} disabled={!key} data-testid={`use-key-${e.name}`}>Use</button>
-          {e.typed && <button type="button" className={button} onClick={() => onTypedKey(e.name, "")} data-testid={`forget-key-${e.name}`}>Forget</button>}
-        </form>
+          <button type="button" className={button} disabled={!filled || !connected} onClick={use} data-testid={`use-key-${e.name}`}>Use</button>
+          {e.typed && <button type="button" className={button} onClick={() => onTypedKey(e.name, "")} disabled={!connected} data-testid={`forget-key-${e.name}`}>Forget</button>}
+        </div>
       )}
     </div>
   );
