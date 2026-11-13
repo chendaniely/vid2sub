@@ -42,6 +42,13 @@ reached through the runtime, whose `retranslate` turns the engine's errors into 
 `RetranslateError`, so nothing here imports them. Cloud models only when the request itself says
 `allow_cloud: true` (§7.2): the editor's box, unticked every time.
 
+The settings drawer (§19.2, S35) is `web.settings`'s: the `settings` output (null in Pages, which
+has no endpoints), a typed key (`typed_key`, read in the flush of its own message and replaced by
+the page's null straight after, so Shiny's input map doesn't keep it; it lives only in the
+engine's `KeyRing`), the session's defaults (`session_defaults`), and Test (`endpoint_test`, its
+answer the `endpoint_test_result` message), which asks the endpoint's `/v1/models` through the
+runtime, off the loop. A change any tab makes reaches every tab, through the session's listeners.
+
 The page is shinyreact's `page_react` (`www/ui.js` and `ui.css`), with `www/` also served at "/"
 for the fonts, as ReactApp's own discovery mounts it. Its one change: Shiny 1.8.0 switches its busy
 indicators on with an inline script, which the CSP's `script-src 'self'` blocks (§6.3), so the
@@ -52,6 +59,7 @@ runs no inline script or style, and the CSP needs no `style-src` of its own.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import re
 from collections import deque
@@ -68,6 +76,15 @@ from vid2sub.subs.edit import EditError
 from vid2sub.subs.glossary import GlossaryError
 from vid2sub.web import WWW, ops, runtime, views
 from vid2sub.web.episode import Episode, OpenError, RetranslateError, SaveError, SaveResult
+from vid2sub.web.settings import (
+    NO_ENDPOINT,
+    BadSetting,
+    EndpointError,
+    change_defaults,
+    enter_key,
+    models_shown,
+    settings_view,
+)
 
 # By name: a test may load this file as a module of another name.
 log = logging.getLogger("vid2sub.web.server")
@@ -426,10 +443,88 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         if check.status() == "success":
             found.set(check.result())
 
+    # The settings drawer (spec §19.2, §5.3, §5.4; S35), the local engine's alone: the Pages
+    # editor has no endpoints (`generate` is false there), so it is offered none of this. The
+    # session's settings are the launch's, shared by every tab: a change any tab makes (a default,
+    # a typed key) reaches every tab's views through the session's listeners.
+    local = rt.backend.capabilities().generate
+    ticks = itertools.count(1)
+    changed = reactive.value(0)
+    session.on_ended(rt.session.on_change(lambda: changed.set(next(ticks))))
+
     @reactive_output
     def status():
+        changed()  # a typed key makes a key present
         return views.status_view(rt.config, rt.keys, found(),
                                  ffmpeg=bool(rt.backend.tools.ffmpeg))
+
+    @reactive_output
+    def settings():
+        changed()
+        if not local:
+            return None
+        return settings_view(rt.config, rt.keys, rt.session.defaults())
+
+    @reactive.effect
+    @reactive.event(input.typed_key)
+    async def _typed_key() -> None:
+        # Read in the flush of the message that brought it; the page sends null straight after,
+        # which replaces it in this session's inputs and in the page's own copies (spec §5.3).
+        request = as_json(input.typed_key())
+        if not local:
+            return
+        try:
+            said = enter_key(rt.config, rt.keys, request)
+        except BadSetting as err:  # never echoes the key or the endpoint sent
+            await notice(session, "error", str(err))
+            return
+        rt.session.changed()
+        await notice(session, "info", said)
+
+    @reactive.effect
+    @reactive.event(input.session_defaults)
+    async def _session_defaults() -> None:
+        if not local:
+            return
+        try:
+            rt.session.set_defaults(change_defaults(rt.session.defaults(),
+                                                    as_json(input.session_defaults())))
+        except BadSetting as err:
+            await notice(session, "error", str(err))
+
+    # A Test asks the endpoint for its models off the event loop, in a task of its own, so a
+    # slow server holds up nothing else; one at a time per endpoint.
+    testing: dict[str, asyncio.Task] = {}
+
+    @reactive.effect
+    @reactive.event(input.endpoint_test)
+    def _endpoint_test() -> None:
+        request = as_json(input.endpoint_test())
+        name = request.get("endpoint") if isinstance(request, dict) else None
+        n = request.get("n") if isinstance(request, dict) else None
+        if not isinstance(name, str) or name in testing:
+            return
+        testing[name] = asyncio.create_task(test_endpoint(name, n if type(n) is int else None))
+        testing[name].add_done_callback(lambda _: testing.pop(name, None))
+
+    async def test_endpoint(name: str, n: int | None) -> None:
+        if not local or name not in rt.config.endpoints:
+            await notice(session, "error", NO_ENDPOINT)  # never echoes the name sent
+            return
+        try:
+            found = await runtime.blocking(rt.endpoint_models, name)
+        except EndpointError as err:
+            result = {"ok": False, "models": [], "more": 0,
+                      "error": str(err) + (f" → {err.hint}" if err.hint else "")}
+        except Exception as err:  # noqa: BLE001 - one Test failing must not stop the session
+            log.error("an endpoint test failed: %s", type(err).__name__)
+            result = {"ok": False, "models": [], "more": 0,
+                      "error": "something went wrong; see the log"}
+        else:
+            models, more = models_shown(found)
+            result = {"ok": True, "models": models, "more": more, "error": None}
+        await shinyreact.send_message(session, "endpoint_test_result",
+                                      {"endpoint": name, "n": n, **result})
 
     editor = Editor(rt, session)
     session.on_ended(editor.end)
@@ -480,7 +575,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         if shown is None:
             return None  # an explicit null: nothing is open
         ep, media = shown
-        return views.episode_view(ep, video_url=media.video_url, audio_url=media.audio_url)
+        return views.episode_view(ep, video_url=media.video_url, audio_url=media.audio_url,
+                                  default_formats=rt.session.defaults().formats)
 
     @reactive_output
     def busy():

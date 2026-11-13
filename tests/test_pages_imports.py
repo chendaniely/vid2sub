@@ -26,11 +26,12 @@ from vid2sub.web import runtime
 SRC = Path(__file__).resolve().parents[1] / "src" / "vid2sub"
 
 # What spec §21's bundle holds of vid2sub: whole packages, then single modules. `web.ops` parses
-# the editor's edits at the door, so the browser editor needs it too; it is pure.
+# the editor's edits at the door, so the browser editor needs it too; it is pure. `web.settings`
+# holds the session's defaults, which the runtime makes (Task 18).
 BUNDLED_TREES = ("vid2sub.subs", "vid2sub.parse")
 BUNDLED_MODULES = ("vid2sub", "vid2sub.catalog", "vid2sub.web", "vid2sub.web.server",
                    "vid2sub.web.views", "vid2sub.web.episode", "vid2sub.web.runtime",
-                   "vid2sub.web.ops")
+                   "vid2sub.web.ops", "vid2sub.web.settings")
 # vid2sub's own dependencies (pyproject.toml, the mac extra, and Phase 3's faster-whisper) that
 # the bundle doesn't have.
 NOT_BUNDLED = ("platformdirs", "numpy", "onnxruntime", "chatlas", "openai", "httpx", "yt_dlp",

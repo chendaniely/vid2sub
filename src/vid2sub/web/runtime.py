@@ -5,16 +5,19 @@ As recordings' runtime does: Shiny's app object is made when its module is impor
 server function runs once per browser session, so the server finds the backend, the job queue
 and the media tokens here (`current()`), and `serve` calls `configure()` before it imports the
 Shiny app. There is one of each per launch: the backend holds the open episodes, the queue holds
-the jobs, which belong to the engine rather than a tab (spec §17.1), and the media tokens die
-with the engine (the Phase 2 plan's Decision 1). Until the Jobs page gives the queue the
+the jobs, which belong to the engine rather than a tab (spec §17.1), the media tokens die
+with the engine (the Phase 2 plan's Decision 1), and the session's settings (`session`: the
+defaults the drawer changes, never written, §5.4) and typed keys (in `keys`) are this launch's,
+shared by every tab and gone when it exits. Until the Jobs page gives the queue the
 pipeline (S36), a job that somehow reaches it fails without running anything.
 
 The server runs in Pages too (spec §3.3, §21), so this module imports nothing the Pages bundle
 lacks at its top: `build()` imports the local parts (the backend, the queue, ffmpeg's tools, the
 cache, the network client) when it runs, and the server reaches local-only work through the
-`Runtime` (`reachable`, `media_for`, `retranslate`). Every call that blocks goes through
-`blocking`, never a thread or an executor of the server's own: a worker thread here, inline in
-Pyodide, which has no threads (Task 14 round 14a, decided with the coordinator 2026-10-24).
+`Runtime` (`reachable`, `media_for`, `retranslate`, `endpoint_models`). Every call that blocks
+goes through `blocking`, never a thread or an executor of the server's own: a worker thread
+here, inline in Pyodide, which has no threads (Task 14 round 14a, decided with the coordinator
+2026-10-24).
 """
 
 from __future__ import annotations
@@ -22,8 +25,10 @@ from __future__ import annotations
 import asyncio
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+from vid2sub.web.settings import Defaults, Session
 
 if TYPE_CHECKING:
     from vid2sub.cache import Cache
@@ -37,6 +42,7 @@ if TYPE_CHECKING:
     from vid2sub.web.media import MediaTokens
 
 ALLOW_CLOUD = "tick Allow cloud models, then retranslate again"
+TEST_TIMEOUT = 10.0  # seconds a settings drawer Test waits for an endpoint's model list
 PLAYBACK_TIMEOUT = 3600.0  # seconds: a two-hour episode's audio, read from a slow network share
 INLINE = sys.platform == "emscripten"  # Pyodide: no threads, so a blocking call runs inline
 
@@ -78,6 +84,7 @@ class Runtime:
     media: MediaTokens
     config: Config
     keys: KeyRing
+    session: Session = field(default_factory=Session)  # this launch's settings (spec §5.4)
 
     def reachable(self) -> dict[str, bool]:
         """Whether each local endpoint answers its model list. Blocks on the network: call it
@@ -116,6 +123,24 @@ class Runtime:
             raise RetranslateError(str(err), hint) from None
         except TranslationFailed as err:
             raise RetranslateError(str(err), "retranslate again, or pick fewer cues") from None
+
+    def endpoint_models(self, name: str) -> list[str]:
+        """The models endpoint `name` serves, from its `/v1/models` (the settings drawer's
+        Test), asked through the one client factory, only at the endpoint's own origin, with
+        its key and no redirect followed (§6.4). Any endpoint, cloud ones too: the person asked,
+        and a model list carries nothing of theirs. EndpointError, with every key redacted, when
+        it fails. Blocks on the network: call it through `blocking`."""
+        from vid2sub.engines import clients
+        from vid2sub.engines.base import EngineError
+        from vid2sub.security import redact
+        from vid2sub.web.settings import EndpointError
+
+        try:
+            return clients.list_models(name, self.config.endpoints[name], self.keys,
+                                       timeout=TEST_TIMEOUT)
+        except EngineError as err:
+            values = self.keys.secrets(self.config)
+            raise EndpointError(redact(str(err), values), redact(err.hint, values)) from None
 
     def media_for(self, ep: Episode, *, audio_only: bool = False) -> Media:
         """The video by a media token when the browser can play its audio; else, or with
@@ -173,7 +198,8 @@ def build(config: Config, *, tools: Tools | None = None, keys: KeyRing | None = 
     keys = keys if keys is not None else KeyRing()
     cache = cache if cache is not None else caching.from_config(config)
     return Runtime(backend=LocalBackend(config, tools, keys, cache), queue=Queue(_no_jobs),
-                   media=MediaTokens(), config=config, keys=keys)
+                   media=MediaTokens(), config=config, keys=keys,
+                   session=Session(Defaults.from_config(config.defaults)))
 
 
 def _no_jobs(source: str, events: Event, cancelled: Callable[[], bool]) -> InputResult:

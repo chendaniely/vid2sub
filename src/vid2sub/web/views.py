@@ -12,7 +12,8 @@ covers; an imported line (no `src`) is never stale and covers the source cues it
 (Q&A item 45). The view never holds a path, only the video's bare file name (§6.8), and the
 probe's container and codec names, which the browser's canPlayType is asked about (§8.2). It
 names each track's head rendition, by which the tab keys its crash-recovery draft (§14.5, S34),
-and the formats Save writes: ASS too where one was written before (§15.2). A track in conflict
+and the formats Save writes: ASS too where one was written before (§15.2) or the session's
+defaults ask. A track in conflict
 lists its versions, and the cues where they differ, so the person can tell which holds what
 (§14.4, S32). The server runs in Pages too (§21), so this module imports only pure packages and
 `web.episode` at its top; the status views' config and keys are the local engine's, imported only
@@ -23,7 +24,7 @@ from __future__ import annotations
 
 import dataclasses
 from bisect import bisect_right
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from vid2sub.subs import langs, naming
@@ -43,7 +44,8 @@ _SCRIPTS = {"Hant": " (Traditional)", "Hans": " (Simplified)"}
 DIFFERENCES_SHOWN = 50  # cues where a conflicted track's versions differ, before "and N more"
 
 
-def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None) -> dict[str, Any]:
+def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None,
+                 default_formats: Sequence[str] = ("srt",)) -> dict[str, Any]:
     return {
         "id": ep.id,
         "video": {"name": ep.video.name, "duration_ms": ep.header.video.duration_ms,
@@ -63,7 +65,7 @@ def episode_view(ep: Episode, *, video_url: str | None, audio_url: str | None) -
         "differences": _differences(ep),
         "glossary_adds": dict(ep.glossary_adds),
         "heads": dict(ep.heads),
-        "formats": _formats(ep),
+        "formats": _formats(ep, default_formats),
     }
 
 
@@ -136,7 +138,7 @@ def _tracks(ep: Episode) -> list[dict[str, Any]]:
     out = []
     for key in keys:
         head = ep.sidecar.head(key)
-        out.append({"key": key, "label": _label(key),
+        out.append({"key": key, "label": track_label(key),
                     "role": "source" if key == ep.source_key else "translation",
                     "head_by": head.by if isinstance(head, HeadRecord) else None,
                     "in_conflict": key in ep.conflicts,
@@ -183,10 +185,11 @@ def _differences(ep: Episode) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _formats(ep: Episode) -> list[str]:
-    """SRT, and ASS where vid2sub has written an ASS for this video before (spec §15.2)."""
+def _formats(ep: Episode, default_formats: Sequence[str]) -> list[str]:
+    """SRT, and ASS where vid2sub has written an ASS for this video before (spec §15.2) or the
+    session's default formats have it (§5.4, the settings drawer)."""
     written = {p.format for p in ep.sidecar.projections().values()}
-    return ["srt", "ass"] if "ass" in written else ["srt"]
+    return ["srt", "ass"] if "ass" in written or "ass" in default_formats else ["srt"]
 
 
 def _flags(stored: tuple[str, ...], computed: tuple[str, ...]) -> list[str]:
@@ -198,7 +201,8 @@ def _lang(track: str) -> str:
     return info.lang if info else track.split("-")[0]
 
 
-def _label(track: str) -> str:
+def track_label(track: str) -> str:
+    """A track's name for people: its language, and the script where it has one."""
     info = naming.TRACKS.get(track)
     if info is None:
         return track
