@@ -17594,16 +17594,18 @@ class FasterWhisperEngine:
   In the `whisper-large-v3` entry, replace
 
 ```python
-        runs_on="Windows/Linux (faster-whisper, M3); the Spark if local-ai adds it",
-        install="a whisper.cpp server, or vid2sub[whisper] from M3",
+        runs_on="the Spark (loads on demand); Windows/Linux (faster-whisper, M3)",
+        install="the Spark's endpoint (it loads the model on demand), a whisper.cpp server, "
+                "or vid2sub[whisper] from M3",
         languages=("ja", "en", "zh", "ko", "yue")),
 ```
 
   with
 
 ```python
-        runs_on="Windows/Linux (faster-whisper); the Spark if local-ai adds it",
-        install="a whisper.cpp server, or vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA GPU)",
+        runs_on="the Spark (loads on demand); Windows/Linux (faster-whisper)",
+        install="the Spark's endpoint (it loads the model on demand), a whisper.cpp server, "
+                "or vid2sub[whisper] (vid2sub[nvidia] for an NVIDIA GPU)",
         languages=("ja", "en", "zh", "ko", "yue"), default_model="large-v3"),
 ```
 
@@ -17626,21 +17628,20 @@ class FasterWhisperEngine:
   In the module docstring, replace
 
 ```python
-`[models.*]` entries point at catalog ids. Routing is an ordered preference per source language:
-the first model available now wins, and among equals the Spark's (an endpoint) wins over the
-Mac's (in-process). The Spark's translation default is Gemma 4, resident with two slots; the only
-Qwen chat model there is Dan's coder (council, 2026-10-14). Pure.
+the first model available now wins, but a route's candidates go in three groups, each in route
+order: endpoint models that aren't cloud (the Spark, a local server), then in-process models (the
+Mac's Qwen3-ASR), then cloud models (Dan, 2026-11-11, "Spark models first"; Q&A items 57 and 59).
 ```
 
   with
 
 ```python
-`[models.*]` entries point at catalog ids. Routing is an ordered preference per source language:
-the first model available now wins, and among equals the Spark's (an endpoint) wins over this
-machine's (in-process). A step can name where its model runs: English takes turbo on the Spark,
-then the Mac's Qwen3-ASR, then turbo through faster-whisper on this machine, as §11.2 orders it.
-The Spark's translation default is Gemma 4, resident with two slots; the only Qwen chat model
-there is Dan's coder (council, 2026-10-14). Pure.
+the first model available now wins, but a route's candidates go in three groups, each in route
+order: endpoint models that aren't cloud (the Spark, a local server), then in-process models (this
+machine's: the Mac's Qwen3-ASR, faster-whisper), then cloud models (Dan, 2026-11-11, "Spark models
+first"; Q&A items 57 and 59). A step can name where its model runs: English takes turbo on the
+Spark, then the Mac's Qwen3-ASR, then turbo through faster-whisper on this machine, as §11.2
+orders it.
 ```
 
   Replace `TRANSCRIBE_ROUTES: dict[str, tuple[str, ...]] = {` with the two lines
@@ -17666,30 +17667,51 @@ TRANSCRIBE_ROUTES: dict[str, tuple[Step, ...]] = {
 ```
 
   replace `TRANSLATE_ROUTE: tuple[str, ...] = (` with `TRANSLATE_ROUTE: tuple[Step, ...] = (`,
-  and in `suggest`, replace
+  and replace `_in_order`'s signature and its `pairs` line, and `suggest`'s `off_route` and `for`
+  lines, as built by the Spark-first one-off (2026-11-13). Replace
 
 ```python
-    considered: list[tuple[str, str]] = []
-    off_route = tuple(
-        (o.name, f"not in the {task} route for {lang}; choose it with --model")
-        for o in candidates if o.catalog not in route)
-    for cid in route:
-        matches = sorted((c for c in candidates if c.catalog == cid),
-                         key=lambda c: 0 if c.kind == "endpoint" else 1)
+def _in_order(route: Sequence[str], candidates: Sequence[Candidate]
+              ) -> list[tuple[str, Candidate]]:
 ```
 
   with
 
 ```python
-    considered: list[tuple[str, str]] = []
+def _in_order(steps: Sequence[tuple[str, str | None]], candidates: Sequence[Candidate]
+              ) -> list[tuple[str, Candidate]]:
+```
+
+  replace
+
+```python
+    pairs = [(group(c, cid), cid, c) for cid in route for c in candidates if c.catalog == cid]
+```
+
+  with
+
+```python
+    pairs = [(group(c, cid), cid, c) for cid, where in steps for c in candidates
+             if c.catalog == cid and where in (None, c.kind)]
+```
+
+  and in `suggest`, replace
+
+```python
+    off_route = tuple(
+        (o.name, f"not in the {task} route for {lang}; choose it with --model")
+        for o in candidates if o.catalog not in route)
+    for cid, c in _in_order(route, candidates):
+```
+
+  with
+
+```python
     steps = [(s, None) if isinstance(s, str) else s for s in route]
     off_route = tuple(
         (o.name, f"not in the {task} route for {lang}; choose it with --model")
         for o in candidates if o.catalog not in {cid for cid, _ in steps})
-    for cid, where in steps:
-        matches = sorted((c for c in candidates
-                          if c.catalog == cid and where in (None, c.kind)),
-                         key=lambda c: 0 if c.kind == "endpoint" else 1)
+    for cid, c in _in_order(steps, candidates):
 ```
 
   then `make readme` (the README's model table follows). In `src/vid2sub/detect.py`, above
