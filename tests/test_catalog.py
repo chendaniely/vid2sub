@@ -100,3 +100,43 @@ def test_an_unavailable_spark_qwen_falls_back_to_the_mac_qwen_for_cantonese():
                        reason="Spark not reachable"),
                   cand("mac-qwen", "qwen3-asr-1.7b", kind="in-process")]
     assert suggest("yue", candidates, "transcribe", allow_cloud=False).model == "mac-qwen"
+
+
+def _mandarin_set(**down):
+    return [cand("spark-large-v3", "whisper-large-v3", available="spark-large-v3" not in down,
+                 reason="Spark not reachable"),
+            cand("spark-turbo", "whisper-large-v3-turbo", available="spark-turbo" not in down,
+                 reason="Spark not reachable"),
+            cand("mac-qwen", "qwen3-asr-1.7b", kind="in-process"),
+            cand("openai", "openai-whisper-1", cloud=True)]
+
+
+def test_mandarin_prefers_the_sparks_large_v3_over_the_macs_qwen3_asr():
+    s = suggest("zh", _mandarin_set(), "transcribe", allow_cloud=False)
+    assert s.model == "spark-large-v3" and s.warning == ""
+
+
+def test_mandarin_with_large_v3_down_takes_the_sparks_turbo_warned_weak_before_the_mac():
+    s = suggest("zh", _mandarin_set(**{"spark-large-v3": 1}), "transcribe", allow_cloud=False)
+    assert s.model == "spark-turbo" and "weak" in s.warning
+
+
+def test_mandarin_with_every_spark_model_down_takes_the_macs_qwen3_asr():
+    s = suggest("zh", _mandarin_set(**{"spark-large-v3": 1, "spark-turbo": 1}), "transcribe",
+                allow_cloud=False)
+    assert s.model == "mac-qwen"
+
+
+def test_the_macs_local_model_comes_before_openai_even_with_allow_cloud():
+    s = suggest("zh", _mandarin_set(**{"spark-large-v3": 1, "spark-turbo": 1}), "transcribe",
+                allow_cloud=True)
+    assert s.model == "mac-qwen"
+    only_cloud = [c for c in _mandarin_set() if c.name == "openai"]
+    assert suggest("zh", only_cloud, "transcribe", allow_cloud=True).model == "openai"
+
+
+def test_cantonese_takes_the_sparks_whisper_warned_weak_before_the_macs_qwen3_asr():
+    candidates = [cand("spark-large-v3", "whisper-large-v3"),
+                  cand("mac-qwen", "qwen3-asr-1.7b", kind="in-process")]
+    s = suggest("yue", candidates, "transcribe", allow_cloud=False)
+    assert s.model == "spark-large-v3" and "weak" in s.warning

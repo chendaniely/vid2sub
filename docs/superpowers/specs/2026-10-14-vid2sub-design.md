@@ -141,10 +141,10 @@ test names.
   for whisper.cpp, so a looping chunk's text goes on as the next prompt. Harmless on the Spark
   under `max_context = 0`; live for a local whisper.cpp server or an entry that sends
   `max_context` above 0. vid2sub could compute the ratio itself.
-- **local-ai's next deploy** (its `phase-2a`, §26.1's note): Qwen3.6 becomes the always-loaded
-  model and Gemma goes on demand, so §11's Gemma rows, the README and the catalog (`make readme`)
-  need updating then; Whisper large-v3 arrives on demand, for the Japanese routing item; and the
-  Spark's Qwen3-ASR is a by-hand service that looped on TV drama, so S22 still waits.
+- **local-ai's 44l deploy** (2026-11-12, its `phase-2a`, §26.1's note): Qwen3.6 became the
+  always-loaded model and Gemma went on demand, so §11's Gemma rows, the README and the catalog
+  now say so (Q&A item 56); Whisper large-v3 arrived on demand, for the Japanese routing item;
+  and the Spark's Qwen3-ASR is a by-hand service that looped on TV drama, so S22 still waits.
 - **Open for Dan since 2026-10-14** (§28): no embedded YouTube player in v1; Intel Macs
   unsupported.
 - **The workflow's own gaps:** plan-driven-development hasn't built its git hooks, its leak check
@@ -884,10 +884,10 @@ vid2sub.toml".
 |---|---|---|---|
 | `qwen3-asr-1.7b` (+ ForcedAligner-0.6B) | Mandarin, Cantonese (Qwen's numbers: WenetSpeech-Yue long 8.85 vs Whisper large-v3's 46.64; Cantonese dialogue 4.12 vs 31.04); strong English; Hong Kong and Guangdong accents; vocabulary context | Japanese supported, no published benchmark | Mac (`mlx-qwen3-asr`); the Spark once local-ai serves it (§26.1) |
 | `qwen3-asr-0.6b` | the same, lighter | less accurate | Mac |
-| `whisper-large-v3` | Japanese (until compared with Qwen3-ASR), 99 languages, vocabulary prompt (not on the Spark's whisper.cpp under `max_context = 0`, §9.3) | slower than turbo; poor on Cantonese | Windows/Linux (`faster-whisper`); the Spark if local-ai adds it |
+| `whisper-large-v3` | Japanese (until compared with Qwen3-ASR), 99 languages, vocabulary prompt (not on the Spark's whisper.cpp under `max_context = 0`, §9.3) | slower than turbo; poor on Cantonese | the Spark (loads on demand, since local-ai's 44l, 2026-11-12); Windows/Linux (`faster-whisper`) |
 | `whisper-large-v3-turbo` | English → English captions, quick drafts | weaker on Cantonese and tonal languages; no translate task | the Spark (resident); Windows/Linux |
 | `openai-whisper-1` | cloud fallback, any language | 25 MB per request (chunks fit); cloud opt-in | OpenAI |
-| `gemma-4-26b-a4b` (translation) | Japanese → English, general; always loaded on the Spark, two slots | | the Spark |
+| `gemma-4-26b-a4b` (translation) | Japanese → English, general; loads on demand on the Spark since local-ai's 44l (2026-11-12), so a run may wait for its load (Q&A item 56) | | the Spark |
 | `qwen3.8-27b` (translation) | Mandarin/Cantonese → English | Dan's coder: on demand, one slot, 41 GiB; not a default | the Spark |
 | `openai-gpt` (translation) | cloud fallback | cloud opt-in | OpenAI |
 | *later:* `parakeet-tdt-0.6b-v3`, `kotoba-whisper-v2`, `translategemma`, `hy-mt-1.5` | | | |
@@ -897,17 +897,28 @@ native timestamps).
 
 ### 11.2 Routing
 
-An ordered preference per source language; the first model available now wins.
+An ordered preference per source language; the first model available now wins. A route's
+candidates go in three groups, each in route order: **(1)** endpoint models that aren't cloud (the
+Spark, a local server), **(2)** in-process models (the Mac's Qwen3-ASR), **(3)** cloud models,
+only with `--allow-cloud`. This is Dan's "Spark models first" of 2026-11-11, for all transcription
+and translation (Q&A items 57 and 59): Mandarin with `spark-large-v3`, `spark-turbo` and the Mac's
+Qwen3-ASR configured goes to large-v3, then turbo (warned weak), then the Mac; Cantonese goes to
+the Spark's Whisper (warned weak) before the Mac's Qwen3-ASR. The table gives each language's
+order within the groups. A Spark Qwen3-ASR, once configured (Task 20, through the speech
+service), is still first.
 
 | Source | Transcription | Translation to English |
 |---|---|---|
-| Cantonese | `qwen3-asr-1.7b` (Spark, then Mac) → `whisper-large-v3` (warns: weak) | `gemma-4-26b-a4b` → configured local endpoint → OpenAI (opt-in) |
-| Mandarin | `qwen3-asr-1.7b` → `whisper-large-v3` → turbo | the same |
+| Cantonese | `qwen3-asr-1.7b` (Spark, then Mac) → `whisper-large-v3` (warns: weak); in the groups above, the Spark's Whisper comes before the Mac's Qwen3-ASR | `gemma-4-26b-a4b` → configured local endpoint → OpenAI (opt-in) |
+| Mandarin | `qwen3-asr-1.7b` → `whisper-large-v3` → turbo; in the groups above, the Spark's large-v3, then turbo, then the Mac's Qwen3-ASR | the same |
 | Japanese | `whisper-large-v3` → `qwen3-asr-1.7b` → turbo (order revisited after a comparison) | the same |
 | English | `whisper-large-v3-turbo` (Spark) → `qwen3-asr-1.7b` (Mac) → `faster-whisper` turbo | none (English captions) |
 
-The Spark default for translation is Gemma 4 for every language in v1 (council, 2026-10-14):
-it's resident with two slots, while the only Qwen chat model on the Spark is the coder.
+The Spark default for translation is Gemma 4 for every language in v1 (council, 2026-10-14). The
+reason then was that it was resident with two slots; since local-ai's 44l (2026-11-12) it loads on
+demand and Qwen3.6 stays loaded, and Dan kept Gemma for the quality already seen, so a run may
+wait for its load or for a `no_fit` refusal (Q&A item 56). The only Qwen chat model on the Spark
+besides Qwen3.6 is the coder.
 
 ### 11.3 Chinese script
 

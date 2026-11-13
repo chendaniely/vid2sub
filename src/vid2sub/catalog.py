@@ -3,9 +3,13 @@
 Data, not code: each model family's languages, strengths, weak spots, where it runs and how to
 install it. The UI's pickers and the README's model table come from it. `vid2sub.toml`'s
 `[models.*]` entries point at catalog ids. Routing is an ordered preference per source language:
-the first model available now wins, and among equals the Spark's (an endpoint) wins over the
-Mac's (in-process). The Spark's translation default is Gemma 4, resident with two slots; the only
-Qwen chat model there is Dan's coder (council, 2026-10-14). Pure.
+the first model available now wins, but a route's candidates go in three groups, each in route
+order: endpoint models that aren't cloud (the Spark, a local server), then in-process models (the
+Mac's Qwen3-ASR), then cloud models (Dan, 2026-11-11, "Spark models first"; Q&A items 57 and 59).
+The Spark's translation default is still Gemma 4, though it loads on demand there since local-ai's
+44l (2026-11-12) while Qwen3.6 stays loaded: Dan kept it for the quality already seen, and vid2sub
+waits for its load (Q&A item 56). The only Qwen chat model there is Dan's coder (council,
+2026-10-14). Pure.
 """
 
 from __future__ import annotations
@@ -54,8 +58,9 @@ CATALOG: dict[str, CatalogEntry] = {e.id: e for e in (
         "whisper-large-v3", "transcribe", "Whisper large-v3",
         good_for="Japanese (until compared with Qwen3-ASR), 99 languages, vocabulary prompt",
         weak="slower than turbo; poor on Cantonese",
-        runs_on="Windows/Linux (faster-whisper, M3); the Spark if local-ai adds it",
-        install="a whisper.cpp server, or vid2sub[whisper] from M3",
+        runs_on="the Spark (loads on demand); Windows/Linux (faster-whisper, M3)",
+        install="the Spark's endpoint (it loads the model on demand), a whisper.cpp server, "
+                "or vid2sub[whisper] from M3",
         languages=("ja", "en", "zh", "ko", "yue")),
     CatalogEntry(
         "whisper-large-v3-turbo", "transcribe", "Whisper large-v3-turbo",
@@ -72,7 +77,8 @@ CATALOG: dict[str, CatalogEntry] = {e.id: e for e in (
         cloud=True),
     CatalogEntry(
         "gemma-4-26b-a4b", "translate", "Gemma 4 26B-A4B",
-        good_for="Japanese → English, general translation; always loaded on the Spark, two slots",
+        good_for="Japanese → English, general translation; loads on demand on the Spark "
+                 "since local-ai's 44l (2026-11-12), so a run may wait for its load",
         weak="", runs_on="the Spark", install="the Spark's endpoint", family="llm"),
     CatalogEntry(
         "qwen3.8-27b", "translate", "Qwen3.8 27B",
@@ -127,6 +133,20 @@ class Suggestion:
     considered: tuple[tuple[str, str], ...] = ()
 
 
+def _in_order(route: Sequence[str], candidates: Sequence[Candidate]
+              ) -> list[tuple[str, Candidate]]:
+    """The route's candidates in three groups, each in route order: endpoint models that aren't
+    cloud (the Spark, a local server), then in-process models (the Mac's), then cloud models.
+    Dan's "Spark models first" of 2026-11-11, taken up in Q&A items 57 and 59."""
+    def group(c: Candidate, cid: str) -> int:
+        if c.cloud or CATALOG[cid].cloud:
+            return 2
+        return 0 if c.kind == "endpoint" else 1
+
+    pairs = [(group(c, cid), cid, c) for cid in route for c in candidates if c.catalog == cid]
+    return [(cid, c) for _, cid, c in sorted(pairs, key=lambda p: p[0])]  # stable: route order
+
+
 def suggest(lang: str, candidates: Sequence[Candidate], task: str, *,
             allow_cloud: bool) -> Suggestion:
     if task == "transcribe":
@@ -142,22 +162,19 @@ def suggest(lang: str, candidates: Sequence[Candidate], task: str, *,
     off_route = tuple(
         (o.name, f"not in the {task} route for {lang}; choose it with --model")
         for o in candidates if o.catalog not in route)
-    for cid in route:
-        matches = sorted((c for c in candidates if c.catalog == cid),
-                         key=lambda c: 0 if c.kind == "endpoint" else 1)
-        for c in matches:
-            if not c.available:
-                considered.append((c.name, c.reason))
-                continue
-            if (c.cloud or CATALOG[cid].cloud) and not allow_cloud:
-                considered.append((c.name, "a cloud model: needs --allow-cloud"))
-                continue
-            notes = []
-            if no_route:
-                notes.append(no_route)
-            if (lang, cid) in WEAK and lang in langs.LANGS:
-                notes.append(f"{CATALOG[cid].title} is weak on {langs.get(lang).name}")
-            return Suggestion(c.name, cid, "; ".join(notes), tuple(considered) + off_route)
+    for cid, c in _in_order(route, candidates):
+        if not c.available:
+            considered.append((c.name, c.reason))
+            continue
+        if (c.cloud or CATALOG[cid].cloud) and not allow_cloud:
+            considered.append((c.name, "a cloud model: needs --allow-cloud"))
+            continue
+        notes = []
+        if no_route:
+            notes.append(no_route)
+        if (lang, cid) in WEAK and lang in langs.LANGS:
+            notes.append(f"{CATALOG[cid].title} is weak on {langs.get(lang).name}")
+        return Suggestion(c.name, cid, "; ".join(notes), tuple(considered) + off_route)
     return Suggestion(None, None, "no usable model", tuple(considered) + off_route)
 
 

@@ -108,10 +108,10 @@ Exit codes: 0 done; 1 an input failed (including a missing tool during `run`); 6
 |---|---|---|---|---|
 | Qwen3-ASR 1.7B + ForcedAligner 0.6B | transcribe | Mandarin and Cantonese by a wide margin (Qwen's numbers: WenetSpeech-Yue long 8.85 vs Whisper large-v3's 46.64); strong English; Hong Kong and Guangdong accents; vocabulary context | Japanese is supported but has no published benchmark | Mac (mlx-qwen3-asr); the Spark once local-ai serves it |
 | Qwen3-ASR 0.6B + ForcedAligner 0.6B | transcribe | the same languages as the 1.7B, lighter and faster | less accurate than the 1.7B | Mac (mlx-qwen3-asr) |
-| Whisper large-v3 | transcribe | Japanese (until compared with Qwen3-ASR), 99 languages, vocabulary prompt | slower than turbo; poor on Cantonese | Windows/Linux (faster-whisper, M3); the Spark if local-ai adds it |
+| Whisper large-v3 | transcribe | Japanese (until compared with Qwen3-ASR), 99 languages, vocabulary prompt | slower than turbo; poor on Cantonese | the Spark (loads on demand); Windows/Linux (faster-whisper, M3) |
 | Whisper large-v3-turbo | transcribe | English → English captions, quick drafts | weaker on Cantonese and tonal languages; no translate task | the Spark (always loaded); Windows/Linux from M3 |
 | OpenAI whisper-1 | transcribe | a cloud fallback in any language | 25 MB per request (vid2sub's chunks fit); the audio leaves your machine | OpenAI |
-| Gemma 4 26B-A4B | translate | Japanese → English, general translation; always loaded on the Spark, two slots | — | the Spark |
+| Gemma 4 26B-A4B | translate | Japanese → English, general translation; loads on demand on the Spark since local-ai's 44l (2026-11-12), so a run may wait for its load | — | the Spark |
 | Qwen3.8 27B | translate | Mandarin and Cantonese → English | on the Spark it's Dan's coder: loads on demand, one slot, 41 GiB | the Spark |
 | A local chat model | translate | translation on your own machine (LM Studio, Ollama, vLLM) | quality depends on the model you load | your machine |
 | OpenAI GPT | translate | a cloud fallback for translation | the text leaves your machine | OpenAI |
