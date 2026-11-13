@@ -405,6 +405,56 @@ def test_a_stalled_response_doesnt_keep_the_engine_from_stopping(start, sig):
     assert serving.folders() == []
 
 
+# A signal that lands after the port is printed but before uvicorn's own handlers are in. Python's
+# default Ctrl-C handler raised KeyboardInterrupt wherever the main thread was, and inside a
+# weakref callback Python reports it ("Exception ignored") and drops it, so the engine served on
+# (CI, macos-15 with Python 3.14, 2026-11-11; 4 of 90 runs on 3.14.10). This child lands the
+# signal there on purpose, from inside a weakref callback, before uvicorn.Server.run starts.
+EARLY_SIGNAL = r"""
+import signal
+import sys
+import weakref
+
+import uvicorn
+from starlette.applications import Starlette
+
+from vid2sub.commands import serve
+from vid2sub.commands._common import Output
+from vid2sub.web import auth
+
+_run = uvicorn.Server.run
+
+
+def run(self, sockets=None):
+    class Thing:
+        pass
+
+    thing = Thing()
+    hook = weakref.ref(thing, lambda _: signal.raise_signal(int(sys.argv[1])))
+    del thing  # the callback runs here, and the signal with it
+    return _run(self, sockets=sockets)
+
+
+uvicorn.Server.run = run
+sock = serve.bind(0)
+raise SystemExit(serve.serve(Starlette(), sock, token=auth.new_token(), open_browser=False,
+                             out=Output(False)))
+"""
+
+
+@POSIX
+@pytest.mark.parametrize(("sig", "code"), [(signal.SIGINT, exitcodes.OK),
+                                           (signal.SIGTERM, 128 + signal.SIGTERM)])
+def test_a_signal_before_uvicorns_own_handlers_still_stops_the_engine(tmp_path, sig, code):
+    try:
+        done = subprocess.run([sys.executable, "-c", EARLY_SIGNAL, str(int(sig))], check=False,
+                              env={**os.environ, "TMPDIR": str(tmp_path)}, capture_output=True,
+                              text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"the engine kept serving after a {signal.Signals(sig).name} it lost")
+    assert done.returncode == code, done.stdout + done.stderr
+
+
 @POSIX
 @pytest.mark.parametrize(("args", "toml"), [((), "[server]\nopen_browser = false\n"),
                                             (("--no-browser",), "")])

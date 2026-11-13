@@ -10,10 +10,14 @@ file's path is printed instead. The browser, unless `--no-browser` or `[server] 
 false`, is opened on that redirect file (mode 0600 in a private folder), so `ps` shows only its
 path. A browser that doesn't come back doesn't hold up the engine: it is opened from a thread, as
 Jupyter does, and by a helper process with the §6.7 environment, so the opener never
-inherits the engine's keys. The folder goes when the engine stops, on Ctrl-C and SIGTERM too:
-uvicorn re-raises the signal after its own shutdown, and SIGTERM's default action would skip
-`finally`, so it becomes a normal exit with status 143 (recordings' __main__ does the same;
-Windows' Ctrl-Break likewise). Shutdown waits at most 3 seconds for open responses, since a
+inherits the engine's keys. The folder goes when the engine stops, on Ctrl-C and SIGTERM too.
+From before the port is printed, those signals only note themselves and ask uvicorn to stop: a
+handler that raised (Python's own Ctrl-C handler, or `sys.exit`) could be dropped, since Python
+discards an exception raised inside a weakref callback or a `__del__`, and the engine then served
+on (CI, 2026-11-11; Task 18). uvicorn's own handlers take over while it serves and hand the
+signals back when it stops; SIGTERM then ends in a normal exit with status 143, so `finally` and
+atexit run (recordings' __main__ exits so too; Windows' Ctrl-Break likewise), and Ctrl-C in
+status 0. Shutdown waits at most 3 seconds for open responses, since a
 paused video holds its stream open. uvicorn's access log is off and it trusts no proxy
 headers, since none is in front of it; the openai, httpx and chatlas loggers stay at WARNING,
 as for every command (§6.8, §6.2).
@@ -51,9 +55,10 @@ if TYPE_CHECKING:
 
 HOST = "127.0.0.1"
 GRACE = 3  # seconds a shutdown waits for open responses before it cancels them
-# The signals uvicorn re-raises after its shutdown whose default action skips `finally` and
-# atexit: SIGTERM everywhere, Ctrl-Break on Windows. SIGINT raises KeyboardInterrupt already.
+# The signals that end in status 128 + the signal, through `finally` and atexit, where their
+# default action would skip both: SIGTERM everywhere, Ctrl-Break on Windows. Ctrl-C ends in 0.
 _EXIT_SIGNALS = [signal.SIGTERM] + ([signal.SIGBREAK] if hasattr(signal, "SIGBREAK") else [])
+_STOP_SIGNALS = [signal.SIGINT, *_EXIT_SIGNALS]  # noted, never raised: see the module docstring
 # SIGHUP (the terminal window closing) has no handler in uvicorn; it is sent down SIGTERM's path,
 # unless it was ignored on entry: `nohup vid2sub serve &` asks to outlive its terminal.
 _HANGUP = getattr(signal, "SIGHUP", None)  # Windows has none
@@ -184,7 +189,17 @@ def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
     from vid2sub.web import auth
 
     port = sock.getsockname()[1]
-    previous = {sig: signal.signal(sig, _exit_on_signal) for sig in _EXIT_SIGNALS}
+    server = uvicorn.Server(uvicorn_config(app))
+    seen: list[int] = []
+
+    def note(signum: int, frame: object) -> None:
+        """Note the signal and ask uvicorn to stop, as its own handler does; never raise."""
+        seen.append(signum)
+        if server.should_exit and signum == signal.SIGINT:
+            server.force_exit = True  # a second Ctrl-C stops waiting for open responses
+        server.should_exit = True
+
+    previous = {sig: signal.signal(sig, note) for sig in _STOP_SIGNALS}
     if _HANGUP is not None and signal.getsignal(_HANGUP) is not signal.SIG_IGN:
         previous[_HANGUP] = signal.signal(_HANGUP, _hangup_as_sigterm)
     page: Path | None = None
@@ -204,9 +219,10 @@ def serve(app: ASGIApp, sock: socket.socket, *, token: str, open_browser: bool,
         if open_browser:
             threading.Thread(target=_open, args=(page, out), name="vid2sub-browser",
                              daemon=True).start()
-        uvicorn.Server(uvicorn_config(app)).run(sockets=[sock])
-    except KeyboardInterrupt:
-        pass
+        server.run(sockets=[sock])  # its handlers hand each signal back to `note` as it ends
+        ended_by = next((sig for sig in seen if sig in _EXIT_SIGNALS), None)
+        if ended_by is not None:
+            raise SystemExit(128 + ended_by)
     finally:
         if page is not None:
             shutil.rmtree(page.parent, ignore_errors=True)
@@ -224,10 +240,6 @@ def uvicorn_config(app: ASGIApp) -> uvicorn.Config:
 
     return uvicorn.Config(app, access_log=False, proxy_headers=False, server_header=False,
                           log_level="warning", lifespan="on", timeout_graceful_shutdown=GRACE)
-
-
-def _exit_on_signal(signum: int, frame: object) -> None:
-    sys.exit(128 + signum)
 
 
 def _hangup_as_sigterm(signum: int, frame: object) -> None:
