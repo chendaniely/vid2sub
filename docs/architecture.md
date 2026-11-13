@@ -24,7 +24,7 @@ flowchart LR
   end
   spark["DGX Spark: the front at 127.0.0.1:9100/v1<br/>(through make tunnel, or on the Spark itself)<br/>whisper.cpp · Gemma 4"]
   sparkqwen["DGX Spark<br/>Qwen3-ASR + forced aligner<br/>(Phase 2, once local-ai serves it)"]
-  cloud["OpenAI<br/>only with --allow-cloud"]
+  cloud["OpenAI<br/>models only with --allow-cloud"]
   pages["GitHub Pages<br/>Shinylive editor<br/>(Phase 4)"]
   term --> core
   browser -->|"websocket + token cookie"| web
@@ -33,9 +33,9 @@ flowchart LR
   core --> mlx
   core -.-> fw
   core <--> files
-  core -->|"chunks, cue text"| spark
+  core -->|"chunks, cue text; Test: its model list"| spark
   core -.->|"chunks"| sparkqwen
-  core -->|"chunks, cue text"| cloud
+  core -->|"chunks, cue text (--allow-cloud); Test: its model list, on a click"| cloud
   pages -.->|"File System Access"| files
   classDef planned stroke-dasharray: 5 5
   class fw,sparkqwen,pages planned
