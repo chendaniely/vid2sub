@@ -857,11 +857,14 @@ vid2sub suggests and the user overrides.
 2. **Sample.** For the first two files of each folder, in the background: decode, run VAD, take
    three ~20 s windows of speech at about 10%, 50% and 80% of the speech found (skipping theme
    songs and intros).
-3. **Detect.** Each window is language-identified by the best available detector: Qwen3-ASR when
-   it's available (97.9% average accuracy in Qwen's benchmark, against Whisper large-v3's 94.1%),
-   otherwise Whisper through the endpoint (`language_probabilities`). The votes give a confidence
-   and flag mixed-language content. **Whisper often labels Cantonese as `zh`,** so when Whisper
-   says `zh` the row asks "Mandarin or Cantonese?".
+3. **Detect.** Each window is language-identified by the first usable detector in §11.2's three
+   groups (the Spark's models, then in-process ones, then cloud with `--allow-cloud`; Dan, Q&A
+   item 61), Qwen3-ASR before Whisper within a group, since Qwen3-ASR is the better detector
+   (97.9% average accuracy in Qwen's benchmark, against Whisper large-v3's 94.1%). Whisper
+   answers through the endpoint (`language_probabilities`). The votes give a confidence and flag
+   mixed-language content. **Whisper often labels Cantonese as `zh`,** so when Whisper says `zh`
+   the row asks "Mandarin or Cantonese?": with the Spark first, a Chinese file is asked about
+   unless `--from zh` or `--from yue` says which.
 4. **Suggest.** The catalog's routing (§11.2) picks a transcription model and a translation
    model. Models unavailable now are shown greyed with the reason ("Spark not reachable",
    "install `vid2sub[mac]`").

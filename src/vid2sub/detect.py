@@ -3,8 +3,10 @@
 Three ~20 s windows are taken at 10%, 50% and 80% of the speech found (skipping theme songs and
 intros); each is language-identified and the votes give a language, a confidence and a "mixed"
 flag. Whisper often labels Cantonese as `zh`, so a Whisper `zh` is ambiguous and needs the user
-(or `--from`). The best detector is Qwen3-ASR (97.9% language-ID accuracy in Qwen's benchmark),
-then a local Whisper, then a cloud one if the run allows it. Candidates say which configured
+(or `--from`). The detector is the first usable one in the routing's three groups: the Spark's
+models first, then in-process ones, then a cloud one if the run allows it (Dan, Q&A item 61);
+within a group, Qwen3-ASR (97.9% language-ID accuracy in Qwen's benchmark) before Whisper.
+Candidates say which configured
 models can run right now, and why the others can't: local endpoints are asked for their model
 list; cloud ones are only checked for a key, never contacted.
 """
@@ -20,7 +22,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from vid2sub.catalog import CATALOG, Candidate
+from vid2sub.catalog import CATALOG, Candidate, is_cloud, route_group
 from vid2sub.config import Config, is_local
 from vid2sub.engines import clients
 from vid2sub.engines.base import Chunk, Engine, EngineError
@@ -136,17 +138,14 @@ def candidates(config: Config, keys: clients.KeyRing, *,
     return out
 
 
-def _is_cloud(c: Candidate) -> bool:
-    return c.cloud or CATALOG[c.catalog].cloud
-
-
 def choose_detector(cands: Sequence[Candidate], *, allow_cloud: bool) -> str | None:
+    """The first usable detector in `catalog.route_group`'s order, the Spark's first (Dan, Q&A
+    item 61); within a group, Qwen3-ASR before Whisper, for its better language-ID accuracy."""
     usable = [c for c in cands if c.available and c.catalog in CATALOG
-              and CATALOG[c.catalog].task == "transcribe"
-              and (allow_cloud or not _is_cloud(c))]
-    for family in ("qwen3-asr", "whisper"):
-        found = sorted((c for c in usable if CATALOG[c.catalog].family == family),
-                       key=lambda c: (_is_cloud(c), 0 if c.kind == "endpoint" else 1))
-        if found:
-            return found[0].name
-    return None
+              and CATALOG[c.catalog].task == "transcribe" and (allow_cloud or not is_cloud(c))]
+    if not usable:
+        return None
+    family = {"qwen3-asr": 0, "whisper": 1}
+    usable = [c for c in usable if CATALOG[c.catalog].family in family]
+    usable.sort(key=lambda c: (route_group(c), family[CATALOG[c.catalog].family]))
+    return usable[0].name if usable else None

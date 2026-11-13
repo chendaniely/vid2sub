@@ -75,12 +75,31 @@ def test_an_unreachable_spark_marks_its_models_unavailable_with_the_tunnel_hint(
     assert cands["mac"].available
 
 
-def test_the_detector_prefers_qwen_then_local_whisper_then_the_cloud():
+def test_detection_takes_the_sparks_whisper_before_the_macs_qwen3_asr():
+    qwen = Candidate("mac", "qwen3-asr-1.7b", "in-process", True)
+    turbo = Candidate("turbo", "whisper-large-v3-turbo", "endpoint", True)
+    assert d.choose_detector([turbo, qwen], allow_cloud=False) == "turbo"
+
+
+def test_detection_takes_the_macs_qwen3_asr_when_the_sparks_models_are_unusable():
+    qwen = Candidate("mac", "qwen3-asr-1.7b", "in-process", True)
+    turbo = Candidate("turbo", "whisper-large-v3-turbo", "endpoint", False, "not listed")
+    assert d.choose_detector([turbo, qwen], allow_cloud=False) == "mac"
+
+
+def test_detection_prefers_qwen3_asr_to_whisper_within_a_group():
+    qwen = Candidate("spark-qwen", "qwen3-asr-1.7b", "endpoint", True)
+    turbo = Candidate("turbo", "whisper-large-v3-turbo", "endpoint", True)
+    assert d.choose_detector([turbo, qwen], allow_cloud=False) == "spark-qwen"
+
+
+def test_detection_uses_the_cloud_only_with_allow_cloud_and_after_both_local_groups():
     qwen = Candidate("mac", "qwen3-asr-1.7b", "in-process", True)
     turbo = Candidate("turbo", "whisper-large-v3-turbo", "endpoint", True)
     cloud = Candidate("w1", "openai-whisper-1", "endpoint", True, cloud=True)
-    assert d.choose_detector([turbo, qwen], allow_cloud=False) == "mac"
-    assert d.choose_detector([turbo, cloud], allow_cloud=False) == "turbo"
+    assert d.choose_detector([cloud, turbo], allow_cloud=False) == "turbo"
+    assert d.choose_detector([cloud, turbo, qwen], allow_cloud=True) == "turbo"
+    assert d.choose_detector([cloud, qwen], allow_cloud=True) == "mac"
     assert d.choose_detector([cloud], allow_cloud=False) is None
     assert d.choose_detector([cloud], allow_cloud=True) == "w1"
 

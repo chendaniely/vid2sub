@@ -133,17 +133,25 @@ class Suggestion:
     considered: tuple[tuple[str, str], ...] = ()
 
 
+def is_cloud(c: Candidate) -> bool:
+    """Whether the candidate sends audio or text off this machine: it says so, or its catalog
+    entry does."""
+    return c.cloud or (c.catalog in CATALOG and CATALOG[c.catalog].cloud)
+
+
+def route_group(c: Candidate) -> int:
+    """0 for an endpoint model that isn't cloud (the Spark, a local server), 1 for an in-process
+    model (the Mac's), 2 for a cloud one. Routing and language detection both go in this order:
+    Dan's "Spark models first" of 2026-11-11 (Q&A items 57, 59 and 61)."""
+    if is_cloud(c):
+        return 2
+    return 0 if c.kind == "endpoint" else 1
+
+
 def _in_order(route: Sequence[str], candidates: Sequence[Candidate]
               ) -> list[tuple[str, Candidate]]:
-    """The route's candidates in three groups, each in route order: endpoint models that aren't
-    cloud (the Spark, a local server), then in-process models (the Mac's), then cloud models.
-    Dan's "Spark models first" of 2026-11-11, taken up in Q&A items 57 and 59."""
-    def group(c: Candidate, cid: str) -> int:
-        if c.cloud or CATALOG[cid].cloud:
-            return 2
-        return 0 if c.kind == "endpoint" else 1
-
-    pairs = [(group(c, cid), cid, c) for cid in route for c in candidates if c.catalog == cid]
+    """The route's candidates in the three groups of `route_group`, each in route order."""
+    pairs = [(route_group(c), cid, c) for cid in route for c in candidates if c.catalog == cid]
     return [(cid, c) for _, cid, c in sorted(pairs, key=lambda p: p[0])]  # stable: route order
 
 
@@ -166,7 +174,7 @@ def suggest(lang: str, candidates: Sequence[Candidate], task: str, *,
         if not c.available:
             considered.append((c.name, c.reason))
             continue
-        if (c.cloud or CATALOG[cid].cloud) and not allow_cloud:
+        if is_cloud(c) and not allow_cloud:
             considered.append((c.name, "a cloud model: needs --allow-cloud"))
             continue
         notes = []
