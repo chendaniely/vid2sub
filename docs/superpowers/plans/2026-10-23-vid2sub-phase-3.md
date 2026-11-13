@@ -17640,8 +17640,8 @@ the first model available now wins, but a route's candidates go in three groups,
 order: endpoint models that aren't cloud (the Spark, a local server), then in-process models (this
 machine's: the Mac's Qwen3-ASR, faster-whisper), then cloud models (Dan, 2026-11-11, "Spark models
 first"; Q&A items 57 and 59). A step can name where its model runs: English takes turbo on the
-Spark, then the Mac's Qwen3-ASR, then turbo through faster-whisper on this machine, as §11.2
-orders it.
+Spark (then the Spark's large-v3, when it is configured), then the Mac's Qwen3-ASR, then turbo
+through faster-whisper on this machine, as §11.2 orders it.
 ```
 
   Replace `TRANSCRIBE_ROUTES: dict[str, tuple[str, ...]] = {` with the two lines

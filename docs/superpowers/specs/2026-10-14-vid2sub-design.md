@@ -122,9 +122,9 @@ test names.
   Phase 2's first task.
 - **Japanese reading speed:** at 4 characters per second Gemma condenses heavily (§29); revisit
   against real episodes in that task.
-- **Japanese routing:** `whisper-large-v3` comes first for Japanese (§11.2) but isn't on the
-  Spark, so Japanese runs on the Mac's Qwen3-ASR unless `--model` says otherwise. A comparison
-  with turbo and Qwen settles the order.
+- **Japanese routing:** `whisper-large-v3` comes first for Japanese (§11.2), and since local-ai's
+  44l (2026-11-12) it is on the Spark, in the starter as `spark-large-v3`, so Spark-first routing
+  sends Japanese there. A comparison with turbo and Qwen3-ASR on real episodes settles the order.
 - **Qwen3-ASR on the Spark** (Dan, 2026-10-23: 1.7B and 0.6B being installed): timings need
   `Qwen3-ForcedAligner-0.6B` too; vLLM serves the text but no words (§26.1, item 7). vid2sub has
   no parser for a Qwen endpoint yet (M1 plan, decision 3). Proposed as a Phase 2 task (S22), its
@@ -134,8 +134,14 @@ test names.
   play (AC-3, E-AC-3, DTS, TrueHD) still has sound; the preview copy stays in Phase 3.
 - **The CSP Shiny and shinyreact need** (§29, M2): if it needs more than the spec allows, that is
   a spec change, for Dan.
-- **local-ai's Phase 3** (§17.4): role aliases, `x-spark-model`, inline refusals. Until then a
-  refused load is a plain error.
+- **local-ai's Phase 3** (§17.4): role aliases and `x-spark-model`. Refusals already arrive from
+  local-ai's front (its Phase 2a, #41 and #42) and are waited out (§17.4).
+- **vid2sub's own Spark key, and a record of what it used** (Dan, 2026-11-12,
+  [Q&A item 58](2026-10-14-vid2sub-qa.md)): local-ai gives vid2sub its own key, so the Spark's
+  meter shows its spend apart; vid2sub records the answering model and each reply's token counts
+  in the sidecar and `run --json`, and prints a dollar estimate per run priced from local-ai's
+  price files; a proxy price for transcription is local-ai's to set. It waits on local-ai's
+  answer on its #52, and gets a plan task then.
 - **whisper.cpp reports no compression ratio** (2026-11-10, found in the runs behind
   [Q&A item 55](2026-10-14-vid2sub-qa.md)): §8.7's guard and §12's `halluc` check on it never fire
   for whisper.cpp, so a looping chunk's text goes on as the next prompt. Harmless on the Spark
@@ -143,8 +149,8 @@ test names.
   `max_context` above 0. vid2sub could compute the ratio itself.
 - **local-ai's 44l deploy** (2026-11-12, its `phase-2a`, §26.1's note): Qwen3.6 became the
   always-loaded model and Gemma went on demand, so §11's Gemma rows, the README and the catalog
-  now say so (Q&A item 56); Whisper large-v3 arrived on demand, for the Japanese routing item;
-  and the Spark's Qwen3-ASR is a by-hand service that looped on TV drama, so S22 still waits.
+  now say so (Q&A item 56); Whisper large-v3 arrived on demand and is in the starter (the
+  Japanese routing item above); and the Spark's Qwen3-ASR is a by-hand service that looped on TV drama, so S22 still waits.
 - **Open for Dan since 2026-10-14** (§28): no embedded YouTube player in v1; Intel Macs
   unsupported.
 - **The workflow's own gaps:** plan-driven-development hasn't built its git hooks, its leak check
@@ -178,6 +184,12 @@ test names.
   drama; the cost, accepted, is that the Spark's whisper.cpp ignores the prompt, so a glossary
   helps only translation there (§8.7, §16) ([Q&A item 55](2026-10-14-vid2sub-qa.md)); §26.1 gains
   local-ai's status.
+- 2026-11-13: §11.2 routes the Spark's models first, in three groups (endpoint models that aren't
+  cloud, then in-process, then cloud), and §10 detects the language the same way (Dan, Q&A items
+  57, 59 and 61); an unreachable Spark is waited for, then the run stops (Q&A item 60); Gemma
+  loads on demand on the Spark (Q&A item 56); §17.4 names the refusals waited out and how long
+  (local-ai #41, #42); §5.1's starter gains `spark-large-v3`; an open item records Q&A item 58
+  (`53a54b8`, `f38dc3c`, `ecac6b5`, `5f2f0e6`).
 
 ## Contents
 
@@ -428,6 +440,14 @@ model = "whisper-large-v3-turbo"          # the name the server knows
 parser = "whisper.cpp"                    # response shape (§9.2)
 local = true                              # valid only because spark's host is in local_hosts
 request_extra = { max_context = 0 }       # form fields sent with each chunk (§9.3)
+
+[models.spark-large-v3]                   # loads on demand on the Spark (Q&A items 57, 59)
+catalog = "whisper-large-v3"
+endpoint = "spark"
+model = "whisper-large-v3"
+parser = "whisper.cpp"
+local = true
+request_extra = { max_context = 0 }
 
 [models.spark-gemma]
 catalog = "gemma-4-26b-a4b"
@@ -918,7 +938,7 @@ service), is still first.
 | Cantonese | `qwen3-asr-1.7b` (Spark, then Mac) → `whisper-large-v3` (warns: weak); in the groups above, the Spark's Whisper comes before the Mac's Qwen3-ASR | `gemma-4-26b-a4b` → configured local endpoint → OpenAI (opt-in) |
 | Mandarin | `qwen3-asr-1.7b` → `whisper-large-v3` → turbo; in the groups above, the Spark's large-v3, then turbo, then the Mac's Qwen3-ASR | the same |
 | Japanese | `whisper-large-v3` → `qwen3-asr-1.7b` → turbo (order revisited after a comparison) | the same |
-| English | `whisper-large-v3-turbo` (Spark) → `qwen3-asr-1.7b` (Mac) → `faster-whisper` turbo | none (English captions) |
+| English | `whisper-large-v3-turbo` (Spark) → `qwen3-asr-1.7b` (Mac) → `faster-whisper` turbo; in the groups above, the Spark's large-v3 comes before the Mac | none (English captions) |
 
 The Spark default for translation is Gemma 4 for every language in v1 (council, 2026-10-14). The
 reason then was that it was resident with two slots; since local-ai's 44l (2026-11-12) it loads on
@@ -1235,9 +1255,10 @@ chunk has finished.
   - yt-dlp bot check → "upgrade yt-dlp".
 - **Cancel** stops between chunks and kills child processes.
 
-### 17.4 The Spark once local-ai's Phase 3 lands
+### 17.4 The Spark's refusals, and what local-ai's Phase 3 adds
 
-- Accept a model's name or its role alias; record `x-spark-model` (§9.6).
+- Once local-ai's Phase 3 lands: accept a model's name or its role alias; record `x-spark-model`
+  (§9.6).
 - On a refusal (a 409, or a 503 `gate_down`, with `error.code`): `loading`, `no_fit`,
   `held_by_brake`, `gate_down`, `restarting`, `draining` and `llama_swap_down` are waited out like
   a dropped connection, and the queue pauses, showing the refusal's code, once
@@ -1246,8 +1267,9 @@ chunk has finished.
   `footprint_suspect`, `load_failed` and `not_downloaded` stay failures: waiting won't fix them.
 - 429 from per-key concurrency → honour `Retry-After`.
 - **Never fall back** to another model or to the cloud.
-- Before Phase 3, a refused load is a plain error and its reason is in local-ai's `make status`;
-  the hint says so.
+- Refusals arrive from local-ai's front now (its Phase 2a) and are waited out as above; what still
+  waits for its Phase 3 is the role aliases and `x-spark-model`. A refusal that waiting won't fix
+  is a plain error whose reason is in local-ai's `make status`; the hint says so.
 
 ## 18. CLI
 
@@ -1633,7 +1655,8 @@ is Phase 1, M2 Phase 2, and so on); the Outline at the top tracks them.
   Safari, edit and download; install from the index on a clean machine.
 
 **In parallel (local-ai, Dan's call):** the Qwen3-ASR service on the Spark (§26.1, item 7). Until
-it exists, Mandarin and Cantonese use the Mac engine.
+it exists, Mandarin and Cantonese use the Spark's Whisper first (Cantonese warned weak), and the
+Mac's Qwen3-ASR when the Spark answers without it (§11.2).
 
 **Later:** B (§3.3, §6.10); `vid2sub compare`, scoring models against an episode corrected in the
 editor; dedicated translation models (TranslateGemma, HY-MT; a per-cue path); `mlx-whisper`,

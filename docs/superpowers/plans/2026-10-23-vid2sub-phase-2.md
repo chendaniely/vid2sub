@@ -40211,8 +40211,9 @@ vid2sub cache clear                                   # empty the cache of playb
 vid2sub serve                                         # the editor, in your browser (below)
 ```
 
-  After the line ``(run the same command with `--skip-existing`); 78 a settings problem.`` (the
-  end of Use), insert:
+  After the line `speech service), and the speech service isn't reachable from vid2sub yet.` (the
+  last line of the README's `### On the Spark, over a folder` section, which the Spark-first
+  one-off added after the end of Use and before `## Models`), insert:
 
 ````markdown
 
