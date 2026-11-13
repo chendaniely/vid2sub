@@ -20,7 +20,8 @@ export type DefaultsChange = { targets: string[] } | { formats: SessionDefaults[
  * connection, since a message sent while there is none stays queued in the page; so do Test and
  * the defaults. The session's defaults (targets, formats) are for this launch, never written
  * (§5.4); the cue rules are shown as built, since nothing can change them yet (Decision 21);
- * Copy settings gives the [defaults] table as TOML, never a key. Every name, address and server answer is plain text (§6.3). */
+ * Copy settings gives the [defaults] table as TOML, never a key. Every name, address and server
+ * answer is plain text (§6.3). */
 export function SettingsDrawer({ open, onClose, connected, settings, tests, onTest, onTypedKey, onDefaults }: {
   open: boolean;
   onClose: () => void;

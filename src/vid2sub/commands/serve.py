@@ -18,19 +18,19 @@ served on (CI, 2026-11-11; Task 18). uvicorn's handlers take over while it serve
 signals back when it stops; asyncio then waits for the worker threads a Test, a retranslation
 or the playback audio may hold (up to minutes), so from that point the signals raise again, as
 before: a further Ctrl-C ends the wait (Task 18 fix round 1, I-3; a raise lost to a weakref
-callback there costs only that one press). SIGTERM then ends in a normal exit with status 143,
-so `finally` and atexit run (recordings' __main__ exits so too; Windows' Ctrl-Break likewise),
-and Ctrl-C in status 0.
-Shutdown waits at most 3 seconds for open responses, since a
-paused video holds its stream open. uvicorn's access log is off and it trusts no proxy
-headers, since none is in front of it; the openai, httpx and chatlas loggers stay at WARNING,
-as for every command (§6.8, §6.2).
+callback there costs only that one press). Python's own exit then joins such a thread too, so
+ending the process there takes yet another Ctrl-C (a gap older than Task 18, on Phase 2's
+phase-end list). SIGTERM then ends in a normal exit with status 143, so `finally` and atexit run
+(recordings' __main__ exits so too; Windows' Ctrl-Break likewise), and Ctrl-C in status 0.
+Shutdown waits at most 3 seconds for open responses, since a paused video holds its stream open.
+uvicorn's access log is off and it trusts no proxy headers, since none is in front of it; the
+openai, httpx and chatlas loggers stay at WARNING, as for every command (§6.8, §6.2).
 Without the built frontend (`www/ui.js`), serve refuses before it reads or binds anything (§18,
 §23.5). `--demo` serves a fresh copy of the demo instead, reading no vid2sub.toml and no key,
 and, once it is set up, guarded against writes, reads and connections beyond it, as far as
-Python audits them (`vid2sub.web.demo`, spec §22.7). The web
-modules are imported only when serve runs, so other commands don't load them, and the Shiny app
-only once `runtime.configure()` has run, as recordings imports it.
+Python audits them (`vid2sub.web.demo`, spec §22.7). The web modules are imported only when
+serve runs, so other commands don't load them, and the Shiny app only once `runtime.configure()`
+has run, as recordings imports it.
 """
 
 from __future__ import annotations
