@@ -270,11 +270,14 @@ export default function App() {
   const onTypedKey = (endpoint: string, key: string) => {
     const n = ++sent.current;
     // With no socket the key is dropped, not queued: shiny.js would hold it in $pendingMessages
-    // for good (vid2sub never reconnects). A message set now reaches $sendMsg a debounce and a
-    // batch later, so the queue is scrubbed again after those, whenever the socket is gone.
+    // for good (vid2sub never reconnects). A key set just before the socket closed reaches
+    // $sendMsg a debounce (one timer) later, so once the paced null is set the queue is scrubbed
+    // again, whenever the socket is gone.
     pace(() => { if (pageConnected()) setTypedKey({ endpoint, key, n }); });
-    pace(() => setTypedKey(null));
-    for (const ms of [0, 50, 250]) setTimeout(() => { if (!pageConnected()) dropQueuedKeys(); }, ms);
+    pace(() => {
+      setTypedKey(null);
+      for (const ms of [0, 50, 250]) setTimeout(() => { if (!pageConnected()) dropQueuedKeys(); }, ms);
+    });
   };
   const onTest = (endpoint: string) => {
     setTests((t) => ({ ...t, [endpoint]: "testing" }));
