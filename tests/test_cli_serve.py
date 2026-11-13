@@ -17,6 +17,7 @@ import socket
 import stat
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -461,6 +462,8 @@ def test_a_signal_before_uvicorns_own_handlers_still_stops_the_engine(tmp_path, 
 # playback audio on such a thread. This child holds one for 60 s.
 HELD_THREAD = r"""
 import asyncio
+import os
+import signal
 import time
 
 from starlette.applications import Starlette
@@ -479,8 +482,13 @@ async def hold(request):
 
 sock = serve.bind(0)
 print("PORT", sock.getsockname()[1], flush=True)
-raise SystemExit(serve.serve(Starlette(routes=[Route("/hold", hold)]), sock,
-                             token=auth.new_token(), open_browser=False, out=Output(False)))
+code = serve.serve(Starlette(routes=[Route("/hold", hold)]), sock, token=auth.new_token(),
+                   open_browser=False, out=Output(False))
+# What is asked is that serve() returns: Python's own exit would wait for the held thread, and a
+# press landing during it would end the child by the signal, which isn't what this is about.
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+print("SERVED", code, flush=True)
+os._exit(code)
 """
 
 
@@ -489,26 +497,42 @@ def test_a_further_ctrl_c_ends_the_engine_while_a_worker_thread_still_runs(tmp_p
     proc = subprocess.Popen([sys.executable, "-c", HELD_THREAD], stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True,
                             env={**os.environ, "TMPDIR": str(tmp_path)})
+    lines: list[str] = []
+    served = threading.Event()
+
+    def read() -> None:
+        for line in proc.stdout:
+            lines.append(line)
+            if line.startswith("SERVED"):
+                served.set()
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
     try:
-        port = int(next(line.split()[1] for line in proc.stdout if line.startswith("PORT")))
-        next(line for line in proc.stdout if "Ctrl-C stops" in line)
+        deadline = time.monotonic() + 20
+        while not any("Ctrl-C stops" in line for line in lines):
+            assert proc.poll() is None and time.monotonic() < deadline, "".join(lines)
+            time.sleep(0.05)
+        port = int(next(line.split()[1] for line in lines if line.startswith("PORT")))
         with socket.create_connection(("127.0.0.1", port), timeout=10) as held:
             held.sendall(b"GET /hold HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
             time.sleep(1)  # the route has its thread
             began = time.monotonic()
             proc.send_signal(signal.SIGINT)
             time.sleep(serve.GRACE + 1)  # uvicorn gave up on the response; asyncio now waits
-            while proc.poll() is None and time.monotonic() - began < 10:
+            while not served.is_set() and time.monotonic() - began < 12:
                 proc.send_signal(signal.SIGINT)
-                time.sleep(1)
-        code = proc.poll()
-        if code is None:
+                served.wait(1)
+        if not served.is_set():
             pytest.fail("a further Ctrl-C didn't end the engine while a worker thread ran")
-        assert code == exitcodes.OK
+        proc.wait(timeout=10)
+        assert proc.returncode == exitcodes.OK, "".join(lines)
+        assert "SERVED 0" in "".join(lines)
     finally:
         if proc.poll() is None:
             proc.kill()
         proc.wait()
+        reader.join(timeout=5)
         proc.stdout.close()
 
 
