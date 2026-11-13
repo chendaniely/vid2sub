@@ -10,7 +10,7 @@ open_browser = true
 # A model marked `local = true` must live on one of these hosts.
 local_hosts = ["127.0.0.1", "localhost", "::1"]
 
-# The DGX Spark through local-ai's SSH tunnel (`make tunnel`).
+# The DGX Spark through local-ai's SSH tunnel (`make tunnel`), or on the Spark itself (no tunnel).
 [endpoints.spark]
 base_url = "http://127.0.0.1:9100/v1"
 key_env = "SPARK_API_KEY"
@@ -32,7 +32,7 @@ local = true
 request_extra = { max_context = 0 }
 
 # The Spark loads Whisper large-v3 on demand; vid2sub's first choice for Mandarin, Japanese and
-# Korean on the Spark.
+# Korean on the Spark, and for Cantonese (weak).
 [models.spark-large-v3]
 catalog = "whisper-large-v3"
 endpoint = "spark"

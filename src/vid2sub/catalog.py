@@ -56,7 +56,9 @@ CATALOG: dict[str, CatalogEntry] = {e.id: e for e in (
         family="qwen3-asr", default_model="Qwen/Qwen3-ASR-0.6B"),
     CatalogEntry(
         "whisper-large-v3", "transcribe", "Whisper large-v3",
-        good_for="Japanese (until compared with Qwen3-ASR), 99 languages, vocabulary prompt",
+        good_for="Mandarin and Japanese on the Spark (until compared with Qwen3-ASR), 99 "
+                 "languages, vocabulary prompt (not on the Spark's whisper.cpp under "
+                 "max_context = 0)",
         weak="slower than turbo; poor on Cantonese",
         runs_on="the Spark (loads on demand); Windows/Linux (faster-whisper, M3)",
         install="the Spark's endpoint (it loads the model on demand), a whisper.cpp server, "

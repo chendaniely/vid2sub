@@ -22,7 +22,7 @@ flowchart LR
     fw["In-process engine<br/>faster-whisper<br/>(Phase 3)"]
     files[("Video folder<br/>video · .vid2sub.jsonl · .xx.srt")]
   end
-  spark["DGX Spark via SSH tunnel<br/>127.0.0.1:9100/v1<br/>whisper.cpp · Gemma 4"]
+  spark["DGX Spark: the front at 127.0.0.1:9100/v1<br/>(through make tunnel, or on the Spark itself)<br/>whisper.cpp · Gemma 4"]
   sparkqwen["DGX Spark<br/>Qwen3-ASR + forced aligner<br/>(Phase 2, once local-ai serves it)"]
   cloud["OpenAI<br/>only with --allow-cloud"]
   pages["GitHub Pages<br/>Shinylive editor<br/>(Phase 4)"]

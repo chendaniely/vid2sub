@@ -147,7 +147,7 @@ speech service), and the speech service isn't reachable from vid2sub yet.
 |---|---|---|---|---|
 | Qwen3-ASR 1.7B + ForcedAligner 0.6B | transcribe | Mandarin and Cantonese by a wide margin (Qwen's numbers: WenetSpeech-Yue long 8.85 vs Whisper large-v3's 46.64); strong English; Hong Kong and Guangdong accents; vocabulary context | Japanese is supported but has no published benchmark | Mac (mlx-qwen3-asr); the Spark once local-ai serves it |
 | Qwen3-ASR 0.6B + ForcedAligner 0.6B | transcribe | the same languages as the 1.7B, lighter and faster | less accurate than the 1.7B | Mac (mlx-qwen3-asr) |
-| Whisper large-v3 | transcribe | Japanese (until compared with Qwen3-ASR), 99 languages, vocabulary prompt | slower than turbo; poor on Cantonese | the Spark (loads on demand); Windows/Linux (faster-whisper, M3) |
+| Whisper large-v3 | transcribe | Mandarin and Japanese on the Spark (until compared with Qwen3-ASR), 99 languages, vocabulary prompt (not on the Spark's whisper.cpp under max_context = 0) | slower than turbo; poor on Cantonese | the Spark (loads on demand); Windows/Linux (faster-whisper, M3) |
 | Whisper large-v3-turbo | transcribe | English → English captions, quick drafts | weaker on Cantonese and tonal languages; no translate task | the Spark (always loaded); Windows/Linux from M3 |
 | OpenAI whisper-1 | transcribe | a cloud fallback in any language | 25 MB per request (vid2sub's chunks fit); the audio leaves your machine | OpenAI |
 | Gemma 4 26B-A4B | translate | Japanese → English, general translation; loads on demand on the Spark since local-ai's 44l (2026-11-12), so a run may wait for its load | — | the Spark |
