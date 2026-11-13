@@ -1221,8 +1221,12 @@ chunk has finished.
 ### 17.4 The Spark once local-ai's Phase 3 lands
 
 - Accept a model's name or its role alias; record `x-spark-model` (§9.6).
-- On an inline refusal's `error.code`: `loading` → wait `retry_after_s`; `no_fit`,
-  `held_by_brake`, `gate_down` → pause the queue and show the refusal text.
+- On a refusal (a 409, or a 503 `gate_down`, with `error.code`): `loading`, `no_fit`,
+  `held_by_brake`, `gate_down`, `restarting`, `draining` and `llama_swap_down` are waited out like
+  a dropped connection, and the queue pauses with the refusal text once `wait_on_connection_s` is
+  spent (local-ai #41; a deploy is when the last three fire). The wait is the body's top-level
+  `retry_after_s`, else the `Retry-After` header, else vid2sub's own backoff (local-ai #42).
+  `footprint_suspect`, `load_failed` and `not_downloaded` stay failures: waiting won't fix them.
 - 429 from per-key concurrency → honour `Retry-After`.
 - **Never fall back** to another model or to the cloud.
 - Before Phase 3, a refused load is a plain error and its reason is in local-ai's `make status`;

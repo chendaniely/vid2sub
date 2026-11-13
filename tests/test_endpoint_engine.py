@@ -88,7 +88,7 @@ def test_a_redirect_is_never_followed():
 @pytest.mark.parametrize("status, payload, headers, kind, retry", [
     (413, {"error": {"message": "too big"}}, {}, "too_large", None),
     (429, {"error": {"message": "busy"}}, {"retry-after": "7"}, "refused", 7.0),
-    (503, {"error": {"code": "no_fit", "message": "doesn't fit", "retry_after_s": 30}}, {},
+    (409, {"error": {"code": "no_fit", "message": "doesn't fit"}, "retry_after_s": 30}, {},
      "refused", 30.0),
     (500, {"error": {"message": "boom"}}, {}, "server", None),
 ])

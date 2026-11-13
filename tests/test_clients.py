@@ -140,7 +140,53 @@ def _transcribe(responses):
 
 
 def _refusal(retry):
-    return (503, {"error": {"code": "loading", "retry_after_s": retry}}, {})
+    return (409, {"error": {"code": "loading"}, "retry_after_s": retry}, {})
+
+
+def _refusal_with(code, *, status=409, body_retry=None, header=None):
+    """local-ai's refusal (its spark/src/spark/messages.py): the code in `error`, a top-level
+    retry_after_s, a Retry-After header and x-should-retry: false."""
+    body: dict = {"error": {"code": code, "message": "no"}}
+    if body_retry is not None:
+        body["retry_after_s"] = body_retry
+    headers = {"x-should-retry": "false"}
+    if header is not None:
+        headers["Retry-After"] = header
+    return (status, body, headers)
+
+
+@pytest.mark.parametrize("code, status", [
+    ("restarting", 409), ("draining", 409), ("llama_swap_down", 409), ("gate_down", 503),
+    ("no_fit", 409), ("loading", 409), ("held_by_brake", 409)])
+def test_every_refusal_worth_waiting_out_is_refused_with_its_retry_after(code, status):
+    with pytest.raises(EngineError) as err:
+        _transcribe([_refusal_with(code, status=status, body_retry=60)])
+    assert err.value.kind == "refused" and err.value.retry_after == 60.0
+
+
+@pytest.mark.parametrize("code", ["footprint_suspect", "load_failed", "not_downloaded"])
+def test_a_refusal_that_waiting_wont_fix_still_fails(code):
+    with pytest.raises(EngineError) as err:
+        _transcribe([_refusal_with(code, body_retry=30, header="30")])
+    assert err.value.kind != "refused"
+
+
+def test_the_top_level_retry_after_s_wins_over_the_header():
+    with pytest.raises(EngineError) as err:
+        _transcribe([_refusal_with("restarting", body_retry=45, header="9")])
+    assert err.value.retry_after == 45.0
+
+
+def test_the_retry_after_header_is_used_when_the_body_has_none():
+    with pytest.raises(EngineError) as err:
+        _transcribe([_refusal_with("draining", header="12")])
+    assert err.value.kind == "refused" and err.value.retry_after == 12.0
+
+
+def test_a_refusal_with_neither_leaves_the_wait_to_vid2subs_own_backoff():
+    with pytest.raises(EngineError) as err:
+        _transcribe([_refusal_with("llama_swap_down")])
+    assert err.value.kind == "refused" and err.value.retry_after is None
 
 
 def test_an_unreadable_retry_hint_in_a_refusal_is_ignored_not_a_crash():

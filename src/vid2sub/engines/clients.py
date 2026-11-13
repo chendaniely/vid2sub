@@ -27,7 +27,12 @@ from vid2sub.engines.base import EngineError
 from vid2sub.security import host_of, key_transport_ok, redact
 
 QUIET = ("openai", "httpx", "httpcore", "chatlas")
-REFUSAL_CODES = {"loading", "no_fit", "held_by_brake", "gate_down"}  # local-ai Phase 3
+# The refusals local-ai's front sends that waiting out can fix (its spark/src/spark/messages.py:
+# CODES_409 and CODES_503; local-ai #41). `footprint_suspect`, `load_failed` and `not_downloaded`
+# are left out on purpose: they stay failures, since waiting won't fix them. A deploy is when
+# `restarting`, `draining` and `llama_swap_down` fire.
+REFUSAL_CODES = {"loading", "no_fit", "held_by_brake", "gate_down", "restarting", "draining",
+                 "llama_swap_down"}
 
 
 def quiet_libraries() -> None:
@@ -126,6 +131,13 @@ def _retry_after(response: Any) -> float | None:
     return _seconds(response.headers.get("retry-after"))
 
 
+def _refusal_wait(body: Any, response: Any) -> float | None:
+    """local-ai's wait (#42): the body's top-level retry_after_s, else the Retry-After header,
+    else None, which leaves the wait to vid2sub's own backoff."""
+    top = _seconds(body.get("retry_after_s")) if isinstance(body, dict) else None
+    return top if top is not None else _retry_after(response)
+
+
 def map_error(err: Exception, *, key_env: str | None, secrets: list[str]) -> EngineError:
     message = redact(str(err), secrets)
     if isinstance(err, openai.APITimeoutError):
@@ -147,7 +159,7 @@ def map_error(err: Exception, *, key_env: str | None, secrets: list[str]) -> Eng
         if code in REFUSAL_CODES:
             return EngineError("refused", f"the Spark refused the request: {code}",
                                hint="local-ai's `make status` says why",
-                               retry_after=_seconds(error.get("retry_after_s")))
+                               retry_after=_refusal_wait(body, err.response))
         if 300 <= status < 400:
             return EngineError("bad_response",
                                f"the server redirected ({status}); vid2sub never follows a "
