@@ -32,11 +32,11 @@ ffmpeg ≥6 for the playback audio.
 
 **Spec:** `docs/superpowers/specs/2026-10-14-vid2sub-design.md`
 
-**Now:** Task 18: The settings drawer, open.
+**Now:** Task 19: The Jobs page, open.
 
 **Run order:** Task 1, then Tasks 25, 26 and 27 (added after the plan's approval: Q&A items 34,
 36 and 37), then Task 2 onward, with Task 28 (added 2026-11-13: Q&A item 58) after Task 20. Tasks 25 to 27's tests raise every later task's `make check` count by 48: the
-later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower. Task 13's drift test and fix round 13c added 24 more (its listed 960 is 1143 in fact, 183 above the listing: the 159 and 24 more, 17 in `tests/test_demo_guard.py` and 7 parser cases in `tests/test_formats.py`): from Task 13's close on, every later listed count is 183 lower than the real one (Task 14's listings count from 960). Task 14's second hostile browser test adds one e2e test, which Task 14's own listings count. Task 14's fix round 14e and direct fix add 33 more full-suite tests and one e2e test (the AVI fallback) (its listed 974 is 1190 in fact, 216 above the listing: the 183 and 33 more, among them 19 snippets of the thread and process check in `tests/test_pages_imports.py`): from Task 14's close on, every later listed full-suite count is 216 lower than the real one (Task 15's listings count from 974), and every later listed `deselected` count and `make e2e` count is 2 lower than the real one (the raw file-name case and the AVI test; Task 14's end is `21 deselected` and `17 passed` in fact). Vitest is as Task 14 listed it (9 files, 44 tests). A later listing that counts a run of `tests/test_demo_guard.py` (24 tests, not 7) or `tests/test_formats.py` (7 more than before) is that many lower, and one of `tests/test_web_server.py` is 12 lower (34 tests, not 22), `tests/test_pages_imports.py` 20 lower (25, not 5), `tests/test_backend_open.py` 1 lower, and `tests/e2e/test_editor_view.py` 2 lower (11 tests in fact, counting the raw file-name case as one, against 9 listed). Task 15's fix rounds and direct fixes add 4 server tests (round 15d's) to the full suite: its listed 978 is 1198 in fact, 220 above the listing (the 216 and 4 more): from Task 15's close on, every later listed full-suite count is 220 lower than the real one (Task 16's listings count from 978). The offset for `deselected` and `make e2e` that Task 14's close gave as 2 is **3**, since Task 13's close added a test to Task 14 that Task 15's listing wasn't rewritten for; Task 15 adds 25 more e2e tests beyond its listing (3 in round 15c's drift, 20 in round 15d and 2 in the direct fixes), so from Task 15's close on every later listed `deselected` count and `make e2e` count is **28** lower than the real one (the 3 and 25 more; Task 15's end is `52 deselected` and `48 passed` in fact, against the listed 24 and 20). Vitest: Task 15 listed 12 files and 58 tests and has 14 files and 68 tests in fact (`CueRow.test.ts`, `BusyNote.test.ts`, `activeDescendant`'s test and the round 15d cases), so from Task 15's close on every later listed Vitest file count is 2 lower and test count 10 lower (Task 16's listings count from 12 and 58). A later listing that counts a run of `tests/test_web_server.py` is 21 lower (42 tests in fact after Task 15, against the 21 its listing ends on), and `tests/e2e/test_editor_view.py` has 13 tests in fact and `tests/e2e/test_editing.py` 29 (6 listed). Task 16's fix round 16d and its direct fixes add 4 full-suite tests (3 server tests and one view test), 15 e2e tests and 6 Vitest tests beyond its listing: its listed 985 is 1209 in fact, 224 above the listing (the 220 and 4 more): from Task 16's close on, every later listed full-suite count is 224 lower than the real one (Task 17's listings count from 985), every later listed `deselected` count and `make e2e` count is 43 lower (the 28 and 15 more; Task 16's end is `74 deselected` and `70 passed` in fact, against the listed 31 and 27), and Vitest is 2 files and 16 tests lower (17 files and 89 tests in fact, against the listed 15 and 73: Task 15's 2 files and 10 tests, and `draft.test.ts` 13 tests in fact against the 9 listed, `SaveBar.test.ts` 7 against 5). Task 17's round 17c gains one e2e test (Task 16's I-2) that its Step 14 counts (`36 deselected`, `32 passed`) but whose later listings do not: from Task 17's close on, every later listed `deselected` count and `make e2e` count is 44 lower than the real one. A later listing that counts a run of `tests/test_web_server.py` is 24 lower (49 tests in fact after Task 16, against the 25 its listing ends on), `tests/test_views.py` 3 lower (27 against 24), and `tests/e2e/test_saving.py` has 22 tests in fact against the 7 listed. Task 17's listing counted one test too few (it adds 8, not 7), and its round 17d and the direct fixes after its re-review add 2 server tests (I-3's hint and the late progress), 10 e2e tests and 8 Vitest tests, so its listed end of 993 is 1220 in fact, 227 above the listing (the 224, one from the miscount, and 2): from Task 17's close on, every later listed full-suite count is 227 lower than the real one (Task 18's listings count from 993), every later listed `deselected` count is 53 lower and every later `make e2e` count 53 lower (Task 17's end is `89 deselected` and `85 passed` in fact, against the listed 36 and 32), and Vitest is 3 files and 24 tests lower (19 files and 106 tests in fact, against the listed 16 and 82: the 2 files and 16 tests from before, `Retranslate.test.ts`, and 8 tests in `draft.test.ts`, `Retranslate.test.ts`, `BusyNote.test.ts` and `retranslate.test.ts`). A later listing that counts a run of `tests/test_web_server.py` is 26 lower (59 tests in fact after Task 17, against the 33 its listing ends on), `tests/test_backend_retranslate.py` is as it listed (34 tests), and `tests/e2e/test_retranslate.py` has 15 tests in fact against the 5 listed. The Spark-first one-off (2026-11-13, Q&A items 56–61, outside the plan's tasks) adds 27 full-suite tests (1220 becomes 1247 in fact; 14 of them in `tests/test_clients.py`): from Task 18's listing on, every later listed full-suite count is 254 lower than the real one (the 227 and 27 more), and a later listing that counts a run of `tests/test_clients.py` is 14 lower (42 tests in fact, 28 before the one-off). Vitest, `deselected` and `make e2e` counts are as before.
+later listings were built without it. Task 5's fix round added 3 tests (the build listing's 590 became 641 with them, 51 above the listing), and Task 6's round 6i added 6 more (its listed end count of 719 is 776 in fact): and Task 7's round 7a added 16 more and its close's direct fixes one (its listed end count of 739 is 813 in fact): from Task 7's close on, every later listed count is 74 lower than the real one. Task 8's fix commit added 6 tests (its listed 794 is 874 in fact): from Task 8's close on, every later listed count is 80 lower than the real one. Task 9's fix commits and direct fix added 14 tests (its listed 856 is 950 in fact, 94 above the listing): from Task 9's close on, every later listed count is 94 lower than the real one (the 80 above, and 14 more: 1 drift test, 9 + 1 + 2 + 1 from round 9a and the direct fix). Task 10's fix commits added 30 tests (its listed 897 is 1021 in fact, 124 above the listing: round 10a and the direct fix, 28 and 2): from Task 10's close on, every later listed count is 124 lower than the real one. Task 11's round 11d, round 11e and direct fixes add 19 more (the listed 938 after its round 11c is 1081 in fact, 143 above the listing: the 124 above and 19 more): from Task 11's close on, every later listed count is 143 lower than the real one. Task 12's fix rounds add 16 more (its listed 950 is 1109 in fact, 159 above the listing: the 143 above and 16 more: the bookmark test, the sweep against the real Shiny app, the proxy and https pair, 9 junk-answer cases, the junk endpoint beside a healthy one, the 60 s re-check and the sanitised error): from Task 12's close on, every later listed count is 159 lower than the real one, a listed run of `tests/test_web_server.py` is 5 lower (14 tests in the file, not 9) and one of `tests/test_clients.py` 11 lower. Task 13's drift test and fix round 13c added 24 more (its listed 960 is 1143 in fact, 183 above the listing: the 159 and 24 more, 17 in `tests/test_demo_guard.py` and 7 parser cases in `tests/test_formats.py`): from Task 13's close on, every later listed count is 183 lower than the real one (Task 14's listings count from 960). Task 14's second hostile browser test adds one e2e test, which Task 14's own listings count. Task 14's fix round 14e and direct fix add 33 more full-suite tests and one e2e test (the AVI fallback) (its listed 974 is 1190 in fact, 216 above the listing: the 183 and 33 more, among them 19 snippets of the thread and process check in `tests/test_pages_imports.py`): from Task 14's close on, every later listed full-suite count is 216 lower than the real one (Task 15's listings count from 974), and every later listed `deselected` count and `make e2e` count is 2 lower than the real one (the raw file-name case and the AVI test; Task 14's end is `21 deselected` and `17 passed` in fact). Vitest is as Task 14 listed it (9 files, 44 tests). A later listing that counts a run of `tests/test_demo_guard.py` (24 tests, not 7) or `tests/test_formats.py` (7 more than before) is that many lower, and one of `tests/test_web_server.py` is 12 lower (34 tests, not 22), `tests/test_pages_imports.py` 20 lower (25, not 5), `tests/test_backend_open.py` 1 lower, and `tests/e2e/test_editor_view.py` 2 lower (11 tests in fact, counting the raw file-name case as one, against 9 listed). Task 15's fix rounds and direct fixes add 4 server tests (round 15d's) to the full suite: its listed 978 is 1198 in fact, 220 above the listing (the 216 and 4 more): from Task 15's close on, every later listed full-suite count is 220 lower than the real one (Task 16's listings count from 978). The offset for `deselected` and `make e2e` that Task 14's close gave as 2 is **3**, since Task 13's close added a test to Task 14 that Task 15's listing wasn't rewritten for; Task 15 adds 25 more e2e tests beyond its listing (3 in round 15c's drift, 20 in round 15d and 2 in the direct fixes), so from Task 15's close on every later listed `deselected` count and `make e2e` count is **28** lower than the real one (the 3 and 25 more; Task 15's end is `52 deselected` and `48 passed` in fact, against the listed 24 and 20). Vitest: Task 15 listed 12 files and 58 tests and has 14 files and 68 tests in fact (`CueRow.test.ts`, `BusyNote.test.ts`, `activeDescendant`'s test and the round 15d cases), so from Task 15's close on every later listed Vitest file count is 2 lower and test count 10 lower (Task 16's listings count from 12 and 58). A later listing that counts a run of `tests/test_web_server.py` is 21 lower (42 tests in fact after Task 15, against the 21 its listing ends on), and `tests/e2e/test_editor_view.py` has 13 tests in fact and `tests/e2e/test_editing.py` 29 (6 listed). Task 16's fix round 16d and its direct fixes add 4 full-suite tests (3 server tests and one view test), 15 e2e tests and 6 Vitest tests beyond its listing: its listed 985 is 1209 in fact, 224 above the listing (the 220 and 4 more): from Task 16's close on, every later listed full-suite count is 224 lower than the real one (Task 17's listings count from 985), every later listed `deselected` count and `make e2e` count is 43 lower (the 28 and 15 more; Task 16's end is `74 deselected` and `70 passed` in fact, against the listed 31 and 27), and Vitest is 2 files and 16 tests lower (17 files and 89 tests in fact, against the listed 15 and 73: Task 15's 2 files and 10 tests, and `draft.test.ts` 13 tests in fact against the 9 listed, `SaveBar.test.ts` 7 against 5). Task 17's round 17c gains one e2e test (Task 16's I-2) that its Step 14 counts (`36 deselected`, `32 passed`) but whose later listings do not: from Task 17's close on, every later listed `deselected` count and `make e2e` count is 44 lower than the real one. A later listing that counts a run of `tests/test_web_server.py` is 24 lower (49 tests in fact after Task 16, against the 25 its listing ends on), `tests/test_views.py` 3 lower (27 against 24), and `tests/e2e/test_saving.py` has 22 tests in fact against the 7 listed. Task 17's listing counted one test too few (it adds 8, not 7), and its round 17d and the direct fixes after its re-review add 2 server tests (I-3's hint and the late progress), 10 e2e tests and 8 Vitest tests, so its listed end of 993 is 1220 in fact, 227 above the listing (the 224, one from the miscount, and 2): from Task 17's close on, every later listed full-suite count is 227 lower than the real one (Task 18's listings count from 993), every later listed `deselected` count is 53 lower and every later `make e2e` count 53 lower (Task 17's end is `89 deselected` and `85 passed` in fact, against the listed 36 and 32), and Vitest is 3 files and 24 tests lower (19 files and 106 tests in fact, against the listed 16 and 82: the 2 files and 16 tests from before, `Retranslate.test.ts`, and 8 tests in `draft.test.ts`, `Retranslate.test.ts`, `BusyNote.test.ts` and `retranslate.test.ts`). A later listing that counts a run of `tests/test_web_server.py` is 26 lower (59 tests in fact after Task 17, against the 33 its listing ends on), `tests/test_backend_retranslate.py` is as it listed (34 tests), and `tests/e2e/test_retranslate.py` has 15 tests in fact against the 5 listed. The Spark-first one-off (2026-11-13, Q&A items 56–61, outside the plan's tasks) adds 27 full-suite tests (1220 becomes 1247 in fact; 14 of them in `tests/test_clients.py`): from Task 18's listing on, every later listed full-suite count is 254 lower than the real one (the 227 and 27 more), and a later listing that counts a run of `tests/test_clients.py` is 14 lower (42 tests in fact, 28 before the one-off). Vitest, `deselected` and `make e2e` counts are as before. Task 18 adds 5 full-suite tests beyond its listing (1d45675's 2, the signal before uvicorn's handlers, and round 18d's 3, I-1's 2 and I-3's 1), so its listed end of 1012 is 1271 in fact, 259 above the listing: from Task 18's close on, every later listed full-suite count is 259 lower than the real one (Task 19's listings count from 1012). Its listing's `deselected` and `make e2e` counts were one short (it adds two e2e tests, not one), and round 18d adds one more (I-2's), so every later listed `deselected` count and `make e2e` count is 55 lower (Task 18's end is `92 deselected` and `88 passed` in fact, against the listed 37 and 33). Vitest is 4 files and 28 tests lower (22 files and 118 tests in fact, against the listed 18 and 90: the 3 files and 24 tests from before, and round 18d's `shinyPage.test.ts` and its drawer test, 4 tests). A later listing that counts a run of `tests/test_web_settings.py` is 2 lower, `tests/test_cli_serve.py` 3 lower, and `tests/e2e/test_settings.py` has 3 tests in fact against the 2 listed.
 
 ## Decisions made while planning (review these)
 
@@ -32443,6 +32443,8 @@ Co-Authored-By: <the model's own line>
 
 **Tier:** 1 · **Scenarios:** S35
 
+**Built differently** (the listing's own steps stay as planned). (1) The listing's gaps (a3ab35b, c80ae64): `views.py`'s docstring had Task 17's wording, not the text the listing replaces, so the new sentences went into it as it stands, re-wrapped within 100 columns; `App.tsx` was edited in place, ending identical to the listing. (2) The listing's `deselected` and `make e2e` counts are one short: it adds two e2e tests, not one. (3) 1d45675, escaped from Task 11 (Tier 1), found by CI on Task 17's close: a Ctrl-C or SIGTERM that came before uvicorn's own handlers could be lost and leave the engine serving (4 hangs in 90 on Python 3.14.10), so `serve` notes the stop signals from before it prints the port, and still ends in 0 for Ctrl-C and 128+N for an exit signal. (4) Round 18d, after the Tier 1 review (Standards: 11 Minor; Spec with the security checklist: 4 Important and 3 Minor; no Critical): Copy settings writes every `[defaults]` key the file set, and only those, with the session's targets and formats, so `vad_threshold` is kept and `cache_max_gb` no longer pinned (I-1; 7600b23); a key used as the connection drops is dropped rather than queued in shiny.js's `$pendingMessages`, and Test, the target boxes and "ASS too" wait for a connection (I-2 and M-2; 8cdf5a7, with `frontend/src/lib/shinyPage.ts` holding the private-field access); the architecture diagram draws the drawer's Test reaching every configured endpoint, cloud ones on a click (I-4; 5f53e14); once uvicorn hands the signals back, a further Ctrl-C or SIGTERM ends asyncio's wait for worker threads again, which 1d45675 had stopped (I-3, 1d45675's own regression; 6a4306b, its test narrowed in 47134e3); Standards 1, 2, 4 and 8 (13277a7, 8cdf5a7). (5) The direct fixes under the cap after the re-review (Standards 9 still open, one new Minor): the key's queue is scrubbed once the paced null is set, not timed from the click (0f90d1d); serve's docstring and the drawer's doc comment are rewrapped, and serve's docstring says Python's exit still joins a held worker thread, so ending the process there takes yet another Ctrl-C, a gap older than this task that is on the Phase-end list (4bf3a45).
+
 **Files:**
 - Create: `src/vid2sub/web/settings.py` (Pages-safe), `frontend/src/components/SettingsDrawer.tsx`
   (+ test), `frontend/src/lib/settings.ts` (+ test)
@@ -32526,11 +32528,11 @@ Co-Authored-By: <the model's own line>
     `TopBar({capabilities, status, onSettings?})` (`open-settings`, shown where `onSettings` is
     given: `App` gives it where `capabilities.generate`).
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .git/TASK_BASE`.
 
 #### Round 18a: the server's settings, typed keys, defaults and Test
 
-- [ ] **Step 1: Write the failing tests,** `tests/test_web_settings.py`:
+- [x] **Step 1: Write the failing tests,** `tests/test_web_settings.py`:
 
 ```python
 """The settings drawer (spec §19.2, §5.3, §5.4, §6.4, §6.8; S35): endpoints and models as
@@ -32947,9 +32949,9 @@ BUNDLED_MODULES = ("vid2sub", "vid2sub.catalog", "vid2sub.web", "vid2sub.web.ser
 NOT_BUNDLED = ("platformdirs", "numpy", "onnxruntime", "chatlas", "openai", "httpx", "yt_dlp",
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_settings.py -q`.
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest tests/test_web_settings.py -q`.
   Expected: `E   ImportError: cannot import name 'settings' from 'vid2sub.web'` and `1 error`.
-- [ ] **Step 3: Write the code,** `src/vid2sub/web/settings.py`:
+- [x] **Step 3: Write the code,** `src/vid2sub/web/settings.py`:
 
 ```python
 """The settings drawer: the engine's configuration shown read-only, typed keys, the session's
@@ -33731,7 +33733,7 @@ log = logging.getLogger("vid2sub.web.server")
     def busy():
 ```
 
-- [ ] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_settings.py
+- [x] **Step 4: Run the checks; they pass.** `uv run pytest tests/test_web_settings.py
   tests/test_pages_imports.py tests/test_web_server.py -q` first (`52 passed`), then the guard
   checks, one at a time, each put back after: in `settings.enter_key`, change `if endpoint is
   None or not endpoint.allow_typed_key:` to `if endpoint is None:`, and `uv run pytest
@@ -33743,7 +33745,7 @@ log = logging.getLogger("vid2sub.web.server")
   tests/test_web_settings.py::test_the_pages_editor_is_offered_no_settings_and_takes_no_key`.
   Then `make check`. Expected: `1008 passed, 2 skipped, 35 deselected` (twice), `Test Files  16
   passed (16)`, `Tests  82 passed (82)`, `All checks passed!`, `no leaks found`.
-- [ ] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 5: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(web): 🤖 the settings drawer's server shows vid2sub.toml read-only, takes a typed key only where allowed, tests an endpoint and keeps the session's defaults
@@ -33808,7 +33810,7 @@ Co-Authored-By: <the model's own line>
 
 #### Round 18b: the drawer
 
-- [ ] **Step 6: Write the failing tests,** `frontend/src/lib/settings.test.ts`:
+- [x] **Step 6: Write the failing tests,** `frontend/src/lib/settings.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -34080,14 +34082,14 @@ def test_the_sessions_defaults_reach_every_tab_and_copy_settings_holds_them(
         assert watched.errors == [] and watched.violations() == []
 ```
 
-- [ ] **Step 7: Run them; watch them fail.** `cd frontend && npx vitest run
+- [x] **Step 7: Run them; watch them fail.** `cd frontend && npx vitest run
   src/lib/settings.test.ts src/components/SettingsDrawer.test.ts`. Expected: `Error: Failed to
   resolve import "./SettingsDrawer" from "src/components/SettingsDrawer.test.ts"`, `Error:
   Failed to resolve import "./settings" from "src/lib/settings.test.ts"` and `Test Files  2
   failed (2)`. `make build && uv run pytest -m e2e tests/e2e/test_settings.py -q`. Expected:
   `playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.` with
   `waiting for get_by_test_id("open-settings")`, and `2 failed`.
-- [ ] **Step 8: Write the code.** `frontend/src/types.ts`:
+- [x] **Step 8: Write the code.** `frontend/src/types.ts`:
 
   Replace
 
@@ -34811,7 +34813,7 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
 }
 ```
 
-- [ ] **Step 9: Run the checks; they pass.** `cd frontend && npm run typecheck && npx vitest run`
+- [x] **Step 9: Run the checks; they pass.** `cd frontend && npm run typecheck && npx vitest run`
   first (`Test Files  18 passed (18)`, `Tests  90 passed (90)`), then `make build && uv run
   pytest -m e2e tests/e2e/test_settings.py -q` three times (`2 passed` each). **Guard check**
   (spec §5.3): in `App.tsx`'s `onTypedKey`, take out `pace(() => setTypedKey(null));`; `make
@@ -34820,7 +34822,7 @@ function NoticeCard({ notice, onDismiss }: { notice: Shown; onDismiss: (f: (s: S
   (the page kept the key); put it back and `make build`. Then `make check`. Expected: `1008
   passed, 2 skipped, 37 deselected` (twice), `Test Files  18 passed (18)`, `Tests  90 passed
   (90)`, `All checks passed!`, `no leaks found`. Then `make e2e`. Expected: `33 passed`.
-- [ ] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 10: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 feat(frontend): 🤖 the settings drawer shows the endpoints and models read-only, tests an endpoint, takes a typed key it never keeps, and changes the session's defaults
@@ -34875,7 +34877,7 @@ This listing's own build had one independent security reviewer (a subagent) go o
 and 18b with `AGENTS.md`'s checklist; its findings are fixed here, as their own round, so the
 implementer builds them in. Step 16's review runs again, on the whole task.
 
-- [ ] **Step 11: Write the failing tests.** In `tests/test_web_settings.py`:
+- [x] **Step 11: Write the failing tests.** In `tests/test_web_settings.py`:
 
   Replace
 
@@ -35162,7 +35164,7 @@ describe("the settings drawer (spec §19.2, S35)", () => {
     expect(box).to_have_value("")
 ```
 
-- [ ] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_web_settings.py
+- [x] **Step 12: Run them; watch them fail.** `uv run pytest tests/test_web_settings.py
   tests/test_translate.py -q`. Expected: `E           vid2sub.config.ConfigError: vid2sub.toml:
   Illegal character '\x7f' (at line 4, column 45)`, `E           Failed: DID NOT RAISE
   BadSetting`, `targets: ('EN', 'jpn', 'en', 'zh') != ('en', 'ja', 'zh-Hans')`, the test key in
@@ -35172,7 +35174,7 @@ describe("the settings drawer (spec §19.2, S35)", () => {
   | 3 passed (4)`. `make build && uv run pytest -m e2e tests/e2e/test_settings.py -q -k typed`.
   Expected: `playwright._impl._errors.TimeoutError: Page.wait_for_function: Timeout 5000ms
   exceeded.` (the key typed and left behind stays in the page).
-- [ ] **Step 13: Write the code.** `src/vid2sub/web/settings.py`:
+- [x] **Step 13: Write the code.** `src/vid2sub/web/settings.py`:
 
   Replace
 
@@ -35671,7 +35673,7 @@ function Endpoint({ endpoint: e, open, connected, test, onTest, onTypedKey }: {
         // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
 ```
 
-- [ ] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_web_settings.py
+- [x] **Step 14: Run the checks; they pass.** `uv run pytest tests/test_web_settings.py
   tests/test_translate.py tests/test_clients.py -q` first (`57 passed`: Task 12 added 11 tests to `tests/test_clients.py`, and the Spark-first one-off 14 more: `71 passed` in fact), `cd frontend && npx
   vitest run` (`Tests  90 passed (90)`), then `make build && uv run pytest -m e2e
   tests/e2e/test_settings.py -q` five times (`2 passed` each: the key leaves the page when React
@@ -35679,7 +35681,7 @@ function Endpoint({ endpoint: e, open, connected, test, onTest, onTypedKey }: {
   `make check`. Expected: `1012 passed, 2 skipped, 37 deselected` (twice), `Test Files  18 passed
   (18)`, `Tests  90 passed (90)`, `All checks passed!`, `no leaks found`. Then `make e2e`.
   Expected: `33 passed`.
-- [ ] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
+- [x] **Step 15: Commit.** Write the message to `.git/COMMIT_MSG`:
 
 ```text
 fix(web): 🤖 a typed key is only a key's own characters, and stays out of reprs, stale redaction lists, the drawer's markup and password managers' forms
@@ -35737,7 +35739,7 @@ Co-Authored-By: <the model's own line>
   tests/test_translate.py tests/test_web_settings.py`, `git commit -F .git/COMMIT_MSG`, then `git
   log -1 --format='%(trailers)'` shows `Plan:`.
 
-- [ ] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
+- [x] **Step 16: Review, look forward, close.** The Tier 1 review from `$(cat .git/TASK_BASE)`
   (`AGENTS.md`, *Reviews*: Matt's `code-review`, two axes in two subagents, plus the security
   checklist, at most one re-review). Worth the reviewers' time, for the checklist: every path a
   typed key takes (the field, the pacer, shinyreact's registry, shiny.js's `$inputValues` and
@@ -36623,8 +36625,9 @@ def capabilities_view(caps: Capabilities) -> dict[str, Any]:
 
 ```python
 from vid2sub.media.probe import probe
-from vid2sub.media.tools import Tools, run_tool
+from vid2sub.media.tools import Tools, input_args, run_tool
 from vid2sub.parse import ParsedChunk
+from vid2sub.security import safe_write
 from vid2sub.store import header_for, now, sidecar_path
 from vid2sub.subs.model import Segment, Word
 from vid2sub.subs.sidecar import IdentityRecord, Sidecar, parse_sidecar, serialize
@@ -36640,9 +36643,10 @@ DEMO = REPO / "demo"
 
 ```python
 from vid2sub.media.probe import probe
-from vid2sub.media.tools import Tools, run_tool
+from vid2sub.media.tools import Tools, input_args, run_tool
 from vid2sub.parse import ParsedChunk
 from vid2sub.pipeline import Event, InputResult, RunContext, RunOptions
+from vid2sub.security import safe_write
 from vid2sub.store import header_for, now, sidecar_path
 from vid2sub.subs.model import Segment, Word
 from vid2sub.subs.sidecar import IdentityRecord, Sidecar, parse_sidecar, serialize
@@ -37706,6 +37710,7 @@ import { randomHex, shownIds } from "@/lib/ids";
 import { type Shown, addNotice, dismissNotice } from "@/lib/notices";
 import { retranslateNotice } from "@/lib/retranslate";
 import { pacer } from "@/lib/sends";
+import { dropQueuedKeys, pageConnected } from "@/lib/shinyPage";
 import { useSetShinyInput, useShinyInitialized, useShinyMessageHandler, useShinyOutputValue } from "@/sr";
 import type { AppliedMessage, Busy, Capabilities, EditOp, EndpointTestResult, EpisodeView, JobsView, Progress, RetranslateResultMessage, SaveResultMessage, SettingsView, Status } from "@/types";
 
@@ -37967,8 +37972,15 @@ export default function App() {
   });
   const onTypedKey = (endpoint: string, key: string) => {
     const n = ++sent.current;
-    pace(() => setTypedKey({ endpoint, key, n }));
-    pace(() => setTypedKey(null));
+    // With no socket the key is dropped, not queued: shiny.js would hold it in $pendingMessages
+    // for good (vid2sub never reconnects). A key set just before the socket closed reaches
+    // $sendMsg a debounce (one timer) later, so once the paced null is set the queue is scrubbed
+    // again, whenever the socket is gone.
+    pace(() => { if (pageConnected()) setTypedKey({ endpoint, key, n }); });
+    pace(() => {
+      setTypedKey(null);
+      for (const ms of [0, 50, 250]) setTimeout(() => { if (!pageConnected()) dropQueuedKeys(); }, ms);
+    });
   };
   const onTest = (endpoint: string) => {
     setTests((t) => ({ ...t, [endpoint]: "testing" }));
@@ -38019,7 +38031,12 @@ export default function App() {
 
   // The websocket closed: ask the engine once why, and say so; never reconnect (Review Focus 5).
   const [lost, setLost] = useState<Lost | null>(null);
+  // Set the moment shiny.js says the socket closed, before `whyLost` has answered: the drawer
+  // sends nothing in that gap, and what shiny.js queued meanwhile goes (I-2).
+  const [disconnected, setDisconnected] = useState(false);
   const check = useCallback(() => {
+    setDisconnected(true);
+    dropQueuedKeys();
     void whyLost((input, init) => window.fetch(input, init)).then(setLost);
   }, []);
   useEffect(() => {
@@ -38034,7 +38051,7 @@ export default function App() {
   return (
     <div className="flex h-dvh flex-col" data-testid="app">
       <TopBar capabilities={capabilities} status={status} onSettings={capabilities?.generate ? () => setSettingsOpen(true) : undefined} />
-      <SettingsDrawer open={settingsOpen && Boolean(settings)} onClose={() => setSettingsOpen(false)} connected={lost === null} settings={settings ?? null}
+      <SettingsDrawer open={settingsOpen && Boolean(settings)} onClose={() => setSettingsOpen(false)} connected={!disconnected && lost === null} settings={settings ?? null}
         tests={tests} onTest={onTest} onTypedKey={onTypedKey} onDefaults={onDefaults} />
       {lost && (
         // Above Shiny's grey disconnected overlay (z-index 99998), which ignores the pointer.
@@ -41044,3 +41061,9 @@ fi
 | Task 17 (re-review) | Minor | `frontend/src/lib/retranslate.ts` | A "Retranslate stale" that replaces some lines and drops others says "Retranslated N" with N the larger of the two counts | open |
 | Task 17 (re-review) | Minor | `frontend/src/App.tsx` | An edit that Restore leaves out because a retranslation made its cue (Q&A item 52) is dropped without a word; the offer counts only what Restore sends. The ruled design, listed so a later note can say it | open |
 | Task 17 (close) | Minor | `tests/e2e/test_retranslate.py` | Couldn't verify: a real model endpoint (never contacted, only the loopback fake and the demo's canned translator), Windows, Linux and Python 3.12 until CI runs, and a screen reader on the polite status lines | open |
+| Task 18 (review) | Minor | `src/vid2sub/web/`, `frontend/src/` | Standards 3, 5, 6, 10 and 11: a Test's result (`ok`, `models`, `more`, `error`) is written out three times in `server.py`'s `test_endpoint` (one `test_result` helper in `settings.py`); `Session.on_change` returns a lambda run for its side effect (a nested `def stop()`); `settings_view` is long (`_endpoint_rows`, `_model_rows`, `_rule_rows`); the drawer's Vitest check of the password-manager hints depends on their order in the markup (check each on the `<input>`); TopBar and the drawer each write the same button class (one shared constant) | open |
+| Task 18 (review) | Minor | `src/vid2sub/security.py` | Spec M-1: `redact` matches a key's exact text, 6 characters or more, so an environment key that `repr()` escapes (the openai SDK puts an error body in `repr` form), or one under 6 characters, reaches a Test's or a retranslation's error text unredacted, against spec §6.8; also remove each key's `repr` and `json.dumps` forms, and treat a key under 6 characters as unredactable | open |
+| Task 18 (review) | Minor | `src/vid2sub/web/settings.py`, `frontend/src/components/SettingsDrawer.tsx` | Spec M-3: the drawer labels an endpoint "cloud" beside its loopback address when no `local = true` model uses it, as the top bar's "lan: cloud" does; say what the word means ("its models need Allow cloud"), or label by whether a local model uses it; the wording may be Dan's | open |
+| Task 18 (close) | Minor | `tests/e2e/test_editor_view.py` | The two-hour episode's 1 s open bar failed once at 1.22 s in a full `make e2e` on a loaded machine (load average 20–25), and passed alone and in the next full run; the Spec reviewer measured no cost from the drawer. Watch it on CI | open |
+| Task 18 (close) | Minor | `frontend/src/components/SettingsDrawer.tsx`, `src/vid2sub/commands/serve.py` | Couldn't verify: a real endpoint's Test (only loopback fakes), how 1Password, Bitwarden and LastPass treat the key field (`data-1p-ignore` is documented; `data-bwignore` and `data-lpignore` only in community posts), and Ctrl-Break on Windows and the signals on Linux until CI runs | open |
+| Task 18 (re-review) | Important | `src/vid2sub/commands/serve.py`, `src/vid2sub/web/runtime.py` | Escaped from Task 11 (Tier 1), found by Task 18's re-review (out of scope there): once `serve()` returns after a further Ctrl-C while a worker thread is held (a Test, a retranslation or the playback audio), Python's exit still joins that thread, so the engine lingers until yet another Ctrl-C, which ends it with an "Exception ignored on threading shutdown" traceback. Measured the same on `2883c42`, so it predates round 18d. The fix is a choice: daemon threads for `runtime.blocking` (but a save must never be cut mid-write), or `os._exit` once `serve`'s cleanup has run on that late path; its test asserts that the process ends, not only `serve()` | open |

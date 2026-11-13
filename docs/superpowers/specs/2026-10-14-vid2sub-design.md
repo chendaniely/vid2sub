@@ -73,7 +73,7 @@ test names.
 | S32 | two tabs, or a tab and a CLI job, save the same episode | nothing is lost; a track that diverged shows both versions for the user to pick | Phase 2 | `tests/test_backend_save.py; tests/e2e/test_saving.py` | built |
 | S33 | Enter pressed to commit a Japanese or Chinese IME candidate | the candidate is committed and no editor action fires | Phase 2 | `tests/e2e/test_editing.py` (a composition through Chromium's CDP `Input.imeSetComposition`) | built |
 | S34 | the tab crashes with unsaved edits | the `localStorage` draft is offered back; closing with unsaved edits warns first | Phase 2 | `tests/e2e/test_saving.py` | built |
-| S35 | the settings drawer | endpoints and models read-only, with Test; a typed key only for an `allow_typed_key` endpoint, shown back only as "key entered for this session" | Phase 2 | `tests/test_settings.py`; Playwright | planned |
+| S35 | the settings drawer | endpoints and models read-only, with Test; a typed key only for an `allow_typed_key` endpoint, shown back only as "key entered for this session" | Phase 2 | `tests/test_web_settings.py; tests/e2e/test_settings.py` | built |
 | S36 | the minimal Jobs page, paths typed into a box | per-stage and per-chunk progress; Cancel stops between chunks | Phase 2 | Playwright | planned |
 | S37 | the editor by keyboard alone, or with a screen reader | every action reachable, focus visible, `aria-current` on the current cue, job progress announced politely | Phase 2 | Playwright | planned |
 | S38 | Add, through the in-app file browser | home and mounted volumes; folders, videos and subtitles only; dotfiles and credential folders hidden; a season sorted by `SxxEyy` | Phase 3 | `tests/test_browse.py` | planned |

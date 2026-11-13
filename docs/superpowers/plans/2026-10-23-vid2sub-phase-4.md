@@ -15152,16 +15152,16 @@ index 58f78e6..f765ed8 100644
 --- a/docs/architecture.md
 +++ b/docs/architecture.md
 @@ -25,7 +25,7 @@ flowchart LR
-   spark["DGX Spark via SSH tunnel<br/>127.0.0.1:9100/v1<br/>whisper.cpp · Gemma 4"]
+   spark["DGX Spark: the front at 127.0.0.1:9100/v1<br/>(through make tunnel, or on the Spark itself)<br/>whisper.cpp · Gemma 4"]
    sparkqwen["DGX Spark<br/>Qwen3-ASR + forced aligner<br/>(Phase 2, once local-ai serves it)"]
-   cloud["OpenAI<br/>only with --allow-cloud"]
+   cloud["OpenAI<br/>models only with --allow-cloud"]
 -  pages["GitHub Pages<br/>Shinylive editor<br/>(Phase 4)"]
 +  pages["GitHub Pages<br/>Shinylive editor"]
    term --> core
    browser -->|"websocket + token cookie"| web
    web --> core
 @@ -38,7 +38,7 @@ flowchart LR
-   core -->|"chunks, cue text"| cloud
+   core -->|"chunks, cue text (--allow-cloud); Test: its model list, on a click"| cloud
    pages -.->|"File System Access"| files
    classDef planned stroke-dasharray: 5 5
 -  class sparkqwen,pages planned
