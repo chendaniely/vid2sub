@@ -195,10 +195,17 @@ def test_an_unreadable_retry_hint_in_a_refusal_is_ignored_not_a_crash():
     assert err.value.kind == "refused" and err.value.retry_after is None
 
 
-def test_a_zero_retry_hint_in_a_refusal_stays_zero():
+def test_a_zero_or_tiny_retry_hint_in_a_refusal_waits_at_least_a_second():
+    for hint in (0, 0.001):
+        with pytest.raises(EngineError) as err:
+            _transcribe([_refusal(hint)])
+        assert err.value.retry_after == 1.0
+
+
+def test_a_huge_integer_retry_hint_in_a_refusal_is_ignored_not_a_crash():
     with pytest.raises(EngineError) as err:
-        _transcribe([_refusal(0)])
-    assert err.value.retry_after == 0.0
+        _transcribe([_refusal(10 ** 400)])
+    assert err.value.kind == "refused" and err.value.retry_after is None
 
 
 @pytest.mark.parametrize("header", ["nan", "inf", "-5", "soon"])

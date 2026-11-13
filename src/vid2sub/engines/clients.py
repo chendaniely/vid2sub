@@ -122,7 +122,7 @@ def _seconds(value: Any) -> float | None:
     """A finite, non-negative number of seconds, or None for anything else."""
     try:
         seconds = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return seconds if math.isfinite(seconds) and seconds >= 0 else None
 
@@ -131,11 +131,15 @@ def _retry_after(response: Any) -> float | None:
     return _seconds(response.headers.get("retry-after"))
 
 
+_MIN_REFUSAL_WAIT_S = 1.0  # a tiny hint would resend the chunk thousands of times in the budget
+
+
 def _refusal_wait(body: Any, response: Any) -> float | None:
     """local-ai's wait (#42): the body's top-level retry_after_s, else the Retry-After header,
     else None, which leaves the wait to vid2sub's own backoff."""
     top = _seconds(body.get("retry_after_s")) if isinstance(body, dict) else None
-    return top if top is not None else _retry_after(response)
+    wait = top if top is not None else _retry_after(response)
+    return None if wait is None else max(wait, _MIN_REFUSAL_WAIT_S)
 
 
 def map_error(err: Exception, *, key_env: str | None, secrets: list[str]) -> EngineError:
