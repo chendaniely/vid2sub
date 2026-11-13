@@ -17,10 +17,13 @@ def write(tmp_path, text):
 def test_the_example_file_is_the_starter_and_is_valid(tmp_path):
     assert (ROOT / "vid2sub.example.toml").read_text(encoding="utf-8") == c.STARTER
     cfg = c.load_config(write(tmp_path, c.STARTER))
-    assert set(cfg.models) == {"spark-turbo", "spark-gemma", "mac-qwen", "openai-whisper",
-                               "openai-gpt"}
+    assert set(cfg.models) == {"spark-turbo", "spark-large-v3", "spark-gemma", "mac-qwen",
+                               "openai-whisper", "openai-gpt"}
     assert c.is_local(cfg.models["spark-turbo"], cfg)
     assert cfg.models["spark-turbo"].request_extra == {"max_context": 0}
+    large = cfg.models["spark-large-v3"]
+    assert large.catalog == "whisper-large-v3" and large.model == "whisper-large-v3"
+    assert large.request_extra == {"max_context": 0} and c.is_local(large, cfg)
     assert c.is_local(cfg.models["mac-qwen"], cfg)
     assert not c.is_local(cfg.models["openai-whisper"], cfg)
 

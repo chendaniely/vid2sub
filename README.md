@@ -65,6 +65,9 @@ your shell sources; on Windows, `setx NAME value` and a new terminal).
   `http://127.0.0.1:9100/v1`. In a `vid2sub.toml` made before 2026-11-10, add
   `request_extra = { max_context = 0 }` under `[models.spark-turbo]`: without it the Spark's
   Whisper can repeat one line over and over on long dialogue.
+  In one made before 2026-11-13, add the `[models.spark-large-v3]` block from the starter file
+  too: the Spark loads Whisper large-v3 on demand, and vid2sub tries it first for Mandarin,
+  Japanese and Korean there.
 - **OpenAI:** export `OPENAI_API_KEY`. Cloud models are used only on runs with `--allow-cloud`.
 - **LM Studio or Ollama** (for translation): add an endpoint with its OpenAI-compatible URL.
 

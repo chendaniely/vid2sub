@@ -31,6 +31,16 @@ local = true
 # doesn't reach this model.
 request_extra = { max_context = 0 }
 
+# The Spark loads Whisper large-v3 on demand; vid2sub's first choice for Mandarin, Japanese and
+# Korean on the Spark.
+[models.spark-large-v3]
+catalog = "whisper-large-v3"
+endpoint = "spark"
+model = "whisper-large-v3"
+parser = "whisper.cpp"
+local = true
+request_extra = { max_context = 0 }
+
 [models.spark-gemma]
 catalog = "gemma-4-26b-a4b"
 endpoint = "spark"
